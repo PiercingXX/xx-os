@@ -40,7 +40,11 @@ from gesture_config import IPC_VERBS, GestureConfig
 # wrapper hardcoded before bindings became generated.
 _LISGD_GEOMETRY: dict[str, tuple[str, ...]] = {
     'swipe_up_short': ('1,DU,B,S,R',),
-    'swipe_up_long': ('1,DU,B,L,R',),
+    # lisgd: S < 1/3 screen height, M 1/3-2/3, L > 2/3. Medium must map
+    # too: with only S and L bound, a natural 'swipe further' landed in
+    # M and did nothing, and L needs a 2/3-screen drag (no switcher on
+    # the FLX1).
+    'swipe_up_long': ('1,DU,B,M,R', '1,DU,B,L,R'),
     'swipe_down_top': ('1,UD,T,*,R',),
     'swipe_left_edge': ('1,LR,L,*,R', '1,RL,R,*,R'),
 }
@@ -105,13 +109,36 @@ def detect_touch_device(sys_input: Path | None = None) -> str | None:
     return None
 
 
-def _kill_lisgd() -> None:
-    # Fire-and-forget: restart_lisgd never reads the kill result (pkill
-    # exits after signalling, not after death), so waiting changes nothing.
-    # OSError (no pkill) still propagates to restart_lisgd, as before.
-    subprocess.Popen(
-        ['pkill', '-x', 'lisgd'], close_fds=True,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def _lisgd_pids(proc: Path = Path('/proc'), uid: int | None = None) -> list[int]:
+    """PIDs of this user's running lisgd, read from /proc (no subprocess)."""
+    uid = os.getuid() if uid is None else uid
+    pids: list[int] = []
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if (entry / 'comm').read_text().strip() != 'lisgd':
+                continue
+            if entry.stat().st_uid != uid:
+                continue
+        except OSError:
+            continue
+        pids.append(int(entry.name))
+    return pids
+
+
+def _kill_lisgd(pids=None, kill=None) -> None:
+    # Only the lisgd instances that exist *now*. A fire-and-forget
+    # `pkill -x lisgd` raced the replacement spawned right after it and
+    # killed that too: every shell start left the session with no
+    # gestures (owner stuck inside an app on the FLX1).
+    import signal
+    kill = kill or os.kill
+    for pid in (_lisgd_pids() if pids is None else pids):
+        try:
+            kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
 
 
 def restart_lisgd(

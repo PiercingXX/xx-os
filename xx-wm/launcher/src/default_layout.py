@@ -276,6 +276,9 @@ def apply_default_layout(config, gestures=None, resolver: DefaultLayoutResolver 
         skippy = resolver.resolve_skippy()
         if skippy:
             gestures.set('swipe_left_home', f'launch:{skippy}')
+        # Android's seeder binds swipe right to the camera explicitly
+        # (unset, the swipe would open the dialer).
+        gestures.set('swipe_right_home', 'camera')
 
     config.set_default_layout_applied(True)
 

@@ -16,10 +16,13 @@ _DEFAULTS: dict[str, str] = {
     'swipe_up_long':         'app_switcher',
     'swipe_left_edge':       'back',
     'long_press_bottom':     'search',
-    'double_tap_home':       'lock_screen',
+    # Android launcher parity: "Double Tap to Lock" is off by default,
+    # and an unset home swipe ('none') opens its default app (left:
+    # camera, right: dialer — see home_swipe_action).
+    'double_tap_home':       'none',
     'long_press_home':       'edit',
     'swipe_left_home':       'none',
-    'swipe_right_home':      'camera',
+    'swipe_right_home':      'none',
     'squeeze':               'assistant',
     'fingerprint_swipe':     'notification_shade',
     'double_press_power':    'camera',
@@ -46,6 +49,28 @@ IPC_VERBS: frozenset[str] = frozenset({
 })
 
 
+# Home side swipes: the app a swipe opens while no app is bound
+# (Android: left opens the camera, right the dialer).
+HOME_SWIPE_DEFAULTS: dict[str, str] = {
+    'swipe_left_home': 'camera',
+    'swipe_right_home': 'dialer',
+}
+
+# "Double Tap to Lock" is a switch: the slot holds lock_screen or none.
+DOUBLE_TAP_VALUES = ('lock_screen', 'none')
+
+
+def home_swipe_action(gestures, key: str) -> str:
+    """Action a home side swipe runs: the bound app, else its default."""
+    try:
+        action = gestures.get(key) or 'none'
+    except Exception:
+        action = 'none'
+    if action == 'none':
+        return HOME_SWIPE_DEFAULTS.get(key, 'none')
+    return action
+
+
 def is_valid_action(action: str) -> bool:
     """Fixed actions plus 'launch:<app_id>' bindings for arbitrary apps."""
     if action in VALID_ACTIONS:
@@ -55,6 +80,8 @@ def is_valid_action(action: str) -> bool:
 
 def _is_valid_value(key: str, value: str) -> bool:
     """Actions are valid everywhere; verbs only for system-level slots."""
+    if key == 'double_tap_home':
+        return value in DOUBLE_TAP_VALUES
     if is_valid_action(value):
         return True
     if key == 'long_press_home' and value == 'edit':
@@ -109,7 +136,17 @@ class GestureConfig:
         if not isinstance(raw, dict):
             return
         disk: dict[str, str] = {}
+        migrated = False
         for key, action in raw.items():
+            if (key == 'double_tap_home' and isinstance(action, str)
+                    and action not in DOUBLE_TAP_VALUES
+                    and is_valid_action(action)):
+                # Double-tap used to take any action; it is the Android
+                # "Double Tap to Lock" switch now, so anything but the
+                # lock turns it off.
+                self._map[key] = 'none'
+                migrated = True
+                continue
             if key in _DEFAULTS and isinstance(action, str) and _is_valid_value(key, action):
                 self._map[key] = action
                 disk[key] = action
@@ -120,6 +157,8 @@ class GestureConfig:
         if (disk.get('swipe_up_short') == 'app_switcher'
                 and disk.get('swipe_up_long') == 'app_switcher'):
             self._map['swipe_up_short'] = 'home'
+            migrated = True
+        if migrated:
             self.save()
 
     def save(self) -> None:

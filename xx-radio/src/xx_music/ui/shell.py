@@ -131,8 +131,13 @@ class Shell:
         self.np_slot.connect("notify::child-revealed", self._np_settled)
 
         self.toast_label = common.label("", "xx-body", chars=30)
-        toast_box = common.hbox(0)
+        self.toast_label.set_hexpand(True)
+        toast_box = common.hbox(12)
         toast_box.append(self.toast_label)
+        self.toast_action = Gtk.Button.new_with_label("")
+        self.toast_action.set_valign(Gtk.Align.CENTER)
+        self.toast_action.set_visible(False)
+        toast_box.append(self.toast_action)
         self.toast_box = toast_box
         self._style_toast()
         self.toast_slot = Gtk.Revealer()
@@ -143,6 +148,7 @@ class Shell:
         self.toast_slot.set_can_target(False)
         self.toast_slot.set_margin_bottom(57)
         self._toast_id = 0
+        self._toast_cb = None
 
         self.overlay = Gtk.Overlay()
         self.overlay.set_child(main)
@@ -217,6 +223,13 @@ class Shell:
                 self.toast_label.add_css_class(cls)
             else:
                 self.toast_label.remove_css_class(cls)
+        # The toast's action (Undo): a caps chip, or a Strong bracket.
+        for cls, on in (("xx-mu-banner-act", not words), ("xx-mm-btn", words),
+                        ("xx-mm-bracket", words)):
+            if on:
+                self.toast_action.add_css_class(cls)
+            else:
+                self.toast_action.remove_css_class(cls)
 
     def _minimal_changed(self) -> None:
         self._paint_tabs()
@@ -384,20 +397,52 @@ class Shell:
                 minimal.Tone.STRONG, size=13))
         return row
 
-    def toast(self, text: str) -> None:
+    def toast(self, text: str, action_label: str = "",
+              action=None) -> None:
         from gi.repository import GLib
 
         self.toast_label.set_text(text)
-        self.toast_slot.set_reveal_child(True)
         if self._toast_id:
             GLib.source_remove(self._toast_id)
+            self._toast_id = 0
+        try:
+            self.toast_action.disconnect_by_func(self._toast_go)
+        except Exception:  # noqa: BLE001 - no handler yet
+            pass
+        self._toast_cb = action
+        if action_label and action is not None:
+            if minimal.active():
+                self.toast_action.set_label(minimal.bracket(
+                    minimal.sentence_word(action_label)))
+                self.toast_action.get_child().add_css_class("xx-mm-b14")
+                minimal.set_tone(self.toast_action, minimal.Tone.STRONG)
+            else:
+                self.toast_action.set_label(action_label.upper())
+                common.fit(self.toast_action, 10)
+            self.toast_action.set_visible(True)
+            self.toast_action.connect("clicked", self._toast_go)
+        else:
+            self.toast_action.set_visible(False)
+        self.toast_slot.set_reveal_child(True)
 
         def _hide() -> bool:
             self._toast_id = 0
             self.toast_slot.set_reveal_child(False)
             return False
 
-        self._toast_id = GLib.timeout_add(2600, _hide)
+        self._toast_id = GLib.timeout_add(4000 if action is not None
+                                          else 2600, _hide)
+
+    def _toast_go(self, _button) -> None:
+        from gi.repository import GLib
+
+        callback, self._toast_cb = self._toast_cb, None
+        self.toast_slot.set_reveal_child(False)
+        if self._toast_id:
+            GLib.source_remove(self._toast_id)
+            self._toast_id = 0
+        if callback is not None:
+            callback()
 
     def retry(self) -> None:
         self.ui.health.note_success()

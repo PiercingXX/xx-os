@@ -449,3 +449,21 @@ def test_theme_pick_paper_clears_prefer_dark(window):
     assert ('theme', 'paper') in shell.config.calls
     assert ('dark', False) in shell.config.calls
     assert events == ['buttons', 'theme', 'surfaces']
+
+
+def test_scrolling_settings_never_leaves_it():
+    # Owner: Settings opened from the shade "closes way too easily" — an
+    # upward scroll left Settings and a downward flick opened the shade.
+    import types
+    import window
+    calls = []
+    fake = types.SimpleNamespace(
+        stack=types.SimpleNamespace(get_visible_child_name=lambda: 'settings'),
+        _leave_settings=lambda: calls.append('leave'),
+        _dispatch_gesture_action=lambda *_a: calls.append('dispatch'),
+        gesture_config={},
+        _swipe_origin=None,
+    )
+    for vel_y in (-900.0, -50.0, 400.0, 1500.0):
+        window.ShellWindow._on_stack_swipe(fake, None, 0.0, vel_y)
+    assert calls == []

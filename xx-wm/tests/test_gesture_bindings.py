@@ -28,6 +28,7 @@ from gesture_config import GestureConfig
 # mapping instead. Order matters: it is lisgd's argument order.
 LEGACY_BINDINGS = [
     '1,DU,B,S,R,/usr/bin/xx-wm-ipc gesture.keyboard',
+    '1,DU,B,M,R,/usr/bin/xx-wm-ipc gesture.home',
     '1,DU,B,L,R,/usr/bin/xx-wm-ipc gesture.home',
     '1,UD,T,*,R,/usr/bin/xx-wm-ipc gesture.shade',
     '1,LR,L,*,R,/usr/bin/xx-wm-ipc gesture.back',
@@ -37,6 +38,7 @@ LEGACY_BINDINGS = [
 # Defaults resolve through _DEFAULTS action names mapped via ACTION_TO_VERB.
 DEFAULT_BINDINGS = [
     '1,DU,B,S,R,/usr/bin/xx-wm-ipc gesture.home',
+    '1,DU,B,M,R,/usr/bin/xx-wm-ipc gesture.switcher',
     '1,DU,B,L,R,/usr/bin/xx-wm-ipc gesture.switcher',
     '1,UD,T,*,R,/usr/bin/xx-wm-ipc gesture.shade',
     '1,LR,L,*,R,/usr/bin/xx-wm-ipc gesture.back',
@@ -93,8 +95,9 @@ class TestRebinding:
         }), encoding='utf-8')
         got = generate_bindings('/usr/bin')
         assert got[0].endswith('gesture.switcher')
-        assert got[3].endswith('gesture.home')
+        # [1], [2]: swipe_up_long M and L; [3]: shade; [4], [5]: edges
         assert got[4].endswith('gesture.home')
+        assert got[5].endswith('gesture.home')
 
     def test_action_names_map_to_ipc_verbs(self, tmp_path):
         (tmp_path / 'gestures.json').write_text(json.dumps({
@@ -105,7 +108,8 @@ class TestRebinding:
         }), encoding='utf-8')
         assert generate_bindings('/usr/bin') == [
             '1,DU,B,S,R,/usr/bin/xx-wm-ipc gesture.home',
-            '1,DU,B,L,R,/usr/bin/xx-wm-ipc gesture.switcher',
+            '1,DU,B,M,R,/usr/bin/xx-wm-ipc gesture.switcher',
+    '1,DU,B,L,R,/usr/bin/xx-wm-ipc gesture.switcher',
             '1,UD,T,*,R,/usr/bin/xx-wm-ipc gesture.shade',
             '1,LR,L,*,R,/usr/bin/xx-wm-ipc gesture.back',
             '1,RL,R,*,R,/usr/bin/xx-wm-ipc gesture.back',
@@ -158,10 +162,11 @@ class TestRebinding:
         # explode is dropped → schema default home → gesture.home
         assert got[0].endswith('gesture.home')
         # launch: is in-shell; lisgd keeps DEFAULT_VERBS for the slot
-        assert got[1].endswith('gesture.home')
+        assert got[1].endswith('gesture.home')   # swipe_up_long, M
+        assert got[2].endswith('gesture.home')   # swipe_up_long, L
         # camera is a valid unmapped action → DEFAULT_VERBS shade
-        assert got[2].endswith('gesture.shade')
-        assert got[3].endswith('gesture.back')
+        assert got[3].endswith('gesture.shade')
+        assert got[4].endswith('gesture.back')
 
     def test_unmapped_action_uses_default_verb(self, tmp_path):
         (tmp_path / 'gestures.json').write_text(json.dumps({
@@ -249,12 +254,34 @@ class TestLisgdRestart:
             which=lambda _n: '/usr/bin/lisgd',
         ) is False
 
-    def test_kill_is_fire_and_forget_popen(self, monkeypatch):
-        spawned: list = []
-        monkeypatch.setattr(subprocess, 'Popen',
-                            lambda argv, **_k: spawned.append(argv))
-        _kill_lisgd()
-        assert spawned == [['pkill', '-x', 'lisgd']]
+    def test_kill_targets_only_existing_pids(self):
+        killed: list = []
+        _kill_lisgd(pids=[11, 12], kill=lambda pid, sig: killed.append(pid))
+        assert killed == [11, 12]
+
+    def test_kill_never_races_the_replacement(self, monkeypatch):
+        # The old pkill ran after the new lisgd spawned and killed it.
+        import gesture_bindings
+        order: list = []
+        monkeypatch.setattr(gesture_bindings, '_lisgd_pids', lambda: [7])
+        monkeypatch.setattr(gesture_bindings.os, 'kill',
+                            lambda pid, sig: order.append(('kill', pid)))
+        assert restart_lisgd(
+            '/usr/bin', touch_dev='/dev/input/event3',
+            spawn=lambda argv, **_k: order.append(('spawn', argv[0])),
+            which=lambda _n: '/usr/bin/lisgd') is True
+        assert order == [('kill', 7), ('spawn', '/usr/bin/lisgd')]
+
+    def test_lisgd_pids_reads_proc(self, tmp_path):
+        import os as _os
+        for pid, comm in ((5, 'lisgd'), (6, 'phoc'), (7, 'lisgd')):
+            d = tmp_path / str(pid)
+            d.mkdir()
+            (d / 'comm').write_text(comm + '\n')
+        (tmp_path / 'self').mkdir()
+        from gesture_bindings import _lisgd_pids
+        assert sorted(_lisgd_pids(tmp_path, uid=_os.getuid())) == [5, 7]
+        assert _lisgd_pids(tmp_path, uid=_os.getuid() + 1) == []
 
 
 class TestCli:
@@ -269,3 +296,10 @@ class TestCli:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def test_medium_bottom_swipe_opens_the_switcher():
+    # lisgd classes a 1/3-2/3 screen swipe as M; with only S and L bound
+    # the switcher was unreachable on the FLX1.
+    lines = generate_bindings('/usr/bin')
+    assert '1,DU,B,M,R,/usr/bin/xx-wm-ipc gesture.switcher' in lines

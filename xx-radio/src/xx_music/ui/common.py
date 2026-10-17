@@ -822,7 +822,7 @@ def present(dialog, parent: Gtk.Widget):
 
 def menu_row(icon: str, text: str, callback) -> Gtk.Button:
     if minimal.active():
-        return minimal.text_row(text.lower(), callback)
+        return minimal.text_row(minimal.sentence_word(text), callback)
     button = Gtk.Button()
     button.add_css_class("xx-mu-menu")
     row = hbox(16)
@@ -931,7 +931,8 @@ def empty_state(text: str, action: str = "", callback=None) -> Gtk.Widget:
     return box
 
 
-def toast(ui, text: str) -> None:
+def toast(ui, text: str, action_label: str = "",
+          action=None) -> None:
     """A one-line note at the bottom of the window (the shell owns it)."""
     if ui is not None and ui.shell is not None:
-        ui.shell.toast(text)
+        ui.shell.toast(text, action_label, action)

@@ -113,9 +113,10 @@ class SettingsPage:
         self._app_sections()
         self.playback_box = common.vbox(0)
         self.downloads_box = common.vbox(0)
+        self.blocked_box = common.vbox(0)
         self.diagnostics_box = common.vbox(0)
         self.about_box = common.vbox(0)
-        for box in (self.playback_box, self.downloads_box,
+        for box in (self.playback_box, self.downloads_box, self.blocked_box,
                     self.diagnostics_box, self.about_box):
             self.body.append(box)
         self._paint_static()
@@ -136,6 +137,10 @@ class SettingsPage:
         if self.prefs:
             self._paint_playback()
             self._paint_downloads()
+            self._paint_blocked()
+
+    def shown(self) -> None:
+        self._paint_blocked()
 
     # -- app sections ------------------------------------------------------------------
     def _app_sections(self) -> None:
@@ -181,6 +186,29 @@ class SettingsPage:
         self.ui.prefs = prefs
         self._paint_playback()
         self._paint_downloads()
+        self._paint_blocked()
+
+    def _paint_blocked(self) -> None:
+        from xx_music.blocked import blocked_summary
+
+        box = self.blocked_box
+        common.clear(box)
+        box.append(section("Killed artists"))
+        try:
+            entries = list(self.ui.blocked.list())
+        except Exception:  # noqa: BLE001 - settings never fail
+            entries = []
+        box.append(nav_row("Killed artists", blocked_summary(len(entries)),
+                           self.open_blocked))
+        box.append(switch_row(
+            "Remove their downloads too",
+            "Delete downloads by killed artists instead of hiding them",
+            bool(self.prefs.get("remove_blocked_downloads")),
+            lambda on: self._set("remove_blocked_downloads", on),
+            last=True))
+
+    def open_blocked(self) -> None:
+        self.ui.shell.push(BlockedView(self.ui).widget, "Killed artists")
 
     def _set(self, key: str, value) -> None:
         self.prefs[key] = value
@@ -358,6 +386,60 @@ class SettingsPage:
     def open_licenses(self, entries: list) -> None:
         nav = self.ui.shell.current_nav()
         nav.push(widgets.licenses_page(nav, self.ui.spec.name, entries))
+
+
+class BlockedView:
+    def __init__(self, ui) -> None:
+        self.ui = ui
+        self.body = common.vbox(0)
+        self.body.add_css_class("xx-page-body")
+        self.body.set_margin_bottom(24)
+        root = common.vbox(0)
+        root.add_css_class("xx-mu")
+        root.append(common.header(ui.shell.pop, "Killed artists",
+                                  "Blocked everywhere"))
+        root.append(common.scroller(self.body))
+        self.widget = root
+        self.paint()
+
+    def paint(self) -> None:
+        common.clear(self.body)
+        try:
+            entries = list(self.ui.blocked.list())
+        except Exception:  # noqa: BLE001 - settings never fail
+            entries = []
+        if not entries:
+            note = common.muted("No killed artists. Their songs will "
+                                "keep showing.")
+            self.body.append(note)
+            return
+        for index, entry in enumerate(entries):
+            title = entry.name or entry.id or "Artist"
+            sub = entry.id if entry.id and entry.id != title else ""
+            row = common.hbox(12)
+            texts = common.vbox(2)
+            texts.set_hexpand(True)
+            texts.set_valign(Gtk.Align.CENTER)
+            texts.append(common.label(title, "xx-title", chars=20))
+            if sub:
+                texts.append(common.label(sub, "xx-secondary", chars=24))
+            row.append(texts)
+            unblock = minimal.outline(
+                "Unblock", lambda e=entry: self.unblock(e))
+            common.fit(unblock, 10)
+            unblock.set_valign(Gtk.Align.CENTER)
+            common.name(unblock, f"Unblock {title}")
+            row.append(unblock)
+            wrap = common.vbox(0)
+            wrap.add_css_class("xx-mu-row")
+            if index == len(entries) - 1:
+                wrap.add_css_class("last")
+            wrap.append(row)
+            self.body.append(wrap)
+
+    def unblock(self, entry) -> None:
+        self.ui.unblock_artist(entry.id, entry.name,
+                               lambda _e: self.paint())
 
 
 class LogView:

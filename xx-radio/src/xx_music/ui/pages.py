@@ -352,6 +352,15 @@ class ArtistView(Page):
         self.hero("", self.title, ARTIST_HERO_PX, "r16", [])
         self.reload()
 
+    def header(self):
+        return common.header(self.ui.shell.pop, self.caption, "",
+                             "view-more-symbolic", "More options",
+                             self._menu)
+
+    def _menu(self) -> None:
+        menus.item_menu(self.ui, Item(ItemKind.ARTIST, self.artist_id,
+                                      self.title))
+
     def reload(self) -> None:
         self.load("artist", lambda: self.ui.engine.artist(self.artist_id),
                   self.paint)

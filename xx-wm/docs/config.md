@@ -30,6 +30,7 @@ migration steps are ever required.
 | `font` | string | `"jetbrains-mono-nerd"` | `system-light`, `monospace` (generic), `space-mono`, `jetbrains-mono`, `jetbrains-mono-nerd`, or `custom`. |
 | `custom_font_family` | string | — | Family used when `font` is `custom`. Settings → Launcher → Import font… installs a `.ttf`/`.otf`, or drop a font in `~/.local/share/fonts` and set both keys. Font files are not part of backups. |
 | `text_size_scale` | float | `1.0` | Launcher-wide type scale, clamped 0.5–2.0. Scales home slots, the clock and date, drawer and folder rows. |
+| `home_scale` | float | `0.8` | Home screen only (app labels, folders, item spacing, clock, date), multiplied with `text_size_scale`. Clamped 0.5–1.5. |
 | `home_alignment` | string | `"center"` | `left` / `center` / `right` for home rows, widget lines, drawer rows, folder and member rows. |
 
 ### Home screen
@@ -38,6 +39,11 @@ migration steps are ever required.
 |---|---|---|---|
 | `home_slots` | list | `[]` | Up to 8 slots: `{type: 'app'\|'folder', label, app_id, cmd, folder}`. `app_id` is a `.desktop` id; `cmd` an argv list for non-desktop entries; `folder` a list of `{label, app_id or cmd}` members. Seeded on first boot when empty. |
 | `home_to_recents` | bool | `false` | Pressing Home while already on home with nothing on top opens the app switcher instead of staying. |
+| `home_slot_count` | int\|null | `null` | Android "Home Slot Count" (0–8): home shows the first N slots; empty ones render as `· · ·` and a tap picks an app; slots past N stay stored. `null` (never set) shows every slot. |
+| `date_time_mode` | string | `"date_time"` | Android "Date/Time Mode": `"off"` hides the clock and date widgets, `"date_only"` hides the clock, `"date_time"` shows both. |
+| `status_bar_visible` | bool | `false` | Android "Show Status Bar": the top status bar (status_bar.py) shows its clock and status glyphs. Off, the strip stays empty but still keeps apps below the camera hole. |
+| `swipe_left_enabled` / `swipe_right_enabled` | bool | `true` | Android "Enable Swipe Left/Right". Off: that side swipe on home does nothing. |
+| `swipe_down_action` | string\|null | `null` → `"notifications"` | Android "Swipe Down Action" on home: `"notifications"` (the shade), `"web_search"` (drawer search with the `!` web prefix), `"disabled"`. Seeded once from `gestures.json` `swipe_down_top` (`none` → `disabled`). |
 | `default_layout_applied` | bool | `false` | Set once seeding has run; never re-seeds. |
 | `app_labels` | dict | `{}` | `{app_id: label}` renames; shown everywhere, searched alongside original names. |
 | `pinned` | list | `[]` | App ids surfaced first in the drawer browse list, in this order. |
@@ -60,7 +66,8 @@ migration steps are ever required.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `search_auto_launch` | bool | `false` | Launch immediately when a search narrows to one result (never for `!` queries). A leading space suppresses it, as does a matching Launcher Settings row. |
-| `drawer_sort` | string | `"default"` | Drawer browse order: `"default"` (pinned first, then A–Z), `"az"` (A–Z, no pin priority), `"install"` (newest installs first, pinned still on top). Cycled by the drawer toggle button. |
+| `auto_show_keyboard` | bool | `false` | Android "Auto-show Keyboard": opening the drawer focuses search and raises the keyboard. |
+| `drawer_sort` | string | `"default"` | Android "Sort Mode": `"default"` (A–Z, pinned first in their manual order), `"alphabetical"` (A–Z, pinned first), `"alphabetical_no_priority"` (plain A–Z), `"install_date"` (newest first, pinned on top), `"apk_size"` (largest installed package/Flatpak first, pinned on top; sizes are looked up off the main loop). Legacy `"az"`/`"install"` load as `alphabetical_no_priority`/`install_date`. Cycled by the drawer toggle button. |
 | `preload_gesture_apps` | bool | `false` | Warm swipe-bound apps into RAM at session start so gestures open a resident process instead of cold-starting (the camera through the Android HAL can be slow). Opt-in — preloading is counter to the minimalism directive; only takes effect in a real session (`XX_WM_SESSION`). |
 
 ### Sounds & notifications
@@ -309,10 +316,10 @@ fails, it applies at the next session start.
 | `swipe_up_long` | `app_switcher` | lisgd → `gesture.switcher`. Verb-rebindable. A long swipe up opens full-screen recents. Swipe down, tap the dim, or back resumes the current app. |
 | `swipe_left_edge` | `back` | lisgd → `gesture.back` on both edges. Verb-rebindable. |
 | `long_press_bottom` | `search` | |
-| `double_tap_home` | `lock_screen` | Double-tap on the home background dispatches this action (the clock keeps its own double-tap-to-lock). |
+| `double_tap_home` | `none` | Android "Double Tap to Lock": `lock_screen` or `none` (any older action loads as `none`). The clock keeps its own double-tap-to-lock. |
 | `long_press_home` | `edit` | Long-press on the home background: `edit` opens slot edit mode, `settings` opens Settings, `none` does nothing. |
-| `swipe_left_home` | `none` | Seeded to `launch:<skippy>` when Skippy is installed. `none` falls through to page navigation. |
-| `swipe_right_home` | `camera` | |
+| `swipe_left_home` | `none` | Android "Swipe Left App". `none` = no app chosen: the swipe opens the camera. Seeded to `launch:<skippy>` when Skippy is installed. |
+| `swipe_right_home` | `none` | Android "Swipe Right App". `none` = no app chosen: the swipe opens the dialer. Seeded to `camera` on first boot. |
 | `squeeze` | `assistant` | Hardware-gated (Active Edge); needs device support. |
 | `fingerprint_swipe` | `notification_shade` | Hardware-gated; needs device support. |
 | `double_press_power` | `camera` | Hardware-gated; needs device support. |

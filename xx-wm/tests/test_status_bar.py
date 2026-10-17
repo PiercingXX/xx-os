@@ -392,3 +392,46 @@ class TestContent:
         text = (SRC / 'status_bar.py').read_text(encoding='utf-8')
         for needle in ('timeout_add', 'subprocess', 'Thread(', 'call_sync'):
             assert needle not in text
+
+
+def test_bar_content_hidden_on_home_only():
+    # Owner: "hide the topbar on the home screen". The surface (and its
+    # reserved zone) stays so apps behind home are never resized.
+    import status_bar
+    assert status_bar.decide_content(home_showing=True) is False
+    assert status_bar.decide_content(home_showing=False) is True
+
+
+def test_home_showing_rules():
+    import types
+    import window
+    def fake(page, over_apps, activated):
+        mgr = types.SimpleNamespace(activated_app_id=lambda: activated)
+        return types.SimpleNamespace(
+            stack=types.SimpleNamespace(get_visible_child_name=lambda: page),
+            _over_apps=over_apps, _toplevel_manager=mgr)
+    home = window.ShellWindow._home_showing
+    assert home(fake('home', True, 'org.app')) is True     # went home over an app
+    assert home(fake('home', False, None)) is True         # nothing open
+    assert home(fake('home', False, 'org.app')) is False   # app in front
+    assert home(fake('settings', True, None)) is False     # Settings page
+
+
+def test_home_scale_shrinks_only_home():
+    import window
+    from config import ShellConfig
+    cfg = ShellConfig.__new__(ShellConfig)
+    cfg.data = {}
+    assert cfg.home_scale == 0.8
+    css = window.launcher_text_css(1.0, 0.8)
+    assert 'font-size: 43.2pt' in css      # home clock 54pt x 0.8
+    assert 'font-size: 14pt' in css        # drawer app rows unchanged
+
+
+def test_show_status_bar_switch_governs_home_only():
+    # Android's "Show Status Bar" is about the launcher's screens; apps
+    # always keep their bar. Off by default, so home has no bar text.
+    import status_bar
+    assert status_bar.decide_content(True, show_on_home=True) is True
+    assert status_bar.decide_content(True, show_on_home=False) is False
+    assert status_bar.decide_content(False, show_on_home=False) is True

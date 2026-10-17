@@ -38,6 +38,7 @@ PREF_DEFAULTS: dict[str, Any] = {
     "minimal_mode": False,
     "first_run_done": False,
     "welcome_done": False,
+    "remove_blocked_downloads": False,
 }
 
 
@@ -200,3 +201,29 @@ class UiStore:
             raw[key] = value
             _write(self._paths.config_path(), raw)
         return self.prefs()
+
+    # -- blocked artists -----------------------------------------------------------
+    def blocked_path(self):
+        return self._state("blocked-artists.json")
+
+    def _blocked_store(self):
+        from xx_music.blocked import BlockedArtists
+
+        return BlockedArtists(self.blocked_path())
+
+    def blocked_list(self) -> list:
+        return self._blocked_store().list()
+
+    def block_artist(self, artist_id: str = "",
+                     artist_name: str = ""):
+        with self._lock:
+            store = self._blocked_store()
+            entry = store.block(artist_id, artist_name)
+            return entry, store.list()
+
+    def unblock_artist(self, artist_id: str = "",
+                       artist_name: str = "") -> list:
+        with self._lock:
+            store = self._blocked_store()
+            store.unblock(artist_id, artist_name)
+            return store.list()

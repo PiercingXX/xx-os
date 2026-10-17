@@ -34,7 +34,7 @@ def theme_css(preset: ThemePreset, scale: float = 1.0) -> str:
     border: none;
     border-radius: 0;
     outline: none;
-    padding: 20px 0;
+    padding: {round(20 * scale)}px 0;
 }}
 /* Slots never hold a highlight: hover, press and keyboard focus all stay
    on the plain background, so no grey band sticks to the focused slot. */
@@ -45,6 +45,10 @@ def theme_css(preset: ThemePreset, scale: float = 1.0) -> str:
     font-size: {_pt(27, scale)};
     font-weight: 400;
     color: {preset.foreground};
+}}
+/* Empty slot "· · ·": the Android 40% alpha. */
+.home-item-btn.empty-slot .home-item-label {{
+    opacity: 0.4;
 }}
 .home-folder-indicator {{
     font-size: {_pt(14, scale)};
@@ -144,14 +148,19 @@ def _launch_cmd(cmd: list[str]) -> None:
 
 
 def folder_row_markup(label: str) -> str:
-    """Folder slot text: the escaped name plus a smaller, dimmed chevron."""
+    """Folder slot text: just the escaped name. No chevron: the owner's
+    folders read as plain words on home, like every other slot."""
     from gi.repository import GLib
-    return (GLib.markup_escape_text(label)
-            + ' <span size="52%" alpha="60%">›</span>')
+    return GLib.markup_escape_text(label)
 
 
 _HOME_ACCESSIBLE_LABEL = 'Home'
 _HOME_ACCESSIBLE_DESCRIPTION = 'Open app drawer. Open launcher settings.'
+
+
+# An empty home slot (Android home_slot_empty / its a11y string).
+EMPTY_SLOT_TEXT = '· · ·'
+EMPTY_SLOT_ACCESSIBLE = 'Empty home slot %d, tap to choose an app'
 
 
 def slot_accessible_label(label: str, index: int) -> str:
@@ -200,7 +209,9 @@ class HomeLauncher(Gtk.Box):
                  on_edit_action: Callable[[str, Gtk.Widget], None] | None = None,
                  is_paused_fn: Callable[[str], bool] | None = None,
                  get_alignment_fn: Callable[[], str] | None = None,
-                 on_status_fn: Callable[[str], None] | None = None) -> None:
+                 on_status_fn: Callable[[str], None] | None = None,
+                 get_empty_count_fn: Callable[[], int] | None = None,
+                 on_empty_tap: Callable[[], None] | None = None) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.set_vexpand(True)
         self._open_dialer = open_dialer_fn
@@ -214,6 +225,8 @@ class HomeLauncher(Gtk.Box):
         self._is_paused = is_paused_fn or (lambda app_id: False)
         self._get_alignment = get_alignment_fn or (lambda: 'center')
         self._on_status = on_status_fn or (lambda message: None)
+        self._get_empty_count = get_empty_count_fn or (lambda: 0)
+        self._on_empty_tap = on_empty_tap or (lambda: None)
         self._open_folder_index: int | None = None
         self.edit_mode = False
         self._build()
@@ -277,6 +290,19 @@ class HomeLauncher(Gtk.Box):
                 self.append(self._make_folder_row(slot, idx))
                 if idx == open_idx:
                     self.append(self._make_member_dropdown(slot))
+        # Android "Home Slot Count" past the filled slots: dim "· · ·"
+        # rows; a tap picks an app for the slot.
+        try:
+            empty = max(0, int(self._get_empty_count()))
+        except Exception:
+            empty = 0
+        for offset in range(empty):
+            row = self._make_row(
+                EMPTY_SLOT_TEXT, lambda: self._on_empty_tap(),
+                accessible_label=EMPTY_SLOT_ACCESSIBLE % (
+                    len(slots) + offset + 1))
+            row.add_css_class('empty-slot')
+            self.append(row)
 
     def _build_edit_rows(self, slots: list[dict]) -> None:
         for idx, slot in enumerate(slots):
@@ -398,7 +424,7 @@ class HomeLauncher(Gtk.Box):
 
     def _make_folder_row(self, slot: dict, idx: int) -> Gtk.Button:
         from gi.repository import Pango
-        # One label (name + dimmed chevron as markup) filling the row, for
+        # One label (the folder name) filling the row, for
         # the same rounding reason as _make_row.
         row = Gtk.Label()
         row.set_markup(folder_row_markup(slot.get('label', '')))

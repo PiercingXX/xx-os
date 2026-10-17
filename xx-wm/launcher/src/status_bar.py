@@ -219,6 +219,21 @@ def apply_zone(window, height: int, layer_shell) -> None:
 
 # ---- visibility -------------------------------------------------------
 
+def content_visible(config) -> bool:
+    """Android "Show Status Bar" (Home & launcher, off by default). On
+    Android it governs the launcher's own screens; apps keep their bar."""
+    return getattr(config, 'status_bar_visible', False) is True
+
+
+def decide_content(home_showing: bool, show_on_home: bool = False) -> bool:
+    """Clock and glyphs always show over apps; on home only with Show
+    Status Bar on (owner: hide the top bar on home). The surface itself
+    stays, keeping its reserved zone: dropping it would resize every app
+    behind home on each visit. The empty strip matches the home background
+    and a pull on it still opens the shade."""
+    return (not home_showing) or show_on_home
+
+
 def decide_visible(locked: bool, wizard_visible: bool) -> bool:
     """Shown over home and apps; hidden under the lock screen and the
     first-boot / welcome wizard (both draw their own full-screen layout).
@@ -322,7 +337,9 @@ window.xx-statusbar {{
 .xx-statusbar-root {{
     background: {bg};
     color: alpha({fg}, 0.90);
-    padding: 0 16px;
+    /* Clear of rounded display corners: inset sides, text on the
+       bottom edge of the strip. */
+    padding: 0 28px 6px 28px;
 }}
 .xx-statusbar-time {{
     font-size: 13px;
@@ -395,7 +412,9 @@ if _HAS_GTK:
 
             self.time_label = Gtk.Label(xalign=0)
             self.time_label.add_css_class('xx-statusbar-time')
-            self.time_label.set_valign(Gtk.Align.CENTER)
+            # Bottom of the strip, not its middle: on the FLX1 a centred
+            # clock sat in the panel's rounded top-left corner, cut off.
+            self.time_label.set_valign(Gtk.Align.END)
             self.set_start_widget(self.time_label)
 
             keepout = Gtk.Box()
@@ -403,7 +422,7 @@ if _HAS_GTK:
             self.set_center_widget(keepout)
 
             self._right = Gtk.Box(spacing=7)
-            self._right.set_valign(Gtk.Align.CENTER)
+            self._right.set_valign(Gtk.Align.END)
             self._right.set_halign(Gtk.Align.END)
             self.set_end_widget(self._right)
 
@@ -498,7 +517,9 @@ if _HAS_GTK:
             self.apply_theme()
 
             self.view = StatusBarView()
+            self._home_showing = False
             self.set_child(self.view)
+            self._refresh_content()
 
             drag = Gtk.GestureDrag.new()
             drag.set_touch_only(False)
@@ -532,12 +553,28 @@ if _HAS_GTK:
                 theme_css(preset).encode('utf-8'))
 
         def apply_config(self) -> None:
-            """Re-read the height (Settings slider, config hot reload)."""
+            """Re-read the height (Settings slider, config hot reload)
+            and Show Status Bar."""
+            refresh = getattr(self, '_refresh_content', None)
+            if callable(refresh):
+                refresh()
             height = resolve_height(self._config, self._device,
                                     getattr(self, '_panel', None))
             if height != self.height:
                 self.height = height
                 apply_zone(self, height, LayerShell)
+
+        def set_home_showing(self, home_showing: bool) -> None:
+            self._home_showing = bool(home_showing)
+            self._refresh_content()
+
+        def _refresh_content(self) -> None:
+            view = getattr(self, 'view', None)
+            if view is None:
+                return
+            shown = decide_content(getattr(self, '_home_showing', False),
+                                   content_visible(self._config))
+            view.set_opacity(1.0 if shown else 0.0)
 
         def sync_visibility(self, locked: bool, wizard_visible: bool) -> None:
             visible = decide_visible(locked, wizard_visible)

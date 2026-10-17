@@ -81,14 +81,17 @@ banner-changed banner-changed seeded
 banner-helper banner-helper seeded
 banner-offline banner-offline seeded
 banner-signedout banner-signedout seeded
-banner-mix banner-mix seeded"
+banner-mix banner-mix seeded
+kill-confirm kill-confirm seeded
+kill-toast kill-toast seeded
+killed-artists killed-artists seeded"
 # Minimal Mode only: the live switch from Settings, both ways.
 MM_EXTRA="mm-toggle-on minimal-on seeded
 mm-toggle-off minimal-off seeded SNAP_MINIMAL=1
 mm-toggle-home minimal-on-home seeded"
 FIT320="home search-results artist album playing lyrics queue library-phone
 settings engine-updating signin firstrun-failed sheet-sleep-on search-menu
-welcome"
+welcome kill-confirm killed-artists"
 SCALE2="home search-results album playing queue library-phone settings
 engine-ready signin firstrun welcome"
 

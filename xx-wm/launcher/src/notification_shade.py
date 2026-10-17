@@ -328,11 +328,6 @@ list.shade-notif-list > row:last-child .notif-content {{
     letter-spacing: 0.14em;
     color: {preset.muted};
 }}
-.shade-empty {{
-    padding: 14px 16px;
-    font-size: 12px;
-    letter-spacing: 0.02em;
-}}
 .shade-hint {{
     font-size: 12px;
     letter-spacing: 0.02em;
@@ -740,11 +735,13 @@ class NotificationShade(Gtk.Window):
         scroller.add_css_class('shade-notif-card')
         scroller.set_child(self.list_box)
 
-        # Placeholder empty state: a single muted line while the list is empty.
-        self._empty_label = Gtk.Label(label='No notifications', xalign=0)
-        self._empty_label.add_css_class('notif-app')
-        self._empty_label.add_css_class('shade-empty')
-        self.list_box.set_placeholder(self._empty_label)
+        # No empty state: with nothing to show, the whole section (header,
+        # CLEAR ALL, card) is hidden; the owner wants a minimal shade.
+        self._notif_section = (notif_header, scroller)
+        for widget in self._notif_section:
+            hide = getattr(widget, 'set_visible', None)
+            if callable(hide):
+                hide(False)
 
         # Grab handle: the sheet's bottom edge (swipe up closes).
         handle = Gtk.Box()
@@ -1089,9 +1086,14 @@ class NotificationShade(Gtk.Window):
             nxt = child.get_next_sibling()
             self.list_box.remove(child)
             child = nxt
+        total = len(self._notifications)
+        for widget in getattr(self, '_notif_section', ()):
+            try:
+                widget.set_visible(total > 0)
+            except Exception:
+                pass
         count = getattr(self, '_notif_count', None)
         if count is not None:
-            total = len(self._notifications)
             try:
                 count.set_text(f'{total:02d}')
                 count.set_visible(total > 0)

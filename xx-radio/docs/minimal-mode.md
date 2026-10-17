@@ -54,6 +54,7 @@ amoled's white both follow the same ramp. Nothing is fixed white.
 | 21 | Sheets (sleep, storage limit, menus, confirm, welcome): `close` as a word; choices as brackets, the chosen one Strong; menus without art or icons, entries as words | done |
 | 22 | Banners: a plain line, no fill or glyph (loud ones Strong), the action in brackets; toasts a plain line over a hairline | done |
 | 23 | First-run and sign-in screens: their buttons become brackets | done |
+| 24 | Kill artist: the menu entries are words (`kill Lumen Drive`), the confirm sheet answers `[ cancel ] [ kill Lumen Drive ]`, the Undo toast is a plain line with `[ undo ]`, long-press an artist's name in Now Playing to kill it, and Settings › Killed artists lists names with `[ unblock ]` | done |
 
 ## Not changed
 

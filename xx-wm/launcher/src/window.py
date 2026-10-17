@@ -274,6 +274,30 @@ def should_claim_vertical_drag(offset_x: float, offset_y: float) -> bool:
             and abs(offset_y) > abs(offset_x) * 1.5)
 
 
+# Android's home fling threshold (MainActivity.SWIPE_THRESHOLD): a side
+# swipe needs 100 px of travel, or a quick flick past half of that.
+_SIDE_SWIPE_PX = 100
+_SIDE_FLICK_PX = 48
+_SIDE_FLICK_VEL = 600
+
+
+def should_claim_horizontal_drag(offset_x: float, offset_y: float) -> bool:
+    """True once a home drag is a side swipe: horizontal-dominant travel
+    past the claim threshold (the vertical rule turned sideways)."""
+    return (abs(offset_x) > _SWIPE_UP_CLAIM_PX
+            and abs(offset_x) > abs(offset_y) * 1.5)
+
+
+def decide_side_swipe(offset_x: float, velocity_x: float) -> str | None:
+    """'left' / 'right' for a claimed side drag, None when too short
+    and too slow. Pure so the thresholds are unit-testable."""
+    travel = abs(offset_x)
+    if travel >= _SIDE_SWIPE_PX or (
+            travel >= _SIDE_FLICK_PX and abs(velocity_x) >= _SIDE_FLICK_VEL):
+        return 'left' if offset_x < 0 else 'right'
+    return None
+
+
 def decide_swipe_up_action(
     distance_px: float, velocity_y: float,
 ) -> str | None:
@@ -291,6 +315,47 @@ def decide_swipe_up_action(
             or velocity_y <= -_LONG_SWIPE_UP_VEL):
         return 'drawer'
     return 'keyboard'
+
+
+def home_side_swipe(win, key: str) -> None:
+    """Enable Swipe Left/Right + Swipe Left/Right App (Android): a
+    disabled direction does nothing, an unbound one opens its default
+    app (left camera, right dialer). Duck-typed for bare test doubles."""
+    from gesture_config import home_swipe_action
+    config = getattr(win, 'config', None)
+    flag = ('swipe_left_enabled' if key == 'swipe_left_home'
+            else 'swipe_right_enabled')
+    if getattr(config, flag, True) is False:
+        return
+    action = home_swipe_action(win.gesture_config, key)
+    if action != 'none':
+        win._dispatch_gesture_action(action)
+
+
+def home_side_swipe_allowed(win) -> bool:
+    """Side swipes act on home outside edit mode, never from the bezels
+    (those belong to lisgd's back swipe)."""
+    launcher = getattr(win, '_home_launcher', None)
+    if launcher is not None and getattr(launcher, 'edit_mode', False):
+        return False
+    width = win.get_width() if hasattr(win, 'get_width') else 0
+    return not origin_is_screen_edge(getattr(win, '_swipe_origin', None),
+                                     width)
+
+
+def home_swipe_down(win) -> None:
+    """Swipe Down Action on home (Android): Expand notifications (the
+    shade), Web search, or Disabled."""
+    action = getattr(getattr(win, 'config', None), 'swipe_down_action',
+                     'notifications')
+    if action == 'disabled':
+        return
+    if action == 'web_search':
+        opener = getattr(win, '_open_web_search_prompt', None)
+        if callable(opener):
+            opener()
+        return
+    win._dispatch_gesture_action('notification_shade')
 
 
 def swipe_release_velocity(
@@ -421,7 +486,7 @@ def _scaled_pt(base: float, scale: float) -> str:
     return '%gpt' % round(base * scale, 1)
 
 
-def launcher_text_css(scale: float) -> str:
+def launcher_text_css(scale: float, home_scale: float | None = None) -> str:
     """Launcher type sizes the static style.css leaves fixed (clock, date,
     drawer rows): scaled overrides loaded through the window provider, so
     text_size_scale hot-reloads them like the shared sheet's tokens."""
@@ -448,8 +513,8 @@ entry.drawer-search, searchentry.drawer-search {{
     font-size: {_alpha};
 }}
 """.format(
-        _clock=_scaled_pt(54, scale),
-        _date=_scaled_pt(12, scale),
+        _clock=_scaled_pt(54, scale if home_scale is None else home_scale),
+        _date=_scaled_pt(12, scale if home_scale is None else home_scale),
         _dim=_scaled_pt(11.5, scale),
         _app=_scaled_pt(14, scale),
         _sub=_scaled_pt(10.5, scale),
@@ -577,6 +642,11 @@ class ShellWindow(Adw.ApplicationWindow):
             remap_superseded_home(self.config, self.app_index)
         except Exception:
             pass  # first-boot seeding must never block the shell
+        try:
+            from config import migrate_launcher_prefs
+            migrate_launcher_prefs(self.config, self.gesture_config)
+        except Exception:
+            pass
 
         # Blank-driven auto-lock: DisplayManager reports blank/wake via
         # on_blank_changed; _lock_src is the pending "dark long enough"
@@ -739,7 +809,12 @@ class ShellWindow(Adw.ApplicationWindow):
         self.apps_list.add_css_class('text-list')
 
         self.toast_overlay = Adw.ToastOverlay()
-        self.toast_overlay.set_child(self._build_root())
+        # Menus, pickers and prompts are in-window bottom sheets, not
+        # popovers: a popover on this layer surface is closed by phoc the
+        # moment the shell changes keyboard mode (see action_sheet.py).
+        from action_sheet import SheetHost
+        self._sheet_host = SheetHost(self._build_root())
+        self.toast_overlay.set_child(self._sheet_host.overlay)
         self.set_content(self.toast_overlay)
 
         # The display owns idle: auto-lock follows blank/wake reports from
@@ -923,16 +998,23 @@ class ShellWindow(Adw.ApplicationWindow):
         # app drawer, down runs the configured action (default: shade)
         current = self.stack.get_visible_child_name()
         if abs(vel_y) > abs(vel_x) * 1.5:
+            if current == 'settings':
+                # Vertical swipes in Settings are scrolling: any upward
+                # swipe used to leave Settings and a quick downward one
+                # opened the shade, so scrolling the list closed it.
+                # Leave with the back arrow or the system back gesture.
+                return
             if vel_y > 300:
                 if current == 'apps' and self._drawer_swipe_down_home():
                     self.go_home()
                     return
+                if current == 'home':
+                    home_swipe_down(self)
+                    return
                 self._dispatch_gesture_action(
                     self.gesture_config.get('swipe_down_top') or 'notification_shade')
             elif vel_y < 0:
-                if current == 'settings':
-                    self._leave_settings()
-                elif current == 'apps':
+                if current == 'apps':
                     try:
                         self.apps_search.grab_focus()
                     except Exception:
@@ -958,21 +1040,26 @@ class ShellWindow(Adw.ApplicationWindow):
             self._drawer_open_hidden = False
             self._populate_apps(self.apps_search.get_text())
             return
-        # Home swipes dispatch their configured apps (design.md "Gestures");
-        # an unbound ('none') swipe falls through to page navigation so the
-        # drawer stays reachable without lisgd.
+        # Home side swipes are the Android launcher's: each direction has
+        # an Enable switch and an app; with no app bound, left opens the
+        # camera and right the dialer (design.md "Gestures").
         if current == 'home' and not self._home_launcher.edit_mode:
-            # Sideways on home is app-launch only (launcher parity) — an
-            # unbound direction does nothing; the drawer is a swipe up away.
-            # Bezel starts belong to lisgd (back), not launch:Files.
+            # Sideways on home is app-launch only (launcher parity); the
+            # drawer is a swipe up away. Bezel starts belong to lisgd
+            # (back), not to the bound app.
             if abs(vel_x) > 200:
                 width = self.get_width() if hasattr(self, 'get_width') else 0
                 if origin_is_screen_edge(self._swipe_origin, width):
                     return
-                action = self.gesture_config.get(
+                done_at = getattr(self, '_home_side_swipe_at', None)
+                if done_at is not None:
+                    from gi.repository import GLib
+                    self._home_side_swipe_at = None
+                    if GLib.get_monotonic_time() - done_at < 500_000:
+                        return  # the capture drag already ran this swipe
+                home_side_swipe(
+                    self,
                     'swipe_left_home' if vel_x < -200 else 'swipe_right_home')
-                if action != 'none':
-                    self._dispatch_gesture_action(action)
             return
         # Settings: a horizontal swipe is back (subpage to the category
         # menu, menu to home), so there is always a way out by gesture
@@ -1004,31 +1091,59 @@ class ShellWindow(Adw.ApplicationWindow):
             self._swipe_drag_samples.append(
                 (now_ms, start_x + offset_x, start_y + offset_y))
         if (not self._swipe_drag_claimed
-                and self.stack.get_visible_child_name() == 'home'
-                and should_claim_vertical_drag(offset_x, offset_y)):
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-            self._swipe_drag_claimed = True
+                and self.stack.get_visible_child_name() == 'home'):
+            if should_claim_vertical_drag(offset_x, offset_y):
+                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                self._swipe_drag_claimed = True
+                self._swipe_drag_axis = 'v'
+            elif (should_claim_horizontal_drag(offset_x, offset_y)
+                  and home_side_swipe_allowed(self)):
+                # Side swipes start anywhere on home, slots included: the
+                # full-width slot buttons claim the touch on press, so
+                # the bubble-phase swipe never saw a swipe begun on one.
+                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                self._swipe_drag_claimed = True
+                self._swipe_drag_axis = 'h'
 
     def _on_swipe_drag_end(self, _gesture, offset_x: float,
                            offset_y: float) -> None:
         if not self._swipe_drag_claimed:
             return
         self._swipe_drag_claimed = False
-        _vel_x, vel_y = swipe_release_velocity(self._swipe_drag_samples)
+        vel_x, vel_y = swipe_release_velocity(self._swipe_drag_samples)
         self._swipe_drag_samples = []
+        if getattr(self, '_swipe_drag_axis', 'v') == 'h':
+            self._swipe_drag_axis = 'v'
+            direction = decide_side_swipe(offset_x, vel_x)
+            if direction is not None:
+                from gi.repository import GLib
+                self._home_side_swipe_at = GLib.get_monotonic_time()
+                home_side_swipe(self, 'swipe_left_home' if direction == 'left'
+                                else 'swipe_right_home')
+            return
         if offset_y >= 0:
-            # Claimed downward drag: same action as a swipe down, with the
-            # same speed floor so a slow list scroll never opens the shade.
+            # Claimed downward drag (home only): the Swipe Down Action, with
+            # the same speed floor so a slow list scroll never fires it.
             if vel_y > _SHORT_SWIPE_UP_VEL:
-                self._dispatch_gesture_action(
-                    self.gesture_config.get('swipe_down_top')
-                    or 'notification_shade')
+                home_swipe_down(self)
             return
         action = decide_swipe_up_action(-offset_y, vel_y)
         if action == 'drawer':
             self.stack.set_visible_child_name('apps')
         elif action == 'keyboard':
             self._show_keyboard()
+
+    def _open_web_search_prompt(self) -> None:
+        """Android opens the system web search; here the drawer search
+        opens with the `!` web prefix typed, so Enter searches the web."""
+        self.stack.set_visible_child_name('apps')
+        try:
+            self.apps_search.set_text('!')
+            self.apps_search.set_position(-1)
+            self.apps_search.grab_focus()
+        except Exception:
+            pass
+        self._arm_search_keyboard()
 
     def _dispatch_gesture_action(self, action: str) -> None:
         """Run a gesture_config action, including launch:<app_id> bindings."""
@@ -1084,9 +1199,10 @@ class ShellWindow(Adw.ApplicationWindow):
         the next real launch drops it back so the warm window comes forward.
         """
         from gi.repository import Gio
+        from gesture_config import home_swipe_action
         ids: list[str] = []
         for key in ('swipe_left_home', 'swipe_right_home'):
-            action = self.gesture_config.get(key) or 'none'
+            action = home_swipe_action(self.gesture_config, key)
             if action == 'camera':
                 entry = next((e for e in self.app_index.entries
                               if 'camera' in e.name.casefold()), None)
@@ -1146,6 +1262,9 @@ class ShellWindow(Adw.ApplicationWindow):
             shade.hide_shade()
         self.stack.set_visible_child_name('home')
         self.present_over_apps()
+        _sync = getattr(self, '_sync_status_bar', None)
+        if callable(_sync):
+            _sync()
 
     def present_over_apps(self) -> None:
         """Raise the shell above regular app windows (the go-home gesture).
@@ -1171,6 +1290,9 @@ class ShellWindow(Adw.ApplicationWindow):
             LayerShell.set_layer(self, LayerShell.Layer.BOTTOM)
             LayerShell.set_keyboard_mode(self, LayerShell.KeyboardMode.NONE)
         GLib.timeout_add(400, self._capture_thumb_once)
+        _sync = getattr(self, '_sync_status_bar', None)
+        if callable(_sync):
+            _sync()
 
     def _wire_foreign_toplevels(self, manager=None) -> None:
         """Yield to apps mapped outside the shell (D-Bus activation,
@@ -1321,6 +1443,10 @@ class ShellWindow(Adw.ApplicationWindow):
     def _handle_back(self) -> None:
         """Called by BackGestureLayer on edge swipe from either side."""
         import subprocess
+        # An open sheet closes first, like Android's back on a sheet.
+        host = getattr(self, '_sheet_host', None)
+        if host is not None and host.close_all():
+            return
         # Home first: collapse an open folder, then leave edit mode.
         launcher = getattr(self, '_home_launcher', None)
         if launcher is not None:
@@ -1452,6 +1578,25 @@ class ShellWindow(Adw.ApplicationWindow):
         app = self.get_application()
         bar.sync_visibility(
             self.is_locked(), bool(getattr(app, '_tour_visible', False)))
+        setter = getattr(bar, 'set_home_showing', None)
+        if callable(setter):
+            setter(self._home_showing())
+
+    def _home_showing(self) -> bool:
+        """Home is on screen: the home page is up and the shell is raised
+        over apps, or no app is focused (nothing covers the BOTTOM shell)."""
+        try:
+            if self.stack.get_visible_child_name() != 'home':
+                return False
+        except Exception:
+            return False
+        if getattr(self, '_over_apps', False):
+            return True
+        mgr = getattr(self, '_toplevel_manager', None)
+        try:
+            return not (mgr is not None and mgr.activated_app_id())
+        except Exception:
+            return True
 
     def _dismiss_lock_screen(self) -> None:
         lock = getattr(self, '_lock_screen', None)
@@ -1528,6 +1673,15 @@ class ShellWindow(Adw.ApplicationWindow):
             # Same current-preset rule as _open_dialer.
             self._power_menu.apply_theme(resolve_appearance_preset(self.config))
         self._power_menu.show_menu()
+
+    def _auto_show_drawer_keyboard(self) -> bool:
+        if self.stack.get_visible_child_name() == 'apps':
+            try:
+                self.apps_search.grab_focus()
+            except Exception:
+                pass
+            self._arm_search_keyboard()
+        return False
 
     def _show_keyboard(self) -> None:
         """Force the on-screen keyboard up via squeekboard's D-Bus interface."""
@@ -1757,6 +1911,17 @@ class ShellWindow(Adw.ApplicationWindow):
 
     def _on_stack_page_changed(self, stack: Gtk.Stack, _param: object) -> None:
         name = stack.get_visible_child_name()
+        _sync = getattr(self, '_sync_status_bar', None)
+        if callable(_sync):
+            _sync()
+        # A sheet belongs to the page it was opened on.
+        host = getattr(self, '_sheet_host', None)
+        if host is not None:
+            host.close_all()
+        if name == 'apps' and getattr(
+                getattr(self, 'config', None), 'auto_show_keyboard', False):
+            # Android "Auto-show Keyboard": the drawer opens typing.
+            GLib.idle_add(self._auto_show_drawer_keyboard)
         # Leaving the drawer disarms both pick modes so a later tap launches
         if name != 'apps':
             self._pick_slot_mode = False
@@ -2108,11 +2273,17 @@ class ShellWindow(Adw.ApplicationWindow):
             accent=theme.accent,
         )
         scale = self.config.text_size_scale
+        # Home has its own factor on top of the text size (config home_scale).
+        home = scale * getattr(self.config, 'home_scale', 1.0)
         import settings_ui
+        from action_sheet import sheet_css
         css = (base + '\n' + shell + '\n'
-               + home_theme_css(theme, scale) + '\n'
-               + launcher_text_css(scale) + '\n'
-               + settings_ui.css(theme, scale))
+               + home_theme_css(theme, home) + '\n'
+               + launcher_text_css(scale, home) + '\n'
+               + settings_ui.css(theme, scale) + '\n'
+               + sheet_css({'surface': theme.surface,
+                            'foreground': theme.foreground,
+                            'border': theme.border}))
         self.theme_provider.load_from_data(css.encode('utf-8'))
 
     def _refresh_clock(self) -> None:
@@ -2208,6 +2379,14 @@ class ShellWindow(Adw.ApplicationWindow):
 
     def _make_drawer_folder_row(self, slot: dict, slot_index: int) -> Gtk.ListBoxRow:
         return _drawer(self)._make_drawer_folder_row(slot, slot_index)
+
+    def _make_hidden_header(self, count: int) -> Gtk.ListBoxRow:
+        # Delegators were missing: a drawer with any installed hidden app
+        # raised AttributeError mid-populate.
+        return _drawer(self)._make_hidden_header(count)
+
+    def _toggle_hidden(self) -> None:
+        return _drawer(self)._toggle_hidden()
 
     def _make_drawer_member_row(self, slot_index: int, member_index: int, member: dict) -> Gtk.ListBoxRow:
         return _drawer(self)._make_drawer_member_row(

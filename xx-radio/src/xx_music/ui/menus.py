@@ -80,6 +80,15 @@ def track_menu(ui, track: Track, queue_index: int | None = None):
         entries.append(("xx-music-thumb-down-symbolic",
                         "Remove dislike" if disliked else "Dislike",
                         lambda: ui.rate(track, Rating.DISLIKE)))
+    from xx_music.ui.kill import request_kill, targets_for_track
+
+    kills = targets_for_track(track)
+    if kills:
+        entries.append(None)
+        for aid, name in kills:
+            entries.append(("user-trash-symbolic", f"Kill {name}"[:32],
+                            lambda aid=aid, name=name: request_kill(
+                                ui, aid, name)))
     art = common.art(ui, track.art_url, track.title, 48, "r4")
     dialog, _box = common.menu_sheet(ui, track.title, track.artist_line,
                                      art, entries)
@@ -113,6 +122,11 @@ def item_menu(ui, item: Item):
         if ui.supports(RADIO):
             entries.append(("media-playlist-shuffle-symbolic", "Start radio",
                             lambda: pages.artist_radio(ui, item.id)))
+        from xx_music.ui.kill import request_kill
+
+        entries.append(None)
+        entries.append(("user-trash-symbolic", f"Kill {item.title}"[:32],
+                        lambda: request_kill(ui, item.id, item.title)))
     if not entries:
         return None
     art = common.item_art(ui, item, 48)

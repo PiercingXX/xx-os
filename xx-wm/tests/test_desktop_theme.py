@@ -260,3 +260,16 @@ def test_xdg_config_home_wins_over_home(tmp_path, monkeypatch):
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'xdg'))
     gtk4, _gtk3 = gtk_css_paths()
     assert gtk4 == tmp_path / 'xdg' / 'gtk-4.0' / 'gtk.css'
+
+
+def test_schedule_is_a_no_op_outside_a_session(monkeypatch):
+    # A render on the dev machine once rewrote the developer's own
+    # gtk.css and gtk-theme. Only a real XX-WM session may theme the desktop.
+    import desktop_theme
+    calls = []
+    monkeypatch.setattr(desktop_theme, 'apply_now', lambda *a, **k: calls.append(a))
+    monkeypatch.delenv('XX_WM_SESSION', raising=False)
+    desktop_theme.schedule(THEME_PRESETS['burgundy'])
+    assert calls == []
+    assert desktop_theme.in_session({'XX_WM_SESSION': '1'}) is True
+    assert desktop_theme.in_session({}) is False

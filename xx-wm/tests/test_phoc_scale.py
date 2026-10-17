@@ -19,7 +19,7 @@ PHOC_DIR = REPO / 'launcher' / 'data' / 'phoc'
 # device name -> (output section, expected scale)
 EXPECTED = {
     'fairphone-5': ('DSI-1', '2.5'),
-    'furiphone-flx1': ('HWCOMPOSER-1', '1.2'),
+    'furiphone-flx1': ('HWCOMPOSER-1', '1.6'),
     'librem-5': ('DSI-1', '2'),
     'tablet': ('DSI-1', '1.5'),
     'qemu': ('Virtual-1', '1.5'),

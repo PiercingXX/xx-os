@@ -2,9 +2,11 @@
 Long-press action menus shared by the app drawer and home folder members —
 the shell's counterpart to the Android launcher's AppItemActions.
 
-Menus are Gtk.Popovers anchored on the pressed row, themed via the
-`.action-menu` CSS class (see window.py's theme provider). Text entries
-commit on Enter, same as the confirm button (design.md "Dialogs & menus").
+Menus, pickers and prompts show as in-window bottom sheets
+(action_sheet.py), like the Android launcher's ActionSheet: a GtkPopover
+on the shell's layer-shell surface is dismissed by the compositor
+whenever the shell changes keyboard mode. Text entries commit on Enter,
+same as the confirm button (design.md "Dialogs & menus").
 """
 from __future__ import annotations
 
@@ -187,7 +189,24 @@ class AppItemActions:
 
     # -- popover plumbing --------------------------------------------------
 
-    def _show_popover(self, anchor: Gtk.Widget, content: Gtk.Widget) -> Gtk.Popover:
+    def _show_popover(self, anchor: Gtk.Widget, content: Gtk.Widget):
+        """Show ``content`` for ``anchor``: an in-window sheet when the
+        anchor's window hosts one (the shell), else a plain popover
+        (windows without a SheetHost)."""
+        from action_sheet import host_for, in_settings
+
+        host = host_for(anchor)
+        if host is not None:
+            sheet = host.present(content, settings_scope=in_settings(anchor))
+
+            def _on_sheet_closed(_sheet) -> None:
+                if self._on_popover_changed is not None:
+                    self._on_popover_changed(False)
+
+            sheet.connect('closed', _on_sheet_closed)
+            if self._on_popover_changed is not None:
+                self._on_popover_changed(True)
+            return sheet
         popover = Gtk.Popover()
         popover.add_css_class('action-menu')
         popover.set_has_arrow(False)
@@ -208,8 +227,14 @@ class AppItemActions:
 
     @staticmethod
     def _cap_title(label: Gtk.Label) -> None:
+        # Two lines before the ellipsis: large text in a phone-width
+        # sheet would otherwise cut "Swipe Down Action" mid-word.
         label.set_ellipsize(Pango.EllipsizeMode.END)
         label.set_max_width_chars(_MENU_TEXT_WIDTH)
+        if hasattr(label, 'set_lines'):
+            label.set_wrap(True)
+            label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            label.set_lines(2)
 
     @staticmethod
     def _cap_item_label(label: Gtk.Label) -> None:
@@ -219,7 +244,8 @@ class AppItemActions:
 
     def _action_list(self, actions: list[tuple[str, Callable[[], None]]],
                      title: str | None = None,
-                     subtitle: str | None = None) -> Gtk.Widget:
+                     subtitle: str | None = None,
+                     checked: int | None = None) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         box.add_css_class('xx-dialog')
         if title:
@@ -251,20 +277,41 @@ class AppItemActions:
             scroller.set_max_content_height(_MENU_MAX_HEIGHT)
             scroller.set_child(rows)
             box.append(scroller)
-        for label, callback in actions:
-            btn = Gtk.Button(label=label)
-            btn.add_css_class('xx-menu-row')
-            child = btn.get_child()
-            child.set_xalign(0)
-            self._cap_item_label(child)
+        for index, (label, callback) in enumerate(actions):
+            if index == checked:
+                btn = self._checked_row(label)
+            else:
+                btn = Gtk.Button(label=label)
+                btn.add_css_class('xx-menu-row')
+                child = btn.get_child()
+                child.set_xalign(0)
+                self._cap_item_label(child)
             btn.connect('clicked', lambda _b, cb=callback: _run(cb))
             rows.append(btn)
         return box
 
+    def _checked_row(self, label: str) -> Gtk.Button:
+        """A choice row marked as the current value (the Android list
+        preference's checked radio), the check trailing."""
+        btn = Gtk.Button()
+        btn.add_css_class('xx-menu-row')
+        btn.add_css_class('checked')
+        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        text = Gtk.Label(label=label, xalign=0)
+        text.set_hexpand(True)
+        self._cap_item_label(text)
+        mark = Gtk.Label(label='✓')
+        mark.add_css_class('xx-menu-check')
+        line.append(text)
+        line.append(mark)
+        btn.set_child(line)
+        return btn
+
     def _show_action_menu(self, anchor: Gtk.Widget, title: str | None,
                           actions: list[tuple[str, Callable[[], None]]],
-                          subtitle: str | None = None) -> None:
-        content = self._action_list(actions, title, subtitle)
+                          subtitle: str | None = None,
+                          checked: int | None = None) -> None:
+        content = self._action_list(actions, title, subtitle, checked)
         self._popover_ref = self._show_popover(anchor, content)
 
     def _entry_dialog_content(self, title: str, initial: str,

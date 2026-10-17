@@ -38,3 +38,14 @@ def test_nothing_found(tmp_path):
 def test_bare_command_without_backlight(tmp_path, monkeypatch):
     monkeypatch.setattr(backlight, 'find', lambda root=None: None)
     assert backlight.brightnessctl_args() == ['brightnessctl']
+
+
+def test_shade_slider_shows_for_led_class_backlight(monkeypatch, tmp_path):
+    # FLX1: no /sys/class/backlight, panel is leds/lcd-backlight; the
+    # shade hid its brightness slider.
+    import quick_actions
+    found = backlight.Backlight('lcd-backlight', 'leds', tmp_path / 'b')
+    monkeypatch.setattr(backlight, 'find', lambda root=None: found)
+    assert quick_actions._has_backlight() is True
+    monkeypatch.setattr(backlight, 'find', lambda root=None: None)
+    assert quick_actions._has_backlight() is False

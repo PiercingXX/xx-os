@@ -761,72 +761,11 @@ class _FakeSlidersBox:
         self.children.append(widget)
 
 
-class TestVolumeRowToggle:
-    def _panel(self, ctrl, monkeypatch):
-        monkeypatch.setattr(quick_actions, '_captions_installed',
-                            lambda: True)
-        monkeypatch.setattr(quick_actions, 'Gtk', _FakeGtk)
-        panel = object.__new__(quick_actions.QuickActionsPanel)
-        panel._captions = ctrl
-        panel._tile_buttons = {}
-        panel._state_labels = {}
-        panel._tile_state = {}
-        panel._updating = False
-        panel.sliders_box = _FakeSlidersBox()
-        return panel
-
-    def test_row_appears_next_to_volume_row(self, monkeypatch):
-        panel = self._panel(_FakeController(), monkeypatch)
-        panel._build_captions_row()
-        assert len(panel.sliders_box.children) == 1
-        row = panel.sliders_box.children[0]
-        assert panel._captions_row_label in row.children
-        assert panel._captions_row_btn in row.children
-        assert panel._captions_row_btn.handlers['toggled'] == \
-            panel._on_captions_row_toggled
-
-    def test_row_hidden_without_package(self, monkeypatch):
-        monkeypatch.setattr(quick_actions, '_captions_installed',
-                            lambda: False)
-        monkeypatch.setattr(quick_actions, 'Gtk', _FakeGtk)
-        panel = object.__new__(quick_actions.QuickActionsPanel)
-        panel._captions = None
-        panel.sliders_box = _FakeSlidersBox()
-        panel._build_captions_row()
-        assert panel.sliders_box.children == []
-        assert panel._captions_row_btn is None
-
-    def test_row_mirrors_tile_state(self, monkeypatch):
-        ctrl = _FakeController()
-        panel = self._panel(ctrl, monkeypatch)
-        panel._build_captions_row()
-        assert panel._captions_row_label.text == 'Off'
-        assert panel._captions_row_btn.text == 'Turn on'
-        ctrl.active = True
-        panel._refresh_captions_ui()
-        assert panel._captions_row_label.text == 'On'
-        assert panel._captions_row_btn.text == 'Turn off'
-
-    def test_row_toggle_drives_same_controller(self, monkeypatch):
-        ctrl = _FakeController()
-        panel = self._panel(ctrl, monkeypatch)
-        panel._build_captions_row()
-        btn = panel._captions_row_btn
-        btn.set_active(True)
-        panel._on_captions_row_toggled(btn)
-        assert ctrl.enabled is True
-
-    def test_row_toggle_no_model_opens_screen(self, monkeypatch):
-        ctrl = _FakeController()
-        ctrl.force_state = 'no-model'
-        panel = self._panel(ctrl, monkeypatch)
-        panel._build_captions_row()
-        assert panel._captions_row_btn.text == 'Get model'
-        btn = panel._captions_row_btn
-        btn.set_active(True)
-        panel._on_captions_row_toggled(btn)
-        assert ctrl.enabled is None
-        assert ctrl.model_calls == [1]
+class TestNoCaptionsRow:
+    def test_shade_has_no_captions_row(self):
+        # Owner: drop the "CAPTIONS  No model  Get model" strip; the
+        # Captions tile is the one entry point.
+        assert not hasattr(quick_actions.QuickActionsPanel, '_build_captions_row')
 
 
 class TestModelPresence:
@@ -1157,7 +1096,7 @@ _BROADWAY_SMOKE = textwrap.dedent('''\
         assert 'captions' in panel._tile_buttons, (
             sorted(panel._tile_buttons))
         panel.expand(True)
-        assert panel._captions_row_btn is not None
+        assert not hasattr(panel, '_captions_row_btn')  # no shade row
 
         def step_on():
             panel._tile_buttons['captions'].set_active(True)

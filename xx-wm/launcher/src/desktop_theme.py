@@ -236,8 +236,19 @@ def _idle_apply(preset) -> bool:
     return False
 
 
+def in_session(environ=os.environ) -> bool:
+    """True only inside a real XX-WM session (the session script exports
+    XX_WM_SESSION=1). Tests, Broadway renders and dev runs build the shell
+    window too, and they must never touch the host's gsettings (dconf is
+    per-user, whatever HOME says) or ~/.config/gtk-*/gtk.css: a render
+    once rethemed the developer's own desktop."""
+    return environ.get('XX_WM_SESSION') == '1'
+
+
 def schedule(preset) -> None:
     """Mirror the resolved preset to the desktop without blocking."""
+    if not in_session():
+        return
     try:
         from gi.repository import GLib
     except Exception:

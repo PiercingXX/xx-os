@@ -79,7 +79,12 @@ class PlayerService:
             max_workers=3, thread_name_prefix="xx-player")
         self._leveling = leveling_enabled
         self._volume = 1.0
+        from xx_music.blocked import BlockedArtists, purge_queue
+
+        self.blocked = BlockedArtists(
+            self.paths.state_dir() / "blocked-artists.json")
         self.queue = Queue.load(self.paths.queue_path())
+        purge_queue(self.queue, self.blocked.is_track_blocked)
         self.status = STATUS_PAUSED if self.queue.tracks else STATUS_STOPPED
         self._sleep = P.SleepTimer(self._clock)
         self._errors = P.ErrorPolicy(self._clock)
@@ -527,15 +532,15 @@ class PlayerService:
 
     def _radio_work(self, generation: int, seed: str) -> None:
         try:
-            found = self.engine.radio(
-                seed, limit=RADIO_LIMIT,
-                exclude=self.queue.ids() | self.heard_ids())
+            self.blocked.refresh()
+            kept = P.fetch_radio_filtered(
+                self.engine, seed, self.blocked, RADIO_LIMIT,
+                self.queue.ids() | self.heard_ids(),
+                self.queue.ids(), self.heard_ids(), self._disliked)
         except Exception as exc:  # noqa: BLE001 - radio stays finite then
             log.debug("radio extension failed: %s", exc)
             self._idle_add(self._radio_done, generation, [])
         else:
-            kept = P.filter_radio(found, self.queue.ids(),
-                                  self.heard_ids(), self._disliked)
             self._idle_add(self._radio_done, generation, kept)
 
     def _radio_done(self, generation: int, tracks: list[Track]) -> None:

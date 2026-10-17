@@ -867,14 +867,15 @@ class TestShadeNotificationList:
         assert [h[0] if h else None for h in headers] == [
             'SIGNAL', 'BANK', 'SIGNAL']
 
-    def test_empty_state_placeholder(self, monkeypatch):
+    def test_empty_shade_hides_the_section(self, monkeypatch):
+        # No "No notifications" line: an empty shade hides the whole
+        # notifications section (header, CLEAR ALL, card).
         _pin_shade_gtk(monkeypatch)
         shade = _bare_shade()
         shade._revealer = _FakeRevealer()
         shade._build_content()
-        placeholder = shade.list_box.placeholder
-        assert placeholder.label_text == 'No notifications'
-        assert 'notif-app' in placeholder.classes
+        assert shade.list_box.placeholder is None
+        assert len(shade._notif_section) == 2
 
     def test_dismiss_keeps_grouping_honest(self, monkeypatch):
         shade = self._shade(monkeypatch)
@@ -987,12 +988,10 @@ class TestBrightnessRow:
         assert 'shade-slider' in panel._vol_slider.classes
 
     def test_has_backlight_probes_sysfs(self, monkeypatch):
-        monkeypatch.setattr(quick_actions, 'Path',
-                            lambda p: SimpleNamespace(glob=lambda pat: []))
+        import backlight
+        monkeypatch.setattr(backlight, 'find', lambda root=None: None)
         assert quick_actions._has_backlight() is False
-        monkeypatch.setattr(quick_actions, 'Path',
-                            lambda p: SimpleNamespace(
-                                glob=lambda pat: iter([object()])))
+        monkeypatch.setattr(backlight, 'find', lambda root=None: object())
         assert quick_actions._has_backlight() is True
 
 

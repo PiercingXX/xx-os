@@ -162,6 +162,17 @@ elif TARGET == "library-phone-lower":
     skip(lambda: library.body, 5)
 elif TARGET == "settings":
     shell.show("settings")
+elif TARGET == "kill-confirm":
+    from xx_music.ui.kill import request_kill
+
+    later(300, lambda: request_kill(ui, "ar-north", "North Hollow"))
+elif TARGET == "kill-toast":
+    later(300, lambda: ui.kill_artist("ar-north", "North Hollow"))
+elif TARGET == "killed-artists":
+    ui.blocked.block("ar-north", "North Hollow")
+    ui.blocked.block("", "Copper Tide")
+    shell.show("settings")
+    later(200, settings.open_blocked)
 elif TARGET == "minimal-on":
     # Live: the regular window, then Minimal Mode switched on in Settings.
     shell.show("settings")

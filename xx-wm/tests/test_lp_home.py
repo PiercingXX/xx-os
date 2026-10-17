@@ -94,8 +94,9 @@ class TestLongPressHomeAction:
         gc.set('long_press_home', 'edit')
         assert GestureConfig().get('long_press_home') == 'edit'
 
-    def test_double_tap_home_default_unchanged(self):
-        assert GestureConfig().get('double_tap_home') == 'lock_screen'
+    def test_double_tap_home_defaults_off_like_android(self):
+        # Android "Double Tap to Lock" defaults off.
+        assert GestureConfig().get('double_tap_home') == 'none'
 
 
 # -- item 3: home background tap / long-press dispatch -------------------------

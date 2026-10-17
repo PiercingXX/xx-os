@@ -314,7 +314,9 @@ class NowPlaying:
         self.album = minimal.text("", minimal.Tone.QUIET, 13, chars=30)
         self.album.set_margin_top(2)
         body.append(self.album)
-        common.on_long_press(body, self.open_menu)
+        # Long-press the title for the song's menu (an artist's name for
+        # Kill artist); swipe anywhere on the stage.
+        common.on_long_press(self.title, self.open_menu)
         swipe = Gtk.GestureSwipe.new()
         swipe.connect("swipe", self._swiped)
         body.add_controller(swipe)
@@ -587,10 +589,22 @@ class NowPlaying:
                 link.connect("clicked", lambda _b, a=artist: (
                     self.close(), self.ui.shell.open_artist(a.id, a.name)))
                 common.name(link, f"Open {artist.name}")
+                from xx_music.ui.kill import request_kill
+
+                common.on_long_press(
+                    link, lambda a=artist: request_kill(
+                        self.ui, a.id, a.name))
                 self.artists.append(link)
             else:
-                self.artists.append(common.label(artist.name,
-                                                 "xx-secondary", chars=18))
+                name_label = common.label(artist.name, "xx-secondary",
+                                          chars=18)
+                self.artists.append(name_label)
+                if artist.name.strip():
+                    from xx_music.ui.kill import request_kill
+
+                    common.on_long_press(
+                        name_label, lambda a=artist: request_kill(
+                            self.ui, "", a.name))
         album = track.album.title if track.album else ""
         self.album.set_text(album)
         self.album.set_visible(bool(album) and not player.problem)
@@ -601,7 +615,10 @@ class NowPlaying:
         self._footer(track)
 
     def _minimal_artists(self, track) -> None:
-        """Plain words, no underline: tap opens the artist."""
+        """Plain words, no underline: tap opens the artist, long-press
+        offers Kill artist."""
+        from xx_music.ui.kill import request_kill
+
         names = [a for a in track.artists if a.name]
         line = []
         for index, artist in enumerate(names):
@@ -616,6 +633,8 @@ class NowPlaying:
             else:
                 word = minimal.text(artist.name, minimal.Tone.QUIET, 15,
                                     chars=18)
+            common.on_long_press(word, lambda a=artist: request_kill(
+                self.ui, a.id or "", a.name))
             line.append(word)
             if index != len(names) - 1:
                 line.append(minimal.text("·", minimal.Tone.QUIET, 15,
