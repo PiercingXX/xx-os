@@ -105,7 +105,8 @@ def plan_prefetch(queue_ids: list[str], current: int,
 
 def build_offline_mix(entries: list[Any], heard: dict[str, float] | None,
                       seed_artist: str = "", limit: int = MIX_LIMIT,
-                      now: float | None = None) -> list[Any]:
+                      now: float | None = None,
+                      blocked=None) -> list[Any]:
     """Up to ``limit`` cached entries playable with no link.
 
     Skips anything heard in the last 48 h, never repeats an artist
@@ -116,6 +117,13 @@ def build_offline_mix(entries: list[Any], heard: dict[str, float] | None,
         return []
     at = time.time() if now is None else now
     heard = heard or {}
+    if blocked is not None:
+        from xx_music.blocked import normalize_name
+
+        names = set(blocked.names())
+        entries = [e for e in entries
+                   if normalize_name(getattr(e, "artist", "") or "")
+                   not in names]
 
     def last_heard(entry: Any) -> float:
         hit = heard.get(entry.track_id)

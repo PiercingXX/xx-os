@@ -816,7 +816,8 @@ def confirm(parent: Gtk.Widget, heading: str, body: str, responses: list,
     return present(dialog, parent)
 
 
-def toast(ui, text: str) -> None:
+def toast(ui, text: str, action_label: str = "",
+          action=None) -> None:
     """A one-line note at the bottom of the window (the shell owns it)."""
     if ui is not None and ui.shell is not None:
-        ui.shell.toast(text)
+        ui.shell.toast(text, action_label, action)

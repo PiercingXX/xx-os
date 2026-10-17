@@ -88,15 +88,19 @@ class UiContext:
     def __init__(self, spec, engine, worker: Worker | None = None,
                  player=None, art=None, store: UiStore | None = None,
                  hooks: Hooks | None = None) -> None:
+        from xx_music.blocked import BlockedArtists
+        from xx_music.policy import FilteredEngine
         from xx_music.ui.player import PlayerModel
 
         self.spec = spec
-        self.engine = engine
         self.paths = spec.paths()
         self.worker = worker or Worker()
         self.player = player or PlayerModel()
         self.art = art
         self.store = store or UiStore(self.paths, engine.key)
+        self.blocked = BlockedArtists(self.store.blocked_path())
+        self.engine = FilteredEngine(engine, self.blocked)
+        self._raw_engine = engine
         self.hooks = hooks or Hooks()
         self.health = HealthMonitor(self.hooks.source_name or engine.name)
         self.shell = None
@@ -169,17 +173,83 @@ class UiContext:
         self._downloads_listeners.append(callback)
 
     def refresh_downloads(self) -> None:
+        from xx_music.policy import filter_download_rows
         from xx_music.ui.downloads import default_rows
 
         rows_for = self.hooks.downloads or default_rows
 
         def done(rows) -> None:
-            self.downloads = rows
-            self.downloaded = {r.track.id for r in rows if r.state == DONE}
+            kept = filter_download_rows(list(rows or []), self.blocked)
+            self.downloads = kept
+            self.downloaded = {r.track.id for r in kept if r.state == DONE}
             for callback in list(self._downloads_listeners):
                 callback()
 
         self.io(lambda: rows_for(self), done, lambda _e: None)
+
+    def kill_artist(self, artist_id: str = "", artist_name: str = "",
+                    on_done=None) -> None:
+        """Block one artist, purge the queue, hide downloads (worker)."""
+        from xx_music.blocked import killed_text
+
+        aid, name = str(artist_id or ""), str(artist_name or "")
+
+        def work():
+            return self.blocked.block(aid, name)
+
+        def done(entry) -> None:
+            if entry is None:
+                return
+            self._purge_blocked_from_queue()
+            if bool((self.prefs or {}).get("remove_blocked_downloads")):
+                for row in list(self.downloads):
+                    if self.blocked.is_track_blocked(row.track):
+                        try:
+                            self.player.remove_download(row.track.id)
+                        except Exception:  # noqa: BLE001 - best effort
+                            pass
+            self.refresh_downloads()
+            try:
+                from xx_music.ui import common
+
+                label = entry.name or name or aid
+                common.toast(self, killed_text(label), "Undo",
+                             lambda: self.unblock_artist(
+                                 entry.id, entry.name))
+            except Exception:  # noqa: BLE001 - toast never fails a kill
+                pass
+            if on_done is not None:
+                on_done(entry)
+
+        self.io(work, done, lambda _e: None)
+
+    def unblock_artist(self, artist_id: str = "", artist_name: str = "",
+                       on_done=None) -> None:
+        aid, name = str(artist_id or ""), str(artist_name or "")
+
+        def work():
+            self.blocked.unblock(aid, name)
+            return self.blocked.list()
+
+        def done(_entries) -> None:
+            self.refresh_downloads()
+            if on_done is not None:
+                on_done(_entries)
+
+        self.io(work, done, lambda _e: None)
+
+    def _purge_blocked_from_queue(self) -> None:
+        try:
+            queued = list(getattr(self.player, "queue", ()))
+        except Exception:  # noqa: BLE001 - an empty player purges nothing
+            return
+        targets = [i for i, t in enumerate(queued)
+                   if self.blocked.is_track_blocked(t)]
+        for index in sorted(targets, reverse=True):
+            try:
+                self.player.remove(index)
+            except Exception:  # noqa: BLE001 - keep purging the rest
+                continue
 
     # -- actions --------------------------------------------------------------------
     def action(self, action_id: str) -> None:

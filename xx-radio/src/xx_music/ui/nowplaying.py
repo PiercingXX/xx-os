@@ -412,10 +412,22 @@ class NowPlaying:
                 link.connect("clicked", lambda _b, a=artist: (
                     self.close(), self.ui.shell.open_artist(a.id, a.name)))
                 common.name(link, f"Open {artist.name}")
+                from xx_music.ui.kill import request_kill
+
+                common.on_long_press(
+                    link, lambda a=artist: request_kill(
+                        self.ui, a.id, a.name))
                 self.artists.append(link)
             else:
-                self.artists.append(common.label(artist.name,
-                                                 "xx-secondary", chars=18))
+                name_label = common.label(artist.name, "xx-secondary",
+                                          chars=18)
+                self.artists.append(name_label)
+                if artist.name.strip():
+                    from xx_music.ui.kill import request_kill
+
+                    common.on_long_press(
+                        name_label, lambda a=artist: request_kill(
+                            self.ui, "", a.name))
         album = track.album.title if track.album else ""
         self.album.set_text(album)
         self.album.set_visible(bool(album) and not player.problem)

@@ -10,7 +10,10 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from xx_music.engine import EngineError, ErrorKind, Track
+from xx_music.blocked import BlockedArtists, normalize_name
+from xx_music.engine import (AlbumPage, ArtistPage, Engine, EngineError,
+                             ErrorKind, Item, ItemKind, PlaylistPage,
+                             SearchResults, Shelf, Track)
 
 # Previous restarts the song past this position, else steps back.
 RESTART_PREVIOUS_S = 3.0
@@ -50,10 +53,246 @@ def should_extend_radio(remaining: int) -> bool:
 
 
 def filter_radio(tracks: list[Track], queued_ids: set[str],
-                 heard_ids: set[str], disliked_ids: set[str]) -> list[Track]:
-    """Drop queued, recently heard and disliked songs from radio results."""
+                 heard_ids: set[str], disliked_ids: set[str],
+                 blocked: BlockedArtists | None = None) -> list[Track]:
+    """Drop queued, recently heard, disliked and blocked songs."""
     return [t for t in tracks if t.id not in queued_ids
-            and t.id not in heard_ids and t.id not in disliked_ids]
+            and t.id not in heard_ids and t.id not in disliked_ids
+            and (blocked is None or not blocked.is_track_blocked(t))]
+
+
+def _blocked_item(item: Item, blocked: BlockedArtists | None) -> bool:
+    if blocked is None:
+        return False
+    if item.kind == ItemKind.TRACK:
+        return item.track is not None and blocked.is_track_blocked(
+            item.track)
+    if item.kind == ItemKind.ARTIST:
+        return blocked.is_blocked_artist(item.id, item.title)
+    if item.kind == ItemKind.ALBUM:
+        names = _subtitle_names(item.subtitle)
+        for name in names:
+            if blocked.is_blocked_name(name):
+                return True
+        return False
+    return False
+
+
+def _subtitle_names(subtitle: str) -> list[str]:
+    names: list[str] = []
+    for chunk in str(subtitle or "").split("·"):
+        for part in chunk.split(","):
+            name = normalize_name(part)
+            if name and not name[:4].isdigit() and len(name) > 1:
+                names.append(part)
+    return names
+
+
+def is_track_blocked(track: Track,
+                     blocked: BlockedArtists | None) -> bool:
+    return blocked is not None and blocked.is_track_blocked(track)
+
+
+def filter_tracks(tracks: list[Track] | tuple[Track, ...],
+                  blocked: BlockedArtists | None) -> list[Track]:
+    if blocked is None:
+        return list(tracks)
+    return [t for t in tracks if not blocked.is_track_blocked(t)]
+
+
+def filter_items(items: list[Item] | tuple[Item, ...],
+                 blocked: BlockedArtists | None) -> list[Item]:
+    if blocked is None:
+        return list(items)
+    return [i for i in items if not _blocked_item(i, blocked)]
+
+
+def filter_shelves(shelves: list[Shelf],
+                   blocked: BlockedArtists | None) -> list[Shelf]:
+    if blocked is None:
+        return list(shelves)
+    out: list[Shelf] = []
+    for shelf in shelves:
+        items = tuple(filter_items(list(shelf.items), blocked))
+        if items:
+            out.append(Shelf(shelf.title, items))
+    return out
+
+
+def filter_search(results: SearchResults,
+                  blocked: BlockedArtists | None) -> SearchResults:
+    if blocked is None:
+        return results
+    return SearchResults(
+        tracks=tuple(filter_tracks(list(results.tracks), blocked)),
+        albums=tuple(filter_items(list(results.albums), blocked)),
+        artists=tuple(filter_items(list(results.artists), blocked)),
+        playlists=tuple(filter_items(list(results.playlists), blocked)))
+
+
+def filter_album_page(page: AlbumPage,
+                      blocked: BlockedArtists | None) -> AlbumPage:
+    if blocked is None:
+        return page
+    return AlbumPage(id=page.id, title=page.title, artists=page.artists,
+                     year=page.year, kind_label=page.kind_label,
+                     art_url=page.art_url,
+                     tracks=tuple(filter_tracks(list(page.tracks), blocked)))
+
+
+def filter_artist_page(page: ArtistPage,
+                       blocked: BlockedArtists | None) -> ArtistPage:
+    if blocked is None:
+        return page
+    return ArtistPage(
+        id=page.id, name=page.name, art_url=page.art_url,
+        top_tracks=tuple(filter_tracks(list(page.top_tracks), blocked)),
+        albums=tuple(filter_items(list(page.albums), blocked)),
+        singles=tuple(filter_items(list(page.singles), blocked)),
+        related=tuple(filter_items(list(page.related), blocked)),
+        radio_seed=page.radio_seed)
+
+
+def filter_playlist_page(page: PlaylistPage,
+                         blocked: BlockedArtists | None) -> PlaylistPage:
+    if blocked is None:
+        return page
+    return PlaylistPage(
+        id=page.id, title=page.title, author=page.author,
+        art_url=page.art_url, track_count=page.track_count,
+        tracks=tuple(filter_tracks(list(page.tracks), blocked)),
+        editable=page.editable)
+
+
+def filter_download_rows(rows: list,
+                         blocked: BlockedArtists | None) -> list:
+    if blocked is None:
+        return list(rows)
+    return [r for r in rows if not blocked.is_track_blocked(r.track)]
+
+
+def fetch_radio_filtered(engine, seed_track_id: str,
+                         blocked: BlockedArtists | None, limit: int,
+                         exclude: set[str] | frozenset,
+                         queued_ids: set[str] | None = None,
+                         heard_ids: set[str] | None = None,
+                         disliked_ids: set[str] | None = None,
+                         ) -> list[Track]:
+    """Radio results with blocked artists skipped, refilled when short.
+
+    Asks for more while the filtered batch is short and the engine
+    still answers, so a queue never runs dry because of blocks.
+    """
+    want = max(int(limit), 0)
+    if want <= 0:
+        return []
+    queued = set(queued_ids or ())
+    heard = set(heard_ids or ())
+    disliked = set(disliked_ids or ())
+    seen = set(exclude or ())
+    collected: list[Track] = []
+    collected_ids: set[str] = set()
+    for _attempt in range(3):
+        need = want - len(collected)
+        batch = engine.radio(seed_track_id, limit=need + len(seen) + want,
+                             exclude=frozenset(seen))
+        if not batch:
+            break
+        for track in batch:
+            seen.add(track.id)
+            if track.id in collected_ids or track.id in queued \
+                    or track.id in heard or track.id in disliked:
+                continue
+            if blocked is not None and blocked.is_track_blocked(track):
+                continue
+            collected.append(track)
+            collected_ids.add(track.id)
+            if len(collected) >= want:
+                break
+        if len(collected) >= want or len(batch) < need:
+            break
+    return collected[:want]
+
+
+class FilteredEngine(Engine):
+    """One filter layer over any engine: blocked artists never surface.
+
+    Wraps catalog reads (home, search, artist/album/playlist pages,
+    charts, library, mood shelves, radio) so screens need no changes.
+    """
+
+    def __init__(self, inner: Engine,
+                 blocked: BlockedArtists | None) -> None:
+        self._inner = inner
+        self._blocked = blocked
+        self.key = inner.key
+        self.name = inner.name
+        self.capabilities = inner.capabilities
+
+    def supports(self, capability: str) -> bool:
+        return self._inner.supports(capability)
+
+    def status(self):
+        return self._inner.status()
+
+    def sign_in(self, credentials: dict[str, str]) -> str:
+        return self._inner.sign_in(credentials)
+
+    def sign_out(self) -> None:
+        return self._inner.sign_out()
+
+    def search(self, query: str, kind=None, limit: int = 20):
+        return filter_search(
+            self._inner.search(query, kind, limit), self._blocked)
+
+    def suggestions(self, query: str) -> list[str]:
+        return self._inner.suggestions(query)
+
+    def home(self) -> list[Shelf]:
+        return filter_shelves(self._inner.home(), self._blocked)
+
+    def moods(self):
+        return self._inner.moods()
+
+    def mood_shelves(self, mood_id: str) -> list[Shelf]:
+        return filter_shelves(
+            self._inner.mood_shelves(mood_id), self._blocked)
+
+    def charts(self, region: str = "") -> list[Shelf]:
+        return filter_shelves(
+            self._inner.charts(region), self._blocked)
+
+    def library(self, section) -> list[Item]:
+        return filter_items(self._inner.library(section), self._blocked)
+
+    def album(self, album_id: str) -> AlbumPage:
+        return filter_album_page(
+            self._inner.album(album_id), self._blocked)
+
+    def artist(self, artist_id: str) -> ArtistPage:
+        return filter_artist_page(
+            self._inner.artist(artist_id), self._blocked)
+
+    def playlist(self, playlist_id: str, limit: int = 200) -> PlaylistPage:
+        return filter_playlist_page(
+            self._inner.playlist(playlist_id, limit), self._blocked)
+
+    def radio(self, seed_track_id: str, limit: int = 25,
+              exclude=frozenset()) -> list[Track]:
+        return fetch_radio_filtered(
+            self._inner, seed_track_id, self._blocked, limit, set(exclude))
+
+    def lyrics(self, track_id: str):
+        return self._inner.lyrics(track_id)
+
+    def rate(self, track_id: str, rating) -> None:
+        return self._inner.rate(track_id, rating)
+
+    def resolve(self, track_id: str, *, low_data: bool = False):
+        return self._inner.resolve(track_id, low_data=low_data)
+
+    def art_url(self, url: str, px: int) -> str:
+        return self._inner.art_url(url, px)
 
 
 def artist_key(track: Track) -> str:
@@ -63,7 +302,8 @@ def artist_key(track: Track) -> str:
 
 
 def build_offline_mix(tracks: list[Track], seed: Track | None,
-                      heard_ids: set[str], limit: int = OFFLINE_MIX_LIMIT
+                      heard_ids: set[str], limit: int = OFFLINE_MIX_LIMIT,
+                      blocked: BlockedArtists | None = None
                       ) -> list[Track]:
     """Up to ``limit`` on-phone songs: no heard songs, the seed artist at
     most 1 in 4, no artist again within 3 places."""
@@ -76,6 +316,8 @@ def build_offline_mix(tracks: list[Track], seed: Track | None,
         if len(picked) >= limit:
             break
         if track.id in heard_ids:
+            continue
+        if blocked is not None and blocked.is_track_blocked(track):
             continue
         key = artist_key(track)
         if seed_key and key == seed_key and seed_count >= max_seed:
