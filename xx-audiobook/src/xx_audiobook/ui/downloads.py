@@ -48,6 +48,15 @@ class DownloadsView:
     def empty(self) -> bool:
         return not (self.active or self.stopped or self.done)
 
+    def signature(self) -> tuple:
+        """What the page paints; an unchanged poll repaints nothing."""
+        rows = tuple((r.item_id, r.state, r.bytes_done, r.bytes_total,
+                      r.error) for r in self.active + self.stopped
+                     + self.done)
+        return (rows, self.block, self.used_bytes,
+                (self.free_bytes or 0) // 100_000_000, self.low,
+                self.wifi_only, tuple(sorted(self.meta.items())))
+
 
 def group(rows: list) -> tuple:
     """(active, stopped, done) keeping the newest-first order."""
@@ -135,9 +144,12 @@ class DownloadsPage:
         def _done(view, error) -> None:
             self._reading = False
             if error is None and view is not None:
+                changed = (not self.loaded
+                           or view.signature() != self.view.signature())
                 self.view = view
                 self.loaded = True
-                self._render()
+                if changed:
+                    self._render()
                 self._sync_poll()
 
         ctx.run(_read, _done)

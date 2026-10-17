@@ -107,6 +107,15 @@ def test_downloads_rows_group_and_read_out():
     assert ui.status_line(rows[2], None) == "Checksum mismatch on file 2."
     view = ui.DownloadsView(used_bytes=466_000_000, free_bytes=None)
     assert ui.storage_line(view) == "Storage used: 466 MB"
+    # The 1 s poll repaints only when something moved.
+    same = ui.DownloadsView(active=active, stopped=stopped, done=done)
+    again = ui.DownloadsView(active=list(active), stopped=stopped,
+                             done=done)
+    assert same.signature() == again.signature()
+    moved = store_module.Download("a", "A", "Running", 43, 100)
+    later = ui.DownloadsView(active=[moved, active[1]], stopped=stopped,
+                             done=done)
+    assert later.signature() != same.signature()
 
 
 def test_stats_bars_are_proportional_with_a_visible_floor():
