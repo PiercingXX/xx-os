@@ -22,7 +22,7 @@ from xx_music.ui.queue_page import QueueView
 from xx_ui import widgets
 
 SLEEP_MINUTES = (15, 30, 45, 60)
-COVER_LIMIT = 304
+COVER_LIMIT = 284
 TICK_MS = 500
 LYRICS_HOLD_S = 3.0
 PROBLEM_ACTIONS = {
@@ -418,7 +418,7 @@ class NowPlaying:
                                                  "xx-secondary", chars=18))
         album = track.album.title if track.album else ""
         self.album.set_text(album)
-        self.album.set_visible(bool(album))
+        self.album.set_visible(bool(album) and not player.problem)
         self._problem(player.problem)
         self._times()
         self._transport()

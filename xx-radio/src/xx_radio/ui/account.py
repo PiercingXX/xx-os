@@ -216,7 +216,7 @@ class SignInPage:
         self.on_signed_in = on_signed_in
         self._pasted = ""
         self.loading = common.LoadingLine()
-        body = common.vbox(0)
+        body = self.body = common.vbox(0)
         body.add_css_class("xx-page-body")
         body.set_margin_bottom(32)
         head = common.label("Sign in with your browser", "xx-mu-h2",
@@ -459,7 +459,7 @@ def show_welcome(ui, open_sign_in) -> object:
     later = widgets.outline_button("Continue without signing in",
                                    lambda: answer(False))
     for button in (sign, later):
-        common.fit(button, 28)
+        common.fit(button, 16)
         button.set_hexpand(True)
         box.append(button)
     later.set_margin_top(4)

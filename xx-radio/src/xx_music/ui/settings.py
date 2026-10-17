@@ -167,9 +167,12 @@ class SettingsPage:
         top = common.hbox(8)
         figure = common.label(fmt.size(used), "xx-mu-h2 xx-mu-num", chars=10)
         figure.set_hexpand(True)
+        figure.set_ellipsize(0)
         top.append(figure)
-        top.append(common.label(f"of {cap} GB", "xx-secondary xx-mu-num",
-                                xalign=1.0, chars=10))
+        of = common.label(f"of {cap} GB", "xx-secondary xx-mu-num",
+                          xalign=1.0, chars=10)
+        of.set_ellipsize(0)
+        top.append(of)
         meter.append(top)
         meter.append(common.meter(used / (cap * 2**30)))
         meter.append(common.label(

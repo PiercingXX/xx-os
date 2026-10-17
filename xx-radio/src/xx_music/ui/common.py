@@ -659,8 +659,10 @@ def flow_chips(items: list, per_line: int = 3) -> Gtk.FlowBox:
         chip.add_css_class("xx-chip")
         chip.set_size_request(-1, 40)
         chip.set_halign(Gtk.Align.START)
-        chip.get_child().set_ellipsize(Pango.EllipsizeMode.END)
         chip.get_child().set_max_width_chars(18)
+        chip.get_child().set_ellipsize(
+            Pango.EllipsizeMode.END if len(text) > 18
+            else Pango.EllipsizeMode.NONE)
         if selected:
             chip.add_css_class("selected")
         chip.connect("clicked", lambda _b, cb=callback: cb())

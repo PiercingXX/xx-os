@@ -230,10 +230,12 @@ class LibraryPage:
         top = common.hbox(8)
         figure = common.label(fmt.size(used), "xx-mu-h2 xx-mu-num", chars=10)
         figure.set_hexpand(True)
+        figure.set_ellipsize(0)
         top.append(figure)
         of = common.label(f"of {cap_gb} GB", "xx-secondary xx-mu-num",
                           xalign=1.0, chars=10)
         of.set_valign(Gtk.Align.END)
+        of.set_ellipsize(0)
         top.append(of)
         box.append(top)
         box.append(common.meter(used / cap if cap else 0.0,

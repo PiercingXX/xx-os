@@ -394,17 +394,22 @@ class MoodsView(Page):
 
 # -- openers -----------------------------------------------------------------------
 
-def open_album(ui, album_id: str, title: str = "") -> None:
-    ui.shell.push(AlbumView(ui, album_id, title).widget, title or "Album")
+def open_album(ui, album_id: str, title: str = "") -> AlbumView:
+    view = AlbumView(ui, album_id, title)
+    ui.shell.push(view.widget, title or "Album")
+    return view
 
 
-def open_playlist(ui, playlist_id: str, title: str = "") -> None:
-    ui.shell.push(PlaylistView(ui, playlist_id, title).widget,
-                  title or "Playlist")
+def open_playlist(ui, playlist_id: str, title: str = "") -> PlaylistView:
+    view = PlaylistView(ui, playlist_id, title)
+    ui.shell.push(view.widget, title or "Playlist")
+    return view
 
 
-def open_artist(ui, artist_id: str, name: str = "") -> None:
-    ui.shell.push(ArtistView(ui, artist_id, name).widget, name or "Artist")
+def open_artist(ui, artist_id: str, name: str = "") -> ArtistView:
+    view = ArtistView(ui, artist_id, name)
+    ui.shell.push(view.widget, name or "Artist")
+    return view
 
 
 def open_mood(ui, mood: Mood) -> None:

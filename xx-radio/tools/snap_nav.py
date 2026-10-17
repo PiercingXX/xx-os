@@ -71,28 +71,6 @@ def skip(get_box, count, wait=600):
     later(wait, hide)
 
 
-def page_body(widget):
-    """The box inside the first vertical scroller of a page."""
-    scroller = find_scroller(widget)
-    child = scroller.get_child()
-    return child.get_child() if isinstance(child, Gtk.Viewport) else child  # noqa: F821
-
-
-def find_scroller(widget):
-    """The first vertical ScrolledWindow inside the visible page."""
-    stack = [widget]
-    while stack:
-        node = stack.pop(0)
-        if isinstance(node, Gtk.ScrolledWindow) and \
-                node.get_vscrollbar_policy() != Gtk.PolicyType.NEVER:  # noqa: F821
-            return node
-        child = node.get_first_child()
-        while child is not None:
-            stack.append(child)
-            child = child.get_next_sibling()
-    return None
-
-
 def top_page():
     return shell.current_nav().get_visible_page().get_child()
 
@@ -134,8 +112,8 @@ elif TARGET == "artist":
     pages.open_artist(ui, "ar-lumen", "Lumen Drive")
 elif TARGET == "artist-lower":
     shell.show("search")
-    pages.open_artist(ui, "ar-lumen", "Lumen Drive")
-    skip(lambda: page_body(top_page()), 4)
+    _artist = pages.open_artist(ui, "ar-lumen", "Lumen Drive")
+    skip(lambda: _artist.body, 4)
 elif TARGET == "album":
     pages.open_album(ui, "al-tide", "Tidewater")
 elif TARGET == "playlist":
@@ -212,7 +190,7 @@ elif TARGET in ("signin", "signin-error"):
             sign = page.xx_page
             sign.paste.set_text("cookie: (pasted)")
             sign.sign_in()
-            skip(lambda: page_body(top_page()), 5, 100)
+            skip(lambda: sign.body, 5, 100)
         later(300, _fail)
 elif TARGET == "oauth":
     ui.action("sign-in")

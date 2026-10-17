@@ -134,6 +134,10 @@ class DemoEngine(fe.FakeEngine):
     key = "fake"
     name = "YouTube Music"
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.ratings = {tid: e.Rating.LIKE for tid in LIKED_IDS}
+
     def home(self) -> list[e.Shelf]:
         self._enter("home")
         pick = [track(t[0]) for t in TRACKS[::3]][:12]
