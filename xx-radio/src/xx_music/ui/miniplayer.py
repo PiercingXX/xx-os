@@ -120,24 +120,28 @@ class MiniPlayer:
         self.widget.append(self.bar)
 
     def _arm(self) -> None:
-        if not self._tick:
-            self._tick = GLib.timeout_add(1000, self._on_tick)
+        """Wake when the line next moves a pixel (never while the song
+        stands still: a snapshot re-arms)."""
+        self._disarm()
+        self._tick = common.wake_for_position(
+            self.ui.player, self.bar.get_width(), self._on_tick)
 
     def _disarm(self) -> None:
         if self._tick:
             GLib.source_remove(self._tick)
             self._tick = 0
 
-    def _on_tick(self) -> bool:
-        if self.ui.player.playing:
-            self._progress()
-        return True
+    def _on_tick(self) -> None:
+        self._tick = 0
+        self._progress()
 
     def _progress(self) -> None:
         """Only a visible change re-allocates the line."""
         fraction = round(self.ui.player.fraction, 3)
         if abs(self.bar.get_fraction() - fraction) >= 0.001:
             self.bar.set_fraction(fraction)
+        if self.widget.get_mapped():
+            self._arm()
 
     def update(self) -> None:
         player = self.ui.player

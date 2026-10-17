@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from xx_music.engine import AlbumPage, Item, ItemKind, PlaylistPage, Track
 
 
@@ -20,6 +22,16 @@ def duration(seconds: float | None) -> str:
 def clock(seconds: float | None) -> str:
     """Like :func:`duration` but ``0:00`` when unknown (scrubber times)."""
     return duration(seconds) or "0:00"
+
+
+def elapsed(position: float | None, total: float = 0.0) -> str:
+    """The played time: whole seconds reached so far (a clock never
+    rounds up), the full length once the end is reached."""
+    if position is None or position < 0:
+        return "0:00"
+    if total > 0 and position >= total:
+        return clock(total)
+    return clock(math.floor(position))
 
 
 def initials(title: str, limit: int = 2) -> str:

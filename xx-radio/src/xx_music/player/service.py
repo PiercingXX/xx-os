@@ -47,6 +47,10 @@ STATUS_PAUSED = "Paused"
 TICK_MS = 500
 IDLE_CHECK_MS = 5000
 CHANGED_COOLDOWN_MS = 250
+# The window extrapolates the last announced position; the tick announces
+# again once the pipeline is further off than this (a stall, a rebuffer).
+DRIFT_ANNOUNCE_S = 0.1
+DURATION_ANNOUNCE_S = 0.5
 RADIO_LIMIT = 25
 UNKNOWN_METHOD = "org.freedesktop.DBus.Error.UnknownMethod"
 
@@ -109,6 +113,13 @@ class PlayerService:
         self._extending = False
         self._position_us = 0
         self._duration_us = 0
+        # The song whose stream the pipeline holds (None while the current
+        # one is still resolving): only its position is the pipeline's.
+        self._loaded_id: str | None = None
+        self._gap_id: str | None = None
+        # What the window was last told: (position_s, at, advancing,
+        # duration_s), to know when its extrapolation has gone stale.
+        self._told: tuple | None = None
         self._last_activity = self._clock()
         self._last_save_key: tuple | None = None
         self._window_connected = False
@@ -148,7 +159,8 @@ class PlayerService:
             audio_sink=sink,
             on_eos=lambda: self._idle_add(self._on_eos),
             on_error=lambda msg: self._idle_add(self._on_gst_error, msg),
-            on_about_to_finish=self._on_about_to_finish,
+            on_timing=self._on_timing,
+            on_gapless=self._on_gapless,
         )
         self._save_if_needed(force=True)
 
@@ -186,6 +198,8 @@ class PlayerService:
             if self.status == STATUS_STOPPED:
                 self.status = STATUS_PLAYING
                 self._play_index(self.queue.index)
+            else:
+                self._next_changed()
         return added
 
     def play_at(self, index: int) -> None:
@@ -213,6 +227,8 @@ class PlayerService:
                 self._cast_load_current()
             else:
                 self._play_index(self.queue.index)
+        else:
+            self._next_changed()
         self._touch()
         self._save_if_needed(force=True)
         self._announce(structural=True)
@@ -222,18 +238,21 @@ class PlayerService:
         self._touch()
         self._save_if_needed()
         self._announce(structural=True)
+        self._next_changed()
 
     def set_shuffle(self, on: bool) -> None:
         self.queue.set_shuffle(on)
         self._touch()
         self._save_if_needed()
         self._announce(structural=True)
+        self._next_changed()
 
     def set_repeat(self, mode: str) -> None:
         self.queue.set_repeat(mode)
         self._touch()
         self._save_if_needed()
         self._announce(structural=True)
+        self._next_changed()
 
     def set_sleep(self, seconds: int) -> None:
         self._sleep.arm(seconds)
@@ -319,6 +338,7 @@ class PlayerService:
             self._play_index(index)
 
     def previous(self) -> None:
+        self._sync_position()
         position_s = self._position_us / 1e6
         index = self.queue.previous_index(position_s)
         if index is None:
@@ -383,6 +403,11 @@ class PlayerService:
         return ""
 
     def snapshot_dict(self) -> dict:
+        """The window's state. ``position_s`` is measured now (at
+        ``position_at`` on the monotonic clock) and moves on in real time
+        only while ``advancing``; ``duration_s`` is the stream's own once
+        the pipeline knows it."""
+        self._sync_position()
         track = self.queue.current()
         sleep = None
         if self._sleep.armed:
@@ -392,6 +417,8 @@ class PlayerService:
             "status": self.status,
             "track": track.to_dict() if track else None,
             "position_s": self._position_us / 1e6,
+            "position_at": self._clock(),
+            "advancing": self._advancing(),
             "duration_s": self._duration_us / 1e6,
             "index": self.queue.index,
             "length": len(self.queue.tracks),
@@ -417,6 +444,7 @@ class PlayerService:
         self._generation += 1
         self.status = STATUS_STOPPED
         self.player.stop()
+        self._loaded_id = None
         self._position_us = 0
         self._touch()
         self._save_if_needed(force=True)
@@ -430,6 +458,11 @@ class PlayerService:
             return
         self._generation += 1
         generation = self._generation
+        # The previous song stops now: the pipeline must not keep playing
+        # (and reporting the position of) a song the window moved past.
+        self.player.stop()
+        self._loaded_id = None
+        self._position_us = 0
         uri = self._prefetched.pop(track.id, "")
         if uri:
             self._uri_ready(generation, index, track.id, uri, None)
@@ -473,6 +506,7 @@ class PlayerService:
                 EngineError(ErrorKind.NOT_AVAILABLE, track_id))
             return
         self.player.load(uri)
+        self._loaded_id = track_id
         if self._leveling and gain_db:
             try:
                 self.player.set_volume(10.0 ** (float(gain_db) / 20.0))
@@ -567,24 +601,57 @@ class PlayerService:
             self._errors.decode_error(track.id), self.queue.index, track,
             EngineError(ErrorKind.OTHER, message))
 
-    def _on_about_to_finish(self) -> None:
+    def _hand_next_uri(self) -> None:
+        """Give playbin the next song's stream for a gapless start (or
+        nothing, when it is not resolved yet or there is no next)."""
         index = self.queue.next_index()
-        if index is None:
+        track = self.queue.tracks[index] if index is not None else None
+        uri = self._prefetched.get(track.id, "") if track else ""
+        self._gap_id = track.id if uri else None
+        self.player.set_next_uri(uri)
+
+    def _on_gapless(self) -> None:
+        """The pipeline started the handed-over next song by itself: the
+        queue follows, and its position starts over."""
+        index = self.queue.next_index()
+        if index is None or self.status == STATUS_STOPPED:
             return
         track = self.queue.tracks[index]
-        uri = self._prefetched.get(track.id, "")
-        if uri:
-            self.player.set_next_uri(uri)
+        self.queue.index = index
+        self.queue.version += 1
+        if track.id != self._gap_id:
+            # The queue changed after the hand-over: play the right song.
+            self._announce(structural=True)
+            self._play_index(index)
+            return
+        self._prefetched.pop(track.id, None)
+        self._loaded_id = track.id
+        self._position_us = 0
+        self._duration_us = 0
+        self._heard[track.id] = self._clock()
+        self._touch()
+        self._save_if_needed(force=True)
+        self._prefetch_next()
+        self._extend_radio_if_needed()
+        self._announce(structural=True)
 
     def _prefetch_next(self) -> None:
+        """Hand playbin the next song now (nothing until it resolves,
+        never a song that is no longer next) and resolve it ahead."""
+        self._hand_next_uri()
         index = self.queue.next_index()
         if index is None:
             return
         track = self.queue.tracks[index]
-        if track.id in self._prefetched:
-            return
-        self._executor.submit(self._prefetch_work, self._generation,
-                              track.id)
+        if track.id not in self._prefetched:
+            self._executor.submit(self._prefetch_work, self._generation,
+                                  track.id)
+
+    def _next_changed(self) -> None:
+        """The queue changed around the loaded song: what plays after it
+        (gaplessly) follows."""
+        if self._loaded_id is not None and not self._is_casting():
+            self._prefetch_next()
 
     def _prefetch_work(self, generation: int, track_id: str) -> None:
         try:
@@ -599,7 +666,7 @@ class PlayerService:
                         ) -> None:
         if generation == self._generation and uri:
             self._prefetched[track_id] = uri
-            self._on_about_to_finish()
+            self._hand_next_uri()
 
     def _extend_radio_if_needed(self) -> None:
         origin = self.queue.origin
@@ -1344,6 +1411,63 @@ class PlayerService:
         self._announce()
         self._emit_cast_changed()
 
+    # -- position: the pipeline's, never a guess -----------------------------------
+    def _sync_position(self) -> None:
+        """Read the position and duration being heard (the speaker's while
+        casting). A song the pipeline does not hold yet is at 0 with its
+        listed length; a known stream length beats the listed one."""
+        track = self.queue.current()
+        listed = int(track.duration_s * 1e6) \
+            if track is not None and track.duration_s else 0
+        if self._is_casting():
+            self._position_us = int(self._cast_position_ms) * 1000
+            self._duration_us = int(self._cast_duration_ms) * 1000 \
+                if self._cast_duration_ms > 0 else listed
+            return
+        if track is None or track.id != self._loaded_id:
+            self._position_us = 0
+            self._duration_us = listed
+            return
+        position = self.player.position_ns()
+        if position is not None:
+            self._position_us = position // 1000
+        duration = self.player.duration_ns()
+        self._duration_us = duration // 1000 \
+            if duration is not None and duration > 0 else listed
+
+    def _advancing(self) -> bool:
+        """Whether the position moves on by itself right now."""
+        if self.status != STATUS_PLAYING:
+            return False
+        if self._is_casting():
+            return bool(self._cast_playing)
+        track = self.queue.current()
+        return track is not None and track.id == self._loaded_id \
+            and self.player.advancing()
+
+    def _on_timing(self) -> None:
+        """The pipeline started or stopped running, a seek landed or a
+        new stream began: the window hears it at once (not after the
+        Changed cooldown) whenever its extrapolation is now off."""
+        self._sync_position()
+        if self._told is None or self._told_is_stale():
+            self._emit_changed_now()
+
+    def _told_is_stale(self) -> bool:
+        """The window's extrapolation of the last Changed is off: the
+        pipeline stalled or jumped, or the stream's length arrived."""
+        if self._told is None:
+            return False
+        position_s, at, advancing, duration_s = self._told
+        if advancing != self._advancing():
+            return True
+        if abs(self._duration_us / 1e6 - duration_s) > DURATION_ANNOUNCE_S:
+            return True
+        expected = position_s + (self._clock() - at if advancing else 0.0)
+        if duration_s > 0:
+            expected = min(expected, duration_s)
+        return abs(self._position_us / 1e6 - expected) > DRIFT_ANNOUNCE_S
+
     # -- tick: position, sleep, persistence (main loop, non-blocking) ------------
     def _tick(self) -> None:
         if self._is_casting():
@@ -1364,15 +1488,9 @@ class PlayerService:
             self._save_if_needed()
             self._schedule(TICK_MS, self._tick)
             return
-        position = self.player.position_ns()
-        duration = self.player.duration_ns()
-        if position is not None:
-            self._position_us = position // 1000
-        if duration is not None and duration > 0:
-            self._duration_us = duration // 1000
-        elif self.queue.current() and self.queue.current().duration_s:
-            self._duration_us = int(
-                self.queue.current().duration_s * 1e6)
+        self._sync_position()
+        if self._told_is_stale():
+            self._announce()
         if self.status == STATUS_PLAYING:
             if self._sleep.expired():
                 self._sleep.arm(P.SLEEP_OFF)
@@ -1416,9 +1534,12 @@ class PlayerService:
         self._changed_dirty = False
         if self._conn is None:
             return
+        snapshot = self.snapshot_dict()
+        self._told = (snapshot["position_s"], snapshot["position_at"],
+                      snapshot["advancing"], snapshot["duration_s"])
         self._conn.emit_signal(
             None, self.spec.player_object_path, self.spec.player_interface,
-            "Changed", GLib.Variant("(s)", (self.snapshot_json(),)))
+            "Changed", GLib.Variant("(s)", (json.dumps(snapshot),)))
         self._emit_properties_changed(mpris_mod.PLAYER_IFACE, {})
         self._emit_properties_changed(mpris_mod.ROOT_IFACE, {})
 
@@ -1460,25 +1581,8 @@ class PlayerService:
     # -- MPRIS property view ----------------------------------------------------------
     def _player_props(self) -> dict:
         track = self.queue.current()
-        if self._is_casting():
-            self._position_us = int(self._cast_position_ms) * 1000
-            if self._cast_duration_ms > 0:
-                self._duration_us = int(self._cast_duration_ms) * 1000
-            elif track is not None and track.duration_s:
-                self._duration_us = int(track.duration_s * 1e6)
-            volume = self._cast_volume
-        else:
-            position = self.player.position_ns()
-            if position is not None:
-                self._position_us = position // 1000
-            duration = self.player.duration_ns()
-            if duration is not None and duration > 0:
-                self._duration_us = duration // 1000
-            elif track is not None and track.duration_s:
-                self._duration_us = int(track.duration_s * 1e6)
-            else:
-                self._duration_us = 0
-            volume = self._volume
+        self._sync_position()
+        volume = self._cast_volume if self._is_casting() else self._volume
         return mpris_mod.player_props(
             self.status, self.queue.repeat, self.queue.shuffle,
             volume, self._position_us,

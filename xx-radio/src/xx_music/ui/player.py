@@ -12,7 +12,11 @@ screens never talk D-Bus themselves.
   ``Queue``: tests, demo renders, and a window without a service.
 
 Positions tick locally between snapshots (the service only announces
-changes), so the scrubber moves without a D-Bus round trip per second.
+changes), so the scrubber moves without a D-Bus round trip per second:
+each snapshot's position is anchored to when the service measured it
+(its ``position_at`` on the shared monotonic clock) and moves on in real
+time only while the service says it is ``advancing`` (not while a song
+resolves, buffers or a seek lands).
 """
 
 from __future__ import annotations
@@ -30,6 +34,10 @@ STOPPED = "Stopped"
 
 SLEEP_OFF = 0
 SLEEP_END_OF_SONG = -1
+
+# A service stamp further back than this is not trusted (another clock):
+# the position is then anchored to when the snapshot arrived.
+STAMP_TRUST_S = 2.0
 
 MPRIS_PATH = "/org/mpris/MediaPlayer2"
 MPRIS_PLAYER = "org.mpris.MediaPlayer2.Player"
@@ -78,7 +86,7 @@ class PlayerModel:
     # -- state fed by the backend -------------------------------------------
     def apply_snapshot(self, snapshot: dict) -> None:
         self.snapshot = dict(snapshot or {})
-        self._stamp = self._clock()
+        self._stamp = self._anchor(self.snapshot.get("position_at"))
         if self.snapshot.get("version", -1) != self.queue_version \
                 and self.backend is not None:
             self.backend.fetch_queue()
@@ -92,6 +100,17 @@ class PlayerModel:
             self.snapshot["index"] = index
             self.snapshot["length"] = len(tracks)
         self._emit_queue()
+
+    def _anchor(self, measured_at) -> float:
+        """When the snapshot's position held: the service's own stamp
+        when it is on this clock (so delivery and a busy main loop cost
+        nothing), else now."""
+        now = self._clock()
+        try:
+            at = float(measured_at)
+        except (TypeError, ValueError):
+            return now
+        return at if 0.0 <= now - at <= STAMP_TRUST_S else now
 
     # -- reading -------------------------------------------------------------
     @property
@@ -128,12 +147,34 @@ class PlayerModel:
         return value
 
     @property
+    def advancing(self) -> bool:
+        """The position moves on by itself (older services: playing)."""
+        return self.playing and bool(self.snapshot.get("advancing", True))
+
+    @property
     def position_s(self) -> float:
-        base = float(self.snapshot.get("position_s") or 0.0)
-        if self.playing:
+        base = max(0.0, float(self.snapshot.get("position_s") or 0.0))
+        if self.advancing:
             base += max(0.0, self._clock() - self._stamp)
         duration = self.duration_s
         return min(base, duration) if duration > 0 else base
+
+    def until_next_step(self, steps: int = 0) -> float | None:
+        """Seconds until what is shown of the position next changes: the
+        elapsed time turning over to the next whole second, or the
+        position reaching the next of ``steps`` equal parts of the song
+        (a pixel of a bar that wide). None while it stands still or has
+        ended."""
+        if not self.advancing:
+            return None
+        position, duration = self.position_s, self.duration_s
+        if duration > 0 and position >= duration:
+            return None
+        wait = 1.0 - position % 1.0
+        if duration > 0 and steps > 0:
+            step = duration / steps
+            wait = min(wait, step - position % step)
+        return wait
 
     @property
     def fraction(self) -> float:

@@ -174,6 +174,16 @@ def later(ms: int, callback) -> int:
     return GLib.timeout_add(ms, lambda: (callback(), False)[1])
 
 
+def wake_for_position(player, steps: int, callback) -> int:
+    """One wake just after the playing position next shows a change (a
+    new second, or the next pixel of a bar ``steps`` wide), at most 30
+    times a second; no wake (0) while it stands still."""
+    wait = player.until_next_step(steps)
+    if wait is None:
+        return 0
+    return later(max(int(wait * 1000) + 15, 33), callback)
+
+
 def vbox(spacing: int = 0) -> Gtk.Box:
     return Gtk.Box.new(Gtk.Orientation.VERTICAL, spacing)
 

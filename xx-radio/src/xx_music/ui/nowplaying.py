@@ -33,7 +33,6 @@ from xx_ui import widgets
 
 SLEEP_MINUTES = (15, 30, 45, 60)
 COVER_LIMIT = 284
-TICK_MS = 500
 LYRICS_HOLD_S = 3.0
 PROBLEM_ACTIONS = {
     "helper-missing": ("setup-helper", "Set up"),
@@ -83,7 +82,7 @@ class Scrubber(Gtk.DrawingArea):
              Gtk.AccessibleProperty.VALUE_NOW,
              Gtk.AccessibleProperty.VALUE_TEXT],
             [0.0, float(max(duration, 1.0)), float(position),
-             fmt.clock(position)])
+             fmt.elapsed(position, duration)])
         self.queue_draw()
 
     def _at(self, x: float) -> float:
@@ -191,7 +190,6 @@ class NowPlaying:
         self._lyric_now = -1
         self._manual_until = 0.0
         self._tick = 0
-        self._tick_key = None
         self._gen = Generation()
         self.words = False
         self.queue = QueueView(ui)
@@ -554,23 +552,25 @@ class NowPlaying:
         self.set_view("art" if self.view == view else view)
 
     def shown(self) -> None:
-        if not self._tick:
-            self._tick = GLib.timeout_add(TICK_MS, self._on_tick)
         self.update()
 
-    def _on_tick(self) -> bool:
+    def _arm_tick(self) -> None:
+        """Wake when the clock or the bar next shows a change, so both
+        move with the audio; nothing to wake for while it stands still
+        (a snapshot re-arms)."""
+        if self._tick:
+            GLib.source_remove(self._tick)
+        self._tick = common.wake_for_position(
+            self.ui.player, self.scrubber.get_width(), self._on_tick)
+
+    def _on_tick(self) -> None:
+        self._tick = 0
         if not self.widget.get_mapped():
-            self._tick = 0
-            return False
-        player = self.ui.player
-        key = (round(player.position_s), player.sleep_remaining_s)
-        if player.playing and key != self._tick_key:
-            self._tick_key = key
-            self._times()
-            self._sleep_label()
-            if self.view == "lyrics":
-                self._follow_lyrics()
-        return True
+            return
+        self._times()
+        self._sleep_label()
+        if self.view == "lyrics":
+            self._follow_lyrics()
 
     # -- updating --------------------------------------------------------------------
     def update(self) -> None:
@@ -711,8 +711,9 @@ class NowPlaying:
                                     self.scrubber.duration) \
                 and not self.scrubber.dragging:
             self.scrubber.set_state(position, duration)
-        self.elapsed.set_text(fmt.clock(position))
+        self.elapsed.set_text(fmt.elapsed(position, duration))
         self.total.set_text(fmt.clock(duration))
+        self._arm_tick()
 
     def _minimal_transport(self) -> None:
         player = self.ui.player

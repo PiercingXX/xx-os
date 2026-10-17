@@ -9,7 +9,7 @@ import json
 import shutil
 
 import pytest
-from gi.repository import Gio, GLib
+from gi.repository import Gio, GLib, Gst
 
 from xx_music import engine as e
 from xx_music.appspec import AppSpec
@@ -316,8 +316,99 @@ def test_gapless_hands_next_uri_to_playbin(tmp_path):
     service.play(_tracks("tr-001", "tr-002"))
     next_uri = service._prefetched.get("tr-002")
     assert next_uri
-    service._on_about_to_finish()
     assert service.player._next_uri == next_uri
+
+
+IDS = ("tr-001", "tr-002", "tr-003", "tr-004")
+
+
+def test_gapless_start_moves_the_queue_on_once(tmp_path):
+    """The handed-over song starting by itself is the queue's current
+    song from 0; its end then plays the one after, not itself again."""
+    service, _, conn, _, _, _ = _attached(SPEC, tmp_path, IDS)
+    service.play(_tracks("tr-001", "tr-002", "tr-003"))
+    service._position_us = 41_000_000
+    service._on_gapless()
+    assert service.queue.current().id == "tr-002"
+    assert service._loaded_id == "tr-002"
+    assert service._position_us == 0
+    assert service.player._next_uri == service._prefetched["tr-003"]
+    assert [s for s in conn.signals if s[3] == "QueueChanged"]
+    service._on_eos()
+    assert service.queue.current().id == "tr-003"
+
+
+def test_queue_changes_hand_over_the_new_next_song(tmp_path):
+    service, _, _, _, proxy, _ = _attached(SPEC, tmp_path, IDS)
+    service.play(_tracks("tr-001", "tr-002"))
+    service.enqueue(_tracks("tr-004"), play_next=True)
+    assert service.player._next_uri == service._prefetched["tr-004"]
+    service.move(1, 2)
+    assert service.player._next_uri == service._prefetched["tr-002"]
+    service.set_repeat("one")
+    assert service.player._next_uri == service._prefetched["tr-001"]
+    service.set_repeat("none")
+    service.remove(1)
+    service.remove(1)
+    assert service.player._next_uri == ""
+    assert "tr-004" in proxy.resolve_calls
+
+
+class HeldExecutor:
+    """Resolving never finishes: the song stays unloaded."""
+
+    def __init__(self):
+        self.jobs = []
+
+    def submit(self, fn, *args):
+        self.jobs.append((fn, args))
+
+
+def test_snapshot_position_is_measured_stamped_and_still_while_loading(
+        tmp_path):
+    """A song still resolving is at 0 with its listed length and does not
+    move (the window must not run the bar ahead of silence)."""
+    service, _, _, _, _, clock = _attached(SPEC, tmp_path)
+    service._executor = HeldExecutor()
+    service.play([make_track("tr-001", duration_s=215.0)])
+    service._position_us = 87_000_000  # what the last song reached
+    snapshot = service.snapshot_dict()
+    assert snapshot["status"] == "Playing"
+    assert snapshot["position_s"] == 0.0
+    assert snapshot["duration_s"] == 215.0
+    assert snapshot["advancing"] is False
+    assert snapshot["position_at"] == clock()
+
+
+def test_seek_reports_the_target_until_it_lands(tmp_path):
+    service, _, conn, _, _, _ = _attached(SPEC, tmp_path)
+    service.play(_tracks("tr-001"))
+    service.player._playbin.get_state(10 * Gst.SECOND)
+    service.seek_us(300_000)
+    snapshot = service.snapshot_dict()
+    assert snapshot["position_s"] == pytest.approx(0.3)
+    assert snapshot["advancing"] is False
+    assert [s for s in conn.signals if s[1] == mpris_mod.MPRIS_PATH
+            and s[3] == "Seeked"]
+
+
+def test_timing_changes_reach_the_window_without_the_cooldown(tmp_path):
+    """A pipeline timing change goes out at once when the window's
+    extrapolation is off, and not at all when it still holds."""
+    service, _, conn, _, _, clock = _attached(SPEC, tmp_path)
+    service._executor = HeldExecutor()
+    service.play(_tracks("tr-001"))
+    assert service._changed_cooldown
+
+    def changed():
+        return len([s for s in conn.signals if s[3] == "Changed"])
+
+    before = changed()
+    service._on_timing()
+    assert changed() == before
+    service._told = (5.0, clock(), True, 0.6)
+    service._on_timing()
+    assert changed() == before + 1
 
 
 def test_sleep_fade_applies_to_playbin(tmp_path):

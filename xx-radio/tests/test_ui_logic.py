@@ -4,6 +4,8 @@ No display, no network."""
 
 from __future__ import annotations
 
+import pytest
+
 from xx_music.cache import CacheEntry, CacheIndex
 from xx_music.engine import (AlbumRef, ArtistRef, Item, ItemKind, Rating,
                              Shelf, Track)
@@ -192,6 +194,106 @@ def test_restored_queue_is_paused():
     assert model.track.id == "t2" and not model.playing
     assert model.position_s == 12.0
     assert PLAYING != model.status
+
+
+def _snap(**changes) -> dict:
+    snapshot = {"status": PLAYING, "track": _track(1, 215.0).to_dict(),
+                "position_s": 10.0, "position_at": 100.0,
+                "advancing": True, "duration_s": 0.0, "index": 0,
+                "length": 1, "version": 0}
+    snapshot.update(changes)
+    return snapshot
+
+
+def test_position_is_anchored_to_when_the_service_measured_it():
+    """Delivery time does not count: the Changed signal arriving 0.4 s
+    after the service measured 10 s means 10.4 s now."""
+    clock = Clock()
+    model = PlayerModel(clock=clock)
+    clock.now = 100.4
+    model.apply_snapshot(_snap())
+    assert model.position_s == pytest.approx(10.4)
+    clock.now += 1.0
+    assert model.position_s == pytest.approx(11.4)
+
+
+def test_position_stands_still_unless_advancing():
+    """Resolving, buffering or a seek landing: Playing, but not moving."""
+    clock = Clock()
+    model = PlayerModel(clock=clock)
+    model.apply_snapshot(_snap(advancing=False))
+    clock.now += 5.0
+    assert model.playing and model.position_s == 10.0
+    model.apply_snapshot(_snap(status=PAUSED, position_at=clock.now))
+    clock.now += 5.0
+    assert model.position_s == 10.0
+
+
+def test_foreign_or_missing_stamps_anchor_on_arrival():
+    clock = Clock()
+    model = PlayerModel(clock=clock)
+    for stamp in (40.0, 160.0, "x"):
+        model.apply_snapshot(_snap(position_at=stamp))
+        assert model.position_s == pytest.approx(10.0)
+    older = _snap()
+    del older["position_at"], older["advancing"]
+    model.apply_snapshot(older)
+    clock.now += 2.0
+    assert model.position_s == pytest.approx(12.0)
+
+
+def test_stream_duration_wins_and_bounds_the_position():
+    clock = Clock()
+    model = PlayerModel(clock=clock)
+    model.apply_snapshot(_snap())
+    assert model.duration_s == 215.0
+    model.apply_snapshot(_snap(duration_s=214.4, position_s=214.0))
+    assert model.duration_s == 214.4
+    clock.now += 3.0
+    assert model.position_s == 214.4
+    assert model.until_next_step(300) is None
+
+
+def test_seek_and_track_change_start_from_their_own_position():
+    clock = Clock()
+    model = PlayerModel(clock=clock)
+    model.apply_snapshot(_snap())
+    clock.now += 1.0
+    model.seek(42.0)
+    assert model.position_s == 42.0
+    model.apply_snapshot(_snap(position_s=42.0, position_at=clock.now,
+                               advancing=False))
+    clock.now += 0.2
+    assert model.position_s == 42.0
+    model.apply_snapshot(_snap(position_s=42.05, position_at=clock.now))
+    clock.now += 1.0
+    assert model.position_s == pytest.approx(43.05)
+    model.apply_snapshot(_snap(track=_track(2, 180.0).to_dict(),
+                               position_s=0.0, position_at=clock.now))
+    clock.now += 0.25
+    assert model.position_s == pytest.approx(0.25)
+    assert model.duration_s == 180.0
+
+
+def test_ticks_land_on_the_next_second_or_pixel():
+    """The clock turns over on whole seconds; a bar moves when the song
+    reaches its next pixel (215 s over 430 px: every half second)."""
+    clock = Clock()
+    model = PlayerModel(clock=clock)
+    model.apply_snapshot(_snap(position_s=10.25))
+    assert model.until_next_step() == pytest.approx(0.75)
+    assert model.until_next_step(430) == pytest.approx(0.25)
+    assert model.until_next_step(43) == pytest.approx(0.75)
+    model.apply_snapshot(_snap(advancing=False))
+    assert model.until_next_step(430) is None
+
+
+def test_elapsed_never_rounds_up():
+    assert fmt.elapsed(59.9) == "0:59"
+    assert fmt.clock(59.9) == "1:00"
+    assert fmt.elapsed(60.0) == "1:00"
+    assert fmt.elapsed(214.7, 214.7) == "3:35"
+    assert fmt.elapsed(None) == fmt.elapsed(-1.0) == "0:00"
 
 
 # -- art loader -------------------------------------------------------------------
