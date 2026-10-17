@@ -151,7 +151,10 @@ class ReviewsBlock:
     def _render(self) -> None:
         box = self.widget
         common.clear(box)
-        box.append(common.section("Ratings & reviews"))
+        heading = common.label("Ratings & reviews", "xx-ab-t16", chars=24)
+        heading.set_margin_top(16)
+        heading.set_margin_bottom(4)
+        box.append(heading)
         state = self.state
         if state is None:
             box.append(common.muted("Loading reviews…"))
@@ -161,10 +164,9 @@ class ReviewsBlock:
         if page is not None and page.average is not None and page.count > 0:
             box.append(self._summary(page.average, page.count))
         elif page is not None:
-            box.append(common.para("No ratings yet", "xx-secondary"))
+            box.append(common.para("No ratings yet", "xx-ab-b15 xx-ab-muted"))
         if ui.error:
-            error = common.para(ui.error, "xx-secondary")
-            error.add_css_class("xx-danger-text")
+            error = common.para(ui.error, "xx-ab-b11 xx-ab-error")
             error.set_margin_top(6)
             box.append(error)
         if ui.show_finished_prompt:
@@ -192,45 +194,43 @@ class ReviewsBlock:
             box.append(more)
         if page is not None and not others and ui.mine is None:
             line = common.para("No reviews yet. Be the first.",
-                               "xx-secondary")
-            line.set_margin_top(12)
+                               "xx-ab-b13 xx-ab-muted")
+            line.set_margin_top(8)
             box.append(line)
 
-    def _summary(self, average: float, count: int) -> Gtk.Box:
-        row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 14)
-        row.set_margin_top(2)
-        row.append(common.label(f"{average:.1f}", "xx-ab-figure xx-ab-num",
-                                chars=4))
-        side = Gtk.Box.new(Gtk.Orientation.VERTICAL, 4)
-        side.set_valign(Gtk.Align.CENTER)
-        side.append(common.stars(average, 14))
-        side.append(common.label(fmt.ratings_count(count), "xx-ab-meta",
-                                 chars=14))
-        row.append(side)
-        row.update_property([Gtk.AccessibleProperty.LABEL], [
-            f"Rated {average:.1f} of 5 from {fmt.ratings_count(count)}"])
-        return row
+    def _summary(self, average: float, count: int) -> Gtk.Label:
+        """'★ 4.4 (7)' at the headline size, read as one phrase."""
+        line = common.label(common.rating_line(average, count),
+                            "xx-ab-heading xx-ab-num", chars=14)
+        line.update_property([Gtk.AccessibleProperty.LABEL], [
+            common.rating_spoken(average, count)])
+        return line
 
     def _buttons(self, items: list, stacked: bool = False) -> Gtk.Box:
         """Side by side at 1x, stacked at large text sizes (or always)."""
         row = Gtk.Box.new(Gtk.Orientation.VERTICAL
                           if stacked or style.large_text()
-                          else Gtk.Orientation.HORIZONTAL, 10)
-        row.set_homogeneous(True)
-        row.set_margin_top(12)
+                          else Gtk.Orientation.HORIZONTAL, 8)
+        row.set_margin_top(8)
         for widget in items:
             row.append(widget)
         return row
 
+    def _panel(self, live: bool = False) -> Gtk.Box:
+        card = Gtk.Box.new(Gtk.Orientation.VERTICAL, 4)
+        card.add_css_class("xx-ab-panel")
+        if live:
+            card.add_css_class("live")
+        card.set_margin_top(8)
+        return card
+
     def _yours(self, ui) -> Gtk.Box:
         state = self.state
         mine = ui.mine
-        card = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        card.add_css_class("xx-ab-card")
-        card.set_margin_top(14)
-        card.append(common.caps(
+        card = self._panel()
+        card.append(common.label(
             "Edit your review" if ui.editing and mine is not None
-            else "Your review"))
+            else "Your review", "xx-ab-t14", chars=24))
         if ui.editing:
             if ui.not_started:
                 card.append(self._gate_text())
@@ -242,13 +242,9 @@ class ReviewsBlock:
                         lambda: self._work(state.mark_finished_and_save,
                                            self._on_finished)), 20)],
                     stacked=True))
-            picker = star_picker(ui.draft_stars, state.set_stars)
-            picker.set_margin_top(6)
-            card.append(picker)
-            head = common.caps("Comment (optional)")
-            head.set_margin_top(8)
-            head.set_margin_bottom(6)
-            card.append(head)
+            card.append(star_picker(ui.draft_stars, state.set_stars))
+            card.append(common.label("Comment (optional)", "xx-ab-field",
+                                     chars=24))
             parent = self.text_box.get_parent()
             if parent is not None:
                 parent.remove(self.text_box)
@@ -258,69 +254,56 @@ class ReviewsBlock:
                 "Save changes" if mine is not None else "Post review",
                 self._save)
             post.set_sensitive(not ui.saving and 1 <= ui.draft_stars <= 5)
-            cancel = widgets.outline_button("Cancel", state.cancel_editing)
+            cancel = widgets.text_button("Cancel", state.cancel_editing)
             card.append(self._buttons([common.fit(post, 14),
-                                       common.fit(cancel, 14)]))
+                                       common.fit(cancel, 8)]))
         elif mine is not None:
-            row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 10)
-            row.set_margin_top(8)
+            row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
+            row.set_margin_top(4)
             row.append(common.badge("You"))
-            row.append(common.stars(mine.stars, 14))
+            row.append(common.stars(mine.stars))
             row.append(common.label("Saving…" if ui.saving
-                                    else when_text(mine), "xx-ab-meta",
-                                    chars=12))
+                                    else when_text(mine),
+                                    "xx-ab-l10 xx-ab-muted", chars=12))
             card.append(row)
             for text in fmt.description_paragraphs(mine.body):
-                para = common.para(text, "xx-body")
-                para.set_margin_top(8)
-                card.append(para)
-            edit = widgets.outline_button("Edit review",
+                card.append(common.para(text, "xx-ab-b13"))
+            edit = widgets.outline_button("Edit your review",
                                           self._start_editing)
-            common.name(edit, "Edit your review")
-            delete = widgets.outline_button("Delete", self.ask_delete_mine)
-            delete.get_child().add_css_class("xx-danger-text")
+            delete = widgets.text_button("Delete", self.ask_delete_mine)
             card.append(self._buttons([common.fit(edit, 16),
-                                       common.fit(delete, 10)]))
+                                       common.fit(delete, 8)]))
         elif ui.gated:
             card.append(self._gate_text())
             if ui.draft_stars > 0 or ui.draft_body.strip():
-                card.append(common.para("Your draft is kept.", "xx-ab-meta"))
+                card.append(common.para("Your draft is kept.",
+                                        "xx-ab-b11 xx-ab-muted"))
             card.append(self._buttons([
                 common.fit(widgets.primary_button(
-                    "Start listening", self._start), 20),
+                    "Start listening", self._start), 16),
                 common.fit(widgets.outline_button(
                     "Mark finished",
                     lambda: self._work(state.mark_finished_and_edit,
-                                       self._on_finished)), 20)],
-                stacked=True))
+                                       self._on_finished)), 16)]))
         else:
-            hint = common.para("Tap a star to rate it.", "xx-secondary")
-            hint.set_margin_top(6)
-            card.append(hint)
-            picker = star_picker(ui.draft_stars, self._start_with_stars)
-            picker.set_margin_top(4)
-            card.append(picker)
-            write = widgets.outline_button("Write review",
+            card.append(common.para("Tap a star to rate it.",
+                                    "xx-ab-b13 xx-ab-muted"))
+            card.append(star_picker(ui.draft_stars, self._start_with_stars))
+            write = widgets.outline_button("Write a review",
                                            self._start_editing)
-            common.name(write, "Write a review")
             common.fit(write, 18)
-            write.set_margin_top(8)
+            write.set_halign(Gtk.Align.START)
             card.append(write)
         return card
 
     def _gate_text(self) -> Gtk.Label:
-        line = common.para(GATE_LINE, "xx-body")
-        line.set_margin_top(8)
-        return line
+        return common.para(GATE_LINE, "xx-ab-b13")
 
     def _finished_prompt(self, ui) -> Gtk.Box:
         state = self.state
-        card = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        card.add_css_class("xx-ab-card")
-        card.add_css_class("live")
-        card.set_margin_top(14)
+        card = self._panel(live=True)
         head = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-        title = common.label("Finished. Rate it?", "xx-title", chars=20)
+        title = common.label("Finished. Rate it?", "xx-ab-t16", chars=20)
         title.set_hexpand(True)
         head.append(title)
         head.append(common.icon_button("window-close-symbolic", "Not now",
@@ -334,29 +317,31 @@ class ReviewsBlock:
                 lambda: state.post_from_prompt(
                     state.ui().draft_stars, self._draft())))
         post.set_sensitive(1 <= ui.draft_stars <= 5 and not ui.saving)
-        card.append(self._buttons([common.fit(post, 14)]))
+        common.fit(post, 14)
+        post.set_halign(Gtk.Align.START)
+        card.append(self._buttons([post]))
         return card
 
     def _review(self, review, admin: bool, last: bool) -> Gtk.Box:
         row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
         row.add_css_class("xx-ab-review")
-        if last:
-            row.add_css_class("last")
-        text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 6)
+        text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 4)
         text.set_hexpand(True)
-        head = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 10)
+        head = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
         name = review.user.display_name or "Someone"
-        who = common.label(name, "xx-title", chars=16)
-        who.set_hexpand(True)
-        head.append(who)
-        head.append(common.label(when_text(review), "xx-ab-meta",
-                                 xalign=1.0, chars=10))
-        text.append(head)
-        stars = common.stars(review.stars, 12)
-        stars.set_halign(Gtk.Align.START)
-        text.append(stars)
+        head.append(common.label(name, "xx-ab-l13", chars=14))
+        head.append(common.stars(review.stars))
+        when = common.label(when_text(review), "xx-ab-l10 xx-ab-muted",
+                            chars=14)
+        when.set_ellipsize(0)  # the name gives way, never the date
+        if style.large_text():
+            text.append(head)
+            text.append(when)
+        else:
+            head.append(when)
+            text.append(head)
         for paragraph in fmt.description_paragraphs(review.body):
-            text.append(common.para(paragraph, "xx-secondary"))
+            text.append(common.para(paragraph, "xx-ab-b13"))
         row.append(text)
         if admin:
             delete = common.icon_button(

@@ -59,24 +59,16 @@ class LibraryPage:
         self._search_id = 0
         self._loading_more = False
 
-        top = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-        top.add_css_class("xx-page-body")
-        top.add_css_class("xx-page-top")
-        title = widgets.label("Library", "xx-display")
-        title.add_css_class("xx-display-face")
-        title.set_hexpand(True)
-        top.append(title)
-        top.append(common.icon_button("folder-music-symbolic", "Collections",
-                                      open_collections))
-        self.view_button = common.icon_button(
-            "view-grid-symbolic", "Show as grid", self.toggle_grid)
-        top.append(self.view_button)
+        top = common.page_top("Library", [
+            ("user-bookmarks-symbolic", "Collections", open_collections),
+            ("view-grid-symbolic", "Show as grid", self.toggle_grid)])
+        self.view_button = top.get_last_child()
 
-        search = widgets.search_bar("Title, author, series",
-                                    on_changed=self._typed)
+        search = widgets.search_bar("Search", on_changed=self._typed)
         self.entry = deferred(search.get_last_child())
         self.entry.update_property([Gtk.AccessibleProperty.LABEL],
-                                   ["Search the library"])
+                                   ["Search title, author, narrator, series"])
+        search.set_margin_bottom(4)
         self.sort_row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
         self.show_row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
         header = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
@@ -110,17 +102,19 @@ class LibraryPage:
 
     def _chip_row(self, row: Gtk.Box, caption: str, items: list) -> None:
         common.clear(row)
-        row.add_css_class("xx-page-body")
         row.add_css_class("xx-ab-chiprow")
-        head = common.caps(caption)
-        head.set_size_request(44, -1)
+        head = common.label(caption, "xx-ab-l12 xx-ab-muted", chars=5)
+        head.set_ellipsize(0)
+        head.set_margin_start(16)
+        head.set_margin_end(4)
         row.append(head)
-        bar = widgets.chip_bar(items, spacing=6)
-        bar.set_hexpand(True)
-        row.append(bar)
+        strip = common.chip_strip(items)
+        strip.set_hexpand(True)
+        strip.get_child().set_margin_end(16)
+        row.append(strip)
 
     def _chips(self) -> None:
-        arrow = " ↓" if self.descending else " ↑"
+        arrow = " ↓" if self.descending else " ↑"  # the trailing icon
         self._chip_row(self.sort_row, "Sort", [
             (text + (arrow if sort == self.sort else ""), sort == self.sort,
              lambda s=sort: self.set_sort(s)) for text, sort in SORTS])
@@ -279,30 +273,31 @@ class LibraryPage:
                     self.ctx, item, self._open_book,
                     last=index == len(rows) - 1))
         if rows and self.has_more_rows():
-            more = common.fit(widgets.outline_button(
+            more = common.fit(widgets.text_button(
                 "More books", self.load_more), 16)
-            more.set_margin_top(16)
+            more.set_halign(Gtk.Align.START)
+            more.set_margin_top(8)
             body.append(more)
 
     def _shelf(self, body: Gtk.Box, shelf) -> None:
+        """ShelfHeader (a 48 px toggle) and its sideways row of tiles."""
         open_now = shelf.id not in self.folded
         head = Gtk.Button()
         head.add_css_class("xx-ab-shelf-head")
         row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
-        text = common.caps(shelf.label)
+        text = common.label(shelf.label, "xx-ab-t14 xx-ab-muted", chars=26)
         text.set_hexpand(True)
         row.append(text)
         row.append(widgets.icon_image(
-            "pan-up-symbolic" if open_now else "pan-down-symbolic", 16))
+            "pan-up-symbolic" if open_now else "pan-down-symbolic", 24))
         head.set_child(row)
-        head.set_margin_top(8)
         common.name(head, f"{shelf.label}, {'shown' if open_now else 'folded'}")
         head.connect("clicked", lambda _b: self._fold(shelf.id))
         body.append(head)
         if not open_now:
             return
         strip = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
-        px = 116 if shelf.id == "continue" else 96
+        px = 120 if shelf.id == "continue" else 96
         for item in shelf.items:
             strip.append(common.book_tile(self.ctx, item, self._open_book,
                                           px=px))
@@ -322,8 +317,8 @@ class LibraryPage:
         flow.set_homogeneous(True)
         flow.set_min_children_per_line(2)
         flow.set_max_children_per_line(2)
-        flow.set_column_spacing(14)
-        flow.set_row_spacing(20)
+        flow.set_column_spacing(16)
+        flow.set_row_spacing(16)
         flow.set_margin_top(8)
         for item in rows:
             flow.append(common.book_tile(self.ctx, item, self._open_book))

@@ -6,8 +6,10 @@ views, collections, covers, stats, reviews and zones answer in-process)
 and a signed-in admin session from an in-memory credential store (a
 dummy token, no password, the hub probe answers nothing); no player
 service, so commands apply locally. SNAP_SCENARIO=empty: a fresh HOME,
-signed out (the Sign in screen). Neither touches libsecret, the hub
-probe, NetworkManager or a socket.
+signed in but with nothing cached and no server to ask (the empty and
+offline lines). SNAP_SCENARIO=signedout: a fresh HOME with nothing
+stored (the sign-in-first gate lands on Sign in). None of them touches
+libsecret, the hub probe, NetworkManager or a socket.
 """
 
 from __future__ import annotations
@@ -42,9 +44,10 @@ def session_store(signed_in: bool) -> auth_module.SessionStore:
 
 
 def make_context() -> AppContext:
-    if os.environ.get("SNAP_SCENARIO", "seeded") == "empty":
+    scenario = os.environ.get("SNAP_SCENARIO", "seeded")
+    if scenario in ("empty", "signedout"):
         return AppContext(api_module.AudiobookApi(),
-                          session=session_store(False))
+                          session=session_store(scenario == "empty"))
     return AppContext(demo_seed.DemoApi(), session=session_store(True))
 
 

@@ -41,60 +41,77 @@ def days_label(count: int) -> str:
 
 
 class DayBars(Gtk.DrawingArea):
-    """30 thin bars on a baseline hairline; the best day's level is a
-    faint hairline with its value; today is the last bar."""
+    """DayBars: thirty thin columns on a hairline baseline, foreground
+    fill, today on the right."""
 
     __gtype_name__ = "XXAudiobookDayBars"
 
     def __init__(self, series: list) -> None:
         super().__init__()
         self.series = series
-        self.set_content_height(round(116 * max(style.scale, 1.0)))
+        self.set_content_height(round(64 * max(style.scale, 1.0)))
         self.set_hexpand(True)
         self.add_css_class("xx-ab-chart")
         self.set_draw_func(self._draw)
         total = sum(v for _d, v in series)
-        best = max((v for _d, v in series), default=0.0)
+        listened = sum(1 for _d, v in series if v > 0)
         self.update_property([Gtk.AccessibleProperty.LABEL], [
-            f"Last 30 days: {stats_module.format_listened(total)} in all, "
-            f"best day {stats_module.format_listened(best)}"])
+            f"Last 30 days: listened on {listened}, "
+            f"{stats_module.format_listened(total)} in all"])
 
     def _draw(self, widget, cr, width, height) -> None:
         color = widget.get_color()
         rgb = (color.red, color.green, color.blue)
         values = [v for _d, v in self.series]
         count = max(len(values), 1)
-        top_pad = 18
-        chart_h = height - top_pad - 2
-        gap = 3
+        gap = 2
         bar_w = max((width - gap * (count - 1)) / count, 1.0)
-        heights = bar_heights(values, chart_h)
-        best = max(values) if values else 0.0
-        # Baseline.
-        cr.set_source_rgba(*rgb, 0.28)
+        heights = bar_heights(values, height - 1)
+        cr.set_source_rgba(*rgb, 1.0)
+        for index, bar in enumerate(heights):
+            if bar > 0:
+                cr.rectangle(index * (bar_w + gap), height - 1 - bar,
+                             bar_w, bar)
+        cr.fill()
+        cr.set_source_rgba(*rgb, 0.1)
         cr.rectangle(0, height - 1, width, 1)
         cr.fill()
-        if best > 0:
-            # The best day's level: a faint hairline and its value.
-            cr.set_source_rgba(*rgb, 0.16)
-            cr.rectangle(0, top_pad, width, 1)
-            cr.fill()
-            layout = widget.create_pango_layout(fmt.short_hours(best))
-            cr.set_source_rgba(*rgb, 0.6)
-            cr.move_to(0, 0)
-            from gi.repository import PangoCairo
 
-            PangoCairo.show_layout(cr, layout)
-        for index, bar in enumerate(heights):
-            x = index * (bar_w + gap)
-            if bar <= 0:
-                cr.set_source_rgba(*rgb, 0.22)
-                cr.rectangle(x, height - 3, bar_w, 2)
-            else:
-                last = index == len(heights) - 1
-                cr.set_source_rgba(*rgb, 1.0 if last else 0.78)
-                cr.rectangle(x, height - 1 - bar, bar_w, bar)
-            cr.fill()
+
+class MonthBars(Gtk.DrawingArea):
+    """MonthBars: twelve columns on a hairline, scaled to the busiest
+    month (the initials sit in a row of labels below)."""
+
+    __gtype_name__ = "XXAudiobookMonthBars"
+
+    def __init__(self, totals: list) -> None:
+        super().__init__()
+        self.totals = totals
+        self.set_content_height(round(96 * max(style.scale, 1.0)))
+        self.set_hexpand(True)
+        self.add_css_class("xx-ab-chart")
+        self.set_draw_func(self._draw)
+        self.update_property([Gtk.AccessibleProperty.LABEL], [
+            "By month: " + ", ".join(
+                f"{MONTHS[i]} {stats_module.format_listened(s)}"
+                for i, s in enumerate(totals) if s > 0)])
+
+    def _draw(self, widget, cr, width, height) -> None:
+        color = widget.get_color()
+        rgb = (color.red, color.green, color.blue)
+        best = max(self.totals) if self.totals else 0.0
+        gap = 4
+        col = (width - gap * 11) / 12
+        cr.set_source_rgba(*rgb, 1.0)
+        for index, seconds in enumerate(self.totals):
+            if best > 0 and seconds > 0:
+                bar = max((height - 1) * seconds / best, 2.0)
+                cr.rectangle(index * (col + gap), height - 1 - bar, col, bar)
+        cr.fill()
+        cr.set_source_rgba(*rgb, 0.1)
+        for index in range(12):
+            cr.rectangle(index * (col + gap), height - 1, col, 1)
+        cr.fill()
 
 
 class StatsPage:
@@ -105,7 +122,7 @@ class StatsPage:
         self.state = stats_module.StatsState(ctx.api)
         self.today = date.today()
         self.body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        self.body.set_margin_bottom(28)
+        self.body.set_margin_bottom(24)
         header = common.header(nav.back, "Listening stats")
         self.widget = widgets.page(header, self.body)
         self._render()
@@ -147,152 +164,119 @@ class StatsPage:
         self._sessions(body)
 
     def _switcher(self, view) -> Gtk.Box:
+        """YearSwitcher: '‹ 2025' · 2026 · '2027 ›'."""
         row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
         row.set_margin_top(4)
-        back = common.icon_button(
-            "go-previous-symbolic", f"Year {view.year - 1}",
-            lambda: self.select(view.year - 1))
+        back = widgets.text_button(f"‹ {view.year - 1}",
+                                   lambda: self.select(view.year - 1))
+        common.fit(back, 6)
+        common.name(back, "Previous year")
         back.set_sensitive(view.can_go_back)
-        forward = common.icon_button(
-            "go-next-symbolic", f"Year {view.year + 1}",
-            lambda: self.select(view.year + 1))
+        forward = widgets.text_button(f"{view.year + 1} ›",
+                                      lambda: self.select(view.year + 1))
+        common.fit(forward, 6)
+        common.name(forward, "Next year")
         forward.set_sensitive(view.can_go_forward)
-        middle = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+        middle = common.label(str(view.year), "xx-ab-year xx-ab-num",
+                              xalign=0.5, chars=6)
         middle.set_hexpand(True)
-        middle.set_valign(Gtk.Align.CENTER)
-        caption = common.caps("Year")
-        caption.set_xalign(0.5)
-        middle.append(caption)
-        middle.append(common.label(str(view.year), "xx-ab-heading xx-ab-num",
-                                   xalign=0.5, chars=6))
+        middle.update_property([Gtk.AccessibleProperty.LABEL],
+                               [f"Year {view.year}"])
         row.append(back)
         row.append(middle)
         row.append(forward)
         return row
 
     def _figures(self, body: Gtk.Box, stats) -> None:
-        hero = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
-        hero.set_margin_top(20)
-        hero.append(common.caps("Time listened"))
-        listened = stats_module.format_listened(stats.total_listened_s)
-        hero.append(common.label(listened, "xx-ab-hero xx-ab-num", lines=2,
-                                 chars=14))
-        sessions = (f"{stats.sessions} sessions  ·  "
-                    f"{fmt.books_count(stats.items_played)} played")
-        hero.append(common.label(sessions, "xx-ab-meta xx-ab-num", lines=2,
-                                 chars=34))
-        hero.update_property([Gtk.AccessibleProperty.LABEL],
-                             [f"Time listened: {listened}. {sessions}"])
-        body.append(hero)
-        tiles = (("Books finished", str(stats.items_finished)),
-                 ("Days listened", str(stats.days_listened)),
-                 ("Current streak", days_label(stats.streak.current_days)),
-                 ("Longest streak", days_label(stats.streak.longest_days)))
-        grid = Gtk.Grid()
-        grid.set_column_homogeneous(True)
-        grid.set_column_spacing(16)
-        grid.set_margin_top(16)
-        per_row = 1 if style.large_text() else 2
-        for index, (caption, value) in enumerate(tiles):
-            cell = common.figure(value, caption)
-            cell.add_css_class("xx-ab-cell-box")
-            grid.attach(cell, index % per_row, index // per_row, 1, 1)
-        body.append(grid)
+        """Tiles: Listened / Finished / Days, then Streak / Longest."""
+        rows = [(("Listened",
+                  stats_module.format_listened(stats.total_listened_s)),
+                 ("Finished", str(stats.items_finished)),
+                 ("Days", str(stats.days_listened)))]
+        if stats.streak.longest_days > 0:
+            rows.append((("Streak", days_label(stats.streak.current_days)),
+                         ("Longest", days_label(stats.streak.longest_days))))
+        for index, tiles in enumerate(rows):
+            grid = Gtk.Box.new(Gtk.Orientation.VERTICAL if style.large_text()
+                               else Gtk.Orientation.HORIZONTAL, 8)
+            grid.set_homogeneous(True)
+            grid.set_margin_top(8 if index == 0 else 8)
+            for caption, value in tiles:
+                grid.append(common.figure(value, caption))
+            body.append(grid)
 
     def _days(self, body: Gtk.Box, stats) -> None:
         series = stats_module.last_days(stats.by_day, self.today)
         body.append(common.section("Last 30 days"))
         body.append(DayBars(series))
         axis = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-        axis.set_margin_top(6)
         first = date.fromisoformat(series[0][0])
         start = common.label(f"{first.strftime('%b')} {first.day}",
-                             "xx-ab-meta", chars=8)
+                             "xx-ab-l10 xx-ab-muted", chars=8)
         start.set_hexpand(True)
         axis.append(start)
-        axis.append(common.label("Today", "xx-ab-meta", xalign=1.0, chars=8))
+        today = common.label("Today", "xx-ab-l10 xx-ab-muted",
+                             xalign=1.0, chars=8)
+        today.set_ellipsize(0)  # short; never misfire an ellipsis
+        axis.append(today)
         body.append(axis)
 
     def _months(self, body: Gtk.Box, stats) -> None:
         totals = stats_module.monthly_totals(stats.by_month)
-        best = max(totals) if totals else 0.0
         body.append(common.section("By month"))
-        last_month = (self.today.month
-                      if stats.year == self.today.year else 12)
-        for index, seconds in enumerate(totals[:last_month]):
-            row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
-            row.set_margin_top(5)
-            row.set_margin_bottom(5)
-            name = common.label(MONTHS[index].upper(), "xx-ab-label",
-                                chars=4)
-            name.set_size_request(36, -1)
-            row.append(name)
-            spoken = (f"{MONTHS[index]}: "
-                      f"{stats_module.format_listened(seconds)}")
-            line = common.bar(stats_module.top_fraction(seconds, best),
-                              spoken)
-            line.set_valign(Gtk.Align.CENTER)
-            row.append(line)
-            value = common.label(fmt.short_hours(seconds),
-                                 "xx-ab-meta xx-ab-num", xalign=1.0, chars=5)
-            value.set_size_request(44, -1)
-            row.append(value)
-            body.append(row)
+        body.append(MonthBars(totals))
+        names = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 4)
+        names.set_homogeneous(True)
+        for month in MONTHS:
+            names.append(common.label(month[0], "xx-ab-l10 xx-ab-muted",
+                                      xalign=0.5, chars=1))
+        body.append(names)
 
     def _tops(self, body: Gtk.Box, stats) -> None:
-        if stats.top_items:
-            body.append(common.section("Top books"))
+        body.append(common.section("Top books"))
+        if not stats.top_items:
+            body.append(common.muted(f"Nothing played in {stats.year}."))
+        else:
             best = stats.top_items[0].listened_s
             for index, top in enumerate(stats.top_items[:5]):
                 body.append(self._top_row(
-                    top.title, top.listened_s, best,
-                    common.cover(self.ctx, top.item_id, top.title, 44,
-                                 bool(top.thumb_url)),
-                    lambda t=top: self.nav.open_book(t.item_id),
-                    index == min(len(stats.top_items), 5) - 1))
+                    f"{index + 1}.", top.title or "Untitled", top.listened_s,
+                    best, lambda t=top: self.nav.open_book(t.item_id)))
         if stats.top_authors:
             body.append(common.section("Top authors"))
             best = stats.top_authors[0].listened_s
-            for index, top in enumerate(stats.top_authors[:5]):
+            for top in stats.top_authors[:5]:
                 body.append(self._top_row(
-                    top.name, top.listened_s, best, None,
+                    "", top.name or "Unknown", top.listened_s, best,
                     lambda t=top: self.nav.browse(
-                        browse_module.AUTHOR, t.name, t.id or None),
-                    index == min(len(stats.top_authors), 5) - 1))
+                        browse_module.AUTHOR, t.name, t.id or None)))
 
-    def _top_row(self, title: str, seconds: float, best: float, art,
-                 on_open, last: bool) -> Gtk.Button:
-        box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 14)
-        if art is not None:
-            art.set_valign(Gtk.Align.CENTER)
-            box.append(art)
-        text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 6)
-        text.set_hexpand(True)
-        text.set_valign(Gtk.Align.CENTER)
+    def _top_row(self, rank: str, title: str, seconds: float, best: float,
+                 on_open) -> Gtk.Button:
+        text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 4)
+        text.set_margin_top(8)
+        text.set_margin_bottom(8)
         head = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
-        name = common.label(title, "xx-body", chars=18)
+        if rank:
+            head.append(common.label(rank, "xx-ab-l12 xx-ab-muted", chars=3))
+        name = common.label(title, "xx-ab-t14", chars=20)
         name.set_hexpand(True)
         head.append(name)
         listened = stats_module.format_listened(seconds)
-        short = common.label(fmt.short_hours(seconds), "xx-ab-meta xx-ab-num",
-                             xalign=1.0, chars=7)
+        short = common.label(listened, "xx-ab-l12 xx-ab-num", xalign=1.0,
+                             chars=12)
         short.set_ellipsize(0)  # short; never misfire an ellipsis
         head.append(short)
         text.append(head)
         text.append(common.bar(stats_module.top_fraction(seconds, best),
                                f"{title}: {listened}"))
-        box.append(text)
-        return common.tap_row(box, f"{title}, {listened}", on_open, last)
+        return common.flat(text, f"{title}, {listened}", on_open)
 
     def _sessions(self, body: Gtk.Box) -> None:
         history = self.state.history()
-        body.append(common.section(
-            f"Recent sessions · {history.total}" if history.total
-            else "Recent sessions"))
+        body.append(common.section("Recent sessions"))
         if history.error:
-            line = common.muted(history.error)
-            line.add_css_class("xx-danger-text")
-            body.append(line)
+            body.append(common.muted(history.error))
         if not history.sessions:
             body.append(common.muted(
                 "Loading…" if history.loading and not history.error
@@ -302,34 +286,30 @@ class StatsPage:
             body.append(self._session_row(
                 session, index == len(history.sessions) - 1))
         if history.can_load_more or history.loading:
-            more = widgets.outline_button(
-                "Loading…" if history.loading else "Load more",
-                self.load_more)
+            more = widgets.text_button(
+                "Loading…" if history.loading else
+                f"More sessions ({len(history.sessions)} of "
+                f"{history.total})", self.load_more)
             more.set_sensitive(not history.loading)
-            common.fit(more, 16)
-            more.set_margin_top(12)
+            common.fit(more, 26)
+            more.set_halign(Gtk.Align.START)
             body.append(more)
 
     def _session_row(self, session, last: bool) -> Gtk.Box:
         row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
         row.add_css_class("xx-ab-session")
-        if last:
-            row.add_css_class("last")
-        text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 3)
+        text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.CENTER)
-        text.append(common.label(session.title or "Untitled", "xx-body",
-                                 lines=2, chars=22))
+        text.append(common.label(session.title or "Untitled", "xx-ab-t14",
+                                 chars=24))
         when = " ".join(p for p in (fmt.day_text(session.started_at),
                                     fmt.clock_text(session.started_at)) if p)
-        meta = "  ·  ".join(p for p in (
-            when, stats_module.format_listened(session.listened_s)) if p)
-        text.append(common.label(meta, "xx-ab-meta xx-ab-num", chars=30))
-        span = (f"{fmt.format_ms(int(session.start_position_s * 1000))} → "
-                f"{fmt.format_ms(int(session.position_s * 1000))}")
-        if session.device:
-            span += f"  ·  {session.device}"
-        text.append(common.label(span, "xx-tiny xx-ab-num", chars=34))
+        meta = " · ".join(p for p in (
+            when, stats_module.format_listened(session.listened_s),
+            (session.device or "").strip()) if p)
+        text.append(common.label(meta, "xx-ab-l12 xx-ab-muted xx-ab-num",
+                                 lines=2, chars=34))
         row.append(text)
         delete = common.icon_button(
             "user-trash-symbolic",

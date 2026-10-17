@@ -1,4 +1,4 @@
-"""XX-Audiobook entry point: Adw.Application with the five-tab shell.
+"""xx-audiobook entry point: Adw.Application with the five-tab shell.
 
 The window (ui/shell.py) builds the five tabs (Library, Playing,
 Downloads, Zones, Setup) and the pushed views on the shared xx_ui design

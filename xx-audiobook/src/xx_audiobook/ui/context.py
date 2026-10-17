@@ -29,7 +29,7 @@ from xx_audiobook import timeline as timeline_module
 from xx_audiobook import zones as zones_module
 from xx_audiobook.applog import get_logger
 
-NOT_SIGNED_IN_LINE = "Not signed in. Sign in from Setup."
+NOT_SIGNED_IN_LINE = "Not connected to the estate server."
 OFFLINE_LINE = "Offline. Showing books on this phone."
 NO_PLAYER_LINE = "The player isn't running."
 NO_SIGN_IN_LINE = "Sign-in isn't available in this build."
@@ -67,6 +67,7 @@ class AppContext:
         self.downloads = None
         self.signed_in = False
         self.started = False
+        self.auth_resolved = False
         self.access_denied = False
         self.me = None
         self.downloaded: set = set()
@@ -166,10 +167,15 @@ class AppContext:
     def _opened(self, restored, error) -> None:
         if error is not None:
             get_logger().warning("startup failed: %s", type(error).__name__)
+            # The gate leaves Checking for Sign in rather than hang.
+            self.auth_resolved = True
+            self.emit("auth-resolved")
             return
         self.player.start(restored)
         self.started = True
+        self.auth_resolved = True
         self.emit("ready")
+        self.emit("auth-resolved")
         if self.signed_in:
             self._after_sign_in()
         if self._probe_network:

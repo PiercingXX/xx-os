@@ -1,9 +1,11 @@
-"""Pushed views (M3): Series / Author / Narrator and Collections /
-Collection (ui/browse/BrowseScreen.kt, ui/collections/).
+"""Pushed views: Series / Author / Narrator and Collections / Collection
+(ui/browse/BrowseScreen.kt, ui/collections/CollectionsScreen.kt).
 
-Series, author and narrator answer from the server by id and fall back
-to the cache by name; the cached answer paints first. Collections keep
-the server's list order. Rows open the Book; a series row opens Series.
+Each opens under a TopBar carrying its name, then one muted kind line
+("Series · 3 books"), uppercase list labels and LibraryRows. Series,
+author and narrator answer from the server by id and fall back to the
+cache by name; the cached answer paints first. Collections keep the
+server's list order. Rows open the Book; a series row opens Series.
 """
 
 from __future__ import annotations
@@ -17,12 +19,11 @@ from xx_audiobook.ui.context import error_line
 from xx_ui import widgets
 
 
-def _title_block(kind_text: str, title: str) -> Gtk.Box:
-    box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 4)
-    box.set_margin_top(4)
-    box.append(common.caps(kind_text))
-    box.append(common.label(title, "xx-ab-heading", lines=3, chars=20))
-    return box
+def _kind_line(text: str) -> Gtk.Label:
+    line = common.label(text, "xx-ab-l12 xx-ab-muted", chars=36)
+    line.set_margin_top(8)
+    line.set_margin_bottom(4)
+    return line
 
 
 class BrowsePage:
@@ -34,8 +35,7 @@ class BrowsePage:
         self.nav = nav
         self.body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
         self.body.set_margin_bottom(24)
-        header = common.header(
-            nav.back, browse_module.KIND_TITLES[kind])
+        header = common.header(nav.back, name)
         self.widget = widgets.page(header, self.body)
         self.loading = True
         self._render(browse_module.BrowseResult())
@@ -53,21 +53,10 @@ class BrowsePage:
     def _render(self, result) -> None:
         body = self.body
         common.clear(body)
-        body.append(_title_block(
-            browse_module.KIND_TITLES[self.kind], self.name))
         books = result.books
-        if books:
-            in_progress = sum(1 for b in books
-                              if 0 < b.item.fraction < 1)
-            finished = sum(1 for b in books if b.item.is_finished)
-            facts = [fmt.books_count(len(books))]
-            if in_progress:
-                facts.append(f"{in_progress} in progress")
-            if finished:
-                facts.append(f"{finished} finished")
-            meta = common.label("  ·  ".join(facts), "xx-ab-meta", chars=36)
-            meta.set_margin_top(6)
-            body.append(meta)
+        kind = browse_module.KIND_TITLES[self.kind]
+        body.append(_kind_line(
+            kind + (f" · {fmt.books_count(len(books))}" if books else "")))
         line = error_line(result.error) if result.error else None
         if line and result.error is not None:
             body.append(common.muted(line))
@@ -75,19 +64,18 @@ class BrowsePage:
             body.append(common.muted(
                 f"No books on this phone for {self.name} yet."))
         if result.series:
-            body.append(common.section("Series"))
-            for index, series in enumerate(result.series):
-                body.append(widgets.list_row(
-                    series.name, fmt.books_count(series.book_count),
-                    trailing=widgets.chevron(),
-                    on_activate=lambda s=series: self.nav.browse(
-                        browse_module.SERIES, s.name, s.id),
-                    last=index == len(result.series) - 1))
-            body.append(common.section("Books"))
-        elif books:
-            spacer = Gtk.Box()
-            spacer.set_size_request(-1, 12)
-            body.append(spacer)
+            body.append(common.caps_section("Series"))
+            for series in result.series:
+                text = (f"{series.name} · "
+                        f"{fmt.books_count(series.book_count)}")
+                link = common.label(text, "xx-ab-t14 xx-ab-link", lines=2,
+                                    chars=30)
+                row = common.tap_row(
+                    link, f"Open series {text}",
+                    lambda s=series: self.nav.browse(
+                        browse_module.SERIES, s.name, s.id))
+                body.append(row)
+            body.append(common.caps_section("Books"))
         for index, book in enumerate(books):
             if self.kind == browse_module.SERIES:
                 prefix = f"#{book.sequence}" if book.sequence else None
@@ -99,18 +87,10 @@ class BrowsePage:
 
 
 def _mosaic(ctx, row: browse_module.ListRow) -> Gtk.Widget:
-    """A 56 px tile: the list's first covers 2x2, or its initials."""
-    grid = Gtk.Grid()
-    grid.set_row_spacing(2)
-    grid.set_column_spacing(2)
-    ids = [_item_of(url) for url in row.thumb_urls[:4]]
-    ids = [i for i in ids if i]
-    if len(ids) < 4:
-        return common.cover(ctx, "", row.name, 56, False)
-    for index, item_id in enumerate(ids):
-        grid.attach(common.cover(ctx, item_id, "", 27, True),
-                    index % 2, index // 2, 1, 1)
-    return grid
+    """A 56 px cover: the list's first book, or the book glyph."""
+    ids = [i for i in (_item_of(url) for url in row.thumb_urls[:1]) if i]
+    first = ids[0] if ids else ""
+    return common.cover(ctx, first, row.name, 56, bool(first))
 
 
 def _item_of(url: str) -> str | None:
@@ -123,6 +103,27 @@ def _item_of(url: str) -> str | None:
     return None
 
 
+def list_row(ctx, row, on_open, last: bool = False) -> Gtk.Button:
+    """ListRow: cover, name, 'N books', the description on one line."""
+    box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
+    art = _mosaic(ctx, row)
+    art.set_valign(Gtk.Align.CENTER)
+    box.append(art)
+    text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 1)
+    text.set_hexpand(True)
+    text.set_valign(Gtk.Align.CENTER)
+    text.append(common.label(row.name, "xx-ab-t16", lines=2, chars=20))
+    text.append(common.label(fmt.books_count(row.book_count),
+                             "xx-ab-l12 xx-ab-muted", chars=20))
+    if row.description:
+        text.append(common.label(row.description, "xx-ab-b11 xx-ab-muted",
+                                 chars=28))
+    box.append(text)
+    return common.tap_row(box, f"Open {row.name}, "
+                          f"{fmt.books_count(row.book_count)}",
+                          on_open, last)
+
+
 class CollectionsPage:
     """The estate's collections, then your playlists (read-only)."""
 
@@ -132,14 +133,12 @@ class CollectionsPage:
         self.body.set_margin_bottom(24)
         header = common.header(nav.back, "Collections")
         self.widget = widgets.page(header, self.body)
-        self.body.append(_title_block("Library", "Collections"))
         self.body.append(common.muted("Loading…"))
         ctx.run(ctx.collections.lists, self._loaded)
 
     def _loaded(self, result, error) -> None:
         body = self.body
         common.clear(body)
-        body.append(_title_block("Library", "Collections"))
         if error is not None or result is None:
             body.append(common.muted(error_line(error) or ""))
             return
@@ -147,20 +146,18 @@ class CollectionsPage:
         if api_error is not None:
             body.append(common.muted(error_line(api_error)))
         if not collections and not playlists and api_error is None:
-            body.append(common.muted("No collections or playlists yet."))
+            body.append(common.muted(
+                "No collections yet. An admin makes them in the web "
+                "studio."))
         for caption, rows in (("Collections", collections),
                               ("Your playlists", playlists)):
             if not rows:
                 continue
-            body.append(common.section(caption))
+            if caption != "Collections" or playlists:
+                body.append(common.caps_section(caption))
             for index, row in enumerate(rows):
-                sub = fmt.books_count(row.book_count)
-                if row.description:
-                    sub += " · " + row.description
-                body.append(widgets.list_row(
-                    row.name, sub, leading=_mosaic(self.ctx, row),
-                    trailing=widgets.chevron(),
-                    on_activate=lambda r=row: self.nav.collection(r),
+                body.append(list_row(
+                    self.ctx, row, lambda r=row: self.nav.collection(r),
                     last=index == len(rows) - 1))
 
 
@@ -172,7 +169,7 @@ class CollectionPage:
         self.body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
         self.body.set_margin_bottom(24)
         kind = "Playlist" if row.kind == "playlist" else "Collection"
-        header = common.header(nav.back, kind)
+        header = common.header(nav.back, row.name or kind)
         self.widget = widgets.page(header, self.body)
         self.kind = kind
         self._render([], None, loading=True)
@@ -183,18 +180,18 @@ class CollectionPage:
     def _render(self, books: list, error, loading: bool = False) -> None:
         body = self.body
         common.clear(body)
-        body.append(_title_block(self.kind, self.row.name))
-        if self.row.description:
-            body.append(common.para(self.row.description, "xx-secondary"))
+        count = self.row.book_count if loading or error else len(books)
+        body.append(_kind_line(
+            self.kind + ("" if loading or error is not None
+                         else f" · {fmt.books_count(count)}")))
+        for text in fmt.description_paragraphs(self.row.description or ""):
+            body.append(common.para(text, "xx-ab-b13"))
         if error is not None:
             body.append(common.muted(error_line(error)))
         elif loading:
             body.append(common.muted("Loading…"))
         elif not books:
-            body.append(common.muted("This list is empty."))
-        spacer = Gtk.Box()
-        spacer.set_size_request(-1, 12)
-        body.append(spacer)
+            body.append(common.muted("Nothing in here yet."))
         for index, item in enumerate(books):
             body.append(common.book_row(self.ctx, item, self.nav.open_item,
                                         last=index == len(books) - 1))

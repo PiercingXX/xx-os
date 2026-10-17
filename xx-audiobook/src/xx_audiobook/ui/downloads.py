@@ -4,8 +4,8 @@
 One row per book with its cover: downloading -> progress + Cancel;
 failed or cancelled -> the reason + Retry and Delete; on this phone ->
 size + Delete (asks first; a book that is playing carries on by
-streaming). A hairline banner says "Waiting for Wi-Fi." while queued
-work is held back; the foot shows the storage the books use. Rows are
+streaming). A queued row's line says why it waits ("Waiting for
+Wi-Fi."); the storage the books use heads the page. Rows are
 read from SQLite on a worker; while anything is moving the page re-reads
 once a second (the download units write progress every 1 MB).
 """
@@ -86,7 +86,7 @@ def status_line(row, block: str | None) -> str:
         return "Cancelled"
     if row.state == "Failed":
         return row.error or "Failed"
-    return f"{fmt.size_text(row.bytes_total)}  ·  On this phone"
+    return fmt.size_text(row.bytes_total)
 
 
 def storage_line(view: DownloadsView) -> str:
@@ -181,87 +181,62 @@ class DownloadsPage:
         if not self.loaded:
             body.append(common.muted("Loading…"))
             return
-        if view.block and (view.active or view.stopped):
-            body.append(self._banner(view.block))
+        body.append(common.para(storage_line(view), "xx-ab-b13 xx-ab-muted"))
         if view.low:
             body.append(common.muted(
                 "Storage is low. Free some space before downloading more."))
         if view.empty:
             body.append(common.muted(EMPTY_LINE))
-        first = not (view.block and (view.active or view.stopped))
         for caption, rows in (("Active", view.active),
                               ("On this phone", view.done),
                               ("Failed or cancelled", view.stopped)):
             if not rows:
                 continue
-            body.append(common.section(f"{caption} · {len(rows)}", first))
-            first = False
+            body.append(common.section(caption))
             for index, row in enumerate(rows):
                 body.append(self._row(row, last=index == len(rows) - 1))
-        body.append(common.section("Storage"))
-        foot = common.para(storage_line(view), "xx-secondary")
-        body.append(foot)
-        if view.wifi_only:
-            note = common.para("Downloads use Wi-Fi only. Change it in "
-                               "Setup.", "xx-ab-meta")
-            note.set_margin_top(6)
-            body.append(note)
-
-    def _banner(self, text: str) -> Gtk.Box:
-        banner = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
-        banner.add_css_class("xx-ab-banner")
-        banner.set_margin_top(8)
-        icon = ("network-wireless-offline-symbolic"
-                if "Wi-Fi" in text else "network-offline-symbolic")
-        banner.append(common.glyph(icon, 18))
-        line = common.label(text, "xx-body", lines=2, chars=26)
-        line.set_hexpand(True)
-        banner.append(line)
-        banner.update_property([Gtk.AccessibleProperty.LABEL], [text])
-        return banner
 
     def _row(self, row, last: bool) -> Gtk.Box:
-        authors, has_cover = self.view.meta.get(row.item_id, ("", True))
+        """DownloadRow: 44 px cover, title, one status line, progress
+        while running; the row opens the Book, the icons act."""
+        _authors, has_cover = self.view.meta.get(row.item_id, ("", True))
         outer = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-        outer.add_css_class("xx-setting")
-        if last:
-            outer.add_css_class("last")
+        outer.add_css_class("xx-ab-hair")
         opener = Gtk.Button()
-        opener.add_css_class("xx-ab-shelf-head")
+        opener.add_css_class("xx-ab-flat")
         opener.set_hexpand(True)
-        box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 14)
-        art = common.cover(self.ctx, row.item_id, row.title, 56, has_cover)
-        art.set_valign(Gtk.Align.START)
+        box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+        art = common.cover(self.ctx, row.item_id, row.title, 44, has_cover)
+        art.set_valign(Gtk.Align.CENTER)
         box.append(art)
-        text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 3)
+        text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.CENTER)
-        text.append(common.label(row.title or row.item_id, "xx-title",
-                                 lines=2, chars=16))
-        if authors:
-            text.append(common.label(authors, "xx-secondary", chars=18))
+        text.append(common.label(row.title or row.item_id, "xx-ab-t16",
+                                 chars=16))
         status = status_line(row, self.view.block)
-        line = common.label(status, "xx-ab-meta xx-ab-num", lines=2,
-                            chars=22)
-        if row.state == "Failed":
-            line.add_css_class("xx-danger-text")
+        line = common.label(status, "xx-ab-b11 xx-ab-num", lines=2, chars=26)
+        line.add_css_class("xx-ab-error" if row.state == "Failed"
+                           else "xx-ab-muted")
         text.append(line)
         if row.state == "Running":
             progress = common.bar(
                 fraction(row),
                 f"{fmt.percent(fraction(row))}% downloaded")
-            progress.set_margin_top(6)
+            progress.set_margin_top(4)
             text.append(progress)
         box.append(text)
         opener.set_child(box)
         common.name(opener, f"{row.title}. {status}")
         opener.connect("clicked", lambda _b: self._open_book(row.item_id))
         outer.append(opener)
-        actions = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+        actions = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
         actions.set_valign(Gtk.Align.CENTER)
         if row.state in ACTIVE:
             actions.append(common.icon_button(
-                "process-stop-symbolic", f"Cancel download of {row.title}",
+                "window-close-symbolic", f"Cancel download of {row.title}",
                 lambda: self.ctx.download_action("cancel", row.item_id)))
         if row.state in STOPPED:
             actions.append(common.icon_button(

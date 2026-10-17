@@ -2,12 +2,15 @@
 # Seeded + empty screenshots of every screen in four themes, plus 320 px
 # and text-scale-2 fit checks:
 #   xx-audiobook/tools/snap_all.sh OUTDIR [TARGET ...]
-# Env: THEMES, EMPTY_TARGETS, FIT320, SCALE2 (target lists) and SHEET
-# (sheet file prefix) narrow a run, e.g. the M4/M5 screens only:
+# Env: THEMES, EMPTY_TARGETS, SIGNEDOUT_TARGETS, FIT320, SCALE2 (target
+# lists) and SHEET (sheet file prefix) narrow a run, e.g. the M4/M5
+# screens only:
 #   SHEET=m45 sh xx-audiobook/tools/snap_all.sh OUT $M45_TARGETS
-# Seeds a temp HOME per theme (tools/demo_seed.py), renders each target
-# with scripts/snap.py through tools/snap_app.py (no network, no
-# keyring, no player service), and montages one sheet per theme.
+# Seeds a temp HOME per theme (tools/demo_seed.py; "empty" is signed in
+# with nothing cached, "signedout" has nothing stored, so the sign-in-first
+# gate shows Checking, then Sign in), renders each target with
+# scripts/snap.py through tools/snap_app.py (no network, no keyring, no
+# player service), and montages one sheet per theme.
 # Exits non-zero on any snap WARNING (phone-fit breach).
 set -u
 LANE=$(cd "$(dirname "$0")/../.." && pwd)
@@ -25,8 +28,8 @@ setup-bottom signout licenses noaccess stats stats-lower stats-sessions
 stats-delete zones zones-cast zones-active playon-sheet book-reviews
 review-mine review-gate review-editor review-delete"
 TARGETS=${*:-"$M3_TARGETS $M45_TARGETS"}
-EMPTY_TARGETS=${EMPTY_TARGETS:-"library playing-restored downloads zones
-signin"}
+EMPTY_TARGETS=${EMPTY_TARGETS:-"library playing-restored downloads zones"}
+SIGNEDOUT_TARGETS=${SIGNEDOUT_TARGETS:-"checking signin"}
 FIT320=${FIT320:-"library book playing sheet-speed series downloads
 zones-active setup-playback stats signin review-editor"}
 SCALE2=${SCALE2:-"library book playing downloads zones-active setup
@@ -93,6 +96,12 @@ for theme in $THEMES; do
         snap_one "$(home_for "$theme" empty 1)" "$out" "$target" empty \
             360x720
         labels="$labels -label empty-$target $out"
+    done
+    for target in $SIGNEDOUT_TARGETS; do
+        out="$WORK/$theme-signedout-$target.png"
+        snap_one "$(home_for "$theme" signedout 1)" "$out" "$target" \
+            signedout 360x720
+        labels="$labels -label signedout-$target $out"
     done
     # shellcheck disable=SC2086
     montage $labels -tile 6x -geometry 360x720+6+6 -background '#202020' \

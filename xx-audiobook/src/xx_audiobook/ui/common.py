@@ -1,8 +1,10 @@
-"""Shared widgets for the audiobook pages (M3), thin over xx_ui.widgets.
+"""Shared widgets for the audiobook pages, thin over xx_ui.widgets.
 
-Covers (square, monochrome initials placeholder), book rows and tiles,
-offline tags, hairline progress, the skip-seconds glyph and the
-book-level scrubber. Every icon-only control carries a label and a
+Each one mirrors a Compose piece of the Android client: ScreenTitle,
+TopBar, SectionTitle, MutedLine, CoverArt (square, a book glyph until the
+art arrives), LibraryRow / BookTile, DownloadedMark, HairlineProgress,
+FilterChip (brandChipColors), SkipGlyph, SeekBar (HairlineSlider), the
+sheets and ConfirmDialog. Every icon-only control carries a label and a
 48 px target; every label wraps or ellipsizes so 320 px still fits.
 """
 
@@ -15,11 +17,12 @@ from gi.repository import GLib, GObject, Gtk, Pango
 from xx_audiobook import fmt
 from xx_ui import widgets
 
-
 # Display roles take the brand display face (Space Mono over the house
 # mono; a family the user picked stays in charge).
 DISPLAY_ROLES = frozenset({"xx-ab-heading", "xx-ab-np-title",
-                           "xx-ab-readout"})
+                           "xx-ab-screen", "xx-ab-year"})
+
+BOOK_ICON = "xx-ab-book-symbolic"
 
 
 def label(text: str, cls: str = "xx-body", lines: int = 1,
@@ -44,7 +47,8 @@ def label(text: str, cls: str = "xx-body", lines: int = 1,
 def para(text: str, cls: str = "xx-body") -> Gtk.Label:
     """Free text: wraps fully, never ellipsized."""
     widget = Gtk.Label(label=text)
-    widget.add_css_class(cls)
+    for name in cls.split():
+        widget.add_css_class(name)
     widget.set_xalign(0.0)
     widget.set_wrap(True)
     widget.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -53,14 +57,15 @@ def para(text: str, cls: str = "xx-body") -> Gtk.Label:
 
 
 def muted(text: str) -> Gtk.Label:
-    """The one muted line for empty, error and offline states."""
-    line = para(text, "xx-secondary")
+    """MutedLine: the one line for empty, error and offline states."""
+    line = para(text, "xx-ab-b13 xx-ab-muted")
     line.set_margin_top(12)
     line.set_margin_bottom(12)
     return line
 
 
 def caps(text: str) -> Gtk.Label:
+    """A small caps label (NOW PLAYING, tile captions)."""
     return label(text.upper(), "xx-ab-label", chars=28)
 
 
@@ -69,15 +74,6 @@ def name(widget: Gtk.Widget, text: str) -> Gtk.Widget:
     widget.set_tooltip_text(text)
     widget.update_property([Gtk.AccessibleProperty.LABEL], [text])
     return widget
-
-
-def header(back, title: str) -> Gtk.Box:
-    """xx_ui's compact sub-page bar with a labelled 48 px back target."""
-    bar = widgets.compact_header(back, title)
-    back_button = bar.get_first_child()
-    back_button.set_size_request(48, 48)
-    name(back_button, "Back")
-    return bar
 
 
 def fit(button: Gtk.Button, chars: int) -> Gtk.Button:
@@ -90,8 +86,12 @@ def fit(button: Gtk.Button, chars: int) -> Gtk.Button:
     return button
 
 
-def icon_button(icon: str, text: str, callback) -> Gtk.Button:
-    button = widgets.icon_button(icon, callback)
+def icon_button(icon: str, text: str, callback, px: int = 24) -> Gtk.Button:
+    button = Gtk.Button()
+    button.add_css_class("xx-btn")
+    button.add_css_class("xx-btn-icon")
+    button.set_child(widgets.icon_image(icon, px))
+    button.connect("clicked", lambda _b: callback())
     button.set_size_request(48, 48)
     return name(button, text)
 
@@ -104,8 +104,149 @@ def clear(box: Gtk.Box) -> None:
         child = following
 
 
+def spacer(px: int) -> Gtk.Box:
+    box = Gtk.Box()
+    box.set_size_request(-1, px)
+    return box
+
+
+# -- chrome ----------------------------------------------------------------
+
+
+def page_top(title: str, actions: list = ()) -> Gtk.Box:
+    """ScreenTitle in a row with labelled 48 px icon actions,
+    (icon, spoken, callback): a tab root's header."""
+    top = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
+    top.add_css_class("xx-ab-top")
+    heading = label(title, "xx-ab-screen", chars=12)
+    heading.set_hexpand(True)
+    heading.set_valign(Gtk.Align.CENTER)
+    heading.update_property([Gtk.AccessibleProperty.LABEL], [title])
+    top.append(heading)
+    for icon, spoken, callback in actions:
+        button = icon_button(icon, spoken, callback)
+        button.set_valign(Gtk.Align.CENTER)
+        top.append(button)
+    return top
+
+
+def header(back, title: str) -> Gtk.Box:
+    """TopBar: a pushed screen's 56 px bar, Back and the title on one
+    line, a hairline along the bottom. ``bar.title`` can be retitled."""
+    bar = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
+    bar.add_css_class("xx-ab-bar")
+    back_button = icon_button("go-previous-symbolic", "Back", back)
+    back_button.set_valign(Gtk.Align.CENTER)
+    bar.append(back_button)
+    heading = label(title, "xx-ab-t16", chars=22)
+    heading.set_hexpand(True)
+    heading.set_valign(Gtk.Align.CENTER)
+    bar.append(heading)
+    bar.title = heading
+    return bar
+
+
+def section(text: str, first: bool = False) -> Gtk.Label:
+    """SectionTitle: title case, 14 px, muted, a heading."""
+    head = label(text, "xx-ab-section", lines=2, chars=30)
+    if first:
+        head.add_css_class("first")
+    return head
+
+
+def caps_section(text: str) -> Gtk.Label:
+    """The uppercase list label of Series / Collections (labelMedium)."""
+    return label(text.upper(), "xx-ab-caps", chars=30)
+
+
+def section_with(text: str, icon: str, spoken: str, callback,
+                 first: bool = False) -> Gtk.Box:
+    """A section title with one labelled 48 px action at its end."""
+    row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
+    head = section(text, first)
+    head.set_hexpand(True)
+    head.set_valign(Gtk.Align.CENTER)
+    row.append(head)
+    action = icon_button(icon, spoken, callback)
+    action.set_valign(Gtk.Align.CENTER)
+    row.append(action)
+    return row
+
+
+def chip(text: str, selected: bool, callback,
+         spoken: str | None = None) -> Gtk.Button:
+    """FilterChip: hairline square idle, inverted when selected; the
+    label stays as written (no caps)."""
+    button = Gtk.Button.new_with_label(text)
+    button.add_css_class("xx-ab-chip")
+    if selected:
+        button.add_css_class("selected")
+    button.get_child().set_ellipsize(Pango.EllipsizeMode.END)
+    button.get_child().set_max_width_chars(18)
+    button.connect("clicked", lambda _b: callback())
+    if spoken is not None:
+        button.update_property([Gtk.AccessibleProperty.LABEL],
+                               [spoken + (", selected" if selected else "")])
+    return button
+
+
+def chip_strip(items: list) -> Gtk.ScrolledWindow:
+    """A sideways-scrolling row of chips: (text, selected, callback)."""
+    box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 6)
+    for text, selected, callback in items:
+        button = chip(text, selected, callback)
+        # The strip scrolls sideways: chips keep their whole label.
+        button.get_child().set_ellipsize(Pango.EllipsizeMode.NONE)
+        box.append(button)
+    scroller = Gtk.ScrolledWindow()
+    scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+    scroller.set_child(box)
+    return scroller
+
+
+def chip_flow(items: list) -> Gtk.FlowBox:
+    """FlowRow of chips that wraps: (text, selected, callback[, spoken])."""
+    flow = Gtk.FlowBox()
+    flow.set_selection_mode(Gtk.SelectionMode.NONE)
+    flow.set_homogeneous(False)
+    flow.set_column_spacing(6)
+    flow.set_row_spacing(6)
+    flow.set_min_children_per_line(1)
+    flow.set_max_children_per_line(12)
+    flow.set_margin_top(6)
+    flow.set_margin_bottom(6)
+    fill_flow(flow, items)
+    return flow
+
+
+def fill_flow(flow: Gtk.FlowBox, items: list) -> None:
+    child = flow.get_first_child()
+    while child is not None:
+        following = child.get_next_sibling()
+        flow.remove(child)
+        child = following
+    for item in items:
+        text, selected, callback = item[:3]
+        spoken = item[3] if len(item) > 3 else None
+        button = chip(text, selected, callback, spoken)
+        button.set_valign(Gtk.Align.CENTER)
+        flow.append(button)
+        button.get_parent().set_focusable(False)
+
+
+def flat(child: Gtk.Widget, spoken: str, callback) -> Gtk.Button:
+    """A chromeless tappable area (48 px min) around ``child``."""
+    button = Gtk.Button()
+    button.add_css_class("xx-ab-flat")
+    button.set_child(child)
+    button.update_property([Gtk.AccessibleProperty.LABEL], [spoken])
+    button.connect("clicked", lambda _b: callback())
+    return button
+
+
 def line(fraction: float) -> Gtk.ProgressBar:
-    """2 px hairline progress: played part in the theme foreground."""
+    """HairlineProgress: 3 px, the played part in the foreground over a
+    25% well; no caps, no gap, no end dot."""
     bar = Gtk.ProgressBar()
     bar.add_css_class("xx-ab-line")
     bar.set_fraction(min(max(fraction, 0.0), 1.0))
@@ -116,17 +257,28 @@ def line(fraction: float) -> Gtk.ProgressBar:
 
 
 def offline_tag() -> Gtk.Box:
-    """'On this phone': a hairline tag with the downloaded glyph."""
-    tag = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 3)
+    """DownloadedMark: a hairline tag, the done glyph and 'Offline'."""
+    tag = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 2)
     tag.add_css_class("xx-ab-tag")
     tag.set_valign(Gtk.Align.CENTER)
     tag.set_halign(Gtk.Align.START)
-    tag.append(widgets.icon_image("folder-download-symbolic", 10))
-    text = Gtk.Label(label="OFFLINE")
+    tag.append(widgets.icon_image("xx-ab-download-symbolic", 12))
+    text = Gtk.Label(label="Offline")
     text.set_ellipsize(Pango.EllipsizeMode.END)
     tag.append(text)
     tag.update_property([Gtk.AccessibleProperty.LABEL], ["Downloaded"])
     return tag
+
+
+def rating_line(average, count: int) -> str:
+    """RatingBadge: '★ 4.0 (1)', or nothing when no one rated it."""
+    text = fmt.rating_text(average, count)
+    return f"{text} ({count})" if text else ""
+
+
+def rating_spoken(average, count: int) -> str:
+    plural = "" if count == 1 else "s"
+    return f"Rated {average:.1f} out of 5 from {count} review{plural}"
 
 
 # -- covers -------------------------------------------------------------------
@@ -201,26 +353,15 @@ class Clamp(Gtk.Widget):
 
 def cover(ctx, item_id: str, title: str, px: int = 0,
           has_cover: bool = True, size: str = "thumb") -> Gtk.Widget:
-    """Square cover: initials placeholder until the art arrives (if any).
-
-    The placeholder is the house glyph language: light initials over a
-    short 2 px rule on a surface tile with a hairline."""
+    """CoverArt: a square on the tile color with a hairline; the book
+    glyph until the art arrives (or for good when there is none)."""
     holder = Gtk.Overlay()
     holder.add_css_class("xx-ab-cover")
-    glyph = Gtk.Box.new(Gtk.Orientation.VERTICAL, max(px // 14, 4))
-    glyph.set_halign(Gtk.Align.CENTER)
-    glyph.set_valign(Gtk.Align.CENTER)
-    tier = "s" if 0 < px <= 64 else ("l" if px >= 160 else "m")
-    initials = Gtk.Label(label=fmt.initials(title))
-    initials.add_css_class("xx-ab-initials")
-    initials.add_css_class(tier)
-    glyph.append(initials)
-    rule = Gtk.Box()
-    rule.add_css_class("xx-ab-rule")
-    rule.set_size_request({"s": 12, "m": 22, "l": 36}[tier], 2)
-    rule.set_halign(Gtk.Align.CENTER)
-    glyph.append(rule)
-    holder.set_child(glyph)
+    glyph_px = 20 if 0 < px <= 48 else (40 if px >= 180 else 24)
+    mark = widgets.icon_image(BOOK_ICON, glyph_px)
+    mark.set_halign(Gtk.Align.CENTER)
+    mark.set_valign(Gtk.Align.CENTER)
+    holder.set_child(mark)
     square = _Square(holder, px)
     square.update_property([Gtk.AccessibleProperty.LABEL],
                            [f"Cover of {title}"])
@@ -235,7 +376,7 @@ def cover(ctx, item_id: str, title: str, px: int = 0,
     def _deliver(texture) -> None:
         picture.set_paintable(texture)
         picture.set_visible(True)
-        glyph.set_visible(False)
+        mark.set_visible(False)
 
     ctx.covers.request(item_id, size, _deliver)
     return square
@@ -244,49 +385,61 @@ def cover(ctx, item_id: str, title: str, px: int = 0,
 # -- book rows and tiles ----------------------------------------------------------
 
 
-def _meta_row(item, downloaded: bool) -> Gtk.Box | None:
-    meta = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
+def _marks(item, downloaded: bool, with_flags: bool = True) -> Gtk.Box | None:
+    """★ / Finished / Missing / Offline, wrapping like a FlowRow."""
     parts = []
-    rating = fmt.rating_text(item.rating_average, item.rating_count)
+    rating = rating_line(item.rating_average, item.rating_count)
     if rating:
-        parts.append(label(rating, "xx-ab-meta xx-ab-num", chars=8))
-    if item.is_finished:
+        mark = label(rating, "xx-ab-meta xx-ab-num", chars=12)
+        mark.update_property([Gtk.AccessibleProperty.LABEL], [
+            rating_spoken(item.rating_average, item.rating_count)])
+        parts.append(mark)
+    if with_flags and item.is_finished:
         parts.append(label("Finished", "xx-ab-meta", chars=10))
-    if item.missing:
-        parts.append(label("Missing on server", "xx-ab-meta xx-danger-text",
+    if with_flags and item.missing:
+        parts.append(label("Missing on server", "xx-ab-l12 xx-ab-error",
                            chars=18))
     if downloaded:
         parts.append(offline_tag())
     if not parts:
         return None
+    flow = Gtk.FlowBox()
+    flow.set_selection_mode(Gtk.SelectionMode.NONE)
+    flow.set_column_spacing(8)
+    flow.set_row_spacing(2)
+    flow.set_max_children_per_line(4)
+    flow.set_can_target(False)
     for part in parts:
-        meta.append(part)
-    return meta
+        part.set_valign(Gtk.Align.CENTER)
+        flow.append(part)
+        part.get_parent().set_focusable(False)
+    return flow
 
 
 def book_row(ctx, item, on_open, prefix: str | None = None,
              last: bool = False) -> Gtk.Button:
-    """Library row: cover, title, author, rating/finished/offline, progress."""
+    """LibraryRow: 56 px cover, title, author, ★ / finished / offline,
+    then the 3 px progress line."""
     row = Gtk.Button()
     row.add_css_class("xx-ab-row")
     if last:
         row.add_css_class("last")
-    box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 14)
+    box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
     art = cover(ctx, item.id, item.title, 56, bool(item.thumb_url))
-    art.set_valign(Gtk.Align.START)
+    art.set_valign(Gtk.Align.CENTER)
     box.append(art)
-    text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 3)
+    text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 1)
     text.set_hexpand(True)
     text.set_valign(Gtk.Align.CENTER)
     if prefix:
-        text.append(caps(prefix))
-    text.append(label(item.title, "xx-title", lines=2, chars=20))
+        text.append(label(prefix, "xx-ab-l10 xx-ab-muted", chars=24))
+    text.append(label(item.title, "xx-ab-t16", lines=2, chars=20))
     if item.authors:
-        text.append(label(item.authors, "xx-secondary", chars=22))
-    meta = _meta_row(item, item.id in ctx.downloaded)
-    if meta is not None:
-        meta.set_margin_top(2)
-        text.append(meta)
+        text.append(label(item.authors, "xx-ab-b13 xx-ab-muted", chars=24))
+    marks = _marks(item, item.id in ctx.downloaded)
+    if marks is not None:
+        marks.set_margin_top(2)
+        text.append(marks)
     if 0 < item.fraction < 1 and not item.is_finished:
         bar = line(item.fraction)
         bar.set_margin_top(6)
@@ -300,65 +453,38 @@ def book_row(ctx, item, on_open, prefix: str | None = None,
 
 
 def book_tile(ctx, item, on_open, px: int = 0) -> Gtk.Button:
-    """Grid / shelf tile: cover, hairline progress, two-line title, author."""
+    """BookTile: cover, progress (only while in progress), two-line
+    title, author, ★ and the Offline mark."""
     tile = Gtk.Button()
     tile.add_css_class("xx-ab-tile")
     box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     box.append(cover(ctx, item.id, item.title, px, bool(item.thumb_url)))
-    bar = line(item.fraction if not item.is_finished else 0.0)
-    bar.set_margin_top(6)
-    bar.set_opacity(1.0 if 0 < item.fraction < 1 else 0.0)
-    box.append(bar)
-    chars = max(px // 9, 10) if px else 14
-    title = label(item.title, "xx-ab-meta xx-ab-strong", lines=2,
-                  chars=chars)
-    title.set_margin_top(6)
+    if 0 < item.fraction < 1 and not item.is_finished:
+        bar = line(item.fraction)
+        bar.set_margin_top(4)
+        box.append(bar)
+    chars = max(px // 8, 10) if px else 16
+    title = label(item.title, "xx-ab-l13", lines=2, chars=chars)
+    title.set_margin_top(4)
     box.append(title)
     if item.authors:
-        box.append(label(item.authors, "xx-ab-meta", chars=chars))
-    if item.id in ctx.downloaded:
-        tag = offline_tag()
-        tag.set_margin_top(4)
-        box.append(tag)
+        box.append(label(item.authors, "xx-ab-l10 xx-ab-muted", chars=chars))
+    marks = _marks(item, item.id in ctx.downloaded, with_flags=False)
+    if marks is not None:
+        marks.set_margin_top(2)
+        box.append(marks)
     tile.set_child(Clamp(box, px) if px else box)
     tile.update_property([Gtk.AccessibleProperty.LABEL], [item.title])
     tile.connect("clicked", lambda _b: on_open(item))
     return tile
 
 
-def section(text: str, first: bool = False) -> Gtk.Label:
-    """A caps section label; ``first`` sits right under a tab's title."""
-    head = widgets.section_label(text)
-    if first:
-        head.add_css_class("xx-ab-first")
-    else:
-        head.set_margin_top(20)
-    return head
-
-
-def section_with(text: str, icon: str, spoken: str, callback,
-                 first: bool = False) -> Gtk.Box:
-    """A section caption with one labelled 48 px action at its end."""
-    row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-    row.add_css_class("xx-ab-head")
-    if first:
-        row.set_margin_top(0)
-    head = caps(text)
-    head.set_hexpand(True)
-    head.set_valign(Gtk.Align.CENTER)
-    row.append(head)
-    action = icon_button(icon, spoken, callback)
-    action.set_valign(Gtk.Align.CENTER)
-    row.append(action)
-    return row
-
-
 # -- skip glyph ----------------------------------------------------------------
 
 
 def skip_glyph(seconds: int, forward: bool, px: int = 32) -> Gtk.DrawingArea:
-    """A circular arrow with the skip seconds inside (any interval):
-    round-capped strokes in the theme foreground, no fill."""
+    """SkipGlyph: a circular arrow with the skip seconds inside (any
+    interval), drawn in the theme foreground."""
     area = Gtk.DrawingArea()
     area.set_content_width(px)
     area.set_content_height(px)
@@ -373,9 +499,8 @@ def skip_glyph(seconds: int, forward: bool, px: int = 32) -> Gtk.DrawingArea:
         if not forward:
             cr.translate(width, 0)
             cr.scale(-1, 1)
-        cr.set_line_width(max(side * 0.055, 1.4))
-        cr.set_line_cap(1)  # round
-        cr.set_line_join(1)
+        cr.set_line_width(max(side * 0.075, 1.6))
+        cr.set_line_cap(0)  # butt: square ends
         start, end = math.radians(-62), math.radians(242)
         cr.arc(cx, cy, r, start, end)
         cr.stroke()
@@ -383,7 +508,7 @@ def skip_glyph(seconds: int, forward: bool, px: int = 32) -> Gtk.DrawingArea:
         ex, ey = cx + r * math.cos(end), cy + r * math.sin(end)
         tx, ty = -math.sin(end), math.cos(end)
         nx, ny = math.cos(end), math.sin(end)
-        head = side * 0.19
+        head = side * 0.2
         cr.move_to(ex + tx * head * 0.9, ey + ty * head * 0.9)
         cr.line_to(ex - tx * head * 0.3 + nx * head * 0.62,
                    ey - ty * head * 0.3 + ny * head * 0.62)
@@ -395,10 +520,10 @@ def skip_glyph(seconds: int, forward: bool, px: int = 32) -> Gtk.DrawingArea:
         layout = widget.create_pango_layout(str(seconds))
         font = Pango.FontDescription.from_string(
             widget.get_pango_context().get_font_description().to_string())
-        font.set_absolute_size(side * 0.30 * Pango.SCALE)
+        font.set_absolute_size(side * 0.28 * Pango.SCALE)
         layout.set_font_description(font)
         tw, th = layout.get_pixel_size()
-        cr.move_to(cx - tw / 2, cy - th / 2 + side * 0.02)
+        cr.move_to(cx - tw / 2, cy - th / 2 + side * 0.03)
         from gi.repository import PangoCairo
 
         PangoCairo.show_layout(cr, layout)
@@ -410,9 +535,44 @@ def skip_glyph(seconds: int, forward: bool, px: int = 32) -> Gtk.DrawingArea:
 # -- scrubber -------------------------------------------------------------------
 
 
+def draw_slider(cr, rgb, bg, width: float, height: float,
+                fraction: float, dragging: bool = False) -> None:
+    """HairlineSlider: a 1 px 25% hairline for the whole range, the
+    played part as a 3 px bar, a 14 px square thumb with a ground rim."""
+    mid = height / 2
+    frac = min(max(fraction, 0.0), 1.0)
+    thumb = 16 if dragging else 14
+    cr.set_source_rgba(*rgb, 0.25)
+    cr.rectangle(0, round(mid) - 0.5, width, 1)
+    cr.fill()
+    cr.set_source_rgba(*rgb, 1.0)
+    cr.rectangle(0, mid - 1.5, width * frac, 3)
+    cr.fill()
+    x = min(max(width * frac - thumb / 2, 0), width - thumb)
+    cr.set_source_rgba(*bg, 1.0)
+    cr.rectangle(x - 1, mid - thumb / 2 - 1, thumb + 2, thumb + 2)
+    cr.fill()
+    cr.set_source_rgba(*rgb, 1.0)
+    cr.rectangle(x, mid - thumb / 2, thumb, thumb)
+    cr.fill()
+
+
+def ground_rgb(widget: Gtk.Widget) -> tuple:
+    """The window ground behind a slider thumb (the thumb's rim), from
+    the theme style.py last applied (no file read here)."""
+    from xx_audiobook.ui import style
+
+    try:
+        hexcode = style.ground.lstrip("#")
+        return tuple(int(hexcode[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    except (ValueError, IndexError):
+        return (0.0, 0.0, 0.0)
+
+
 class Scrubber(Gtk.DrawingArea):
-    """Book-level seek bar: 2 px trough, the played part bright, chapter
-    ticks, a slim playhead; drag or tap to seek, arrows step 30 s."""
+    """SeekBar: book-level position on a HairlineSlider; drag or tap to
+    seek, arrows step 30 s. ``ticks`` (chapter starts) are kept for the
+    spoken value only; Android draws none."""
 
     __gtype_name__ = "XXAudiobookScrubber"
     __gsignals__ = {"seek": (GObject.SignalFlags.RUN_FIRST, None, (int,))}
@@ -423,11 +583,13 @@ class Scrubber(Gtk.DrawingArea):
         self.duration_ms = 0
         self.ticks: list = []
         self._drag_ms: int | None = None
-        self.set_content_height(36)
+        self._ground = ground_rgb(self)
+        self.set_content_height(32)
         self.set_hexpand(True)
         self.set_focusable(True)
         self.set_draw_func(self._draw)
-        self.update_property([Gtk.AccessibleProperty.LABEL], ["Position"])
+        self.update_property([Gtk.AccessibleProperty.LABEL],
+                             ["Position in book"])
         drag = Gtk.GestureDrag.new()
         drag.connect("drag-begin", self._begin)
         drag.connect("drag-update", self._update)
@@ -448,12 +610,18 @@ class Scrubber(Gtk.DrawingArea):
              Gtk.AccessibleProperty.VALUE_NOW,
              Gtk.AccessibleProperty.VALUE_TEXT],
             [0.0, float(max(duration_ms, 1)), float(position_ms),
-             fmt.format_ms(position_ms)])
+             f"{fmt.format_ms(position_ms)} of "
+             f"{fmt.format_ms(duration_ms)}"])
         self.queue_draw()
 
     @property
     def dragging(self) -> bool:
         return self._drag_ms is not None
+
+    @property
+    def shown_ms(self) -> int:
+        return self._drag_ms if self._drag_ms is not None \
+            else self.position_ms
 
     def _ms_at(self, x: float) -> int:
         width = max(self.get_width(), 1)
@@ -492,37 +660,19 @@ class Scrubber(Gtk.DrawingArea):
 
     def _draw(self, widget, cr, width, height) -> None:
         color = widget.get_color()
-        rgb = (color.red, color.green, color.blue)
-        mid = height / 2
-        shown = self._drag_ms if self._drag_ms is not None \
-            else self.position_ms
-        frac = (shown / self.duration_ms) if self.duration_ms > 0 else 0.0
-        frac = min(max(frac, 0.0), 1.0)
-        cr.set_source_rgba(*rgb, 0.22)
-        cr.rectangle(0, mid - 1, width, 2)
-        cr.fill()
-        cr.set_source_rgba(*rgb, 0.45)
-        for tick in self.ticks:
-            if self.duration_ms > 0 and 0 < tick < self.duration_ms:
-                x = round(width * tick / self.duration_ms)
-                cr.rectangle(x, mid + 4, 1, 4)
-        cr.fill()
-        cr.set_source_rgba(*rgb, 1.0)
-        cr.rectangle(0, mid - 1, width * frac, 2)
-        cr.fill()
-        head = 3 if self._drag_ms is not None else 2
-        tall = 20 if self._drag_ms is not None else 14
-        x = min(max(width * frac - head / 2, 0), width - head)
-        cr.rectangle(x, mid - tall / 2, head, tall)
-        cr.fill()
+        frac = (self.shown_ms / self.duration_ms
+                if self.duration_ms > 0 else 0.0)
+        draw_slider(cr, (color.red, color.green, color.blue), self._ground,
+                    width, height, frac, self.dragging)
 
 
 # -- sheets and confirms -----------------------------------------------------
 
 
 def sheet(title: str) -> tuple:
-    """An Adw.Dialog (a bottom sheet on the phone) holding a padded box
-    with the title and a labelled close target. Returns (dialog, box)."""
+    """ModalBottomSheet: an Adw.Dialog (a bottom sheet on the phone)
+    holding a padded box with the title and a labelled close target.
+    Returns (dialog, box)."""
     import gi
 
     gi.require_version("Adw", "1")
@@ -534,8 +684,9 @@ def sheet(title: str) -> tuple:
     dialog.set_content_width(360)
     box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 8)
     box.add_css_class("xx-ab-sheet")
+    box.add_css_class("xx-ab")
     head = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-    heading = label(title, "xx-dialog-title", chars=20)
+    heading = label(title, "xx-ab-t16", chars=20)
     heading.set_hexpand(True)
     head.append(heading)
     head.append(icon_button("window-close-symbolic", "Close", dialog.close))
@@ -552,19 +703,19 @@ def present(dialog, parent: Gtk.Widget):
 
 def confirm(parent: Gtk.Widget, heading: str, body: str, responses: list,
             on_response, extra: Gtk.Widget | None = None):
-    """A house-style confirm sheet. ``responses``: (id, label, kind) with
-    kind 'outline' | 'primary' | 'danger'; the first one is the dismiss
-    answer (also on close)."""
+    """ConfirmDialog in the house sheet. ``responses``: (id, label, kind)
+    with kind 'outline' | 'primary' | 'danger'; the first one is the
+    dismiss answer (also on close)."""
     dialog, box = sheet(heading)
     if body:
-        box.append(para(body, "xx-secondary"))
+        box.append(para(body, "xx-ab-b13"))
     if extra is not None:
         extra.set_margin_top(4)
         box.append(extra)
     from xx_audiobook.ui import style
 
     row = Gtk.Box.new(Gtk.Orientation.VERTICAL if style.large_text()
-                      else Gtk.Orientation.HORIZONTAL, 10)
+                      else Gtk.Orientation.HORIZONTAL, 8)
     row.set_homogeneous(True)
     row.set_margin_top(12)
     answered = []
@@ -592,24 +743,7 @@ def later(ms: int, callback) -> None:
     GLib.timeout_add(ms, lambda: (callback(), False)[1])
 
 
-# -- M4/M5 building blocks -----------------------------------------------------
-
-
-def page_top(title: str, actions: list = ()) -> Gtk.Box:
-    """A tab root's header: the display title at the gutter and labelled
-    48 px icon actions, (icon, spoken, callback), like the Library."""
-    top = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-    top.add_css_class("xx-page-body")
-    top.add_css_class("xx-page-top")
-    heading = widgets.label(title, "xx-display")
-    heading.add_css_class("xx-display-face")
-    heading.set_hexpand(True)
-    heading.set_ellipsize(Pango.EllipsizeMode.END)
-    heading.set_max_width_chars(12)
-    top.append(heading)
-    for icon, spoken, callback in actions:
-        top.append(icon_button(icon, spoken, callback))
-    return top
+# -- small building blocks -----------------------------------------------------
 
 
 def glyph(icon: str, px: int = 20, on: bool = False) -> Gtk.Image:
@@ -621,28 +755,21 @@ def glyph(icon: str, px: int = 20, on: bool = False) -> Gtk.Image:
 
 
 def bar(fraction: float, spoken: str) -> Gtk.ProgressBar:
-    """The 2 px hairline as a chart bar (its own spoken value)."""
+    """The 3 px hairline as a chart bar (its own spoken value)."""
     widget = line(fraction)
     widget.update_property([Gtk.AccessibleProperty.LABEL], [spoken])
     return widget
 
 
-def stars(value: float, px: int = 14) -> Gtk.Box:
-    """Five read-only stars, filled up to the rounded value."""
-    box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 2)
-    box.add_css_class("xx-ab-stars")
+def stars(value: float) -> Gtk.Label:
+    """Read-only ★★★★☆ in the foreground, read as 'n of 5 stars'."""
     whole = int(round(min(max(value or 0.0, 0.0), 5.0)))
-    for index in range(5):
-        star = widgets.icon_image(
-            "starred-symbolic" if index < whole else "non-starred-symbolic",
-            px)
-        if index < whole:
-            star.add_css_class("on")
-        box.append(star)
-    box.set_valign(Gtk.Align.CENTER)
-    box.update_property([Gtk.AccessibleProperty.LABEL],
-                        [fmt.stars_text(value)])
-    return box
+    mark = Gtk.Label(label="★" * whole + "☆" * (5 - whole))
+    mark.add_css_class("xx-ab-stars")
+    mark.set_valign(Gtk.Align.CENTER)
+    mark.update_property([Gtk.AccessibleProperty.LABEL],
+                         [fmt.stars_text(value)])
+    return mark
 
 
 def dot(on: bool, spoken: str) -> Gtk.Label:
@@ -651,13 +778,14 @@ def dot(on: bool, spoken: str) -> Gtk.Label:
     mark.add_css_class("xx-ab-dot")
     if on:
         mark.add_css_class("on")
-    mark.set_valign(Gtk.Align.CENTER)
+    mark.set_valign(Gtk.Align.START)
     mark.update_property([Gtk.AccessibleProperty.LABEL], [spoken])
     return mark
 
 
 def badge(text: str) -> Gtk.Label:
-    tag = Gtk.Label(label=text.upper())
+    """Tag: a hairline square box, the label in the muted stop."""
+    tag = Gtk.Label(label=text)
     tag.add_css_class("xx-ab-badge")
     tag.set_valign(Gtk.Align.CENTER)
     tag.set_halign(Gtk.Align.START)
@@ -678,16 +806,11 @@ def tap_row(child: Gtk.Widget, spoken: str, callback,
 
 
 def figure(value: str, caption: str) -> Gtk.Box:
-    """A big light number over a caps caption (stats tiles)."""
+    """Stats Tile: a hairline square, a caps caption over the value."""
     box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
-    box.append(label(value, "xx-ab-figure xx-ab-num", chars=8))
-    box.append(caps(caption))
+    box.add_css_class("xx-ab-tile-box")
+    box.append(label(caption.upper(), "xx-ab-label", chars=10))
+    box.append(label(value, "xx-ab-t16 xx-ab-num", lines=2, chars=10))
     box.update_property([Gtk.AccessibleProperty.LABEL],
                         [f"{caption}: {value}"])
-    return box
-
-
-def spacer(px: int) -> Gtk.Box:
-    box = Gtk.Box()
-    box.set_size_request(-1, px)
     return box

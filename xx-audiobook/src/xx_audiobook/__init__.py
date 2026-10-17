@@ -1,4 +1,4 @@
-"""XX-Audiobook — Linux phone port (spec + scaffold)."""
+"""xx-audiobook — Linux phone port (spec + scaffold)."""
 
 __version__ = "0.1.0"
 __app_id__ = "io.piercingxx.XXAudiobook"
