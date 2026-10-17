@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.piercingxx.XXCalculator</id>
+  <name>xx-calculator</name>
+  <summary>Expression calculator with history and scientific keys</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>
+      Linux phone port of the PiercingXX Android xx-calculator app. Exact
+      decimal arithmetic, live preview, shopkeeper percent, scientific
+      panel, and a 100-entry on-phone history. Local-only: no network.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.piercingxx.XXCalculator.desktop</launchable>
+</component>

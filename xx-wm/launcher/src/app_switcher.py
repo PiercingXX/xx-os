@@ -238,7 +238,9 @@ class AppSwitcher(_AppSwitcherBase):
     def __init__(self, manager: ToplevelManager | None = None,
                  config: ShellConfig | None = None,
                  thumbnails: object | None = None,
-                 on_activated: Callable[[], None] | None = None) -> None:
+                 on_activated: Callable[[], None] | None = None,
+                 nope_state: object | None = None,
+                 on_nope: Callable[[object], None] | None = None) -> None:
         super().__init__(title='PiercingXX Switcher')
         self.add_css_class('switcher-window')
 
@@ -249,6 +251,8 @@ class AppSwitcher(_AppSwitcherBase):
         # Hands the screen to the activated app (the shell drops to the
         # background layer); stays None for standalone use.
         self._on_activated = on_activated
+        self._nope = nope_state
+        self._on_nope = on_nope
 
         if _LAYER_SHELL and LayerShell.is_supported():
             LayerShell.init_for_window(self)
@@ -617,6 +621,20 @@ class AppSwitcher(_AppSwitcherBase):
         self._focus_app(app)
 
     def _focus_app(self, app: AppInfo) -> None:
+        try:
+            nope = getattr(self, '_nope', None)
+            blocked = bool(nope is not None and nope.is_blocked(app.app_id))
+        except Exception:
+            blocked = False
+        if blocked:
+            self.hide_switcher()
+            callback = getattr(self, '_on_nope', None)
+            if callable(callback):
+                try:
+                    callback(app)
+                except Exception:
+                    pass
+            return
         self._focus_app_with_manager(self._manager, app, self._on_activated)
         self.hide_switcher()
 

@@ -178,17 +178,26 @@ class BannerState:
             self.current.get('actions'), self.current.get('desktop_entry'))
 
 
-def dispatch_tap(state: BannerState, daemon, launch_fn) -> str:
+def dispatch_tap(state: BannerState, daemon, launch_fn,
+                 allow_fn=None) -> str:
     """Tap the current card: default action over the daemon, else launch.
 
     Mirrors the shade row tap (ActionInvoked then close, or desktop launch
     then close) with a fake-friendly seam: daemon and launch_fn are injected.
     Swipe/drag dismissal never calls this, so the shade row survives those.
+    `allow_fn(desktop_entry)` vetoes the tap when it returns False (the
+    Nope gate); a vetoed tap reports 'blocked' and launches nothing.
     """
     current = getattr(state, 'current', None)
     if not current:
         return 'none'
     target = tap_target(current.get('actions'), current.get('desktop_entry'))
+    if target != 'none' and callable(allow_fn):
+        try:
+            if not allow_fn(current.get('desktop_entry') or ''):
+                return 'blocked'
+        except Exception:
+            pass
     notif_id = current.get('id')
     if target == 'default':
         if daemon is not None:
@@ -282,11 +291,13 @@ if _HAS_GTK:
             config: ShellConfig | None = None,
             notif_daemon=None,
             launch_fn=None,
+            nope_state=None,
         ) -> None:
             super().__init__()
             self._config = config if config is not None else ShellConfig()
             self._daemon = notif_daemon
             self._launch_fn = launch_fn or _launch_desktop_entry
+            self._nope = nope_state
             self._state = BannerState()
             self._timer_id = None
             self._hide_id = None
@@ -453,11 +464,31 @@ if _HAS_GTK:
             self.hide_banner()
             return GLib.SOURCE_REMOVE
 
-        def _on_tap(self) -> None:
+        def _nope_allows(self, desktop_entry: str) -> bool:
+            nope = getattr(self, '_nope', None)
+            if nope is None or not desktop_entry:
+                return True
             try:
-                dispatch_tap(self._state, self._daemon, self._launch_fn)
+                return not nope.is_blocked(desktop_entry)
+            except Exception:
+                return True
+
+        def _on_tap(self) -> None:
+            nope_label = None
+            try:
+                result = dispatch_tap(
+                    self._state, self._daemon, self._launch_fn,
+                    allow_fn=self._nope_allows)
+                if result == 'blocked':
+                    current = self._state.current or {}
+                    nope_label = current.get('app_name') or current.get(
+                        'desktop_entry') or 'App'
             finally:
                 self.hide_banner()
+            if nope_label is not None:
+                self.show_notification(
+                    999906, 'Nope-Mode', 'Nope.',
+                    f'Nope. {nope_label} is blocked.', '', [], None)
 
         def _on_swipe(self, _gesture, _vx: float, vy: float) -> None:
             if vy < _SWIPE_UP_VY:
@@ -479,10 +510,12 @@ else:
             config: ShellConfig | None = None,
             notif_daemon=None,
             launch_fn=None,
+            nope_state=None,
         ) -> None:
             self._config = config if config is not None else ShellConfig()
             self._daemon = notif_daemon
             self._launch_fn = launch_fn or _launch_desktop_entry
+            self._nope = nope_state
             self._state = BannerState()
             self.visible = False
             self.last_duration_ms: int | None = None
@@ -513,9 +546,30 @@ else:
             self._state.clear()
             self.visible = False
 
-        def _on_tap(self) -> str:
+        def _nope_allows(self, desktop_entry: str) -> bool:
+            nope = getattr(self, '_nope', None)
+            if nope is None or not desktop_entry:
+                return True
             try:
-                return dispatch_tap(self._state, self._daemon,
-                                    self._launch_fn)
+                return not nope.is_blocked(desktop_entry)
+            except Exception:
+                return True
+
+        def _on_tap(self) -> str:
+            nope_label = None
+            try:
+                result = dispatch_tap(
+                    self._state, self._daemon, self._launch_fn,
+                    allow_fn=self._nope_allows)
+                if result == 'blocked':
+                    current = self._state.current or {}
+                    nope_label = current.get('app_name') or current.get(
+                        'desktop_entry') or 'App'
             finally:
                 self.hide_banner()
+            if nope_label is not None:
+                self.show_notification(
+                    999906, 'Nope-Mode', 'Nope.',
+                    f'Nope. {nope_label} is blocked.', '', [], None)
+                return 'blocked'
+            return result

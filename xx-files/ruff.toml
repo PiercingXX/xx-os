@@ -1,0 +1,7 @@
+# Ruff configuration for xx-files
+# Matches XX-WM's policy: classic default (E4/E7/E9/F) with E402 ignored
+# for the GTK gi.require_version() import pattern. Pinned so ruff-version
+# drift never changes the gate.
+[lint]
+select = ["E4", "E7", "E9", "F"]
+extend-ignore = ["E402"]

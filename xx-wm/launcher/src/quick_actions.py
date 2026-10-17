@@ -316,7 +316,7 @@ def format_tile_state(key: str, active: bool, detail: str | None = None) -> str:
         return detail
     if not active:
         return 'Off'
-    if key in ('wifi', 'bt') and detail:
+    if key in ('wifi', 'bt', 'nope') and detail:
         return detail
     return 'On'
 
@@ -338,6 +338,7 @@ _TILE_SETTINGS_SECTIONS = {
     'airplane': 'mobile',
     'night': 'display',
     'tailscale': 'services',
+    'nope': 'nope',
 }
 
 
@@ -1024,6 +1025,7 @@ _TILES: list[_TileDef] = [
     _TileDef('torch',    'Torch',    lambda: None,                        _toggle_torch,                           2),
     _TileDef('dnd',      'DnD',      lambda: None,                        lambda _v: None,                         2),
     _TileDef('focus',    'Focus',    lambda: None,                        lambda _v: None,                         2),
+    _TileDef('nope',     'Nope',     lambda: None,                        lambda _v: None,                         2),
     _TileDef('saver',    'Saver',    _get_saver_state,                    _set_saver_state,                        2),
     _TileDef('record',   'Record',   _get_record_state,                   _set_record_state,                     2),
     _TileDef('captions', 'Captions', lambda: None,                        lambda _v: None,                         2),
@@ -1044,6 +1046,8 @@ class QuickActionsPanel(Gtk.Box):
 
     def __init__(self, dnd_state: object | None = None,
                  focus_state: object | None = None,
+                 nope_state: object | None = None,
+                 on_nope_changed=None,
                  hud: object | None = None,
                  config: ShellConfig | None = None,
                  on_open_settings: object | None = None,
@@ -1054,6 +1058,8 @@ class QuickActionsPanel(Gtk.Box):
 
         self._dnd = dnd_state
         self._focus = focus_state
+        self._nope = nope_state
+        self._on_nope_changed = on_nope_changed
         self._on_open_settings = on_open_settings
         self._on_open_uri = on_open_uri
         # Volume/brightness HUD overlay (plan T3/T4). Optional: when absent the
@@ -1207,6 +1213,13 @@ class QuickActionsPanel(Gtk.Box):
                 tile = tile._replace(
                     get_state=lambda: bool(self._focus.is_active()),
                     set_state=lambda v: self._focus.set_enabled(v),
+                )
+            if tile.key == 'nope':
+                if getattr(self, '_nope', None) is None:
+                    continue
+                tile = tile._replace(
+                    get_state=lambda: bool(self._nope.is_active()),
+                    set_state=self._set_nope,
                 )
             tiles.append(tile)
         return tiles
@@ -1526,6 +1539,32 @@ class QuickActionsPanel(Gtk.Box):
             return
         self._apply_tile_ui(tile.key, new_state)
 
+    def _set_nope(self, enabled: bool) -> None:
+        """Shade tap: toggle derived state, then let the shell close what
+        is already open (the panel never touches toplevels itself)."""
+        nope = getattr(self, '_nope', None)
+        if nope is None:
+            return
+        try:
+            if enabled:
+                nope.set_enabled(True)
+                nope.set_force()
+            elif nope.is_active():
+                nope.toggle()
+            active = bool(nope.is_active())
+        except Exception:
+            return
+        try:
+            self.refresh_states()
+        except Exception:
+            pass
+        callback = getattr(self, '_on_nope_changed', None)
+        if callable(callback):
+            try:
+                callback(active)
+            except Exception:
+                pass
+
     def _set_tailscale(self, enabled: bool) -> None:
         def _work() -> None:
             import tailscale
@@ -1836,6 +1875,14 @@ class QuickActionsPanel(Gtk.Box):
                 details = _query_tile_details()
             except Exception:
                 details = {}
+            try:
+                nope = getattr(self, '_nope', None)
+                if nope is not None:
+                    detail = nope.tile_detail()
+                    if detail:
+                        details['nope'] = detail
+            except Exception:
+                pass
             _post_to_main(self._apply_queried_states, states, details)
 
         self._spawn_panel_worker(_work)

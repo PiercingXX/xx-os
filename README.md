@@ -9,6 +9,7 @@ A complete, minimal phone experience for Linux phones: the **XX-WM** shell and t
 | [`xx-dialer/`](xx-dialer/) | Phone app with call screening and spam blocking (the shell asks it before ringing) |
 | [`txxt/`](txxt/) | SMS/MMS messaging (owns SMS on the phone) |
 | [`xx-calendar/`](xx-calendar/) | Calendar. Owns its events (lossless iCalendar) |
+| [`xx-calculator/`](xx-calculator/) | Expression calculator with history and scientific keys (offline) |
 | [`xx-email/`](xx-email/) | Gmail client with offline outbox, snooze and background sync |
 | [`xx-vitals/`](xx-vitals/) | Health and steps, synced to a self-hosted server |
 | [`xx-share/`](xx-share/) | Nearby Share, compatible with LocalSend |
@@ -17,6 +18,9 @@ A complete, minimal phone experience for Linux phones: the **XX-WM** shell and t
 | [`xx-auto/`](xx-auto/) | Driving screen for a phone in a car mount (MPRIS media, maps, starred-contact calls) |
 | [`xx-radio/`](xx-radio/) | Unofficial YouTube Music player: search, radio, queue, background playback, offline downloads (spec + scaffold) |
 | [`xx-audiobook/`](xx-audiobook/) | Self-hosted audiobooks from your own server: library, player, downloads, zones |
+| [`xx-note/`](xx-note/) | Markdown notes as plain files, with labels, archive, trash and optional WebDAV sync |
+| [`xx-weather/`](xx-weather/) | ZIP-code weather from the National Weather Service (US only), with saved locations and rain/freeze alerts |
+| [`xx-files/`](xx-files/) | Tree-first local file manager: list/tree/grid, Trash with restore, share via xx-share |
 
 Each directory is a self-contained project with its own `meson.build`, tests and README. How the pieces talk to each other is in [`docs/dbus.md`](docs/dbus.md).
 

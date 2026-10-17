@@ -110,6 +110,23 @@ tile (expanded tier, hidden while `wf-recorder` is absent) records to
 | `focus_schedules` | list | `[]` | Same shape as `dnd_schedules`. |
 | `focus_break_until` | float | `0.0` | Break deadline (set by "Take a break" 5/10/15 min); transient, excluded from backups. |
 
+### Nope-Mode
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `nope_enabled` | bool | `false` | Master switch. Off means nothing is blocked, whatever the schedule says. |
+| `nope_apps` | list | `[]` | Desktop ids that go silent and won't open while Nope is on. |
+| `nope_schedules` | list | `[]` | Same shape as `dnd_schedules`. |
+| `nope_override` | string | `"none"` | `"force"` (manual on) or `"break"` (bounded leave-early); `"none"` lets the schedule decide. |
+| `nope_override_until` | float | `0.0` | Override deadline epoch; `0.0` is an indefinite ForceOn. Transient, excluded from backups. |
+| `nope_break_log` | list | `[]` | Recent break start epochs enforcing the 30 min interval and 3-per-window budget. |
+| `nope_min_interval` | int | `30` | Minimum minutes between breaks. Editable only while Nope is off. |
+| `nope_budget` | int | `3` | Breaks allowed per schedule window. Editable only while Nope is off. |
+
+While on, open windows of chosen apps are closed and their notifications are
+dropped (not held like Focus). Calls still ring through DnD's starred and
+repeat-caller exceptions.
+
 ### Screen time
 
 | Key | Type | Default | Effect |

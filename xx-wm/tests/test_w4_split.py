@@ -165,7 +165,7 @@ def test_settings_registry_order_and_shape():
                     'charging', 'batteryuse', 'screentime',
                     'backup', 'storage', 'security', 'lock', 'mobile',
                     'services', 'firewall',
-                    'apps', 'appearance', 'display', 'keyboard',
+                    'apps', 'nope', 'appearance', 'display', 'keyboard',
                     'launcher', 'standby', 'permissions', 'smart_lock',
                     'medical',
                     'recording', 'captions', 'nearby', 'findmy',

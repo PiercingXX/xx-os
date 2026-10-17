@@ -1,0 +1,29 @@
+{
+  "properties": {
+    "units": "us",
+    "periods": [
+      {
+        "number": 1,
+        "name": "Tonight",
+        "startTime": "2026-08-25T19:00:00-06:00",
+        "endTime": "2026-08-26T06:00:00-06:00",
+        "isDaytime": "false",
+        "temperature": 61,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 20 },
+        "icon": "https://api.weather.gov/icons/land/night/sct?size=medium"
+      },
+      {
+        "number": 2,
+        "name": "Wednesday",
+        "startTime": "2026-08-26T13:00:00-06:00",
+        "endTime": "2026-08-26T19:00:00-06:00",
+        "isDaytime": "true",
+        "temperature": 88,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 10 },
+        "icon": "https://api.weather.gov/icons/land/day/sct?size=medium"
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.piercingxx.XXNote</id>
+  <name>xx-note</name>
+  <summary>Markdown notes as plain files</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>
+      Linux phone port of the PiercingXX Android xx-note app. Every note is
+      one Markdown file with YAML frontmatter in a folder you own, with
+      pinning, labels, archive, trash with 7-day expiry, offline search, a
+      live-styled editor, and optional WebDAV sync (off by default).
+    </p>
+  </description>
+  <launchable type="desktop-id">io.piercingxx.XXNote.desktop</launchable>
+</component>

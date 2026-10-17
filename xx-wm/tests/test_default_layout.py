@@ -27,6 +27,7 @@ _ALL_APPS = {
     'org.gnome.Calculator',
     'org.postmarketos.Megapixels',
     'waydroid.com.synology.projectkailash',
+    'io.piercingxx.XXFiles',
 }
 
 
@@ -106,7 +107,7 @@ class TestResolver:
         assert comms['folder'][0]['app_id'] is None  # built-in dialer
 
         tools = slots[4]
-        assert [m['label'] for m in tools['folder']] == ['Firefox', 'Calculator', 'Camera', 'Photos']
+        assert [m['label'] for m in tools['folder']] == ['Firefox', 'Calculator', 'Camera', 'Photos', 'Files']
 
     def test_seeded_labels_become_renames(self):
         resolver = _full_resolver()
@@ -118,6 +119,18 @@ class TestResolver:
     def test_notes_prefers_piercing_note_cmd(self):
         notes = _full_resolver().resolve_notes()
         assert notes == {'type': 'app', 'label': 'Notes', 'cmd': ['piercing-note']}
+
+    def test_notes_prefers_xx_note_over_text_editor(self):
+        apps = {'io.piercingxx.XXNote', 'org.gnome.TextEditor'}
+        resolver = DefaultLayoutResolver(
+            find_desktop=lambda x: x if x in apps else None,
+            find_cmd=lambda x: False,
+            find_browser=lambda: None,
+            find_by_name=lambda name: None,
+        )
+        assert resolver.resolve_notes() == {
+            'type': 'app', 'label': 'Notes', 'app_id': 'io.piercingxx.XXNote',
+        }
 
     def test_no_apps_leaves_only_comms_with_builtin_phone(self):
         slots = _empty_resolver().resolve_slots()

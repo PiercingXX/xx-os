@@ -58,7 +58,7 @@ equivalent named in the notes.
 |---|---|---|
 | Gestures — "What every swipe, tap, and long-press does" → help dialog | Gestures — same summary → help sheet | same; two help lines say the Linux way: long-press edits home, slots change in edit mode |
 | Enable Swipe Left (`swipe_left_enabled` · on) | Enable Swipe Left (`swipe_left_enabled` · on) | same |
-| Swipe Left App (`swipe_left_app` · unset → Camera; seeded Skippy) — app picker, Clear when set | Swipe Left App (gestures.json `swipe_left_home` · `none` → Camera; seeded Skippy) — Select App sheet, Clear when set | same |
+| Swipe Left App (`swipe_left_app` · unset → Camera; seeded by the owner's setup) — app picker, Clear when set | Swipe Left App (gestures.json `swipe_left_home` · `none` → Camera; seeded by the owner's setup) — Select App sheet, Clear when set | same |
 | Enable Swipe Right (`swipe_right_enabled` · on) | Enable Swipe Right (`swipe_right_enabled` · on) | same |
 | Swipe Right App (`swipe_right_app` · unset → Dialer; seeded Camera) | Swipe Right App (gestures.json `swipe_right_home` · `none` → Dialer; seeded Camera) | same |
 | Swipe Down Action (`swipe_down_action` · notifications) — Expand notifications, Web search, Disabled | Swipe Down Action (`swipe_down_action` · notifications) | same (Linux): Web search opens drawer search with the `!` web prefix typed (Android opens the system web search). Seeded once from the old `swipe_down_top` slot |

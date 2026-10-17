@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=xx-weather
+GenericName=Weather
+Comment=ZIP-code weather from the National Weather Service
+Exec=@bindir@/xx-weather
+Icon=io.piercingxx.XXWeather
+DBusActivatable=false
+Terminal=false
+Categories=Utility;
+StartupNotify=true

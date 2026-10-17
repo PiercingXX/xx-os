@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.piercingxx.XXFiles</id>
+  <name>xx-files</name>
+  <summary>Tree-first local file manager</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>
+      Linux phone port of the PiercingXX Android xx-files app. A real
+      directory tree — not Recent/Images/Downloads: list, tree and grid
+      views with breadcrumbs, sort, search, multi-select, copy, move,
+      rename, new folder, open-with, share via xx-share, properties,
+      and the freedesktop Trash with restore. Local-only: no network.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.piercingxx.XXFiles.desktop</launchable>
+  <provides>
+    <mediatype>inode/directory</mediatype>
+  </provides>
+</component>

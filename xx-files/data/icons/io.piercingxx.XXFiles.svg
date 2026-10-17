@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108" role="img" aria-label="xx-files app mark">
+  <!-- Stand-in folder mark until the owner's xx-files mark lands; same 108 grid as the sibling marks. -->
+  <rect width="108" height="108" rx="22" fill="#000000"/>
+  <path d="M28,44 A6,6 0 0 1 34,38 H48 L54,45 H74 A6,6 0 0 1 80,51 V68 A6,6 0 0 1 74,74 H34 A6,6 0 0 1 28,68 Z" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

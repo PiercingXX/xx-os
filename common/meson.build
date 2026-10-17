@@ -18,5 +18,6 @@ python.install_sources(
 python.install_sources(
   'xx_phone/__init__.py',
   'xx_phone/schedules.py',
+  'xx_phone/weather.py',
   subdir: 'xx_phone',
 )

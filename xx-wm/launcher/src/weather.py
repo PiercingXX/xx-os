@@ -29,31 +29,46 @@ _API = ('https://api.open-meteo.com/v1/forecast'
 
 _UNITS = ('fahrenheit', 'celsius')
 
-# WMO weather interpretation codes, collapsed to short text
-_WMO_TEXT = [
-    ((0,), 'Clear'),
-    ((1, 2), 'Partly cloudy'),
-    ((3,), 'Cloudy'),
-    ((45, 48), 'Fog'),
-    ((51, 53, 55, 56, 57), 'Drizzle'),
-    ((61, 63, 65, 66, 67, 80, 81, 82), 'Rain'),
-    ((71, 73, 75, 77, 85, 86), 'Snow'),
-    ((95, 96, 99), 'Storm'),
-]
+try:
+    # One shared fetch/parse implementation with the xx-weather app
+    # (common/xx_phone/weather.py, installed as xx_phone on the phone).
+    from xx_phone import weather as _shared_weather
+except Exception:  # noqa: BLE001 - the local copies below take over
+    _shared_weather = None
 
 
-def describe(code: int) -> str:
-    for codes, text in _WMO_TEXT:
+def _local_describe(code: int) -> str:
+    # WMO weather interpretation codes, collapsed to short text
+    table = [
+        ((0,), 'Clear'),
+        ((1, 2), 'Partly cloudy'),
+        ((3,), 'Cloudy'),
+        ((45, 48), 'Fog'),
+        ((51, 53, 55, 56, 57), 'Drizzle'),
+        ((61, 63, 65, 66, 67, 80, 81, 82), 'Rain'),
+        ((71, 73, 75, 77, 85, 86), 'Snow'),
+        ((95, 96, 99), 'Storm'),
+    ]
+    for codes, text in table:
         if code in codes:
             return text
     return ''
 
 
-def format_current(temp: float, code: int, unit: str = 'fahrenheit') -> str:
-    text = describe(code)
+def _local_format_current(temp: float, code: int,
+                           unit: str = 'fahrenheit') -> str:
+    text = _local_describe(code)
     suffix = 'F' if unit == 'fahrenheit' else 'C'
     degrees = f'{round(temp)}°{suffix}'
     return f'{degrees} {text}'.strip()
+
+
+if _shared_weather is not None:
+    describe = _shared_weather.wmo_text
+    format_current = _shared_weather.widget_format_current
+else:
+    describe = _local_describe
+    format_current = _local_format_current
 
 
 def default_cache_path() -> Path:
@@ -65,6 +80,8 @@ def default_location_cache_path() -> Path:
 
 
 def _http_fetch(lat: float, lon: float, unit: str = 'fahrenheit') -> dict:
+    if _shared_weather is not None:
+        return _shared_weather.fetch_openmeteo_current(lat, lon, unit)
     url = _API.format(lat=lat, lon=lon, unit=unit)
     with urllib.request.urlopen(url, timeout=10) as response:
         payload = json.loads(response.read().decode('utf-8'))

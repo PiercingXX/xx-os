@@ -624,8 +624,10 @@ class ShellWindow(Adw.ApplicationWindow):
         self.gesture_config = GestureConfig()
         from dnd import DndState
         from focus_mode import FocusState
+        from nope_mode import NopeState
         self.dnd_state = DndState(self.config)
         self.focus_state = FocusState(self.config)
+        self.nope_state = NopeState(self.config)
         try:
             # One address book for the shell: warms the xx-contacts cache
             # before the first call and feeds starred contacts to DnD.
@@ -747,6 +749,7 @@ class ShellWindow(Adw.ApplicationWindow):
             on_changed=self._refresh_after_item_action,
             on_status=self._show_status,
             focus_state=self.focus_state,
+            nope_state=self.nope_state,
             on_popover_changed=self._on_item_popover,
             on_keyboard=self._on_entry_keyboard,
             real_name_fn=lambda app_id: next(
@@ -1181,6 +1184,88 @@ class ShellWindow(Adw.ApplicationWindow):
         actions.append(('Turn off Focus', self._turn_off_focus))
         self.item_actions._show_action_menu(self.stack, f'{label} is paused', actions)
 
+    def _nope_blocks(self, app_id: str, label: str = '') -> bool:
+        """Nope launch gate: True when the launch must not happen."""
+        from nope_mode import blocks_window
+        return blocks_window(self, app_id, label)
+
+    def _show_nope_notice(self, label: str) -> None:
+        from nope_mode import BREAK_MINUTES
+        try:
+            text = self.nope_state.notice_text(label)
+        except Exception:
+            text = f'Nope. {label} is blocked.'
+        actions = [(f'Take a break ({m} min)',
+                    lambda mins=m: self._start_nope_break(mins))
+                   for m in BREAK_MINUTES]
+        actions.append(('Turn off Nope', self._turn_off_nope))
+        try:
+            self.item_actions._show_action_menu(self.stack, text, actions)
+        except Exception:
+            pass
+        try:
+            self._show_status(text)
+        except Exception:
+            pass
+
+    def _start_nope_break(self, minutes: int) -> None:
+        try:
+            ok, reason = self.nope_state.start_break(minutes)
+        except Exception:
+            return
+        self._refresh_after_item_action()
+        try:
+            self.quick_actions_refresh()
+        except Exception:
+            pass
+        self._show_status(
+            f'Nope paused for {minutes} minutes.' if ok else str(reason))
+
+    def _on_switcher_nope(self, app) -> None:
+        try:
+            label = getattr(app, 'app_id', None) or getattr(app, 'title', '')
+            self._show_nope_notice(str(label))
+        except Exception:
+            pass
+
+    def _turn_off_nope(self) -> None:
+        try:
+            self.nope_state.set_enabled(False)
+        except Exception:
+            return
+        self._refresh_after_item_action()
+        try:
+            self.quick_actions_refresh()
+        except Exception:
+            pass
+        self._show_status('Nope turned off.')
+
+    def _on_nope_changed(self, active: bool) -> None:
+        if active:
+            self._on_nope_turned_on()
+
+    def _on_nope_turned_on(self) -> None:
+        try:
+            from nope_mode import close_blocked_windows
+            close_blocked_windows(
+                self._ensure_toplevel_manager(), self.nope_state)
+        except Exception:
+            pass
+        try:
+            self.quick_actions_refresh()
+        except Exception:
+            pass
+
+    def quick_actions_refresh(self) -> None:
+        shade = getattr(self, '_shade', None)
+        panel = getattr(shade, 'quick_actions', None) if shade else None
+        if panel is not None:
+            try:
+                panel.refresh_states()
+                return
+            except Exception:
+                pass
+
     def _start_focus_break(self, minutes: int) -> None:
         self.focus_state.start_break(minutes)
         self._refresh_after_item_action()
@@ -1211,6 +1296,11 @@ class ShellWindow(Adw.ApplicationWindow):
             elif action.startswith('launch:'):
                 ids.append(action[len('launch:'):])
         for app_id in ids:
+            try:
+                if self.nope_state.is_blocked(app_id):
+                    continue
+            except Exception:
+                pass
             try:
                 info = Gio.DesktopAppInfo.new(app_id)
                 if info is not None:
@@ -1391,6 +1481,8 @@ class ShellWindow(Adw.ApplicationWindow):
             pass
 
     def _launch_app_id(self, app_id: str) -> None:
+        if self._nope_blocks(app_id, str(app_id)):
+            return
         from gi.repository import Gio
         try:
             info = Gio.DesktopAppInfo.new(app_id)
@@ -1626,6 +1718,8 @@ class ShellWindow(Adw.ApplicationWindow):
             self._shade = NotificationShade(
                 dnd_state=self.dnd_state,
                 focus_state=self.focus_state,
+                nope_state=self.nope_state,
+                on_nope_changed=self._on_nope_changed,
                 on_open_settings=self.open_settings,
                 on_power=self._show_power_menu,
                 hud=hud,
@@ -1828,6 +1922,8 @@ class ShellWindow(Adw.ApplicationWindow):
                 manager=manager, config=self.config,
                 thumbnails=self._ensure_thumbs(),
                 on_activated=self.drop_to_background,
+                nope_state=self.nope_state,
+                on_nope=self._on_switcher_nope,
             )
             self._switcher.set_application(self.get_application())
             self._switcher.apply_theme(resolve_appearance_preset(self.config))
