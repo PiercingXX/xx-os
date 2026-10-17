@@ -10,6 +10,7 @@
 
 #include "pos-config.h"
 #include "pos-wayland.h"
+#include "pos-output-priv.h"
 
 #include <gdk/gdkwayland.h>
 
@@ -102,6 +103,12 @@ registry_handle_global (void               *data,
                                                      name,
                                                      &zxdg_output_manager_v1_interface,
                                                      3);
+    /* Outputs announced before the manager still need their xdg-output */
+    for (guint i = 0; i < self->outputs->len; i++) {
+      PosOutput *output = g_ptr_array_index (self->outputs, i);
+
+      pos_output_bind_xdg_output (output, self->zxdg_output_manager_v1);
+    }
   }
 
   if (pos_wayland_has_wl_protcols (self) && !self->ready) {

@@ -202,19 +202,32 @@ static const struct zxdg_output_v1_listener xdg_output_v1_listener =
 static void
 set_wl_output (PosOutput *self, struct wl_output *wl_output)
 {
-  PosWayland *wayland;
-  struct zxdg_output_manager_v1 *xdg_output_manager;
+  struct zxdg_output_manager_v1 *manager;
 
   if (!wl_output)
     return;
 
-  wayland = pos_wayland_get_default ();
   self->wl_output = wl_output;
   wl_output_add_listener (self->wl_output, &wl_output_listener, self);
 
-  xdg_output_manager = pos_wayland_get_zxdg_output_manager_v1 (wayland);
-  self->xdg_output = zxdg_output_manager_v1_get_xdg_output (xdg_output_manager,
-                                                            self->wl_output);
+  manager = pos_wayland_get_zxdg_output_manager_v1 (pos_wayland_get_default ());
+  pos_output_bind_xdg_output (self, manager);
+}
+
+
+/* Attach the xdg-output for logical size. The registry sends globals in
+ * any order, so the manager may arrive after the output (or be absent);
+ * nothing may assume it is there. Safe to call more than once.
+ */
+void
+pos_output_bind_xdg_output (PosOutput *self, struct zxdg_output_manager_v1 *manager)
+{
+  g_return_if_fail (POS_IS_OUTPUT (self));
+
+  if (self->xdg_output != NULL || self->wl_output == NULL || manager == NULL)
+    return;
+
+  self->xdg_output = zxdg_output_manager_v1_get_xdg_output (manager, self->wl_output);
   zxdg_output_v1_add_listener (self->xdg_output, &xdg_output_v1_listener, self);
 }
 

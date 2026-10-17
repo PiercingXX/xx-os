@@ -500,6 +500,7 @@ pos_input_surface_finalize (GObject *object)
 
   g_clear_object (&self->emoji_db);
   g_clear_object (&self->size_manager);
+  g_clear_pointer (&self->loop, g_main_loop_unref);
 
   G_OBJECT_CLASS (pos_app_parent_class)->finalize (object);
 }

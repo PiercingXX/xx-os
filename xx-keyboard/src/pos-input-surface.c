@@ -447,7 +447,7 @@ pos_input_surface_update_glide (PosInputSurface *self)
 
   g_return_if_fail (POS_IS_INPUT_SURFACE (self));
 
-  if (self->glide_decoder == NULL || self->deck == NULL)
+  if (self->glide_decoder == NULL || self->deck == NULL || self->osks == NULL)
     return;
 
   child = hdy_deck_get_visible_child (self->deck);
@@ -1933,6 +1933,14 @@ pos_input_surface_destroy (GtkWidget *widget)
 {
   PosInputSurface *self = POS_INPUT_SURFACE (widget);
 
+  /* Tearing down the deck changes its visible child, which must not run
+   * layout-switch logic on a half destroyed surface (it touches osks and
+   * the glide state cleared below).
+   */
+  g_signal_handlers_disconnect_by_func (self->deck,
+                                        on_visible_child_changed,
+                                        self);
+
   g_clear_object (&self->action_map);
   /* Clear array early since this also destroys the osks in the deck */
   g_clear_pointer (&self->osks, g_ptr_array_unref);
@@ -2618,6 +2626,7 @@ pos_input_surface_init (PosInputSurface *self)
 {
   g_autoptr (GPropertyAction) completion_action = NULL;
   g_autoptr (GError) err = NULL;
+  g_autofree char *dict_dir = NULL;
   GAction *action;
 
   gtk_widget_init_template (GTK_WIDGET (self));
@@ -2655,7 +2664,8 @@ pos_input_surface_init (PosInputSurface *self)
   g_settings_bind (self->osk_settings, "osk-features", self, "osk-features", G_SETTINGS_BIND_GET);
 
   self->glide_cancellable = g_cancellable_new ();
-  self->glide_decoder = pos_glide_decoder_new (pos_input_surface_get_dict_dir ());
+  dict_dir = pos_input_surface_get_dict_dir ();
+  self->glide_decoder = pos_glide_decoder_new (dict_dir);
   g_signal_connect_swapped (self->osk_settings, "changed::glide-typing",
                             G_CALLBACK (pos_input_surface_update_glide),
                             self);

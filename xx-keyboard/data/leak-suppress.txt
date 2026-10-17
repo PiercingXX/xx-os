@@ -7,3 +7,8 @@ leak:libgovarnam.so.1
 leak:sqlite3Malloc
 # https://gitlab.gnome.org/GNOME/gtk/merge_requests/823
 leak:gtk_header_bar_set_decoration_layout
+# One-time process-exit leaks, only reachable via the full app run
+# (test-kb-lifecycle), not via unit tests. All freed by the OS at exit.
+leak:populate_emoji_chooser
+leak:pos_vk_driver_init
+leak:pos_keypad_init

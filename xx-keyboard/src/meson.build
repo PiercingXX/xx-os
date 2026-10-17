@@ -160,7 +160,7 @@ libpos_dep = declare_dependency(
 
 # xx-keyboard: binary renamed from phosh-osk-stevia. The sm.puri.OSK0
 # D-Bus name and protocol behaviour are unchanged (see pos-osk-dbus.c).
-executable(
+xx_keyboard_bin = executable(
   'xx-keyboard',
   'dh-dconf-migration.c',
   'phosh-osk-stevia.c',

@@ -53,6 +53,33 @@ test(
   args: ['--layouts=' + meson.current_source_dir() / '..' / 'src' / 'layouts'],
 )
 
+# xx-keyboard: SIGTERM lifecycle. Runs the real binary against a fake
+# headless compositor plus a private bus, swipes once, then stops it
+# with SIGTERM like systemd does. Needs no display; skips cleanly
+# without dbus-daemon. No fatal-warnings: the fake compositor
+# legitimately trips benign toolkit criticals (seat, resize).
+lifecycle_env = environment()
+lifecycle_env.set('NO_AT_BRIDGE', '1')
+lifecycle_env.set('GSETTINGS_BACKEND', 'memory')
+lifecycle_env.set(
+  'LSAN_OPTIONS',
+  'suppressions=@0@/data/leak-suppress.txt'.format(meson.project_source_root()),
+)
+lifecycle_env.set('ASAN_OPTIONS', 'fast_unwind_on_malloc=0')
+lifecycle_env.set('MALLOC_CHECK_', '2')
+test(
+  'test-kb-lifecycle',
+  find_program('test-kb-lifecycle.py'),
+  args: [
+    '--binary=' + meson.current_build_dir() / '..' / 'src' / 'xx-keyboard',
+    '--schema-dir=' + meson.project_build_root() / 'data',
+    '--dict-dir=' + meson.project_source_root() / 'glide' / 'dicts',
+  ],
+  depends: [compile_schemas, xx_keyboard_bin],
+  env: lifecycle_env,
+  timeout: 150,
+)
+
 if presage_dep.found()
   # Create a dummy db for testing
   presage_test_db = custom_target(
