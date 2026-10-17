@@ -5,6 +5,9 @@ phone. Signed out: one line and Sign in, then Liked and History kept on
 this phone, and On this phone. On this phone lists downloads by state:
 downloading (a blinking square and a 2 px progress line), waiting,
 failed (with Retry) and done, under a storage meter.
+
+Minimal Mode: the sections are words, the meter a hairline under one
+line of figures, rows without art, ``[ retry ]`` and ``[ cancel ]``.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from gi.repository import Gtk
 from xx_music.engine import (ERROR_TEXT, LIBRARY, ErrorKind, Item,
                              LibrarySection, Track)
 from xx_music.tasks import Generation
-from xx_music.ui import common, css, fmt, menus
+from xx_music.ui import common, css, fmt, menus, minimal
 from xx_music.ui.context import ACTIVE, DONE, FAILED, QUEUED, DownloadRow
 from xx_ui import widgets
 
@@ -63,9 +66,19 @@ class LibraryPage:
         root.append(self.top)
         root.append(common.scroller(self.body))
         self.widget = root
+        self._repaint = None
         ui.on_account(self._account_changed)
         ui.on_downloads(self._downloads_changed)
+        minimal.listen(self._minimal_changed)
         self._account_changed()
+
+    def _minimal_changed(self) -> None:
+        """Repaint what is on screen from what was loaded."""
+        self._paint_top()
+        if self.section == PHONE:
+            self._paint_phone()
+        elif self._repaint is not None:
+            self._repaint()
 
     # -- sections ------------------------------------------------------------------
     def sections(self) -> tuple:
@@ -100,6 +113,7 @@ class LibraryPage:
 
     def show_section(self, key: str) -> None:
         self.section = key
+        self._repaint = None
         self._paint_top()
         common.clear(self.body)
         self.loading.set_active(False)
@@ -130,7 +144,7 @@ class LibraryPage:
                 f"Sign in to see your {ui.engine.name} library.",
                 "xx-secondary"))
             if "sign-in" in ui.hooks.actions:
-                button = widgets.outline_button(
+                button = minimal.outline(
                     "Sign in", lambda: ui.action("sign-in"))
                 common.fit(button, 12)
                 button.set_halign(Gtk.Align.START)
@@ -144,6 +158,7 @@ class LibraryPage:
     # -- signed-in sections ------------------------------------------------------------
     def _got_items(self, items: list[Item]) -> None:
         self.loading.set_active(False)
+        self._repaint = lambda: self._got_items(items)
         common.clear(self.body)
         if not items:
             self._gutter(common.muted(EMPTY[self.section]))
@@ -164,13 +179,14 @@ class LibraryPage:
         self.loading.set_active(False)
         kind = getattr(error, "kind", ErrorKind.OTHER)
         common.clear(self.body)
-        self._gutter(widgets.empty_state(
+        self._gutter(common.empty_state(
             ERROR_TEXT.get(kind, ERROR_TEXT[ErrorKind.OTHER]), "Retry",
             self.reload)).set_margin_top(24)
 
     def _paint_tracks(self, tracks: list[Track], key: str) -> None:
         if key != self.section:
             return
+        self._repaint = lambda: self._paint_tracks(tracks, key)
         common.clear(self.body)
         if not tracks:
             self._gutter(common.muted(EMPTY[key]))
@@ -224,6 +240,8 @@ class LibraryPage:
         except (ValueError, TypeError):
             cap_gb = 2
         cap = cap_gb * 2**30
+        if minimal.active():
+            return storage_lines(used, cap_gb, self._phone_line(count))
         box = common.vbox(8)
         box.add_css_class("xx-mu-block")
         box.set_margin_top(8)
@@ -265,6 +283,8 @@ class LibraryPage:
                       last: bool) -> Gtk.Widget:
         ui = self.ui
         track = row.track
+        if minimal.active():
+            return self._minimal_download_row(row, done)
         button = Gtk.Button()
         button.add_css_class("xx-mu-row")
         if last:
@@ -328,6 +348,53 @@ class LibraryPage:
             common.on_long_press(button, lambda: menus.track_menu(ui, track))
         return button
 
+    def _retry(self, track: Track) -> None:
+        self.ui.player.download([menus.download_payload(
+            "track", track.id, track.title, track)])
+        common.toast(self.ui, "Trying again")
+
+    def _minimal_download_row(self, row: DownloadRow,
+                              done: list[DownloadRow]) -> Gtk.Widget:
+        ui = self.ui
+        track = row.track
+        if row.state == DONE:
+            tracks = [r.track for r in done]
+            return minimal.list_row(
+                track.title, fmt.joined(track.artist_line,
+                                        fmt.size(row.size_bytes)
+                                        if row.size_bytes else ""),
+                lambda: ui.shell.play_song(track, tracks, {
+                    "type": "offline", "title": "On this phone"}),
+                lambda: menus.track_menu(ui, track))
+        note = row.note or {
+            ACTIVE: f"downloading · {int(row.progress * 100)}%",
+            QUEUED: "waiting",
+            FAILED: "couldn't download"}[row.state]
+        line = common.hbox(8)
+        texts = common.vbox(1)
+        texts.set_hexpand(True)
+        texts.set_valign(Gtk.Align.CENTER)
+        texts.append(minimal.text(track.title, minimal.Tone.PLAIN, 15,
+                                  chars=20))
+        texts.append(minimal.text(note, minimal.Tone.QUIET, 13, chars=24))
+        if row.state == ACTIVE:
+            bar = minimal.hairline(row.progress)
+            bar.set_margin_top(4)
+            texts.append(bar)
+        line.append(texts)
+        if row.state == FAILED:
+            line.append(minimal.bracket_button(
+                "retry", lambda: self._retry(track), minimal.Tone.STRONG,
+                size=13, spoken=f"Retry {track.title}"))
+        else:
+            line.append(minimal.bracket_button(
+                "cancel", lambda: ui.player.remove_download(track.id),
+                minimal.Tone.QUIET, size=13,
+                spoken=f"Cancel {track.title}"))
+        line.set_margin_top(6)
+        line.set_margin_bottom(6)
+        return line
+
     def _gutter(self, widget: Gtk.Widget) -> Gtk.Widget:
         holder = common.vbox(0)
         holder.add_css_class("xx-page-body")
@@ -335,3 +402,23 @@ class LibraryPage:
         self.body.append(holder)
         return widget
 
+
+
+def storage_lines(used: int, cap_gb: int, line: str) -> Gtk.Widget:
+    """Minimal Mode's storage meter: the figures, a hairline, a Quiet
+    line. No block, no fill."""
+    box = common.vbox(6)
+    box.set_margin_top(8)
+    box.set_margin_bottom(4)
+    figures = minimal.text(f"{fmt.size(used)} of {cap_gb} GB",
+                           minimal.Tone.PLAIN, 15, chars=24)
+    figures.add_css_class("xx-mu-num")
+    box.append(figures)
+    cap = cap_gb * 2**30
+    bar = minimal.hairline(used / cap if cap else 0.0)
+    bar.update_property([Gtk.AccessibleProperty.LABEL],
+                        [f"{fmt.size(used)} of {cap_gb} GB used"])
+    box.append(bar)
+    box.append(minimal.text(line, minimal.Tone.QUIET, 13, lines=2,
+                            chars=34))
+    return box

@@ -4,6 +4,10 @@ Playback, Downloads and storage, Diagnostics and About.
 Every value lives in ``config.json`` through the window's store (on the
 worker). The diagnostics block is redacted before it reaches the
 clipboard; the log view shows the redacted tail of the log file.
+
+Playback opens with Minimal Mode (off by default): flipping it saves
+the setting and rebuilds every screen at once, no restart. In Minimal
+Mode the switches are ``[ on ]`` / ``[ off ]`` and rows open with ``▸``.
 """
 
 from __future__ import annotations
@@ -14,19 +18,47 @@ from xx_music import __version__ as core_version
 from xx_music import diagnostics
 from xx_music.cache import VALID_CAP_CHOICES_GB
 from xx_music.engine import STREAM
-from xx_music.ui import common, css, fmt
+from xx_music.ui import common, css, fmt, minimal
 from xx_ui import widgets
+
+MINIMAL_TITLE = "Minimal mode"
+MINIMAL_SUB = "Text only: no art, icons or tiles. Art is never fetched."
 
 LOG_LINES = 200
 
 
 def switch_row(title: str, subtitle: str, active: bool, on_change,
                last: bool = False) -> Gtk.Widget:
+    if minimal.active():
+        row = widgets.setting_row(title, subtitle, on_off_button(
+            title, active, on_change), last=last)
+        _wrap_titles(row)
+        return row
     switch = widgets.make_switch(active, on_change)
     switch.update_property([Gtk.AccessibleProperty.LABEL], [title])
     row = widgets.setting_row(title, subtitle, switch, last=last)
     _wrap_titles(row)
     return row
+
+
+def on_off_button(title: str, active: bool, on_change) -> Gtk.Button:
+    """Minimal Mode's switch: ``[ on ]`` Strong or ``[ off ]`` Quiet."""
+    state = {"on": bool(active)}
+    button = minimal.bracket_button(
+        minimal.on_off(state["on"]), None, minimal.toggled(state["on"]),
+        spoken=f"{title}, {minimal.on_off(state['on'])}")
+
+    def flip(_b) -> None:
+        state["on"] = not state["on"]
+        button.get_child().set_text(minimal.bracket(
+            minimal.on_off(state["on"])))
+        minimal.set_tone(button, minimal.toggled(state["on"]))
+        common.name(button, f"{title}, {minimal.on_off(state['on'])}")
+        on_change(state["on"])
+
+    button.connect("clicked", flip)
+    button.xx_state = state
+    return button
 
 
 def _wrap_titles(row: Gtk.Widget) -> None:
@@ -44,6 +76,11 @@ def _wrap_titles(row: Gtk.Widget) -> None:
 
 def nav_row(title: str, subtitle: str, callback, last: bool = False,
             trailing: Gtk.Widget | None = None) -> Gtk.Button:
+    if minimal.active() and (trailing is None or isinstance(trailing, str)):
+        trailing = minimal.text(trailing or minimal.OPENS,
+                                minimal.Tone.QUIET, 15, chars=6)
+    elif isinstance(trailing, str):
+        trailing = None
     row = widgets.list_row(title, subtitle,
                            trailing=trailing or widgets.chevron(),
                            on_activate=callback, last=last)
@@ -76,14 +113,29 @@ class SettingsPage:
         self._app_sections()
         self.playback_box = common.vbox(0)
         self.downloads_box = common.vbox(0)
-        self.body.append(self.playback_box)
-        self.body.append(self.downloads_box)
-        self.body.append(self._diagnostics())
-        self.body.append(self._about())
+        self.diagnostics_box = common.vbox(0)
+        self.about_box = common.vbox(0)
+        for box in (self.playback_box, self.downloads_box,
+                    self.diagnostics_box, self.about_box):
+            self.body.append(box)
+        self._paint_static()
         for box in (self.body,):
             box.add_css_class("xx-page-body")
         ui.io(ui.store.prefs, self._got_prefs, lambda _e: None)
         ui.on_downloads(self._paint_downloads)
+        minimal.listen(self._minimal_changed)
+
+    def _paint_static(self) -> None:
+        common.clear(self.diagnostics_box)
+        self.diagnostics_box.append(self._diagnostics())
+        common.clear(self.about_box)
+        self.about_box.append(self._about())
+
+    def _minimal_changed(self) -> None:
+        self._paint_static()
+        if self.prefs:
+            self._paint_playback()
+            self._paint_downloads()
 
     # -- app sections ------------------------------------------------------------------
     def _app_sections(self) -> None:
@@ -135,12 +187,24 @@ class SettingsPage:
         self.ui.io(lambda: self.ui.store.set_pref(key, value),
                    lambda p: self.prefs.update(p))
 
+    def set_minimal(self, on: bool) -> None:
+        """Save Minimal Mode and apply it now (after this click returns:
+        the row that was clicked is rebuilt too)."""
+        from gi.repository import GLib
+
+        self._set("minimal_mode", bool(on))
+        GLib.idle_add(lambda: (self.ui.set_minimal(bool(on)), False)[1])
+
     def _paint_playback(self) -> None:
         box = self.playback_box
         common.clear(box)
-        if not self.ui.supports(STREAM):
-            return
         box.append(section("Playback"))
+        streams = self.ui.supports(STREAM)
+        box.append(switch_row(
+            MINIMAL_TITLE, MINIMAL_SUB, bool(self.prefs.get("minimal_mode")),
+            self.set_minimal, last=not streams))
+        if not streams:
+            return
         box.append(switch_row(
             "Data saver", "Lower quality on mobile data",
             bool(self.prefs.get("data_saver")),
@@ -161,6 +225,26 @@ class SettingsPage:
         cap = int(self.prefs.get("storage_cap_gb") or 2)
         done = [r for r in self.ui.downloads if r.state == "done"]
         used = sum(r.size_bytes or 0 for r in done)
+        if minimal.active():
+            from xx_music.ui.library import storage_lines
+
+            box.append(storage_lines(
+                used, cap, f"{fmt.songs(len(done))} downloaded · 1 GB "
+                "always left free"))
+        else:
+            box.append(self._meter(used, cap, done))
+        box.append(nav_row("Storage limit", f"{cap} GB for downloads and "
+                           "songs fetched ahead", self.open_cap))
+        box.append(switch_row(
+            "Download on Wi-Fi only", "Mobile data never fills the phone",
+            bool(self.prefs.get("wifi_only")),
+            lambda on: self._set("wifi_only", on)))
+        box.append(switch_row(
+            "Keep liked songs", "Download songs you like",
+            bool(self.prefs.get("keep_liked_offline")),
+            lambda on: self._set("keep_liked_offline", on), last=True))
+
+    def _meter(self, used: int, cap: int, done: list) -> Gtk.Widget:
         meter = common.vbox(8)
         meter.add_css_class("xx-mu-block")
         meter.set_margin_bottom(8)
@@ -179,17 +263,7 @@ class SettingsPage:
         meter.append(common.label(
             f"{fmt.songs(len(done))} downloaded · 1 GB always left free",
             "xx-mu-meta", lines=2, chars=34))
-        box.append(meter)
-        box.append(nav_row("Storage limit", f"{cap} GB for downloads and "
-                           "songs fetched ahead", self.open_cap))
-        box.append(switch_row(
-            "Download on Wi-Fi only", "Mobile data never fills the phone",
-            bool(self.prefs.get("wifi_only")),
-            lambda on: self._set("wifi_only", on)))
-        box.append(switch_row(
-            "Keep liked songs", "Download songs you like",
-            bool(self.prefs.get("keep_liked_offline")),
-            lambda on: self._set("keep_liked_offline", on), last=True))
+        return meter
 
     def open_cap(self):
         dialog, box = common.sheet("Storage limit")
@@ -223,7 +297,8 @@ class SettingsPage:
         box.append(nav_row("Copy diagnostics",
                            "Versions and recent errors, no sign-in data",
                            self.copy_diagnostics,
-                           trailing=widgets.icon_image("edit-copy-symbolic")))
+                           trailing="copy" if minimal.active() else
+                           widgets.icon_image("edit-copy-symbolic")))
         box.append(nav_row("Log", "What the app did recently",
                            self.open_log, last=True))
         return box

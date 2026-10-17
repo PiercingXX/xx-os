@@ -4,6 +4,11 @@ Each opens inside the current tab with a compact back header, paints a
 skeleton title at once (the name the tap already knew), loads on the
 worker under a 2 px loading line, and keeps one muted sentence plus
 Retry when the engine fails.
+
+Minimal Mode: no hero art, the title in the display face, names as
+plain words, ``[ play ]`` and friends, song lists without art, and the
+release and related carousels as ``Title — Artist`` shelves. A page
+repaints itself from what it already loaded when the mode flips.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ from xx_music.engine import (CHARTS, ERROR_TEXT, MOODS, RADIO, STREAM,
                              AlbumPage, ArtistPage, ErrorKind, Item,
                              ItemKind, Mood, PlaylistPage, Shelf, Track)
 from xx_music.tasks import Generation
-from xx_music.ui import common, css, fmt, menus
+from xx_music.ui import common, css, fmt, menus, minimal
 from xx_ui import widgets
 
 HERO_PX = 168
@@ -34,15 +39,21 @@ class Page:
         self.ui = ui
         self.title = title
         self.generation = Generation()
+        self.expanded: set[str] = set()
+        self.data = None
+        self._painter = None
         self.loading = common.LoadingLine()
         self.body = common.vbox(0)
         self.body.set_margin_bottom(32)
         root = common.vbox(0)
         root.add_css_class("xx-mu")
-        root.append(self.header())
+        self.header_slot = common.vbox(0)
+        self.header_slot.append(self.header())
+        root.append(self.header_slot)
         root.append(self.loading)
         root.append(common.scroller(self.body))
         self.widget = root
+        minimal.listen(self._minimal_changed)
 
     def header(self) -> Gtk.Widget:
         return common.header(self.ui.shell.pop, self.caption)
@@ -52,19 +63,51 @@ class Page:
 
         def done(result) -> None:
             self.loading.set_active(False)
-            common.clear(self.body)
-            paint(result)
+            self.data, self._painter = result, paint
+            self.repaint()
 
         self.ui.run(capability, fn, done, self.failed, self.generation)
 
+    def repaint(self) -> None:
+        if self._painter is None:
+            return
+        common.clear(self.body)
+        self._painter(self.data)
+
+    def _minimal_changed(self) -> None:
+        if self.widget.get_root() is None:
+            return  # popped: nothing to show it on
+        common.clear(self.header_slot)
+        self.header_slot.append(self.header())
+        if self._painter is not None:
+            self.repaint()
+
+    def shelf(self, key: str, items: list[Item], on_menu=True) -> None:
+        """Minimal Mode's stand-in for a carousel: ``Title — Artist``
+        rows, five before "more…"."""
+        ui = self.ui
+
+        def toggle() -> None:
+            self.expanded ^= {key}
+            self.repaint()
+
+        entries = [(minimal.item_text(item), lambda i=item:
+                    ui.shell.open_item(i),
+                    (lambda i=item: menus.item_menu(ui, i))
+                    if on_menu else None) for item in items]
+        self.gutter(minimal.shelf(entries, key in self.expanded, toggle))
+
     def failed(self, error) -> None:
         self.loading.set_active(False)
-        kind = getattr(error, "kind", ErrorKind.OTHER)
-        common.clear(self.body)
+        self.data = getattr(error, "kind", ErrorKind.OTHER)
+        self._painter = self._paint_failed
+        self.repaint()
+
+    def _paint_failed(self, kind) -> None:
         box = common.vbox(0)
         box.add_css_class("xx-page-body")
         box.append(common.label(self.title, "xx-mu-h1", lines=2, chars=16))
-        box.append(widgets.empty_state(
+        box.append(common.empty_state(
             ERROR_TEXT.get(kind, ERROR_TEXT[ErrorKind.OTHER]),
             "Retry", self.reload))
         box.get_last_child().set_margin_top(32)
@@ -98,6 +141,11 @@ class Page:
         self.gutter(box)
 
     def actions(self, buttons: list[Gtk.Widget]) -> None:
+        if minimal.active():
+            row = minimal.flow(buttons, spacing=8)
+            row.set_margin_top(10)
+            self.gutter(row)
+            return
         row = Gtk.Box.new(Gtk.Orientation.VERTICAL if css.large_text()
                           else Gtk.Orientation.HORIZONTAL, 10)
         row.set_margin_top(18)
@@ -111,14 +159,26 @@ class Page:
         a line with a callback is a tappable name."""
         box = common.vbox(0)
         box.set_margin_top(8)
-        art = common.art(self.ui, url, title, px, shape)
-        art.set_halign(Gtk.Align.START)
-        box.append(art)
+        bare = minimal.active()
+        if not bare:
+            art = common.art(self.ui, url, title, px, shape)
+            art.set_halign(Gtk.Align.START)
+            box.append(art)
         head = common.label(title, "xx-mu-h1", lines=3, chars=16)
-        head.set_margin_top(18)
+        head.set_margin_top(4 if bare else 18)
         box.append(head)
         for text, callback in lines:
             if not text:
+                continue
+            if bare:
+                if callback is not None:
+                    line = minimal.text_row(text, callback, spoken=f"Open {text}")
+                else:
+                    line = minimal.text(text, minimal.Tone.QUIET, 13,
+                                        chars=30)
+                    line.add_css_class("xx-mu-num")
+                    line.set_margin_top(4)
+                box.append(line)
                 continue
             if callback is not None:
                 link = Gtk.Button()
@@ -137,6 +197,8 @@ class Page:
 
 
 def _wide(button: Gtk.Button) -> Gtk.Button:
+    if button.has_css_class("xx-mm-btn"):
+        return button
     button.set_hexpand(True)
     return common.fit(button, 10)
 
@@ -152,7 +214,20 @@ def _play_buttons(ui, tracks: list[Track], origin: dict,
         else:
             ui.player.play(tracks, 0, origin)
 
-    buttons = [_with_icon(_wide(widgets.primary_button(
+    if minimal.active():
+        Tone = minimal.Tone
+        words = [minimal.bracket_button("play", lambda: play(False),
+                                        Tone.STRONG),
+                 minimal.bracket_button("shuffle", lambda: play(True),
+                                        Tone.QUIET)]
+        if download is not None and ui.supports(STREAM):
+            words.append(minimal.bracket_button(
+                "download", lambda: (ui.player.download([download]),
+                                     common.toast(ui, "Downloading")),
+                Tone.QUIET))
+        return words
+
+    buttons = [_with_icon(_wide(minimal.primary(
         "Play", lambda: play(False))), "media-playback-start-symbolic")]
     shuffle = common.icon_button("media-playlist-shuffle-symbolic",
                                  "Shuffle", lambda: play(True))
@@ -169,6 +244,8 @@ def _play_buttons(ui, tracks: list[Track], origin: dict,
 
 
 def _with_icon(button: Gtk.Button, icon: str) -> Gtk.Button:
+    if button.has_css_class("xx-mm-btn"):
+        return button  # Minimal Mode: the word is enough
     text = button.get_label() or ""
     row = common.hbox(8)
     row.set_halign(Gtk.Align.CENTER)
@@ -285,11 +362,11 @@ class ArtistView(Page):
         self.hero(page.art_url, page.name, ARTIST_HERO_PX, "r16", [])
         origin = {"type": "artist", "id": page.id, "title": page.name}
         top = list(page.top_tracks)
-        buttons = [_with_icon(_wide(widgets.primary_button(
+        buttons = [_with_icon(_wide(minimal.primary(
             "Play", lambda: ui.player.play(top, 0, origin))),
             "media-playback-start-symbolic")]
         if ui.supports(RADIO) and (page.radio_seed or top):
-            buttons.append(_with_icon(_wide(widgets.outline_button(
+            buttons.append(_with_icon(_wide(minimal.outline(
                 "Radio", lambda: _start_artist_radio(ui, page))),
                 "media-playlist-shuffle-symbolic"))
         if top:
@@ -298,14 +375,20 @@ class ArtistView(Page):
             self.rows(top, origin, limit=5)
         for title, items in (("Albums", page.albums),
                              ("Singles", page.singles)):
-            if items:
+            if items and minimal.active():
+                self.section(title)
+                self.shelf(title, list(items))
+            elif items:
                 self.section(title)
                 self.body.append(common.carousel([
                     common.tile(ui, item, lambda i=item: ui.shell.open_item(i),
                                 lambda i=item: menus.item_menu(ui, i),
                                 px=RELEASE_PX)
                     for item in items]))
-        if page.related:
+        if page.related and minimal.active():
+            self.section("Fans also like")
+            self.shelf("related", list(page.related), on_menu=False)
+        elif page.related:
             self.section("Fans also like")
             self.body.append(common.carousel([
                 common.tile(ui, item, lambda i=item: ui.shell.open_item(i),
@@ -362,6 +445,9 @@ class ShelvesView(Page):
             if len(tracks) == len(items):
                 self.rows(tracks, {"type": "chart", "title": shelf.title},
                           numbered=self.capability == CHARTS, limit=10)
+                continue
+            if minimal.active():
+                self.shelf(shelf.title, items)
                 continue
             self.body.append(common.carousel([
                 common.tile(ui, item, lambda i=item: ui.shell.open_item(i),

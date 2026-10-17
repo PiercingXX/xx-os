@@ -6,6 +6,9 @@ dropped by a Generation). Enter or a suggestion: results, with a filter
 row (All, Songs, Albums, Artists, Playlists). Tapping a song plays it and
 starts its radio; long-press (or More) opens Play next, Add to queue,
 Start radio, Go to artist/album, Download, Like, Dislike.
+
+Minimal Mode: the field without glyphs (``clear`` is a word), the
+filters and recent searches as words, rows without art or icons.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from gi.repository import GLib, Gtk
 from xx_music.engine import (ERROR_TEXT, SEARCH, SUGGEST, ErrorKind, Item,
                              ItemKind, SearchResults)
 from xx_music.tasks import Generation
-from xx_music.ui import common, menus
+from xx_music.ui import common, menus, minimal
 from xx_ui import widgets
 
 SUGGEST_DELAY_MS = 260
@@ -48,14 +51,18 @@ class SearchPage:
         bar.set_margin_end(20)
         bar.set_margin_top(4)
         bar.set_margin_bottom(8)
+        self.bar = bar
         self.entry = bar.get_last_child()
+        self.clear_word = minimal.word_button(
+            "clear", lambda: self.set_text(""), spoken="Clear the search")
+        self.clear_word.set_visible(False)
+        bar.append(self.clear_word)
         self.entry.set_can_focus(False)
         tap = Gtk.GestureClick.new()
         tap.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         tap.connect("pressed", lambda *_a: self._focus())
         self.entry.add_controller(tap)
-        self.entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY,
-                                           "system-search-symbolic")
+        self._style_bar()
         self.entry.connect("changed", self._changed)
         self.entry.connect("activate", lambda _e: self.submit(
             self.entry.get_text()))
@@ -75,6 +82,18 @@ class SearchPage:
         root.append(common.scroller(self.body))
         self.widget = root
         ui.io(ui.store.recents, self._got_recents, lambda _e: None)
+        minimal.listen(self._minimal_changed)
+
+    def _style_bar(self) -> None:
+        """The search glyph, or (Minimal Mode) none."""
+        self.entry.set_icon_from_icon_name(
+            Gtk.EntryIconPosition.PRIMARY,
+            None if minimal.active() else "system-search-symbolic")
+        self._sync_clear_icon()
+
+    def _minimal_changed(self) -> None:
+        self._style_bar()
+        self._paint()
 
     # -- entry ---------------------------------------------------------------------
     def _focus(self) -> None:
@@ -96,9 +115,12 @@ class SearchPage:
             self._paint()
 
     def _sync_clear_icon(self) -> None:
+        typed = bool(self.entry.get_text())
+        words = minimal.active()
         self.entry.set_icon_from_icon_name(
             Gtk.EntryIconPosition.SECONDARY,
-            "edit-clear-symbolic" if self.entry.get_text() else None)
+            "edit-clear-symbolic" if typed and not words else None)
+        self.clear_word.set_visible(typed and words)
 
     def _changed(self, _entry) -> None:
         self._sync_clear_icon()
@@ -246,6 +268,11 @@ class SearchPage:
 
     def _suggestion_row(self, text: str, typed: bool,
                         last: bool) -> Gtk.Widget:
+        if minimal.active():
+            return minimal.text_row(
+                text, lambda: self.submit(text),
+                tone=minimal.Tone.PLAIN if typed else minimal.Tone.QUIET,
+                spoken=f"Search for {text}")
         row = Gtk.Button()
         row.add_css_class("xx-mu-row")
         if last:

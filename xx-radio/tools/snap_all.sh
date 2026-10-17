@@ -6,7 +6,12 @@
 # with scripts/snap.py through tools/snap_app.py (the demo engine, a
 # local player, no network, no keyring, no player service), and
 # montages one sheet per theme. Exits non-zero on any snap WARNING
-# (phone-fit breach). JOBS sets the parallel renders (default 4).
+# (phone-fit breach). JOBS sets the parallel renders (default 3).
+# MINIMAL=both (default) also renders every screen in Minimal Mode as
+# mm-LABEL (sheet-minimal-THEME.png, sheet-minimal-fit.png), plus the
+# live switch (mm-toggle-on, mm-toggle-off); MINIMAL=only skips the
+# regular screens, MINIMAL=none the minimal ones. A LABEL argument may
+# name either form.
 set -u
 LANE=$(cd "$(dirname "$0")/../.." && pwd)
 ROOT="$LANE/xx-radio"
@@ -18,6 +23,7 @@ OUTDIR=$(cd "$OUTDIR" && pwd)
 PY=${PYTHON:-python3}
 THEMES=${THEMES:-"amoled paper graphite aura"}
 JOBS=${JOBS:-3}
+MINIMAL=${MINIMAL:-both}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -76,6 +82,10 @@ banner-helper banner-helper seeded
 banner-offline banner-offline seeded
 banner-signedout banner-signedout seeded
 banner-mix banner-mix seeded"
+# Minimal Mode only: the live switch from Settings, both ways.
+MM_EXTRA="mm-toggle-on minimal-on seeded
+mm-toggle-off minimal-off seeded SNAP_MINIMAL=1
+mm-toggle-home minimal-on-home seeded"
 FIT320="home search-results artist album playing lyrics queue library-phone
 settings engine-updating signin firstrun-failed sheet-sleep-on search-menu
 welcome"
@@ -100,8 +110,17 @@ home_for() {
 }
 
 line_for() {
-    printf '%s\n' "$SCREENS" | while read -r label rest; do
+    # mm-LABEL is LABEL in Minimal Mode (saved in settings before start)
+    printf '%s\n' "$MM_EXTRA" | while read -r label rest; do
         [ "$label" = "$1" ] && { echo "$rest"; return; }
+    done
+    base=${1#mm-}
+    printf '%s\n' "$SCREENS" | while read -r label rest; do
+        if [ "$label" = "$base" ]; then
+            if [ "$base" = "$1" ]; then echo "$rest"
+            else echo "$rest SNAP_MINIMAL=1"; fi
+            return
+        fi
     done
 }
 
@@ -125,18 +144,35 @@ wanted() {
     return 1
 }
 
-labels_all=$(printf '%s\n' "$SCREENS" | cut -d' ' -f1)
+regular=$(printf '%s\n' "$SCREENS" | cut -d' ' -f1)
+mm_labels=""
+for label in $regular; do mm_labels="$mm_labels mm-$label"; done
+mm_labels="$mm_labels $(printf '%s\n' "$MM_EXTRA" | cut -d' ' -f1)"
+fit_labels=$FIT320
+scale_labels=$SCALE2
+case $MINIMAL in
+    none) labels_all=$regular ;;
+    only) labels_all=$mm_labels; fit_labels=""; scale_labels="" ;;
+    *) labels_all="$regular $mm_labels" ;;
+esac
+if [ "$MINIMAL" != none ]; then
+    for label in $FIT320 mm-toggle-on; do
+        case $label in mm-*) ;; *) label=mm-$label ;; esac
+        fit_labels="$fit_labels $label"
+    done
+    for label in $SCALE2; do scale_labels="$scale_labels mm-$label"; done
+fi
 for theme in $THEMES; do
     for label in $labels_all; do
         wanted "$label" && add_job "$WORK/$theme-$label.png" "$theme" 1 \
             360x720 "$label"
     done
 done
-for label in $FIT320; do
+for label in $fit_labels; do
     wanted "$label" && add_job "$WORK/fit320-$label.png" amoled 1 320x720 \
         "$label"
 done
-for label in $SCALE2; do
+for label in $scale_labels; do
     wanted "$label" && add_job "$WORK/scale2-$label.png" amoled 2 360x720 \
         "$label"
 done
@@ -178,30 +214,41 @@ if [ -s "$WORK/warnings" ] || [ -s "$WORK/failures" ]; then
     exit 1
 fi
 
-for theme in $THEMES; do
+# sheet OUT STRIP FILE... : one montage of the renders that exist,
+# each captioned with its name less the STRIP prefix
+sheet() {
+    out=$1 strip=$2
+    shift 2
     labels=""
-    for label in $labels_all; do
-        [ -s "$WORK/$theme-$label.png" ] && \
-            labels="$labels -label $label $WORK/$theme-$label.png"
+    for file in "$@"; do
+        [ -s "$file" ] || continue
+        name=$(basename "$file" .png)
+        labels="$labels -label ${name#"$strip"} $file"
     done
-    [ -n "$labels" ] || continue
+    [ -n "$labels" ] || return 0
     # shellcheck disable=SC2086
     montage $labels -tile 9x -geometry 360x720+6+6 -background '#202020' \
-        -fill white -pointsize 22 "$OUTDIR/sheet-$theme.png" \
+        -fill white -pointsize 22 "$OUTDIR/$out" \
         || { echo "snap_all: montage failed" >&2; exit 1; }
+    echo "$OUTDIR/$out"
+}
+
+for theme in $THEMES; do
+    files=""
+    for label in $regular; do files="$files $WORK/$theme-$label.png"; done
+    # shellcheck disable=SC2086
+    sheet "sheet-$theme.png" "$theme-" $files
+    files=""
+    for label in $mm_labels; do files="$files $WORK/$theme-$label.png"; done
+    # shellcheck disable=SC2086
+    sheet "sheet-minimal-$theme.png" "$theme-" $files
     cp "$WORK/$theme-"*.png "$OUTDIR/" 2>/dev/null
 done
-labels=""
-for file in "$WORK"/fit320-*.png "$WORK"/scale2-*.png; do
-    [ -s "$file" ] || continue
-    name=$(basename "$file" .png)
-    labels="$labels -label $name $file"
-done
-if [ -n "$labels" ]; then
-    # shellcheck disable=SC2086
-    montage $labels -tile 8x -geometry +6+6 -background '#202020' \
-        -fill white -pointsize 22 "$OUTDIR/sheet-fit.png" \
-        || { echo "snap_all: montage failed" >&2; exit 1; }
-    cp "$WORK"/fit320-*.png "$WORK"/scale2-*.png "$OUTDIR/" 2>/dev/null
-fi
-echo "wrote $OUTDIR/sheet-{$(echo "$THEMES" | tr ' ' ,)}.png and sheet-fit.png"
+# shellcheck disable=SC2046
+sheet sheet-fit.png "" $(ls "$WORK"/fit320-*.png "$WORK"/scale2-*.png \
+    2>/dev/null | grep -v -- '-mm-')
+# shellcheck disable=SC2046
+sheet sheet-minimal-fit.png "" $(ls "$WORK"/fit320-mm-*.png \
+    "$WORK"/scale2-mm-*.png 2>/dev/null)
+cp "$WORK"/fit320-*.png "$WORK"/scale2-*.png "$OUTDIR/" 2>/dev/null
+exit 0

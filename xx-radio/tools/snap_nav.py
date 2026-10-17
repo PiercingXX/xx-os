@@ -162,6 +162,15 @@ elif TARGET == "library-phone-lower":
     skip(lambda: library.body, 5)
 elif TARGET == "settings":
     shell.show("settings")
+elif TARGET == "minimal-on":
+    # Live: the regular window, then Minimal Mode switched on in Settings.
+    shell.show("settings")
+    later(300, lambda: settings.set_minimal(True))
+elif TARGET == "minimal-off":
+    shell.show("settings")
+    later(300, lambda: settings.set_minimal(False))
+elif TARGET == "minimal-on-home":
+    later(300, lambda: settings.set_minimal(True))
 elif TARGET == "settings-lower":
     shell.show("settings")
     skip(lambda: settings.body, 3)

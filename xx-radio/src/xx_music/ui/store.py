@@ -4,7 +4,8 @@
 - recent searches (newest first, 12 kept);
 - songs this phone played (Listen again, History when signed out);
 - local likes and dislikes (Liked when signed out);
-- the window's settings (``config.json``: storage limit, Wi-Fi only...).
+- the window's settings (``config.json``: storage limit, Wi-Fi only,
+  Minimal Mode...).
 
 Reads and writes block on disk, so screens call them on the worker.
 Writes go to a temporary file first, then an atomic rename.
@@ -34,6 +35,7 @@ PREF_DEFAULTS: dict[str, Any] = {
     "data_saver": True,
     "loudness_leveling": False,
     "charts_region": "",
+    "minimal_mode": False,
     "first_run_done": False,
     "welcome_done": False,
 }

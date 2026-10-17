@@ -6,6 +6,10 @@ Each tab owns a navigation stack: pages pushed from a tab (artist,
 album, playlist, mood, charts, settings pages) open inside it, and
 tapping the lit tab again pops back to its root. Apps add screens
 through ``AppSpec.extra_tabs`` and ``xx_music.ui.context.Hooks``.
+
+Minimal Mode (``xx_music.ui.minimal``) turns the tabs into words (the
+open one in caps and Strong), the banners and toasts into plain lines
+with a bracketed action; every screen rebuilds itself when it flips.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from xx_music.appspec import CORE_TAB_TITLES, AppSpec  # noqa: E402
 from xx_music.engine import Engine, Item, ItemKind, Mood, Track  # noqa: E402
 from xx_music.health import Banner, BannerKind  # noqa: E402
 from xx_music.tasks import Worker  # noqa: E402
-from xx_music.ui import common, css  # noqa: E402
+from xx_music.ui import common, css, minimal  # noqa: E402
 from xx_music.ui.context import Hooks, UiContext  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 
@@ -104,18 +108,9 @@ class Shell:
 
         self.mini = MiniPlayer(self.ui, self.open_now_playing)
         self.tabs = common.hbox(0)
-        self.tabs.add_css_class("xx-tabs")
         self.tabs.set_homogeneous(True)
         self.tab_buttons: dict[str, Gtk.Button] = {}
-        for key in spec.tab_keys():
-            title = self.titles[key]
-            button = Gtk.Button.new_with_label(title.upper())
-            button.add_css_class("xx-tab")
-            common.fit(button, 9)
-            button.connect("clicked", lambda _b, k=key: self.show(k))
-            common.name(button, title)
-            self.tab_buttons[key] = button
-            self.tabs.append(button)
+        self._paint_tabs()
 
         main = common.vbox(0)
         main.add_css_class("xx-mu")
@@ -137,9 +132,9 @@ class Shell:
 
         self.toast_label = common.label("", "xx-body", chars=30)
         toast_box = common.hbox(0)
-        toast_box.add_css_class("xx-mu-banner")
-        toast_box.add_css_class("loud")
         toast_box.append(self.toast_label)
+        self.toast_box = toast_box
+        self._style_toast()
         self.toast_slot = Gtk.Revealer()
         self.toast_slot.set_transition_type(
             Gtk.RevealerTransitionType.SLIDE_UP)
@@ -159,7 +154,76 @@ class Shell:
         self.ui.on_health(self.sync_banner)
         self.ui.player.connect(self._on_player)
         self._last_track = ""
+        minimal.listen(self._minimal_changed)
         self.show("home")
+
+    # -- minimal mode -------------------------------------------------------------
+    def _paint_tabs(self) -> None:
+        """Caps tabs with an indicator; in Minimal Mode, words."""
+        common.clear(self.tabs)
+        self.tab_buttons.clear()
+        words = minimal.active()
+        # Words differ in width: an even split would size every tab to
+        # "settings" and overflow 320 px.
+        self.tabs.set_homogeneous(not words)
+        for cls, on in (("xx-tabs", not words), ("xx-mm-tabs", words)):
+            if on:
+                self.tabs.add_css_class(cls)
+            else:
+                self.tabs.remove_css_class(cls)
+        for key in self.spec.tab_keys():
+            title = self.titles[key]
+            if words:
+                button = minimal.word_button(
+                    minimal.tab_word(title, key == self.current),
+                    lambda k=key: self.show(k),
+                    minimal.toggled(key == self.current), 14, title)
+                button.set_valign(Gtk.Align.FILL)
+                button.set_hexpand(True)
+                button.add_css_class("xx-mm-tab")
+            else:
+                button = Gtk.Button.new_with_label(title.upper())
+                button.add_css_class("xx-tab")
+                common.fit(button, 9)
+                button.connect("clicked", lambda _b, k=key: self.show(k))
+            common.name(button, title)
+            self.tab_buttons[key] = button
+            self.tabs.append(button)
+
+    def _style_tabs(self) -> None:
+        for name, button in self.tab_buttons.items():
+            open_ = name == self.current
+            if minimal.active():
+                button.get_child().set_text(
+                    minimal.tab_word(self.titles[name], open_))
+                minimal.set_tone(button, minimal.toggled(open_))
+            elif open_:
+                button.add_css_class("active")
+            else:
+                button.remove_css_class("active")
+
+    def _style_toast(self) -> None:
+        box = self.toast_box
+        words = minimal.active()
+        for cls, on in (("xx-mu-banner", not words), ("loud", not words),
+                        ("xx-mm-toast", words)):
+            if on:
+                box.add_css_class(cls)
+            else:
+                box.remove_css_class(cls)
+        for cls, on in (("xx-body", not words), ("xx-mm-text", words),
+                        ("xx-mm-s14", words), ("xx-mm-plain", words)):
+            if on:
+                self.toast_label.add_css_class(cls)
+            else:
+                self.toast_label.remove_css_class(cls)
+
+    def _minimal_changed(self) -> None:
+        self._paint_tabs()
+        self._style_tabs()
+        self._style_toast()
+        self._banner_key = None
+        self.sync_banner()
 
     # -- tabs and navigation ------------------------------------------------------
     def show(self, key: str) -> None:
@@ -167,11 +231,7 @@ class Shell:
             self.navs[key].pop_to_tag(key)
         self.current = key
         self.stack.set_visible_child_name(key)
-        for name, button in self.tab_buttons.items():
-            if name == key:
-                button.add_css_class("active")
-            else:
-                button.remove_css_class("active")
+        self._style_tabs()
         page = self.pages.get(key)
         if page is not None and hasattr(page, "shown"):
             page.shown()
@@ -278,6 +338,8 @@ class Shell:
     def _banner_widget(self, banner: Banner) -> Gtk.Widget:
         loud = banner.kind in (BannerKind.SOURCE_CHANGED,
                                BannerKind.HELPER_MISSING)
+        if minimal.active():
+            return self._minimal_banner(banner, loud)
         row = common.hbox(12)
         row.add_css_class("xx-mu-banner")
         row.add_css_class("loud" if loud else "calm")
@@ -302,6 +364,24 @@ class Shell:
             button.connect("clicked",
                            lambda _b, a=banner.action: self.ui.action(a))
             row.append(button)
+        return row
+
+    def _minimal_banner(self, banner: Banner, loud: bool) -> Gtk.Widget:
+        """A plain line, no fill or glyph: loud is Strong, calm Plain;
+        the action in brackets."""
+        row = common.hbox(8)
+        row.add_css_class("xx-mm-banner")
+        text = minimal.text(banner.text, minimal.Tone.STRONG if loud
+                            else minimal.Tone.PLAIN, 13, lines=2, chars=22)
+        text.set_hexpand(True)
+        text.set_valign(Gtk.Align.CENTER)
+        row.append(text)
+        action = BANNER_BUTTONS.get(banner.action)
+        if action and (banner.action in self.ui.hooks.actions
+                       or banner.action == "retry"):
+            row.append(minimal.bracket_button(
+                action.lower(), lambda a=banner.action: self.ui.action(a),
+                minimal.Tone.STRONG, size=13))
         return row
 
     def toast(self, text: str) -> None:
@@ -354,6 +434,7 @@ def build_window(app, spec: AppSpec, engine: Engine | None = None,
 
     xx_ui.apply(app)
     css.install()
+    minimal.reset()
     window = Adw.ApplicationWindow(application=app)
     window.set_title(spec.name)
     window.set_default_size(360, 720)
@@ -367,6 +448,9 @@ def build_window(app, spec: AppSpec, engine: Engine | None = None,
             player or PlayerModel(DbusBackend(spec)),
             ArtLoader(spec.paths().art_cache_dir(), engine.art_url),
             hooks=hooks)
+    # Minimal Mode is known before the first paint, so no art request
+    # leaves while it is on (one small JSON read, once, at start).
+    ui.set_minimal(bool(ui.store.prefs().get("minimal_mode")))
     shell = Shell(spec, engine, ui=ui, window=window)
     window.set_content(shell.root)
     window.xx_shell = shell

@@ -144,6 +144,22 @@ class UiContext:
         """Disk work on the worker (no health bookkeeping)."""
         return self.worker.run(fn, on_done, on_error)
 
+    # -- minimal mode -------------------------------------------------------------
+    @property
+    def minimal(self) -> bool:
+        from xx_music.ui import minimal
+
+        return minimal.active()
+
+    def set_minimal(self, on: bool) -> None:
+        """Minimal Mode on or off, live: art stops (the loader refuses
+        every request) before the screens rebuild without it."""
+        from xx_music.ui import minimal
+
+        if self.art is not None:
+            self.art.enabled = not on
+        minimal.set_active(on)
+
     def supports(self, capability: str) -> bool:
         return self.engine.supports(capability)
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from gi.repository import Gdk, Gtk
 
-from xx_music.ui import common, css
+from xx_music.ui import common, css, minimal
 from xx_music.ui.settings import nav_row, section
 from xx_radio.account import METHOD_OAUTH, AccountState
 from xx_radio.youtube import auth
@@ -68,7 +68,12 @@ class AccountSection:
         self.slot.append(widgets.setting_row("Account", "Checking…",
                                              last=True))
         ui.on_account(self._from_ui)
+        minimal.listen(self._minimal_changed)
         self.refresh()
+
+    def _minimal_changed(self) -> None:
+        if self.state is not None:
+            self.show(self.state)
 
     def refresh(self) -> None:
         self.ui.io(self.manager.state, self.show,
@@ -89,7 +94,7 @@ class AccountSection:
                 "Not signed in. Search, radio and lyrics work without an "
                 "account; signing in adds your library and likes.",
                 "xx-secondary"))
-            button = widgets.primary_button("Sign in", self.open_sign_in)
+            button = minimal.primary("Sign in", self.open_sign_in)
             common.fit(button, 12)
             button.set_halign(Gtk.Align.START)
             button.set_margin_top(12)
@@ -103,7 +108,7 @@ class AccountSection:
             row = widgets.setting_row(title, sub)
             _wrap(row)
             slot.append(row)
-        out = widgets.outline_button("Sign out", self.confirm_sign_out)
+        out = minimal.outline("Sign out", self.confirm_sign_out)
         common.fit(out, 12)
         out.set_halign(Gtk.Align.START)
         out.set_margin_top(12)
@@ -146,6 +151,8 @@ def _numbered(index: int, text: str) -> Gtk.Widget:
     num = Gtk.Label(label=str(index))
     num.add_css_class("xx-mu-stepnum")
     num.add_css_class("now")
+    if minimal.active():
+        num.add_css_class("xx-mm-stepnum")
     num.set_size_request(28, 28)
     num.set_valign(Gtk.Align.START)
     row.append(num)
@@ -237,8 +244,8 @@ class SignInPage:
                               else Gtk.Orientation.HORIZONTAL, 10)
         buttons.set_homogeneous(True)
         buttons.set_margin_top(12)
-        paste = widgets.outline_button("Paste", self.paste_clipboard)
-        self.go = widgets.primary_button("Sign in", self.sign_in)
+        paste = minimal.outline("Paste", self.paste_clipboard)
+        self.go = minimal.primary("Sign in", self.sign_in)
         for button in (paste, self.go):
             common.fit(button, 10)
             buttons.append(button)
@@ -349,7 +356,7 @@ class OAuthPage:
             entry.set_hexpand(True)
             entry.update_property([Gtk.AccessibleProperty.LABEL], [caption])
             body.append(entry)
-        self.go = widgets.primary_button("Get a code", self.start)
+        self.go = minimal.primary("Get a code", self.start)
         common.fit(self.go, 14)
         self.go.set_margin_top(16)
         body.append(self.go)
@@ -454,9 +461,9 @@ def show_welcome(ui, open_sign_in) -> object:
     note.set_margin_top(10)
     note.set_margin_bottom(14)
     box.append(note)
-    sign = widgets.primary_button("Sign in to YouTube Music",
+    sign = minimal.primary("Sign in to YouTube Music",
                                   lambda: answer(True))
-    later = widgets.outline_button("Continue without signing in",
+    later = minimal.outline("Continue without signing in",
                                    lambda: answer(False))
     for button in (sign, later):
         common.fit(button, 16)

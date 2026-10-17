@@ -17,7 +17,7 @@ from gi.repository import GLib, Gtk
 
 from xx_music.engine import ComponentState
 from xx_music.diagnostics import redact_text
-from xx_music.ui import common, css, fmt
+from xx_music.ui import common, css, fmt, minimal
 from xx_music.ui.settings import nav_row, section
 from xx_radio import engine_status as es
 from xx_ui import widgets
@@ -106,6 +106,8 @@ class StepList:
             num = Gtk.Label(label=str(index + 1))
             num.add_css_class("xx-mu-stepnum")
             num.add_css_class("xx-mu-num")
+            if minimal.active():
+                num.add_css_class("xx-mm-stepnum")
             num.set_size_request(28, 28)
             num.set_valign(Gtk.Align.CENTER)
             row.append(num)
@@ -138,7 +140,10 @@ class StepList:
             num.set_text("✓")
         elif state == "now":
             num.add_css_class("now")
-            mark.append(common.busy_square())
+            mark.append(minimal.text(minimal.RESOLVING, minimal.Tone.STRONG,
+                                     15, chars=2)
+                        if num.has_css_class("xx-mm-stepnum")
+                        else common.busy_square())
         elif state == "bad":
             num.add_css_class("bad")
             num.set_text("×")
@@ -171,6 +176,14 @@ class StepList:
 
 
 def _state_block(snap: es.Snapshot) -> Gtk.Widget:
+    if minimal.active():
+        box = common.vbox(4)
+        box.append(common.label(STATE_TITLE.get(snap.state, snap.state),
+                                "xx-mu-h2", lines=2, chars=18))
+        box.append(minimal.text(STATE_LINE.get(snap.state, ""),
+                                minimal.Tone.QUIET, 14, wrap=True,
+                                chars=30))
+        return box
     box = common.vbox(6)
     box.add_css_class("xx-mu-block")
     top = common.hbox(10)
@@ -286,6 +299,12 @@ class EnginePage:
 
     @staticmethod
     def _part_mark(state) -> Gtk.Widget:
+        if minimal.active():
+            if state == ComponentState.OK:
+                return minimal.text("ok", minimal.Tone.QUIET, 13, chars=8)
+            if state in (ComponentState.MISSING, ComponentState.BROKEN):
+                return minimal.text("fix", minimal.Tone.STRONG, 13, chars=8)
+            return minimal.text("—", minimal.Tone.QUIET, 13, chars=8)
         dot = Gtk.Box()
         dot.add_css_class("xx-mu-state-dot")
         dot.set_size_request(8, 8)
@@ -303,7 +322,7 @@ class EnginePage:
         box.append(common.para(
             "The update stopped. Check the connection and try again; "
             "Copy details helps when reporting it.", "xx-secondary"))
-        copy = widgets.outline_button("Copy details", lambda: self._copy(
+        copy = minimal.outline("Copy details", lambda: self._copy(
             error))
         common.fit(copy, 14)
         copy.set_halign(Gtk.Align.START)
@@ -327,7 +346,7 @@ class EnginePage:
                      self.running, "Working…"), "xx-mu-meta", chars=30))
             box.append(line)
             return box
-        update = widgets.primary_button(
+        update = minimal.primary(
             "Updating…" if self.running == "update" else (
                 "Try again" if snap.state == es.UPDATE_FAILED
                 else "Update engine"), self.update)
@@ -335,7 +354,7 @@ class EnginePage:
         update.set_sensitive(not busy)
         box.append(update)
         if snap.state == es.TOKEN_MISSING or self.running == "token":
-            token = widgets.outline_button(
+            token = minimal.outline(
                 "Setting up…" if self.running == "token"
                 else "Set up token helper", self.setup_token)
             common.fit(token, 20)
@@ -345,12 +364,12 @@ class EnginePage:
                           else Gtk.Orientation.HORIZONTAL, 10)
         row.set_homogeneous(True)
         if snap.has_previous:
-            undo = widgets.outline_button("Undo update", self.undo)
+            undo = minimal.outline("Undo update", self.undo)
             common.fit(undo, 12)
             undo.set_sensitive(not busy)
             row.append(undo)
         if snap.venv_active:
-            system = widgets.outline_button("Use system", self.drop)
+            system = minimal.outline("Use system", self.drop)
             common.fit(system, 12)
             system.set_sensitive(not busy)
             row.append(system)
@@ -436,11 +455,17 @@ class EngineSection:
         self.widget.append(section("Playback engine"))
         self.slot = common.vbox(0)
         self.widget.append(self.slot)
-        self._row("Checking…")
+        self.subtitle = "Checking…"
+        self._row(self.subtitle)
         ui.io(control.snapshot, self.show, lambda _e: self._row(
             "Couldn't check the engine"))
+        minimal.listen(self._minimal_changed)
+
+    def _minimal_changed(self) -> None:
+        self._row(self.subtitle)
 
     def _row(self, subtitle: str, mark: Gtk.Widget | None = None) -> None:
+        self.subtitle = subtitle
         common.clear(self.slot)
         self.slot.append(nav_row("Playback engine", subtitle, self.open,
                                  last=True))
@@ -520,8 +545,8 @@ class SetupScreen:
         self.loading.set_active(self.state == "running")
         common.clear(self.actions)
         if self.state == "idle":
-            self._button(widgets.primary_button("Set up", self.start))
-            self._button(widgets.text_button("Not now", self.skip))
+            self._button(minimal.primary("Set up", self.start))
+            self._button(minimal.quiet("Not now", self.skip))
         elif self.state == "running":
             line = common.hbox(10)
             line.set_margin_top(14)
@@ -531,14 +556,14 @@ class SetupScreen:
                                      "xx-mu-meta", chars=34))
             self.actions.append(line)
         elif self.state == "done":
-            self._button(widgets.primary_button("Start listening",
+            self._button(minimal.primary("Start listening",
                                                 self.finish))
         else:
-            self._button(widgets.primary_button("Try again", self.start))
+            self._button(minimal.primary("Try again", self.start))
             row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 10)
             row.set_homogeneous(True)
-            copy = widgets.outline_button("Copy details", self.copy)
-            later = widgets.outline_button("Not now", self.skip)
+            copy = minimal.outline("Copy details", self.copy)
+            later = minimal.outline("Not now", self.skip)
             for button in (copy, later):
                 common.fit(button, 12)
                 row.append(button)
