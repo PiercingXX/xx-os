@@ -1673,6 +1673,16 @@ class ShellWindow(Adw.ApplicationWindow):
         setter = getattr(bar, 'set_home_showing', None)
         if callable(setter):
             setter(self._home_showing())
+        shade_setter = getattr(bar, 'set_shade_open', None)
+        if callable(shade_setter):
+            shade = getattr(self, '_shade', None)
+            revealer = getattr(shade, '_revealer', None)
+            try:
+                open_ = bool(revealer is not None
+                             and revealer.get_reveal_child())
+            except Exception:
+                open_ = False
+            shade_setter(open_)
 
     def _home_showing(self) -> bool:
         """Home is on screen: the home page is up and the shell is raised
@@ -1728,6 +1738,11 @@ class ShellWindow(Adw.ApplicationWindow):
                 media_watcher=mpris,
             )
             self._shade.set_application(self.get_application())
+            # The status bar's text hides while the shade is revealed.
+            revealer = getattr(self._shade, '_revealer', None)
+            if revealer is not None:
+                revealer.connect('notify::reveal-child',
+                                 lambda *_a: self._sync_status_bar())
             # Same current-preset rule as _open_dialer: the shade can be
             # built long after startup, under a hot-reloaded theme.
             self._shade.apply_theme(resolve_appearance_preset(self.config))

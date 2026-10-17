@@ -289,8 +289,10 @@ class TestBannerWiring:
 
 class TestHudPosition:
     def test_top_margin_is_twenty_percent(self):
-        assert hud.hud_top_margin(720) == 144
-        assert hud.hud_top_margin(640) == 128
+        # Middle of the top third: center at height / 6.
+        assert hud.hud_top_margin(720) == 120
+        assert hud.hud_top_margin(1000, 60) == 136
+        assert hud.hud_top_margin(100, 60) == 0
 
     def test_hud_centers_box_at_top_fraction(self):
         src = _hud_src()

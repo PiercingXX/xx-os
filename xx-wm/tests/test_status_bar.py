@@ -435,3 +435,11 @@ def test_show_status_bar_switch_governs_home_only():
     assert status_bar.decide_content(True, show_on_home=True) is True
     assert status_bar.decide_content(True, show_on_home=False) is False
     assert status_bar.decide_content(False, show_on_home=False) is True
+
+
+def test_bar_text_hides_while_the_shade_is_open():
+    # Owner: "When the shade is shown the top bar needs to be auto hidden".
+    import status_bar
+    assert status_bar.decide_content(False, shade_open=True) is False
+    assert status_bar.decide_content(True, True, shade_open=True) is False
+    assert status_bar.decide_content(False, shade_open=False) is True

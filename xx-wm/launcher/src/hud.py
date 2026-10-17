@@ -43,17 +43,21 @@ _HUD_HOLD_MS          = 1000
 _HUD_FADE_STEPS       = 10
 _HUD_FADE_INTERVAL_MS = 20
 
-_HUD_TOP_FRACTION = 0.2
 _HUD_FALLBACK_SCREEN_PX = 720
 
 
-def hud_top_margin(screen_height: int) -> int:
-    """TOP margin placing the HUD ~20% down the screen."""
+def hud_top_margin(screen_height: int, hud_height: int = 0) -> int:
+    """TOP margin centering the HUD in the top third of the screen
+    (owner: "middle top 1/3"): its middle sits at height / 6."""
     try:
         height = int(screen_height)
     except (TypeError, ValueError):
         height = _HUD_FALLBACK_SCREEN_PX
-    return max(0, int(height * _HUD_TOP_FRACTION))
+    try:
+        own = max(0, int(hud_height))
+    except (TypeError, ValueError):
+        own = 0
+    return max(0, int(height / 6 - own / 2))
 
 
 def _screen_height() -> int:
@@ -61,7 +65,11 @@ def _screen_height() -> int:
     try:
         from gi.repository import Gdk
         display = Gdk.Display.get_default()
-        monitor = display.get_primary_monitor() if display is not None else None
+        # GTK4 has no primary monitor; the old get_primary_monitor() call
+        # always raised, so the HUD sat at 20% of a guessed 720 px screen.
+        monitors = display.get_monitors() if display is not None else None
+        monitor = (monitors.get_item(0)
+                   if monitors is not None and monitors.get_n_items() else None)
         geometry = monitor.get_geometry() if monitor is not None else None
         height = geometry.height if geometry is not None else None
         if height:
@@ -261,9 +269,14 @@ if _HAS_GTK:
         def _place_at_top_fraction(self) -> None:
             if _HAS_LAYER and LayerShell.is_supported():
                 try:
+                    _min, natural, _b1, _b2 = self.measure(
+                        Gtk.Orientation.VERTICAL, -1)
+                except Exception:
+                    natural = 0
+                try:
                     LayerShell.set_margin(
                         self, LayerShell.Edge.TOP,
-                        hud_top_margin(_screen_height()))
+                        hud_top_margin(_screen_height(), natural))
                 except Exception:
                     pass
 

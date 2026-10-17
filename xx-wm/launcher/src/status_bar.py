@@ -225,12 +225,16 @@ def content_visible(config) -> bool:
     return getattr(config, 'status_bar_visible', False) is True
 
 
-def decide_content(home_showing: bool, show_on_home: bool = False) -> bool:
+def decide_content(home_showing: bool, show_on_home: bool = False,
+                   shade_open: bool = False) -> bool:
     """Clock and glyphs always show over apps; on home only with Show
     Status Bar on (owner: hide the top bar on home). The surface itself
     stays, keeping its reserved zone: dropping it would resize every app
     behind home on each visit. The empty strip matches the home background
-    and a pull on it still opens the shade."""
+    and a pull on it still opens the shade. While the shade is open the
+    bar's text hides too (the shade carries its own clock and status)."""
+    if shade_open:
+        return False
     return (not home_showing) or show_on_home
 
 
@@ -568,12 +572,17 @@ if _HAS_GTK:
             self._home_showing = bool(home_showing)
             self._refresh_content()
 
+        def set_shade_open(self, shade_open: bool) -> None:
+            self._shade_open = bool(shade_open)
+            self._refresh_content()
+
         def _refresh_content(self) -> None:
             view = getattr(self, 'view', None)
             if view is None:
                 return
             shown = decide_content(getattr(self, '_home_showing', False),
-                                   content_visible(self._config))
+                                   content_visible(self._config),
+                                   getattr(self, '_shade_open', False))
             view.set_opacity(1.0 if shown else 0.0)
 
         def sync_visibility(self, locked: bool, wizard_visible: bool) -> None:
