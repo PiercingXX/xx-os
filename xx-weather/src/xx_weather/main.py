@@ -291,6 +291,9 @@ class WeatherWindow:
             when = "Now" if index == 0 else hour_label(hour.time)
             time_l = W.label(when, "xx-secondary", xalign=0.5)
             time_l.set_halign(Gtk.Align.CENTER)
+            # A short fixed label in a scrolling strip: the column grows
+            # to fit "10 PM" at large text instead of ellipsizing it.
+            time_l.set_ellipsize(self._Pango.EllipsizeMode.NONE)
             col.append(time_l)
             temp_l = W.label(temp_str(hour.temp_f, units),
                              "xx-hour-temp", xalign=0.5)
