@@ -61,7 +61,7 @@ for theme in $THEMES; do
             # shellcheck disable=SC2086
             if env HOME="$SHOME" XDG_CONFIG_HOME="$SHOME/.config" \
                 XDG_DATA_HOME="$SHOME/.local/share" SEED_HOME="$SHOME" \
-                "$ROOT/.venv/bin/python" "$ROOT/scripts/snap.py" \
+                "${PYTHON:-$ROOT/.venv/bin/python}" "$ROOT/scripts/snap.py" \
                 --out "$out" --delay 2.0 \
                 --path "$ROOT/$APP/src" --path "$ROOT/common" \
                 $SCRIPT_ARGS -- -m xx_contacts >"$log" 2>&1; then

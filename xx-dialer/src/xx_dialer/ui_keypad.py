@@ -86,8 +86,10 @@ class KeypadView:
         self.deps = deps
         self.buffer = buffer or KeypadBuffer()
         self._suppress_click: set = set()
+        # 2 px between the rows: hero, match card, matches, keys and the
+        # call row must fit the 360x720 canvas (4 px overflowed it by 6).
         self._root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                             spacing=4)
+                             spacing=2)
         self._toast = Adw.ToastOverlay()
         self._build()
         self.refresh()

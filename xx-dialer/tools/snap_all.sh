@@ -17,7 +17,9 @@ OUTDIR=${1:?usage: snap_all.sh OUTDIR}
 THEMES=${THEMES:-"amoled paper forest aura"}
 SCREENS=${SCREENS:-"recents missed keypad people menu rules rules_low setup backup logs"}
 
-if [ -x "$ROOT/.venv/bin/python" ]; then
+if [ -n "${PYTHON:-}" ]; then
+    PY="$PYTHON"
+elif [ -x "$ROOT/.venv/bin/python" ]; then
     PY="$ROOT/.venv/bin/python"
 else
     PY="python3"
