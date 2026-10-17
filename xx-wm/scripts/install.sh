@@ -439,6 +439,12 @@ build_install() {
     enable_service
     setup_greeter
     add_input_group
+    _build_status=$?
+    # Resident suite processes still run the old code until they restart;
+    # refresh them now so the new code shows without a reboot. Best
+    # effort: never fail the install when there is no session to refresh.
+    refresh_running_apps || true
+    return $_build_status
 }
 
 # --- per-device phoc.ini scale (20.5) --------------------------------------
@@ -570,6 +576,288 @@ add_input_group() {
             return 1
         }
     echo "Added '$user' to the input group — re-login (or reboot) for it to take effect."
+}
+
+# --- post-install refresh (install_refresh) ---------------------------------
+# Suite apps keep resident processes that survive an install with the OLD
+# code: --gapplication-service windows (D-Bus activated, resident after
+# the window closes), the radio/audiobook player services, systemd user
+# units, and the shell itself. Reopening an app reattaches to the old
+# process, so without this a fresh install shows old code until a reboot.
+# Best effort throughout: a refresh step never fails the install, never
+# touches processes owned by another user, and never uses pkill -f (a
+# substring pattern could match this script's own command line). PIDs
+# come from exact argv matches in /proc instead. XX_REFRESH_PROC and
+# XX_REFRESH_USER_BASE are test hooks (fake /proc, fake runtime base).
+_rra_proc_root() {
+    if [ -n "${XX_REFRESH_PROC:-}" ]; then
+        printf '%s\n' "$XX_REFRESH_PROC"
+    else
+        printf '%s\n' /proc
+    fi
+}
+
+_rra_argv_has() {
+    printf '%s\n' "$2" | grep -qxF -e "$1" 2>/dev/null
+}
+
+_rra_argv_has_path() {
+    if printf '%s\n' "$2" | grep -qxF -e "$1" 2>/dev/null; then
+        return 0
+    fi
+    printf '%s\n' "$2" | grep -qx -e ".*/$1" 2>/dev/null
+}
+
+_rra_session_bus() {
+    _s_uid=$(id -u 2>/dev/null) || return 1
+    _s_base=${XX_REFRESH_USER_BASE:-/run/user}
+    _s_dir=${XDG_RUNTIME_DIR:-$_s_base/$_s_uid}
+    if [ ! -S "$_s_dir/bus" ]; then
+        _s_dir=$_s_base/$_s_uid
+    fi
+    if [ ! -S "$_s_dir/bus" ]; then
+        return 1
+    fi
+    XDG_RUNTIME_DIR=$_s_dir
+    DBUS_SESSION_BUS_ADDRESS=unix:path=$_s_dir/bus
+    export XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
+    return 0
+}
+
+_rra_window_pids() {
+    _w_mod=$1
+    _w_launch=$2
+    _w_proc=$(_rra_proc_root)
+    _w_me=$$
+    for _w_d in "$_w_proc"/[0-9]*; do
+        [ -d "$_w_d" ] || continue
+        _w_pid=${_w_d##*/}
+        case $_w_pid in
+            ''|*[!0-9]*) continue ;;
+        esac
+        if [ "$_w_pid" = "$_w_me" ]; then
+            continue
+        fi
+        if ! [ -O "$_w_d" ] 2>/dev/null; then
+            continue
+        fi
+        [ -r "$_w_d/cmdline" ] || continue
+        _w_args=$(tr '\0' '\n' <"$_w_d/cmdline" 2>/dev/null) || continue
+        if _rra_argv_has --gapplication-service "$_w_args" && { _rra_argv_has "$_w_mod" "$_w_args" || _rra_argv_has_path "$_w_launch" "$_w_args"; }; then
+            echo "$_w_pid"
+        fi
+    done
+    return 0
+}
+
+_rra_player_pids() {
+    _pp_mod=$1
+    _pp_flag=$2
+    _pp_launch=$3
+    _pp_proc=$(_rra_proc_root)
+    _pp_me=$$
+    for _pp_d in "$_pp_proc"/[0-9]*; do
+        [ -d "$_pp_d" ] || continue
+        _pp_pid=${_pp_d##*/}
+        case $_pp_pid in
+            ''|*[!0-9]*) continue ;;
+        esac
+        if [ "$_pp_pid" = "$_pp_me" ]; then
+            continue
+        fi
+        if ! [ -O "$_pp_d" ] 2>/dev/null; then
+            continue
+        fi
+        [ -r "$_pp_d/cmdline" ] || continue
+        _pp_args=$(tr '\0' '\n' <"$_pp_d/cmdline" 2>/dev/null) || continue
+        if [ -n "$_pp_flag" ]; then
+            if _rra_argv_has "$_pp_flag" "$_pp_args" && { _rra_argv_has "$_pp_mod" "$_pp_args" || _rra_argv_has_path "$_pp_launch" "$_pp_args"; }; then
+                echo "$_pp_pid"
+            fi
+        else
+            if _rra_argv_has "$_pp_mod" "$_pp_args" || _rra_argv_has_path "$_pp_launch" "$_pp_args"; then
+                echo "$_pp_pid"
+            fi
+        fi
+    done
+    return 0
+}
+
+_rra_shell_pids() {
+    _h_proc=$(_rra_proc_root)
+    _h_me=$$
+    for _h_d in "$_h_proc"/[0-9]*; do
+        [ -d "$_h_d" ] || continue
+        _h_pid=${_h_d##*/}
+        case $_h_pid in
+            ''|*[!0-9]*) continue ;;
+        esac
+        if [ "$_h_pid" = "$_h_me" ]; then
+            continue
+        fi
+        if ! [ -O "$_h_d" ] 2>/dev/null; then
+            continue
+        fi
+        [ -r "$_h_d/cmdline" ] || continue
+        _h_args=$(tr '\0' '\n' <"$_h_d/cmdline" 2>/dev/null) || continue
+        _h_first=$(printf '%s\n' "$_h_args" | sed -n '1p')
+        case $_h_first in
+            python3|python3.*|*/python3|*/python3.*) ;;
+            *) continue ;;
+        esac
+        if _rra_argv_has_path xx-wm/main.py "$_h_args"; then
+            echo "$_h_pid"
+        fi
+    done
+    return 0
+}
+
+_rra_mpris_status() {
+    _m_bus=$1
+    _m_out=
+    if command -v gdbus >/dev/null 2>&1; then
+        _m_out=$(gdbus call --session --dest "$_m_bus" --object-path /org/mpris/MediaPlayer2 --method org.freedesktop.DBus.Properties.Get org.mpris.MediaPlayer2.Player PlaybackStatus 2>/dev/null) || _m_out=
+    fi
+    if [ -z "$_m_out" ] && command -v busctl >/dev/null 2>&1; then
+        _m_out=$(busctl --user get-property "$_m_bus" /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player PlaybackStatus 2>/dev/null) || _m_out=
+    fi
+    printf '%s\n' "$_m_out"
+    return 0
+}
+
+_rra_quit_window() {
+    _q_bus=$1
+    _q_pid=$2
+    _q_path=/$(printf '%s' "$_q_bus" | tr '.' '/')
+    if command -v gdbus >/dev/null 2>&1; then
+        if gdbus call --session --dest "$_q_bus" --object-path "$_q_path" --method org.gtk.Actions.Activate quit '[]' '{}' >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    if [ -n "$_q_pid" ]; then
+        env kill -TERM "$_q_pid" 2>/dev/null || true
+    fi
+    return 0
+}
+
+_rra_quit_player() {
+    _qp_bus=$1
+    _qp_pid=$2
+    if command -v gdbus >/dev/null 2>&1; then
+        if gdbus call --session --dest "$_qp_bus" --object-path /org/mpris/MediaPlayer2 --method org.mpris.MediaPlayer2.Quit >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    if [ -n "$_qp_pid" ]; then
+        env kill -TERM "$_qp_pid" 2>/dev/null || true
+    fi
+    return 0
+}
+
+refresh_running_apps() {
+    _r_windows="io.piercingxx.XXDialer:xx_dialer:xx-dialer io.piercingxx.XXCalendar:xx_calendar:xx-calendar io.piercingxx.XXVitals:xx_vitals:xx-vitals io.piercingxx.XXRadio:xx_radio:xx-radio io.piercingxx.XXAudiobook:xx_audiobook:xx-audiobook io.piercingxx.XXFiles:xx_files:xx-files io.piercingxx.XXClock:xx_clock:xx-clock io.piercingxx.TxxT:txxt:txxt"
+    _r_players="org.mpris.MediaPlayer2.xx_radio:xx_radio:--player-service:xx-radio org.mpris.MediaPlayer2.xx_audiobook:xx_audiobook.service.player_service::xx-audiobook-player"
+    _r_units="xx-clock-daemon.service xx-share.service xx-auto-watch.service xx-vitals-collect.service"
+    _r_refreshed=0
+    _r_deferred=0
+    if ! _rra_session_bus; then
+        echo "refresh: no user session bus found — leaving running apps until the next login."
+        return 0
+    fi
+    for _r_spec in $_r_windows; do
+        _r_bus=${_r_spec%%:*}
+        _r_tmp=${_r_spec#*:}
+        _r_mod=${_r_tmp%%:*}
+        _r_launch=${_r_tmp#*:}
+        _r_pids=$(_rra_window_pids "$_r_mod" "$_r_launch")
+        if [ -z "$_r_pids" ]; then
+            continue
+        fi
+        for _r_pid in $_r_pids; do
+            _rra_quit_window "$_r_bus" "$_r_pid"
+            echo "refresh: asked $_r_launch ($_r_bus) to quit; it starts with the new code on the next launch."
+            _r_refreshed=$((_r_refreshed + 1))
+        done
+    done
+    for _r_spec in $_r_players; do
+        _r_rest=$_r_spec
+        _r_mbus=${_r_rest%%:*}
+        _r_rest=${_r_rest#*:}
+        _r_mod=${_r_rest%%:*}
+        _r_rest=${_r_rest#*:}
+        _r_flag=${_r_rest%%:*}
+        _r_launch=${_r_rest#*:}
+        _r_name=${_r_mbus#org.mpris.MediaPlayer2.}
+        _r_status=$(_rra_mpris_status "$_r_mbus")
+        case $_r_status in
+            *Playing*)
+                echo "refresh: $_r_name player is Playing — leaving it; it picks up the new code after playback stops or at the next login."
+                _r_deferred=$((_r_deferred + 1))
+                continue
+                ;;
+        esac
+        _r_pids=$(_rra_player_pids "$_r_mod" "$_r_flag" "$_r_launch")
+        if [ -z "$_r_status" ] && [ -z "$_r_pids" ]; then
+            continue
+        fi
+        if [ -z "$_r_status" ]; then
+            echo "refresh: $_r_name player status is unknown — leaving it; it picks up the new code after playback stops or at the next login."
+            _r_deferred=$((_r_deferred + 1))
+            continue
+        fi
+        if [ -z "$_r_pids" ]; then
+            _rra_quit_player "$_r_mbus" ""
+            echo "refresh: quit idle $_r_name player; it restarts with the new code on the next playback."
+            _r_refreshed=$((_r_refreshed + 1))
+            continue
+        fi
+        for _r_pid in $_r_pids; do
+            _rra_quit_player "$_r_mbus" "$_r_pid"
+            echo "refresh: quit idle $_r_name player (pid $_r_pid); it restarts with the new code on the next playback."
+            _r_refreshed=$((_r_refreshed + 1))
+        done
+    done
+    if command -v systemctl >/dev/null 2>&1 && systemctl --user list-units --no-legend >/dev/null 2>&1; then
+        for _r_unit in $_r_units; do
+            # try-restart only touches a running unit, and the clock
+            # daemon reloads its schedule from disk on start
+            # (ClockDaemon reconciles on startup), so no alarm is lost.
+            if systemctl --user try-restart "$_r_unit" 2>/dev/null; then
+                echo "refresh: try-restarted $_r_unit (no-op when it was not running)."
+                _r_refreshed=$((_r_refreshed + 1))
+            else
+                echo "refresh: could not try-restart $_r_unit — leaving it until later."
+                _r_deferred=$((_r_deferred + 1))
+            fi
+        done
+    else
+        echo "refresh: no systemd user manager — skipping user units until the next login."
+    fi
+    _r_shell=$(_rra_shell_pids)
+    _r_count=0
+    _r_only=
+    for _r_p in $_r_shell; do
+        _r_count=$((_r_count + 1))
+        _r_only=$_r_p
+    done
+    if [ "$_r_count" = 1 ]; then
+        # SIGUSR1 respawns only the python child; the /usr/bin/xx-wm
+        # wrapper, phoc and the session stay up (see xx-wm.in).
+        if env kill -USR1 "$_r_only" 2>/dev/null; then
+            echo "refresh: asked the shell (pid $_r_only) to respawn with the new code; apps and phoc stay up."
+            _r_refreshed=$((_r_refreshed + 1))
+        else
+            echo "refresh: could not signal the shell — leaving it until the next login."
+            _r_deferred=$((_r_deferred + 1))
+        fi
+    elif [ "$_r_count" = 0 ]; then
+        echo "refresh: shell is not running — nothing to respawn."
+    else
+        echo "refresh: several shell processes found — leaving them until the next login."
+        _r_deferred=$((_r_deferred + 1))
+    fi
+    echo "refresh: done — $_r_refreshed refreshed, $_r_deferred left until later."
+    return 0
 }
 
 is_systemd() {
