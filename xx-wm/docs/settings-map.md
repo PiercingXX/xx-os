@@ -50,6 +50,7 @@ The rules (owner, "minimal"):
 - **Apps**
   - `screentime`: Screen time today, App time and limits
   - `apps`: Installed apps (review and uninstall)
+  - `nope`: Nope-Mode: chosen apps go silent and won't open (the shade's Nope tile toggles it; long-press opens here)
 - **Privacy & security**
   - `lock`: Change PIN, Change device password
   - `smart_lock`: Smart Lock, trusted devices and networks
