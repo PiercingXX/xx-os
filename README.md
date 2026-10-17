@@ -21,6 +21,7 @@ A complete, minimal phone experience for Linux phones: the **XX-WM** shell and t
 | [`xx-note/`](xx-note/) | Markdown notes as plain files, with labels, archive, trash and optional WebDAV sync |
 | [`xx-weather/`](xx-weather/) | ZIP-code weather from the National Weather Service (US only), with saved locations and rain/freeze alerts |
 | [`xx-files/`](xx-files/) | Tree-first local file manager: list/tree/grid, Trash with restore, share via xx-share |
+| [`xx-auth/`](xx-auth/) | Offline TOTP/HOTP two-factor codes, encrypted at rest, Aegis vault files |
 
 Each directory is a self-contained project with its own `meson.build`, tests and README. How the pieces talk to each other is in [`docs/dbus.md`](docs/dbus.md).
 

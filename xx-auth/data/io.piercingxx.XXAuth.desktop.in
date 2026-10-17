@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=xx-auth
+GenericName=Authenticator
+Comment=Offline TOTP/HOTP two-factor codes
+Exec=@bindir@/xx-auth
+Icon=io.piercingxx.XXAuth
+DBusActivatable=false
+Terminal=false
+Categories=Utility;Security;
+StartupNotify=true

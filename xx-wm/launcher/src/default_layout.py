@@ -73,6 +73,7 @@ _CALENDAR_CANDIDATES = ['io.piercingxx.XXCalendar', 'org.gnome.Calendar', 'gnome
                         'waydroid.com.google.android.calendar']
 _CALCULATOR_CANDIDATES = ['io.piercingxx.XXCalculator', 'org.gnome.Calculator',
                           'gnome-calculator']
+_AUTH_CANDIDATES = ['io.piercingxx.XXAuth']
 _CAMERA_CANDIDATES = ['furios-camera', 'org.postmarketos.Megapixels',
                       'org.gnome.Snapshot', 'megapixels']
 _PHOTOS_CANDIDATES = [
@@ -219,6 +220,7 @@ class DefaultLayoutResolver:
             self.labels[app_id] = name
             children.append({'label': name, 'app_id': app_id})
         for label, candidates in (('Calculator', _CALCULATOR_CANDIDATES),
+                                  ('Authenticator', _AUTH_CANDIDATES),
                                   ('Camera', _CAMERA_CANDIDATES),
                                   ('Photos', _PHOTOS_CANDIDATES),
                                   ('Weather', _WEATHER_CANDIDATES),

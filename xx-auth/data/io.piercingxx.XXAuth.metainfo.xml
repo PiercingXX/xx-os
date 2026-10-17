@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.piercingxx.XXAuth</id>
+  <name>xx-auth</name>
+  <summary>Offline TOTP/HOTP two-factor codes</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>
+      Linux phone port of the PiercingXX Android xx-auth app. Holds TOTP
+      and HOTP secrets encrypted on-device, renders codes that expire on
+      their own, and exchanges Aegis vault files. Local-only: no network.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.piercingxx.XXAuth.desktop</launchable>
+</component>

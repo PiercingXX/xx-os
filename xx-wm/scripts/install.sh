@@ -150,6 +150,7 @@ install_deps() {
     install_portals
     install_media_deps
     install_notes_deps
+    install_auth_deps
 }
 
 install_notes_deps() {
@@ -214,6 +215,22 @@ install_media_deps() {
     # libadwaita and gtk4-layer-shell come from the base deps above; neither
     # media app uses Gtk4LayerShell or the GstAudio/GstPbutils typelibs
     # (only Gst 1.0), so no extra gir is installed for them.
+}
+
+install_auth_deps() {
+    # Runtime stack for xx-auth (offline authenticator): AES-256-GCM via the
+    # cryptography bindings, the Secret Service keyring, and zbarimg for
+    # QR-image import. Names follow the exact prefix convention of the base
+    # and media deps above (py3-/python-/python3-); re-verify on device when
+    # the phone image changes.
+    echo "Installing authenticator dependencies..."
+    if [ "$PKG" = apk ]; then
+        pkg_install py3-cryptography libsecret zbar
+    elif [ "$PKG" = pacman ]; then
+        pkg_install python-cryptography libsecret zbar
+    else
+        pkg_install python3-cryptography gir1.2-secret-1 zbar-tools
+    fi
 }
 
 install_portals() {
@@ -377,7 +394,7 @@ link_squeekboard_layouts() {
 # The XX apps live next to xx-wm in the monorepo. xx-find is deliberately
 # absent: Find My Device is built but must not be installed or run until the
 # owner turns it on. One app failing to build never blocks the shell.
-XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-calculator xx-email xx-vitals xx-share xx-captions xx-auto xx-radio xx-audiobook xx-note xx-weather xx-files"
+XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-calculator xx-email xx-vitals xx-share xx-captions xx-auto xx-radio xx-audiobook xx-note xx-weather xx-files xx-auth"
 
 install_apps() {
     for app in $XX_APPS; do
