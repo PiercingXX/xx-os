@@ -71,7 +71,17 @@ def _render(path):
 
 
 def _capture():
-    _render(out)
+    try:
+        _render(out)
+    except TypeError:
+        # A tick (a clock label, a timer) invalidated the window's render
+        # node just before the capture: headless Broadway then paints an
+        # empty node. Try again on a later main-loop turn.
+        state['empty'] = state.get('empty', 0) + 1
+        if state['empty'] > 20:
+            raise
+        GLib.timeout_add(150, _capture)
+        return False
     os._exit(0)
 
 
