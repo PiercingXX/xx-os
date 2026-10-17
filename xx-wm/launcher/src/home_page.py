@@ -347,9 +347,18 @@ class HomePage:
 
         win = self._win
         now = datetime.now()
-        win.clock_label.set_text(
-            format_clock(now, resolve_24h(win.config)))
+        clock = format_clock(now, resolve_24h(win.config))
+        win.clock_label.set_text(clock)
         win.date_label.set_text(now.strftime('%a, %b %d').replace(' 0', ' '))
+        # The top status bar rides this same 1 s tick (no poller of its own).
+        bar = getattr(win, '_status_bar', None)
+        if bar is not None:
+            try:
+                bar.set_time(clock)
+                bar.set_flags(win.dnd_state.is_active(now),
+                              win.focus_state.is_active(now))
+            except Exception:
+                pass
 
     def _tick_clock(self) -> bool:
         self._refresh_clock()
@@ -373,7 +382,14 @@ class HomePage:
                 win.status_strip.set_text(line)
             except Exception:
                 pass
-        status_line_async(_done)
+
+        def _snapshot(snapshot: dict) -> None:
+            # Same poll feeds the top status bar; kept for a bar built later.
+            win._status_snapshot = snapshot
+            bar = getattr(win, '_status_bar', None)
+            if bar is not None:
+                bar.set_status(snapshot)
+        status_line_async(_done, on_snapshot=_snapshot)
 
     def set_privacy_snapshot(self, snapshot: dict | None) -> None:
         """Feed the privacy monitor snapshot; the status strip gains the
@@ -385,6 +401,12 @@ class HomePage:
                 for kind, apps in dict(snapshot or {}).items()}
         except Exception:
             win._privacy_snapshot = {}
+        bar = getattr(win, '_status_bar', None)
+        if bar is not None:
+            try:
+                bar.set_privacy(any(win._privacy_snapshot.values()))
+            except Exception:
+                pass
         try:
             win._refresh_status()
         except Exception:

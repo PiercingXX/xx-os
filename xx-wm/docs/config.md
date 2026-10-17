@@ -259,6 +259,7 @@ surface, not the store.
 | `night_light` | bool | `false` | Night-light master switch state (Settings → Display, "Night" tile). |
 | `night_light_temp` | int | `2200` | Night-light temperature in Kelvin, clamped 2200–6500. Included in backups. |
 | `night_light_schedule` | bool | `false` | When true the light follows sunset-to-sunrise from the weather coordinates instead of staying on. |
+| `status_bar_height` | int\|null | `null` | Height of the top status bar in logical px, clamped 20–96 (Settings → Display, "Status bar height"). The bar reserves this much at the top edge so apps start below the camera hole. `null` uses the device default: 64 on the FuriPhone FLX1 (its punch-hole sits inside the bar), 28 elsewhere. Device-local: never exported in backups. |
 
 ### Wireless debugging (xxdb)
 

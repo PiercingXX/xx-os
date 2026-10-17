@@ -624,6 +624,9 @@ class ShellWindow(Adw.ApplicationWindow):
         self._dialer: object | None = None
         self._power_menu: object | None = None
         self._back_layer: object | None = None
+        # Top status bar (status_bar.py), built by main._show_shell on a
+        # layer-shell compositor; fed by the clock/status ticks below.
+        self._status_bar: object | None = None
         self._swipe_origin: tuple[float, float] | None = None
         self._theme_buttons: dict[str, Gtk.Button] = {}
         # Built on first switcher open: a second pywayland Display in
@@ -1428,6 +1431,9 @@ class ShellWindow(Adw.ApplicationWindow):
             media_watcher=mpris,
         )
         self._lock_screen.set_application(self.get_application())
+        # Every show/hide path flips `visible`: the status bar follows it.
+        self._lock_screen.connect(
+            'notify::visible', lambda *_: self._sync_status_bar())
         self._lock_screen.present()
         self._lock_screen.on_shown()
         self._reassert_call_ui_above_lock()
@@ -1436,6 +1442,16 @@ class ShellWindow(Adw.ApplicationWindow):
         """A live call stays reachable: re-present the call UI above the
         lock (both are OVERLAY; the last mapped wins)."""
         return _calls(self)._reassert_call_ui_above_lock()
+
+    def _sync_status_bar(self) -> None:
+        """Hide the top status bar under the lock screen and the welcome
+        wizard, show it over home and apps (status_bar.decide_visible)."""
+        bar = getattr(self, '_status_bar', None)
+        if bar is None:
+            return
+        app = self.get_application()
+        bar.sync_visibility(
+            self.is_locked(), bool(getattr(app, '_tour_visible', False)))
 
     def _dismiss_lock_screen(self) -> None:
         lock = getattr(self, '_lock_screen', None)
@@ -2348,6 +2364,9 @@ class ShellWindow(Adw.ApplicationWindow):
         self._refresh_weather()
         self._resync_blank_lock()
         self._retheme_surfaces()
+        bar = getattr(self, '_status_bar', None)
+        if bar is not None:
+            bar.apply_config()
 
     def _retheme_surfaces(self) -> None:
         """Fan the freshly resolved preset out to every constructed overlay
@@ -2371,6 +2390,9 @@ class ShellWindow(Adw.ApplicationWindow):
         back = getattr(self, '_back_layer', None)
         if back is not None:
             back.apply_theme(preset)
+        bar = getattr(self, '_status_bar', None)
+        if bar is not None:
+            bar.apply_theme(preset)
         # The HUD lives on the application (main.py wires it into the shade
         # from there); getattr-guarded so bare test namespaces still fan out.
         get_app = getattr(self, 'get_application', None)

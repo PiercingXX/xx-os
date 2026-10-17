@@ -141,41 +141,65 @@ def mobile_signal() -> str | None:
     return None
 
 
-def status_line() -> str:
-    """Single-line status string for the home screen header."""
-    parts: list[str] = []
-
+def status_snapshot() -> dict:
+    """One poll of what the home strip and the top status bar show:
+    ``ssid``, ``signal`` (bars, only probed without Wi-Fi), ``battery``
+    (0-100 or None) and ``charging``. Blocking (nmcli/mmcli): workers only."""
     ssid = wifi_ssid()
-    if ssid:
-        parts.append(ssid)
-    else:
-        sig = mobile_signal()
-        if sig:
-            parts.append(sig)
+    return {
+        'ssid': ssid,
+        'signal': None if ssid else mobile_signal(),
+        'battery': battery_pct(),
+        'charging': battery_charging(),
+    }
 
-    bat = battery_label()
-    if bat:
-        parts.append(bat)
 
+def format_status_line(snapshot: dict) -> str:
+    """The home strip line for a status_snapshot(). Pure."""
+    parts: list[str] = []
+    if snapshot.get('ssid'):
+        parts.append(snapshot['ssid'])
+    elif snapshot.get('signal'):
+        parts.append(snapshot['signal'])
+    pct = snapshot.get('battery')
+    if pct is not None:
+        parts.append(f"{pct}%{'+' if snapshot.get('charging') else ''}")
     return '  ·  '.join(parts)
 
 
-def status_line_async(callback) -> None:
+def status_line() -> str:
+    """Single-line status string for the home screen header."""
+    return format_status_line(status_snapshot())
+
+
+def status_line_async(callback, on_snapshot=None) -> None:
     """Collect status_line() off the GTK thread, deliver on the main loop.
 
     `callback(line)` fires exactly once via GLib.idle_add, even on failure
-    (with ''). Never raises.
+    (with ''). Never raises. With `on_snapshot`, the worker polls once via
+    status_snapshot() and also delivers the dict (after the line) to the
+    top status bar: one poll feeds both, no second poller.
     """
     from gi.repository import GLib
 
     def _worker() -> None:
+        snapshot = None
         try:
-            line = status_line()
+            if on_snapshot is not None:
+                snapshot = status_snapshot()
+                line = format_status_line(snapshot)
+            else:
+                line = status_line()
         except Exception:
             line = ''
 
         def _deliver() -> bool:
             callback(line)
+            if snapshot is not None:
+                try:
+                    on_snapshot(snapshot)
+                except Exception:
+                    pass
             return False
         GLib.idle_add(_deliver)
 

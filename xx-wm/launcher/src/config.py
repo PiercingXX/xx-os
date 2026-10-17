@@ -111,6 +111,9 @@ DEFAULT_CONFIG = {
     'night_light': False,
     'night_light_temp': 2200,
     'night_light_schedule': False,
+    # Top status bar height in logical px; None = the device default
+    # (status_bar.resolve_height). Device-local: not in backups.
+    'status_bar_height': None,
 }
 
 _WEATHER_TEMP_UNITS = ('fahrenheit', 'celsius')
