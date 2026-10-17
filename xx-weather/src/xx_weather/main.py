@@ -12,11 +12,25 @@ import os
 import threading
 import time
 
-APP_CSS = """
-.xx-weather-hero { font-size: 36px; font-weight: 300; }
-.xx-weather-sub { font-size: 15px; }
-.xx-hour-temp { font-size: 16px; }
+def app_css(scale: float = 1.0) -> str:
+    """App-local type roles, scaled by the suite text-size setting so
+    large text stays proportional (the shared sheet scales the rest)."""
+
+    def px(base: int) -> str:
+        return f"{round(base * scale)}px"
+
+    return f"""
+.xx-weather-hero {{ font-size: {px(72)}; font-weight: 200; }}
+.xx-weather-cond {{ font-size: {px(16)}; }}
+.xx-weather-tile-value {{ font-size: {px(20)}; }}
+.xx-hour-temp {{ font-size: {px(16)}; }}
+.xx-weather-hour {{ min-height: {px(44)}; }}
+.xx-weather-hours-strip {{ padding-bottom: 4px; }}
+.xx-setting.xx-weather-last, .xx-row.xx-weather-last {{ border-bottom: none; }}
 """
+
+
+APP_CSS = app_css()
 
 
 def _require_gtk():
@@ -29,16 +43,15 @@ def _require_gtk():
     return Adw, Gdk, Gio, GLib, Gtk, Pango
 
 
-LICENSES_TEXT = (
-    "Forecasts: NWS weather.gov (US public domain).\n\n"
-    "Weather data by Open-Meteo.com (CC BY 4.0).\n\n"
-    "ZIP lookup via Zippopotam.us from GeoNames (CC BY 4.0).\n\n"
-    "App code: GPL-3.0-only."
+LICENSE_ROWS = (
+    ("NWS weather.gov", "Forecasts \u00b7 US public domain"),
+    ("Open-Meteo.com", "Weather data \u00b7 CC BY 4.0"),
+    ("Zippopotam.us", "ZIP lookup from GeoNames \u00b7 CC BY 4.0"),
+    ("xx-weather", "App code \u00b7 GPL-3.0-only"),
 )
 
-FOOTER_TEXT = ("Forecast: NWS weather.gov \u2022 Weather data by "
-               "Open-Meteo.com (CC BY 4.0) \u2022 ZIP lookup: "
-               "GeoNames (CC BY 4.0)")
+FOOTER_TEXT = ("NWS weather.gov \u00b7 Open-Meteo.com (CC BY 4.0) "
+               "\u00b7 GeoNames (CC BY 4.0)")
 
 ALERT_HOURS = (3, 6, 12)
 ALERT_TEMPS_F = (20, 28, 32, 40)
@@ -74,11 +87,17 @@ class WeatherWindow:
         self.win = Adw.ApplicationWindow(application=app)
         self.win.set_title("xx-weather")
         self.win.set_default_size(360, 720)
+        scale = 1.0
         try:
-            xx_ui.apply(self.win)
+            scale = xx_ui.apply(self.win).scale
         except Exception:  # noqa: BLE001 - theme is decorative
             pass
-        self._load_app_css()
+        self._app_css_provider = None
+        self._load_app_css(scale)
+        try:
+            xx_ui.on_change(lambda theme: self._load_app_css(theme.scale))
+        except Exception:  # noqa: BLE001 - live restyle is decorative
+            pass
 
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.NONE)
@@ -102,16 +121,19 @@ class WeatherWindow:
 
     # -- theme ---------------------------------------------------------
 
-    def _load_app_css(self) -> None:
+    def _load_app_css(self, scale: float = 1.0) -> None:
         try:
             Gtk, Gdk = self._Gtk, self._Gdk
-            provider = Gtk.CssProvider()
-            provider.load_from_data(APP_CSS.encode("utf-8"))
-            display = Gdk.Display.get_default()
-            if display is not None:
+            if self._app_css_provider is None:
+                display = Gdk.Display.get_default()
+                if display is None:
+                    return
+                self._app_css_provider = Gtk.CssProvider()
                 Gtk.StyleContext.add_provider_for_display(
-                    display, provider,
+                    display, self._app_css_provider,
                     Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            self._app_css_provider.load_from_data(
+                app_css(scale).encode("utf-8"))
         except Exception:  # noqa: BLE001 - app css is decorative
             pass
 
@@ -145,6 +167,9 @@ class WeatherWindow:
         page.set_margin_start(20)
         page.set_margin_end(20)
         page.set_margin_top(12)
+        # The page margins are the gutter; a second one from the header's
+        # own padding pushed titles 20 px right of the content.
+        header.remove_css_class("xx-page-body")
         page.append(header)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -159,11 +184,11 @@ class WeatherWindow:
             "Weather", None,
             [("REFRESH", self.refresh_forced)])
         self.forecast_header_box = header
+        self.forecast_title = header.get_first_child().get_first_child()
+        self.refresh_button = self.forecast_title.get_next_sibling()
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         body.set_margin_top(12)
         body.set_margin_bottom(28)
-        self.zip_chips_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        body.append(self.zip_chips_box)
         self.error_label = W.wrap_label("", "xx-secondary")
         self.error_label.add_css_class("xx-danger-text")
         self.error_label.set_visible(False)
@@ -180,23 +205,27 @@ class WeatherWindow:
         self.forecast_scroll = self._page_shell(header, body)
         self.stack.add_named(self.forecast_scroll, "forecast")
 
+    def _set_forecast_title(self, place) -> None:
+        """The page names the place it shows, like the Android header."""
+        title = place.city if place is not None else "Weather"
+        try:
+            self.forecast_title.set_text(title)
+            # Nothing saved, nothing to refresh.
+            self.refresh_button.set_visible(place is not None)
+        except Exception:  # noqa: BLE001 - title swap is decorative
+            pass
+
     def _render_forecast(self) -> None:
         Gtk, W = self._Gtk, self._W
-        from xx_phone.weather import (condition_label, day_label, full_date,
-                                      hilo, hour_label, temp_str,
-                                      updated_label)
+        from xx_phone.weather import (condition_label, day_label, hilo,
+                                      hour_label, temp_str, updated_label)
 
         while (child := self.forecast_body.get_first_child()) is not None:
             self.forecast_body.remove(child)
-        while (child := self.zip_chips_box.get_first_child()) is not None:
-            self.zip_chips_box.remove(child)
 
         places = self.store.places()
         selected = self.store.selected()
-        if len(places) > 1 and selected is not None:
-            chips = W.chip_bar([(p.city, p.zip == selected.zip,
-                                 self._select_zip_cb(p.zip)) for p in places])
-            self.zip_chips_box.append(chips)
+        self._set_forecast_title(selected if places else None)
 
         state = self.state
         data = None
@@ -211,66 +240,50 @@ class WeatherWindow:
             self.error_label.set_visible(False)
 
         units = self.store.units()
+        state_code = selected.state if selected is not None else ""
         if not places:
+            # Nothing saved: the one primary action, nothing else.
             self.spinner.set_visible(False)
             self.spinner.stop()
-            box = W.empty_state(
-                "Enter a ZIP code for accurate NWS forecasts. "
-                "No location tracking, no extra services.",
-                "SET ZIP CODE", lambda: self.show("settings"))
-            self.forecast_body.append(box)
+            add = W.outline_button("Add ZIP code", self._go_add_zip)
+            add.set_hexpand(True)
+            self.forecast_body.append(add)
             self._update_caption(None)
             return
         if data is None and error_msg is None:
             self.spinner.set_visible(True)
             self.spinner.start()
-            self._update_caption(
-                selected.display_name if selected is not None else None)
+            self._update_caption(None)
             return
         self.spinner.set_visible(False)
         self.spinner.stop()
         if data is None:
-            box = W.empty_state("Couldn't load this forecast.",
-                                "TRY AGAIN", self.refresh_forced)
-            self.forecast_body.append(box)
-            self._update_caption(selected.display_name)
+            # The red error line says it; REFRESH in the header retries.
+            self._update_caption(None)
             return
 
-        stamp = (f"{data.place.display_name} \u2022 Updated "
-                 f"{updated_label(data.updated_at_ms)}")
+        stamp = f"Updated {updated_label(data.updated_at_ms)}"
+        if state_code:
+            stamp = f"{state_code} · {stamp}"
         self._update_caption(stamp)
 
-        hero = W.card()
         today = data.daily[0] if data.daily else None
-        hero_date = today.date if today is not None else None
-        date_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        date_label = W.label(
-            full_date(hero_date) if hero_date is not None else "", "xx-title")
-        date_label.set_hexpand(True)
-        date_row.append(date_label)
-        if hero_date is not None:
-            day_btn = W.text_button("DAY",
-                                    self._open_day_cb(hero_date))
-            day_btn.set_valign(Gtk.Align.CENTER)
-            date_row.append(day_btn)
-        hero.append(date_row)
-        cond = W.wrap_label(data.current.condition_text, "xx-secondary")
+        hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        hero.append(W.label(temp_str(data.current.temp_f, units),
+                            "xx-weather-hero"))
+        cond = W.wrap_label(data.current.condition_text, "xx-weather-cond")
         hero.append(cond)
-        temp = W.label(temp_str(data.current.temp_f, units),
-                       "xx-weather-hero")
-        hero.append(temp)
         if today is not None:
-            hero.append(W.label(hilo(today.hi_f, today.lo_f, units),
-                                "xx-weather-sub"))
-        if data.current.feels_like_f is not None:
-            hero.append(W.label(
-                f"Feels like {temp_str(data.current.feels_like_f, units)}",
-                "xx-secondary"))
+            line = hilo(today.hi_f, today.lo_f, units)
+            if line:
+                sub = W.label(line, "xx-secondary")
+                sub.set_margin_top(4)
+                hero.append(sub)
         self.forecast_body.append(hero)
 
-        self.forecast_body.append(W.section_label("HOURLY FORECAST"))
+        self.forecast_body.append(W.section_label("HOURLY"))
         strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=22)
-        strip.set_margin_start(2)
+        strip.add_css_class("xx-weather-hours-strip")
         for index, hour in enumerate(list(data.hourly)[:24]):
             col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             col.set_valign(Gtk.Align.START)
@@ -284,7 +297,7 @@ class WeatherWindow:
             temp_l.set_halign(Gtk.Align.CENTER)
             col.append(temp_l)
             pop = hour.pop_pct or 0
-            pop_l = W.label(f"{pop}%" if pop >= 30 else "", "xx-secondary",
+            pop_l = W.label(f"{pop}%" if pop >= 30 else "", "xx-time",
                             xalign=0.5)
             pop_l.set_halign(Gtk.Align.CENTER)
             col.append(pop_l)
@@ -299,11 +312,11 @@ class WeatherWindow:
         daily = list(data.daily)
         for pos, point in enumerate(daily):
             secondary = condition_label(point.condition)
-            if point.pop_pct is not None:
-                secondary = f"{secondary} \u2022 {point.pop_pct}%"
+            if point.pop_pct is not None and point.pop_pct >= 30:
+                secondary = f"{secondary} · {point.pop_pct}%"
             row = W.list_row(
-                day_label(point.date), secondary,
-                hilo(point.hi_f, point.lo_f, units),
+                "Today" if pos == 0 else day_label(point.date), secondary,
+                trailing=self._hilo_columns(point.hi_f, point.lo_f, units),
                 on_activate=self._open_day_cb(point.date),
                 last=pos == len(daily) - 1)
             rows.append(row)
@@ -315,20 +328,51 @@ class WeatherWindow:
         for pos, (name, value, sub) in enumerate(
                 self._detail_tiles(data, units)):
             tile = W.card()
+            tile.set_spacing(4)
             tile.append(W.caption(name))
-            tile.append(W.label(value, "xx-title"))
+            value_l = W.label(value, "xx-weather-tile-value")
+            value_l.set_margin_top(8)
+            tile.append(value_l)
             if sub:
                 tile.append(W.label(sub, "xx-secondary"))
             grid.attach(tile, pos % 2, pos // 2, 1, 1)
         self.forecast_body.append(grid)
 
-        foot = W.wrap_label(FOOTER_TEXT, "xx-secondary")
+        foot = W.wrap_label(FOOTER_TEXT, "xx-tiny")
+        foot.set_margin_top(8)
         self.forecast_body.append(foot)
+
+    def _hilo_columns(self, hi_f, lo_f, units):
+        """High over low as two aligned columns: high in text, low muted.
+        A night-only date omits the high instead of printing "--"."""
+        Gtk, W = self._Gtk, self._W
+        from xx_phone.weather import temp_str
+
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        hi = W.label(temp_str(hi_f, units) if hi_f is not None else "",
+                     "xx-title", xalign=1.0)
+        hi.set_width_chars(4)
+        lo = W.label(temp_str(lo_f, units) if lo_f is not None else "",
+                     "xx-secondary", xalign=1.0)
+        lo.set_width_chars(4)
+        box.append(hi)
+        box.append(lo)
+        return box
+
+    def _go_add_zip(self) -> None:
+        self.show("places")
+        try:
+            self.zip_entry.grab_focus()
+        except Exception:  # noqa: BLE001 - focus is a convenience
+            pass
 
     def _select_zip_cb(self, zip_code: str):
         def _select() -> None:
             self.store.set_selected_zip(zip_code)
             self._render_forecast()
+            self._render_places()
+            self._render_settings()
+            self.show("forecast")
             self.refresh_visible(False)
 
         return _select
@@ -397,36 +441,47 @@ class WeatherWindow:
             ("PRESSURE", pressure, pressure_sub),
             ("VISIBILITY", visibility, ""),
             ("SUNRISE", sunrise, sunset_sub),
-            ("PRECIP CHANCE", pop, "Next 12 hours"),
+            ("PRECIP", pop, "Next 12 hours"),
         ]
 
     # -- places page ---------------------------------------------------------
 
     def _build_places_page(self) -> None:
         Gtk, W = self._Gtk, self._W
-        header = W.page_header("Locations", None,
-                               [("ADD", lambda: self.show("settings"))])
-        self.places_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                                   spacing=12)
-        self.places_body.set_margin_top(12)
-        self.places_body.set_margin_bottom(28)
-        self.stack.add_named(self._page_shell(header, self.places_body),
-                             "places")
+        header = W.page_header("Places", None, None)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        body.set_margin_top(12)
+        body.set_margin_bottom(28)
+        self.places_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        body.append(self.places_body)
+
+        # Adding a ZIP lives here and only here: entry + ADD on one line.
+        add_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.zip_entry = W.text_entry("ZIP code")
+        self.zip_entry.set_max_length(5)
+        self.zip_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        self.zip_entry.set_max_width_chars(10)
+        self.zip_entry.set_hexpand(True)
+        self.zip_entry.connect("activate", lambda _e: self._on_add_zip())
+        add_row.append(self.zip_entry)
+        add_btn = W.text_button("ADD", self._on_add_zip)
+        add_btn.set_valign(Gtk.Align.CENTER)
+        add_row.append(add_btn)
+        body.append(add_row)
+        self.zip_error = W.wrap_label("", "xx-secondary")
+        self.zip_error.add_css_class("xx-danger-text")
+        self.zip_error.set_visible(False)
+        body.append(self.zip_error)
+        self.stack.add_named(self._page_shell(header, body), "places")
 
     def _render_places(self) -> None:
-        W = self._W
+        Gtk, W = self._Gtk, self._W
         from xx_phone.weather import temp_str
 
         while (child := self.places_body.get_first_child()) is not None:
             self.places_body.remove(child)
         places = self.store.places()
         units = self.store.units()
-        selected = self.store.selected_zip()
-        if not places:
-            self.places_body.append(W.empty_state(
-                "No saved locations yet.", "ADD A ZIP CODE",
-                lambda: self.show("settings")))
-            return
         for pos, place in enumerate(places):
             data = self.state.data_by_zip.get(place.zip)
             failed = (place.zip in self.state.errors
@@ -434,22 +489,27 @@ class WeatherWindow:
                           and data is None))
             if data is not None:
                 secondary = data.current.condition_text
-                meta = temp_str(data.current.temp_f, units)
             else:
-                secondary = ("Couldn't load" if failed else "Loading\u2026")
-                meta = "--"
-            name = place.display_name
-            if place.zip == selected:
-                name = f"\u2022 {name}"
-            row = W.list_row(name, f"{place.zip} \u2022 {secondary}", meta,
+                secondary = ("Couldn't load" if failed else "Loading…")
+            trailing = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                               spacing=4)
+            if data is not None:
+                temp = W.label(temp_str(data.current.temp_f, units),
+                               "xx-weather-tile-value", xalign=1.0)
+                temp.set_valign(Gtk.Align.CENTER)
+                trailing.append(temp)
+            if len(places) > 1:
+                remove = W.icon_button("window-close-symbolic",
+                                       self._remove_zip_cb(place.zip))
+                remove.set_valign(Gtk.Align.CENTER)
+                remove.set_tooltip_text(f"Remove {place.display_name}")
+                trailing.append(remove)
+            row = W.list_row(place.display_name,
+                             f"{place.zip} · {secondary}",
+                             trailing=trailing,
                              on_activate=self._select_zip_cb(place.zip),
                              last=pos == len(places) - 1)
             self.places_body.append(row)
-            if len(places) > 1:
-                remove = W.text_button("REMOVE",
-                                       self._remove_zip_cb(place.zip))
-                remove.set_halign(self._Gtk.Align.END)
-                self.places_body.append(remove)
 
     def _remove_zip_cb(self, zip_code: str):
         def _remove() -> None:
@@ -465,6 +525,7 @@ class WeatherWindow:
     def _after_places_changed(self) -> bool:
         self._render_places()
         self._render_forecast()
+        self._render_settings()
         self.refresh_visible(False)
         return False
 
@@ -477,40 +538,18 @@ class WeatherWindow:
         body.set_margin_top(12)
         body.set_margin_bottom(28)
 
-        body.append(W.section_label("ADD ZIP CODE"))
-        self.zip_entry = Gtk.Entry()
-        self.zip_entry.set_placeholder_text("e.g. 00802")
-        self.zip_entry.set_max_length(5)
-        self.zip_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
-        self.zip_entry.set_max_width_chars(12)
-        body.append(self.zip_entry)
-        self.zip_error = W.wrap_label("", "xx-secondary")
-        self.zip_error.add_css_class("xx-danger-text")
-        self.zip_error.set_visible(False)
-        body.append(self.zip_error)
-        add_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        add_row.set_halign(Gtk.Align.END)
-        add_row.append(W.primary_button("ADD", self._on_add_zip))
-        body.append(add_row)
-
         body.append(W.section_label("TEMPERATURE"))
         self.units_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         body.append(self.units_box)
 
-        body.append(W.section_label("WEATHER ALERTS"))
-        self.alerts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                                  spacing=8)
+        body.append(W.section_label("ALERTS"))
+        self.alerts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         body.append(self.alerts_box)
 
         body.append(W.section_label("ABOUT"))
-        about_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        about_row.append(W.text_button("LICENSES",
-                                       lambda: self.show("licenses")))
-        about_row.set_halign(Gtk.Align.START)
-        body.append(about_row)
-        body.append(W.wrap_label(
-            "ZIP-code weather from the National Weather Service. "
-            "US only, no location tracking.", "xx-secondary"))
+        body.append(W.list_row("Licenses", "NWS, Open-Meteo, GeoNames",
+                               on_activate=lambda: self.show("licenses"),
+                               last=True))
 
         self.settings_body = body
         self.stack.add_named(self._page_shell(header, body), "settings")
@@ -523,9 +562,9 @@ class WeatherWindow:
             self.units_box.remove(child)
         units = self.store.units()
         self.units_box.append(W.segmented([
-            ("\u00b0F", units == Units.FAHRENHEIT,
+            ("°F", units == Units.FAHRENHEIT,
              lambda: self._set_units(Units.FAHRENHEIT)),
-            ("\u00b0C", units == Units.CELSIUS,
+            ("°C", units == Units.CELSIUS,
              lambda: self._set_units(Units.CELSIUS)),
         ]))
 
@@ -533,40 +572,43 @@ class WeatherWindow:
             self.alerts_box.remove(child)
         enabled = self.store.alerts_enabled()
         selected = self.store.selected()
-        self.alerts_box.append(W.setting_row(
-            "Enable alerts",
-            "Forecasts work with it off.",
-            W.make_switch(enabled, self._on_alerts_enabled), last=True))
-        if not enabled:
-            return
-        if selected is None:
-            self.alerts_box.append(W.wrap_label(
-                "Save a ZIP to attach rain and freeze triggers.",
-                "xx-secondary"))
-            return
-        triggers = self.store.ensure_triggers(selected.zip)
-        note = W.wrap_label(
-            f"Watching {selected.display_name} ({selected.zip}). "
-            "Same 15-minute refresh, no extra polling.", "xx-secondary")
-        self.alerts_box.append(note)
-        self.alerts_box.append(W.setting_row(
-            "Rain in the next N hours", "PoP 50%+ or falling precip",
-            W.make_switch(triggers.precip_enabled,
-                          lambda on: self._with_triggers(
-                              selected.zip, precip_enabled=on)),
-            last=True))
-        self.alerts_box.append(W.chip_bar(
-            [(f"{h}H", triggers.precip_hours == h,
-              self._hours_cb(selected.zip, h)) for h in ALERT_HOURS]))
-        self.alerts_box.append(W.setting_row(
-            "Temperature at or below", "Threshold is \u00b0F",
-            W.make_switch(triggers.temp_enabled,
-                          lambda on: self._with_triggers(
-                              selected.zip, temp_enabled=on)),
-            last=True))
-        self.alerts_box.append(W.chip_bar(
-            [(f"{t}\u00b0F", triggers.temp_at_or_below_f == t,
-              self._temp_cb(selected.zip, t)) for t in ALERT_TEMPS_F]))
+        rows = [("Weather alerts",
+                 selected.display_name if selected is not None else "",
+                 enabled, self._on_alerts_enabled, None)]
+        if enabled and selected is not None:
+            triggers = self.store.ensure_triggers(selected.zip)
+            zip_code = selected.zip
+            rows.append((
+                "Rain within", "50%+ chance or falling",
+                triggers.precip_enabled,
+                lambda on: self._with_triggers(zip_code, precip_enabled=on),
+                [(f"{h}H", triggers.precip_hours == h,
+                  self._hours_cb(zip_code, h)) for h in ALERT_HOURS]
+                if triggers.precip_enabled else None))
+            rows.append((
+                "At or below", "Temperature",
+                triggers.temp_enabled,
+                lambda on: self._with_triggers(zip_code, temp_enabled=on),
+                [(f"{t}\u00b0F", triggers.temp_at_or_below_f == t,
+                  self._temp_cb(zip_code, t)) for t in ALERT_TEMPS_F]
+                if triggers.temp_enabled else None))
+        for pos, (title, sub, active, callback, chips) in enumerate(rows):
+            last = pos == len(rows) - 1
+            row = W.setting_row(title, sub, W.make_switch(active, callback))
+            self.alerts_box.append(row)
+            if not chips:
+                if last:
+                    row.add_css_class("xx-weather-last")
+                continue
+            # Chips belong to their row: the hairline goes under them.
+            row.add_css_class("xx-weather-last")
+            bar = W.chip_bar(chips)
+            bar.set_margin_bottom(16)
+            self.alerts_box.append(bar)
+            if not last:
+                self.alerts_box.append(
+                    self._Gtk.Separator(
+                        orientation=self._Gtk.Orientation.HORIZONTAL))
 
     def _with_triggers(self, zip_code: str, **changes) -> None:
         from dataclasses import replace
@@ -635,19 +677,17 @@ class WeatherWindow:
     # -- day + licenses pages ----------------------------------------------------
 
     def _build_day_page(self) -> None:
-        Gtk, W = self._Gtk, self._W
-        header = W.compact_header(lambda: self.show("forecast"), "DAY",
-                                  "", "", None)
-        self.day_header_box = header
+        Gtk = self._Gtk
+        self.day_header_slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.day_body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                                spacing=2)
-        self.day_body.set_margin_top(12)
+                                spacing=0)
+        self.day_body.set_margin_top(8)
         self.day_body.set_margin_bottom(28)
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         page.set_margin_start(20)
         page.set_margin_end(20)
         page.set_margin_top(12)
-        page.append(header)
+        page.append(self.day_header_slot)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_vexpand(True)
@@ -656,11 +696,13 @@ class WeatherWindow:
         self.stack.add_named(page, "day")
 
     def _render_day(self) -> None:
-        W = self._W
+        Gtk, W = self._Gtk, self._W
         from xx_phone.weather import full_date, hilo, hour_label, temp_str
 
         while (child := self.day_body.get_first_child()) is not None:
             self.day_body.remove(child)
+        while (child := self.day_header_slot.get_first_child()) is not None:
+            self.day_header_slot.remove(child)
         units = self.store.units()
         selected = self.store.selected()
         data = self.state.data_by_zip.get(selected.zip) if selected else None
@@ -670,20 +712,20 @@ class WeatherWindow:
         point = None
         if data is not None and day is not None:
             point = next((d for d in data.daily if d.date == day), None)
-        title = full_date(day) if day is not None else "Day"
-        self.day_body.append(W.label(title, "xx-display"))
+        summary = ""
         if point is not None:
             bits = [b for b in [hilo(point.hi_f, point.lo_f, units),
                                 f"{point.pop_pct}% precip"
                                 if point.pop_pct is not None else ""]
                     if b]
-            if bits:
-                self.day_body.append(W.label(" \u00b7 ".join(bits),
-                                             "xx-secondary"))
-        self.day_body.append(W.section_label("HOURLY"))
+            summary = " · ".join(bits)
+        title = full_date(day) if day is not None else "Day"
+        header = W.compact_header(lambda: self.show("forecast"), title,
+                                  summary)
+        # The page body already carries the gutter.
+        header.remove_css_class("xx-page-body")
+        self.day_header_slot.append(header)
         if not hours:
-            self.day_body.append(W.wrap_label(
-                "No hourly forecast for this day.", "xx-secondary"))
             return
         from datetime import datetime as _now
 
@@ -691,21 +733,38 @@ class WeatherWindow:
         for pos, hour in enumerate(hours):
             when = "Now" if pos == 0 and hour.time.hour == now_hour else \
                 hour_label(hour.time)
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.add_css_class("xx-weather-hour")
+            time_l = W.label(when, "xx-secondary")
+            time_l.set_width_chars(6)
+            time_l.set_valign(Gtk.Align.CENTER)
+            row.append(time_l)
+            temp_l = W.label(temp_str(hour.temp_f, units), "xx-title")
+            temp_l.set_hexpand(True)
+            temp_l.set_valign(Gtk.Align.CENTER)
+            row.append(temp_l)
             pop = hour.pop_pct or 0
-            meta = temp_str(hour.temp_f, units)
-            if pop >= 20:
-                meta = f"{meta}  {pop}%"
-            self.day_body.append(W.list_row(
-                when, "", meta, last=pos == len(hours) - 1))
+            pop_l = W.label(f"{pop}%" if pop >= 20 else "", "xx-secondary",
+                            xalign=1.0)
+            pop_l.set_valign(Gtk.Align.CENTER)
+            row.append(pop_l)
+            self.day_body.append(row)
 
     def _build_licenses_page(self) -> None:
         Gtk, W = self._Gtk, self._W
-        header = W.compact_header(lambda: self.show("settings"), "LICENSES",
-                                  "", "", None)
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        body.set_margin_top(12)
+        header = W.compact_header(lambda: self.show("settings"), "LICENSES")
+        header.remove_css_class("xx-page-body")
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        body.set_margin_top(8)
         body.set_margin_bottom(28)
-        body.append(W.wrap_label(LICENSES_TEXT, "xx-secondary"))
+        for pos, (name, terms) in enumerate(LICENSE_ROWS):
+            row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            row.add_css_class("xx-setting")
+            if pos == len(LICENSE_ROWS) - 1:
+                row.add_css_class("xx-weather-last")
+            row.append(W.label(name, "xx-title"))
+            row.append(W.wrap_label(terms, "xx-secondary"))
+            body.append(row)
         self.stack.add_named(self._page_shell(header, body), "licenses")
 
     # -- refresh ---------------------------------------------------------------

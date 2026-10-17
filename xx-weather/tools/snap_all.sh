@@ -1,8 +1,9 @@
 #!/bin/sh
-# Seeded screenshots of every xx-weather screen in amoled + paper,
-# plus graphite/aura spot checks and phone-fit probes (320 px, 600x1333,
-# large text):
+# Seeded screenshots of every xx-weather screen in amoled + paper at the
+# FLX1 canvas (450x1000) and a 360x800 phone, plus fit probes (320 px
+# wide, large text at 1.3) and graphite/aura spot checks:
 #   xx-weather/tools/snap_all.sh OUTDIR
+# Writes sheet-{amoled,paper}-{450x1000,360x800}.png and sheet-fit.png.
 # Exits non-zero on any snap WARNING (phone-fit breach).
 set -u
 LANE=$(cd "$(dirname "$0")/../.." && pwd)
@@ -12,7 +13,6 @@ mkdir -p "$OUTDIR"
 PY=${PYTHON:-python3}
 command -v "$PY" >/dev/null 2>&1 || PY=python3
 
-THEMES="amoled paper"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -30,7 +30,7 @@ snap_one() {
     out="$WORK/$theme-$name.png"
     err="$WORK/$theme-$name.err"
     attempt=0
-    while [ "$attempt" -lt 3 ]; do
+    while [ "$attempt" -lt 5 ]; do
         attempt=$((attempt + 1))
         rm -f "$out"
         if HOME="$home" XDG_CONFIG_HOME="$home/.config" \
@@ -55,54 +55,79 @@ snap_one() {
     fail "snap failed: $theme $name ($(tail -n 3 "$err" 2>/dev/null))"
 }
 
-# scenario,page per shot (states cover every screen and every data state)
-states="welcome,welcome,forecast
+# name,scenario,page per shot (every screen and every data state)
+STATES="welcome,welcome,forecast
+add,welcome,places
 loading,loading,forecast
 current,current,forecast
 error,error,forecast
+day,day,forecast
 places,places,places
 settings,current,settings
 alerts,alerts,settings
-licenses,current,licenses
-day,day,forecast"
+licenses,current,licenses"
+SIZES="450x1000 360x800"
 
-for theme in $THEMES; do
-    for entry in $states; do
+group() {
+    # $1=theme $2=size: every state, one after another
+    for entry in $STATES; do
         name=${entry%%,*}; rest=${entry#*,}
         scenario=${rest%%,*}; page=${rest##*,}
-        snap_one "$theme" "$name" "360x720" "$scenario" "$page"
+        snap_one "$1" "$2-$name" "$2" "$scenario" "$page"
+    done
+}
+
+fits() {
+    # Narrowest canvas, large text, and two more presets.
+    snap_one paper fit-narrow-current 320x640 current forecast
+    snap_one paper fit-narrow-alerts 320x640 alerts settings
+    snap_one paper fit-large-current 360x800 current forecast \
+        ', "text_size_scale": 1.3'
+    snap_one amoled fit-large-alerts 360x800 alerts settings \
+        ', "text_size_scale": 1.3'
+    snap_one amoled fit-large-places 360x800 places places \
+        ', "text_size_scale": 1.3'
+    snap_one graphite fit-spot-current 450x1000 current forecast
+    snap_one aura fit-spot-places 450x1000 places places
+}
+
+# One at a time: Broadway display numbers (and their ports) collide
+# when renders run in parallel.
+for theme in amoled paper; do
+    for size in $SIZES; do
+        group "$theme" "$size"
     done
 done
+fits
 
-# Phone-fit probes: narrowest canvas, FLX1 canvas, large text.
-snap_one "paper" "narrow-current" "320x640" "current" "forecast"
-snap_one "paper" "flx1-current" "600x1333" "current" "forecast"
-snap_one "paper" "large-current" "360x720" "current" "forecast" \
-    ', "text_size_scale": 1.3'
+labels() {
+    # $1=theme $2=size
+    for entry in $STATES; do
+        name=${entry%%,*}
+        printf -- "-label %s %s " "$name" "$WORK/$1-$2-$name.png"
+    done
+}
 
-# Theme spot checks beyond the two sheet themes.
-snap_one "graphite" "spot-current" "360x720" "current" "forecast"
-snap_one "aura" "spot-settings" "360x720" "current" "settings"
-
-for theme in $THEMES; do
-    # shellcheck disable=SC2086
-    montage -label 'welcome' "$WORK/$theme-welcome.png" \
-        -label 'loading' "$WORK/$theme-loading.png" \
-        -label 'current' "$WORK/$theme-current.png" \
-        -label 'error' "$WORK/$theme-error.png" \
-        -label 'places' "$WORK/$theme-places.png" \
-        -label 'settings' "$WORK/$theme-settings.png" \
-        -label 'alerts' "$WORK/$theme-alerts.png" \
-        -label 'licenses' "$WORK/$theme-licenses.png" \
-        -label 'day' "$WORK/$theme-day.png" \
-        -tile 3x3 -geometry +4+4 -background black \
-        -fill white -pointsize 28 "$OUTDIR/sheet-$theme.png" \
-        || fail "montage failed for $theme"
-    cp "$WORK/$theme-"*.png "$OUTDIR/"
+for theme in amoled paper; do
+    for size in $SIZES; do
+        # shellcheck disable=SC2046
+        montage $(labels "$theme" "$size") \
+            -tile 5x2 -geometry +4+4 -background black \
+            -fill white -pointsize 28 "$OUTDIR/sheet-$theme-$size.png" \
+            || fail "montage failed for $theme $size"
+    done
 done
-cp "$WORK/paper-narrow-current.png" "$WORK/paper-flx1-current.png" \
-    "$WORK/paper-large-current.png" "$WORK/graphite-spot-current.png" \
-    "$WORK/aura-spot-settings.png" "$OUTDIR/"
+montage -label 'narrow' "$WORK/paper-fit-narrow-current.png" \
+    -label 'narrow alerts' "$WORK/paper-fit-narrow-alerts.png" \
+    -label 'large' "$WORK/paper-fit-large-current.png" \
+    -label 'large alerts' "$WORK/amoled-fit-large-alerts.png" \
+    -label 'large places' "$WORK/amoled-fit-large-places.png" \
+    -label 'graphite' "$WORK/graphite-fit-spot-current.png" \
+    -label 'aura' "$WORK/aura-fit-spot-places.png" \
+    -tile 4x2 -geometry +4+4 -background black \
+    -fill white -pointsize 28 "$OUTDIR/sheet-fit.png" \
+    || fail "montage failed for fit"
+cp "$WORK/"*.png "$OUTDIR/"
 rm -rf "$WORK"
 trap - EXIT
-echo "wrote $OUTDIR/sheet-{amoled,paper}.png"
+echo "wrote $OUTDIR/sheet-{amoled,paper}-{450x1000,360x800}.png and sheet-fit.png"
