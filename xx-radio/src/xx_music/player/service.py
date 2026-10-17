@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Callable
 
 import gi
@@ -21,6 +23,12 @@ from gi.repository import Gio, GLib  # noqa: E402
 
 from xx_music import policy as P  # noqa: E402
 from xx_music.appspec import AppSpec  # noqa: E402
+from xx_music.cast import discovery as cast_discovery  # noqa: E402
+from xx_music.cast.client import CastClient, CastError  # noqa: E402
+from xx_music.cast.queueing import local_index_after_cast  # noqa: E402
+from xx_music.cast.server import CastHttpServer  # noqa: E402
+from xx_music.cast.server import lan_address as cast_lan_address  # noqa: E402
+from xx_music.cast.server import sniff_type as cast_sniff_type  # noqa: E402
 from xx_music.engine import (ERROR_TEXT, RADIO, Engine, EngineError,  # noqa: E402
                              ErrorKind, Rating, Track)
 from xx_music.paths import AppPaths  # noqa: E402
@@ -65,7 +73,9 @@ class PlayerService:
                  executor=None, audio_sink=None,
                  audio_sink_name: str = "autoaudiosink",
                  leveling_enabled: bool = False,
-                 own_name=None) -> None:
+                 own_name=None, cast_client_factory=None,
+                 cast_server_factory=None,
+                 lan_address_fn=None) -> None:
         self.spec = spec
         self.engine = engine
         self.proxy = proxy
@@ -107,6 +117,29 @@ class PlayerService:
         self._conn: Gio.DBusConnection | None = None
         self._loop: GLib.MainLoop | None = None
         self._owner_ids: list[int] = []
+        self._cast_devices: list[dict] = []
+        self._cast_searching = False
+        self._cast_avahi: cast_discovery.AvahiBrowser | None = None
+        self._cast_discovery: cast_discovery.Discovery | None = None
+        self._cast_client: CastClient | None = None
+        self._cast_server: CastHttpServer | None = None
+        self._cast_connected_id: str | None = None
+        self._cast_connected_name = ""
+        self._cast_host = ""
+        self._cast_port = 8009
+        self._cast_volume = 1.0
+        self._cast_muted = False
+        self._cast_media_id: str | None = None
+        self._cast_position_ms = 0
+        self._cast_duration_ms = 0
+        self._cast_playing = False
+        self._cast_busy = False
+        self._cast_error: str | None = None
+        self._cast_lost_count = 0
+        self._cast_lost_at = 0.0
+        self._cast_client_factory = cast_client_factory
+        self._cast_server_factory = cast_server_factory
+        self._cast_lan_fn = lan_address_fn
         sink = audio_sink
         if sink is None and audio_sink_name != "autoaudiosink":
             from gi.repository import Gst
@@ -132,7 +165,14 @@ class PlayerService:
         self._touch()
         self._save_if_needed(force=True)
         self._announce(structural=True)
-        self._play_index(self.queue.index)
+        if self._is_casting():
+            if tracks:
+                self._cast_load_current()
+            else:
+                self._cast_stop_media()
+                self.stop_casting(handoff=False)
+        else:
+            self._play_index(self.queue.index)
 
     def start_radio(self, track: Track) -> None:
         self.play([track], 0, {"type": "radio", "seed": track.id})
@@ -154,16 +194,25 @@ class PlayerService:
         self._touch()
         self._save_if_needed(force=True)
         self._announce(structural=True)
-        self._play_index(index)
+        if self._is_casting():
+            self._cast_load_current()
+        else:
+            self._play_index(index)
 
     def remove(self, index: int) -> None:
         current = self.queue.current()
         self.queue.remove(index)
         if not self.queue.tracks:
+            if self._is_casting():
+                self._cast_stop_media()
+                self.stop_casting(handoff=False)
             self._stop_playback()
         elif current is not None and index == self.queue.index \
                 and self.queue.current() is not current:
-            self._play_index(self.queue.index)
+            if self._is_casting():
+                self._cast_load_current()
+            else:
+                self._play_index(self.queue.index)
         self._touch()
         self._save_if_needed(force=True)
         self._announce(structural=True)
@@ -211,8 +260,15 @@ class PlayerService:
         self._downloads_version += 1
         self._emit_downloads_changed()
 
-    # -- transport (MPRIS drives these) -----------------------------------------
+    # -- transport (MPRIS drives these; the speaker while casting) ------------
+    def _is_casting(self) -> bool:
+        return self._cast_client is not None and \
+            self._cast_connected_id is not None
+
     def pause(self) -> None:
+        if self._is_casting():
+            self._cast_pause()
+            return
         if self.status == STATUS_PLAYING:
             self.status = STATUS_PAUSED
             self.player.pause()
@@ -221,6 +277,9 @@ class PlayerService:
             self._announce()
 
     def resume(self) -> None:
+        if self._is_casting():
+            self._cast_resume()
+            return
         if self.queue.tracks and self.status != STATUS_PLAYING:
             self.status = STATUS_PLAYING
             self.player.play()
@@ -228,6 +287,9 @@ class PlayerService:
             self._announce()
 
     def stop(self) -> None:
+        if self._is_casting():
+            self._cast_stop_media()
+            self.stop_casting(handoff=False)
         self._stop_playback()
 
     def play_pause(self) -> None:
@@ -239,6 +301,9 @@ class PlayerService:
     def next(self) -> None:
         index = self.queue.next_index()
         if index is None:
+            if self._is_casting():
+                self._cast_stop_media()
+                self.stop_casting(handoff=False)
             self._stop_playback()
             return
         self.queue.index = index
@@ -248,7 +313,10 @@ class PlayerService:
         self._touch()
         self._save_if_needed(force=True)
         self._announce(structural=True)
-        self._play_index(index)
+        if self._is_casting():
+            self._cast_load_current()
+        else:
+            self._play_index(index)
 
     def previous(self) -> None:
         position_s = self._position_us / 1e6
@@ -265,11 +333,27 @@ class PlayerService:
         self._touch()
         self._save_if_needed(force=True)
         self._announce(structural=True)
-        self._play_index(index)
+        if self._is_casting():
+            self._cast_load_current()
+        else:
+            self._play_index(index)
 
     def seek_us(self, position_us: int) -> None:
-        self.player.seek_ns(max(0, int(position_us)) * 1000)
-        self._position_us = max(0, int(position_us))
+        at = max(0, int(position_us))
+        if self._is_casting():
+            self._position_us = at
+            client = self._cast_client
+            if client is not None:
+                try:
+                    client.seek(at / 1e6)
+                except Exception:  # noqa: BLE001 - a lost speaker surfaces
+                    pass
+            self._cast_position_ms = at // 1000
+            self._emit_seeked(self._position_us)
+            self._announce()
+            return
+        self.player.seek_ns(at * 1000)
+        self._position_us = at
         self._emit_seeked(self._position_us)
         self._announce()
 
@@ -309,6 +393,7 @@ class PlayerService:
             "problem": self._problem,
             "origin": self.queue.origin,
             "offline": self._offline,
+            "cast": self._cast_snapshot(),
         }
 
     def snapshot_json(self) -> str:
@@ -605,8 +690,631 @@ class PlayerService:
     def _apply_fade_volume(self) -> None:
         self.player.set_volume(self._volume * self._sleep.fade_scale())
 
+    # -- cast: output target, discovery, session ---------------------------------
+    def _cast_snapshot(self) -> dict:
+        return {
+            "available": bool(self._cast_devices),
+            "searching": self._cast_searching,
+            "devices": [dict(device) for device in self._cast_devices],
+            "connectedId": self._cast_connected_id,
+            "connectedName": self._cast_connected_name,
+            "playing": self._cast_playing if self._is_casting()
+            else False,
+            "positionMs": int(self._cast_position_ms),
+            "durationMs": int(self._cast_duration_ms),
+            "busy": self._cast_busy,
+            "error": self._cast_error,
+            "volume": float(self._cast_volume),
+            "muted": bool(self._cast_muted),
+            "mediaId": self._cast_media_id,
+        }
+
+    def cast_state_json(self) -> str:
+        return json.dumps(self._cast_snapshot())
+
+    def list_cast_devices_json(self) -> str:
+        self._refresh_cast_devices()
+        return json.dumps(self._cast_devices)
+
+    def _emit_cast_changed(self) -> None:
+        if self._conn is None:
+            return
+        self._conn.emit_signal(
+            None, self.spec.player_object_path,
+            self.spec.player_interface, "CastChanged",
+            GLib.Variant("(s)", (self.cast_state_json(),)))
+
+    def _refresh_cast_devices(self) -> None:
+        if self._cast_avahi is None:
+            self._cast_avahi = cast_discovery.AvahiBrowser(
+                on_update=self._on_cast_devices,
+                idle_add=self._idle_add)
+        if self._cast_discovery is None:
+            self._cast_discovery = cast_discovery.Discovery(
+                on_update=self._on_cast_devices,
+                idle_add=self._idle_add)
+        self._cast_searching = True
+        try:
+            self._cast_avahi.refresh()
+        except Exception:  # noqa: BLE001 - discovery never breaks calls
+            pass
+        self._executor.submit(self._cast_fallback_work)
+
+    def _cast_fallback_work(self) -> None:
+        """Zeroconf scan when the daemon gave us nothing.
+
+        Runs on the worker pool, never the main loop; the wait below
+        leaves time for the daemon's async answers first.
+        """
+        threading.Event().wait(1.0)
+        avahi = self._cast_avahi
+        if avahi is not None and (avahi.available or avahi.devices):
+            return
+        if self._cast_devices:
+            return
+        try:
+            discovery = self._cast_discovery
+            if discovery is not None:
+                discovery.refresh()
+        except Exception:  # noqa: BLE001 - discovery never breaks calls
+            pass
+
+    def _on_cast_devices(self, devices, searching) -> None:
+        self._cast_devices = [
+            {"id": device.id, "name": device.name,
+             "host": device.host, "port": device.port,
+             "model": device.model, "group": device.group}
+            for device in (devices or [])]
+        self._cast_searching = bool(searching)
+        self._announce()
+        self._emit_cast_changed()
+
+    def cast_to(self, device_id: str) -> None:
+        target = str(device_id or "").strip()
+        if not target:
+            raise ValueError("cast device id must not be empty")
+        known = next((d for d in self._cast_devices
+                      if d.get("id") == target), None)
+        if known is None:
+            raise ValueError(f"unknown cast device: {target}")
+        track = self.queue.current()
+        if track is None:
+            raise ValueError("nothing to cast")
+        self._cast_busy = True
+        self._cast_error = None
+        self._announce()
+        self._emit_cast_changed()
+        host = str(known.get("host") or "")
+        port = int(known.get("port") or 8009)
+        position_s = self._position_us / 1e6
+        playing = self.status == STATUS_PLAYING
+        self._executor.submit(self._cast_connect_work, dict(known),
+                              host, port, track, position_s, playing)
+
+    def stop_casting(self, handoff: bool = True) -> None:
+        client, server = self._cast_client, self._cast_server
+        was_playing = self._cast_playing
+        self._cast_client = None
+        self._cast_server = None
+        self._cast_connected_id = None
+        self._cast_connected_name = ""
+        self._cast_playing = False
+        self._cast_busy = False
+        if client is not None:
+            try:
+                client.on_closed = None
+                client.on_media = None
+                client.on_volume = None
+                client.close()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+        if server is not None:
+            try:
+                server.stop()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+        if handoff and self.queue.tracks:
+            ids = [track.id for track in self.queue.tracks]
+            self.queue.index = local_index_after_cast(
+                ids, self.queue.index, self._cast_media_id)
+            self._position_us = int(self._cast_position_ms) * 1000
+            try:
+                self.player.seek_ns(self._position_us * 1000)
+            except Exception:  # noqa: BLE001 - handoff is best effort
+                pass
+            if was_playing:
+                self.status = STATUS_PLAYING
+                try:
+                    self.player.play()
+                except Exception:  # noqa: BLE001 - handoff is best effort
+                    pass
+            else:
+                self.status = STATUS_PAUSED
+                try:
+                    self.player.pause()
+                except Exception:  # noqa: BLE001 - handoff is best effort
+                    pass
+        self._cast_media_id = None
+        self._touch()
+        self._save_if_needed(force=True)
+        self._announce()
+        self._emit_cast_changed()
+
+    def _cast_pause(self) -> None:
+        client = self._cast_client
+        if client is not None:
+            try:
+                client.pause()
+            except Exception:  # noqa: BLE001 - loss surfaces async
+                pass
+        self._cast_playing = False
+        self.status = STATUS_PAUSED
+        self._touch()
+        self._save_if_needed(force=True)
+        self._announce()
+
+    def _cast_resume(self) -> None:
+        if not self.queue.tracks:
+            return
+        client = self._cast_client
+        if client is not None:
+            try:
+                client.play()
+            except Exception:  # noqa: BLE001 - loss surfaces async
+                pass
+        self._cast_playing = True
+        self.status = STATUS_PLAYING
+        self._touch()
+        self._announce()
+
+    def _cast_stop_media(self) -> None:
+        client = self._cast_client
+        if client is not None:
+            try:
+                client.stop_media()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+
+    def _cast_file_for(self, track_id: str):
+        files = getattr(self.proxy, "files", None)
+        if isinstance(files, dict):
+            path = files.get(track_id)
+            if path is not None and Path(path).is_file():
+                return Path(path)
+            return None
+        try:
+            if not self.proxy.is_cached(track_id):
+                return None
+        except Exception:  # noqa: BLE001 - cache doubt means no file
+            return None
+        candidates = [
+            self.paths.audio_cache_dir() / track_id,
+            self.paths.offline_dir() / track_id,
+        ]
+        cache_dir = getattr(self.proxy, "_cache_dir", None)
+        if cache_dir is not None:
+            candidates.append(Path(cache_dir) / track_id)
+        for path in candidates:
+            try:
+                if path.is_file():
+                    return path
+            except OSError:
+                continue
+        return None
+
+    def _ensure_cast_file(self, track_id: str):
+        path = self._cast_file_for(track_id)
+        if path is not None:
+            return path
+        try:
+            url = self.proxy.url_for(
+                track_id, lambda: self.engine.resolve(track_id))
+        except Exception:  # noqa: BLE001 - resolve failure is a cast error
+            return None
+        if url.startswith("file://"):
+            from urllib.parse import unquote, urlparse
+
+            candidate = Path(unquote(urlparse(url).path))
+            return candidate if candidate.is_file() else None
+        try:
+            import urllib.request
+
+            request = urllib.request.Request(
+                url, headers={"Connection": "close"})
+            with urllib.request.urlopen(request, timeout=30) as response:
+                response.read()
+        except Exception:  # noqa: BLE001 - fetch failure is a cast error
+            return None
+        return self._cast_file_for(track_id)
+
+    def _cast_lan_ip(self) -> str | None:
+        try:
+            if self._cast_lan_fn is not None:
+                return self._cast_lan_fn()
+            return cast_lan_address()
+        except Exception:  # noqa: BLE001 - doubt means no address
+            return None
+
+    def _make_cast_client(self, host: str, port: int) -> CastClient:
+        if self._cast_client_factory is not None:
+            return self._cast_client_factory(host, port)
+        return CastClient(
+            host, port,
+            on_media=lambda *a: self._idle_add(self._on_cast_media, *a),
+            on_volume=lambda *a: self._idle_add(
+                self._on_cast_volume, *a),
+            on_closed=lambda r: self._idle_add(self._on_cast_closed, r))
+
+    def _make_cast_server(self) -> CastHttpServer:
+        if self._cast_server_factory is not None:
+            return self._cast_server_factory()
+        return CastHttpServer()
+
+    def _cast_connect_work(self, device: dict, host: str, port: int,
+                           track, position_s: float,
+                           playing: bool) -> None:
+        lan = self._cast_lan_ip()
+        if not lan:
+            self._idle_add(self._cast_failed,
+                           "No network address for casting. "
+                           "Join the same network as the speaker.")
+            return
+        path = self._ensure_cast_file(track.id)
+        if path is None:
+            self._idle_add(self._cast_failed,
+                           "This song is not on this phone yet. "
+                           "Play it once, then cast it.")
+            return
+        server = self._make_cast_server()
+        try:
+            server.start(lan)
+        except ValueError as exc:
+            self._idle_add(self._cast_failed, str(exc))
+            return
+        except Exception:  # noqa: BLE001 - bind failure is a cast error
+            self._idle_add(self._cast_failed,
+                           "Could not open the speaker stream.")
+            return
+        try:
+            mime = cast_sniff_type(path)
+        except Exception:  # noqa: BLE001 - sniff doubt keeps a default
+            mime = "audio/mpeg"
+        try:
+            url = server.set_item(track.id, path, mime)
+        except Exception:  # noqa: BLE001 - token failure is a cast error
+            try:
+                server.stop()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+            self._idle_add(self._cast_failed,
+                           "Could not open the speaker stream.")
+            return
+        client = self._make_cast_client(host, port)
+        if self._cast_client_factory is None:
+            client.on_media = lambda *a: self._idle_add(
+                self._on_cast_media, *a)
+            client.on_volume = lambda *a: self._idle_add(
+                self._on_cast_volume, *a)
+            client.on_closed = lambda r: self._idle_add(
+                self._on_cast_closed, r)
+        else:
+            client.on_media = lambda *a: self._idle_add(
+                self._on_cast_media, *a)
+            client.on_volume = lambda *a: self._idle_add(
+                self._on_cast_volume, *a)
+            client.on_closed = lambda r: self._idle_add(
+                self._on_cast_closed, r)
+        try:
+            client.open()
+            client.ensure_session()
+        except CastError:
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+            try:
+                server.stop()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+            self._idle_add(self._cast_failed,
+                           f"Could not reach {device.get('name', 'the speaker')}.")
+            return
+        except Exception:  # noqa: BLE001 - connect failure is a cast error
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+            try:
+                server.stop()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+            self._idle_add(self._cast_failed,
+                           f"Could not reach {device.get('name', 'the speaker')}.")
+            return
+        art = track.art_url or ""
+        if not art.startswith("http"):
+            art = ""
+        album = track.album.title if track.album else ""
+        try:
+            client.load(url, mime, track.title, track.artist_line,
+                        album, art, max(0.0, float(position_s)),
+                        track.id)
+        except CastError:
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+            try:
+                server.stop()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+            self._idle_add(self._cast_failed,
+                           "The speaker refused this song.")
+            return
+        except Exception:  # noqa: BLE001 - load failure is a cast error
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+            try:
+                server.stop()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+            self._idle_add(self._cast_failed,
+                           "The speaker refused this song.")
+            return
+        if not playing:
+            try:
+                client.pause()
+            except Exception:  # noqa: BLE001 - loss surfaces async
+                pass
+        self._idle_add(self._cast_ready, device, host, port, client,
+                       server, track.id, position_s, playing)
+
+    def _cast_ready(self, device: dict, host: str, port: int,
+                    client: CastClient, server: CastHttpServer,
+                    track_id: str, position_s: float,
+                    playing: bool) -> None:
+        old_client, old_server = self._cast_client, self._cast_server
+        self._cast_client, self._cast_server = client, server
+        for old in (old_client,):
+            if old is not None and old is not client:
+                try:
+                    old.close()
+                except Exception:  # noqa: BLE001 - stopping must not raise
+                    pass
+        if old_server is not None and old_server is not server:
+            try:
+                old_server.stop()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+        self._cast_connected_id = str(device.get("id"))
+        self._cast_connected_name = str(device.get("name") or "")
+        self._cast_host = host
+        self._cast_port = int(port or 8009)
+        self._cast_media_id = track_id
+        self._cast_position_ms = int(max(0.0, float(position_s)) * 1000.0)
+        self._cast_playing = bool(playing)
+        self._cast_busy = False
+        self._cast_error = None
+        self._cast_lost_count = 0
+        self.status = STATUS_PLAYING if playing else STATUS_PAUSED
+        try:
+            self.player.pause()
+        except Exception:  # noqa: BLE001 - local pause is best effort
+            pass
+        self._touch()
+        self._save_if_needed(force=True)
+        self._announce()
+        self._emit_cast_changed()
+
+    def _cast_failed(self, text: str) -> None:
+        self._cast_busy = False
+        self._cast_error = text
+        self._announce()
+        self._emit_cast_changed()
+
+    def _cast_load_current(self) -> None:
+        track = self.queue.current()
+        client, server = self._cast_client, self._cast_server
+        if track is None or client is None or server is None:
+            return
+        self._cast_busy = True
+        self._emit_cast_changed()
+        self._executor.submit(self._cast_reload_work, track,
+                              self._cast_playing)
+
+    def _cast_reload_work(self, track, playing: bool) -> None:
+        path = self._ensure_cast_file(track.id)
+        if path is None:
+            self._idle_add(self._cast_failed,
+                           "This song is not on this phone yet. "
+                           "Play it once, then cast it.")
+            return
+        server = self._cast_server
+        client = self._cast_client
+        if server is None or client is None:
+            return
+        try:
+            mime = cast_sniff_type(path)
+        except Exception:  # noqa: BLE001 - sniff doubt keeps a default
+            mime = "audio/mpeg"
+        try:
+            url = server.set_item(track.id, path, mime)
+        except Exception:  # noqa: BLE001 - token failure is a cast error
+            self._idle_add(self._cast_failed,
+                           "Could not open the speaker stream.")
+            return
+        art = track.art_url or ""
+        if not art.startswith("http"):
+            art = ""
+        album = track.album.title if track.album else ""
+        try:
+            client.load(url, mime, track.title, track.artist_line,
+                        album, art, 0.0, track.id)
+        except Exception:  # noqa: BLE001 - load failure is a cast error
+            self._idle_add(self._cast_failed,
+                           "The speaker refused this song.")
+            return
+        if not playing:
+            try:
+                client.pause()
+            except Exception:  # noqa: BLE001 - loss surfaces async
+                pass
+        self._idle_add(self._cast_reloaded, track.id, playing)
+
+    def _cast_reloaded(self, track_id: str, playing: bool) -> None:
+        if not self._is_casting():
+            return
+        self._cast_media_id = track_id
+        self._cast_position_ms = 0
+        self._cast_playing = bool(playing)
+        self._cast_busy = False
+        self._cast_error = None
+        self.status = STATUS_PLAYING if playing else STATUS_PAUSED
+        self._position_us = 0
+        self._touch()
+        self._save_if_needed(force=True)
+        self._announce()
+        self._emit_cast_changed()
+
+    def _on_cast_media(self, media_id, position_ms: int,
+                       duration_ms: int, playing: bool) -> None:
+        if not self._is_casting():
+            return
+        if media_id and self.queue.tracks:
+            ids = [track.id for track in self.queue.tracks]
+            if media_id not in ids and media_id != self._cast_media_id:
+                self._on_cast_takeover()
+                return
+        was_playing = self._cast_playing
+        if media_id:
+            self._cast_media_id = str(media_id)
+        self._cast_position_ms = max(0, int(position_ms or 0))
+        if duration_ms:
+            self._cast_duration_ms = max(0, int(duration_ms))
+        self._cast_playing = bool(playing)
+        self._position_us = self._cast_position_ms * 1000
+        if duration_ms:
+            self._duration_us = self._cast_duration_ms * 1000
+        self.status = STATUS_PLAYING if playing else STATUS_PAUSED
+        current = self.queue.current()
+        if current is not None and media_id and \
+                media_id != current.id:
+            match = next((index for index, track in
+                          enumerate(self.queue.tracks)
+                          if track.id == media_id), None)
+            if match is not None:
+                self.queue.index = match
+                self.queue.version += 1
+                self._announce(structural=True)
+        finished = (was_playing and not playing
+                    and self._cast_duration_ms > 0
+                    and self._cast_position_ms >=
+                    self._cast_duration_ms - 1500)
+        self._touch()
+        self._announce()
+        self._emit_cast_changed()
+        if finished:
+            self.next()
+
+    def _on_cast_volume(self, level: float, muted: bool) -> None:
+        if not self._is_casting():
+            return
+        self._cast_volume = min(1.0, max(0.0, float(level)))
+        self._cast_muted = bool(muted)
+        self._announce()
+        self._emit_cast_changed()
+
+    def _on_cast_closed(self, reason: str) -> None:
+        if not self._is_casting():
+            return
+        now = self._clock()
+        if now - self._cast_lost_at > 60.0:
+            self._cast_lost_count = 0
+        self._cast_lost_at = now
+        self._cast_lost_count += 1
+        if self._cast_lost_count > 2:
+            self._on_cast_lost("The speaker went away. "
+                               "Paused on this phone.")
+            return
+        host, port = self._cast_host, self._cast_port
+        self._executor.submit(self._cast_reattach_work, host, port,
+                              reason)
+
+    def _cast_reattach_work(self, host: str, port: int,
+                            reason: str) -> None:
+        client = self._make_cast_client(host, port)
+        try:
+            client.attach()
+        except Exception:  # noqa: BLE001 - reattach failure ends casting
+            self._idle_add(self._on_cast_lost,
+                           "The speaker went away. "
+                           "Paused on this phone.")
+            return
+        self._idle_add(self._cast_reattached, client)
+
+    def _cast_reattached(self, client: CastClient) -> None:
+        if self._cast_client is not None:
+            try:
+                self._cast_client.close()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+        client.on_media = lambda *a: self._idle_add(
+            self._on_cast_media, *a)
+        client.on_volume = lambda *a: self._idle_add(
+            self._on_cast_volume, *a)
+        client.on_closed = lambda r: self._idle_add(
+            self._on_cast_closed, r)
+        self._cast_client = client
+        self._cast_playing = bool(client.playing)
+        self.status = STATUS_PLAYING if client.playing else STATUS_PAUSED
+        self._announce()
+        self._emit_cast_changed()
+
+    def _on_cast_takeover(self) -> None:
+        self._on_cast_lost("Another app took over the speaker. "
+                           "Paused on this phone.")
+
+    def _on_cast_lost(self, text: str) -> None:
+        position_ms = self._cast_position_ms
+        self.stop_casting(handoff=False)
+        self._position_us = int(position_ms) * 1000
+        try:
+            self.player.seek_ns(self._position_us * 1000)
+        except Exception:  # noqa: BLE001 - handoff is best effort
+            pass
+        try:
+            self.player.pause()
+        except Exception:  # noqa: BLE001 - handoff is best effort
+            pass
+        self.status = STATUS_PAUSED
+        self._problem = {"kind": "other", "text": text}
+        self._touch()
+        self._save_if_needed(force=True)
+        self._announce()
+        self._emit_cast_changed()
+
     # -- tick: position, sleep, persistence (main loop, non-blocking) ------------
     def _tick(self) -> None:
+        if self._is_casting():
+            self._position_us = int(self._cast_position_ms) * 1000
+            if self._cast_duration_ms > 0:
+                self._duration_us = int(self._cast_duration_ms) * 1000
+            elif self.queue.current() and self.queue.current().duration_s:
+                self._duration_us = int(
+                    self.queue.current().duration_s * 1e6)
+            if self.status == STATUS_PLAYING:
+                if self._sleep.expired():
+                    self._sleep.arm(P.SLEEP_OFF)
+                    self.pause()
+                elif self._sleep.end_of_song_pause(
+                        self._position_us / 1e6, self._duration_us / 1e6):
+                    self._sleep.arm(P.SLEEP_OFF)
+                    self.pause()
+            self._save_if_needed()
+            self._schedule(TICK_MS, self._tick)
+            return
         position = self.player.position_ns()
         duration = self.player.duration_ns()
         if position is not None:
@@ -703,19 +1411,28 @@ class PlayerService:
     # -- MPRIS property view ----------------------------------------------------------
     def _player_props(self) -> dict:
         track = self.queue.current()
-        position = self.player.position_ns()
-        if position is not None:
-            self._position_us = position // 1000
-        duration = self.player.duration_ns()
-        if duration is not None and duration > 0:
-            self._duration_us = duration // 1000
-        elif track is not None and track.duration_s:
-            self._duration_us = int(track.duration_s * 1e6)
+        if self._is_casting():
+            self._position_us = int(self._cast_position_ms) * 1000
+            if self._cast_duration_ms > 0:
+                self._duration_us = int(self._cast_duration_ms) * 1000
+            elif track is not None and track.duration_s:
+                self._duration_us = int(track.duration_s * 1e6)
+            volume = self._cast_volume
         else:
-            self._duration_us = 0
+            position = self.player.position_ns()
+            if position is not None:
+                self._position_us = position // 1000
+            duration = self.player.duration_ns()
+            if duration is not None and duration > 0:
+                self._duration_us = duration // 1000
+            elif track is not None and track.duration_s:
+                self._duration_us = int(track.duration_s * 1e6)
+            else:
+                self._duration_us = 0
+            volume = self._volume
         return mpris_mod.player_props(
             self.status, self.queue.repeat, self.queue.shuffle,
-            self._volume, self._position_us,
+            volume, self._position_us,
             mpris_mod.metadata_for(
                 self.spec.player_object_path, track, self._duration_us,
                 self.art_url_for(track)),
@@ -740,6 +1457,9 @@ class PlayerService:
 
     def _on_player1_call(self, _connection, _sender, _path, _iface,
                          method, params, invocation) -> None:
+        if _iface == "org.freedesktop.DBus.Properties":
+            self._handle_cast_props(method, params, invocation)
+            return
         try:
             args = params.unpack() if params is not None else ()
         except Exception as exc:
@@ -793,6 +1513,19 @@ class PlayerService:
                 self._reply(invocation, GLib.Variant(
                     "(usi)", (version, payload, index)))
                 return
+            elif method == "ListCastDevices":
+                self._reply(invocation, GLib.Variant(
+                    "(s)", (self.list_cast_devices_json(),)))
+                return
+            elif method == "CastTo":
+                (device_id,) = args
+                self.cast_to(str(device_id))
+            elif method == "StopCasting":
+                self.stop_casting()
+            elif method == "CastState":
+                self._reply(invocation, GLib.Variant(
+                    "(s)", (self.cast_state_json(),)))
+                return
             else:
                 try:
                     invocation.return_dbus_error(UNKNOWN_METHOD, method)
@@ -803,6 +1536,31 @@ class PlayerService:
             self._reject(invocation, f"bad arguments for {method}: {exc}")
             return
         self._reply(invocation, None)
+
+    def _handle_cast_props(self, method: str, params, invocation) -> None:
+        try:
+            args = params.unpack() if params is not None else ()
+        except Exception as exc:
+            self._reject(invocation, f"cannot unpack args: {exc}")
+            return
+        if method == "GetAll":
+            (iface,) = args
+            if iface != self.spec.player_interface:
+                self._unknown(invocation, str(iface))
+                return
+            self._reply(invocation, GLib.Variant(
+                "(a{sv})", ({"CastState": GLib.Variant(
+                    "s", self.cast_state_json())},)))
+        elif method == "Get":
+            iface, name = args
+            if iface != self.spec.player_interface or \
+                    name != "CastState":
+                self._unknown(invocation, str(name))
+                return
+            self._reply(invocation, GLib.Variant(
+                "(v)", (GLib.Variant("s", self.cast_state_json()),)))
+        else:
+            self._unknown(invocation, method)
 
     # -- D-Bus: MPRIS2 ------------------------------------------------------------------
     def _on_mpris_call(self, _connection, _sender, _path, iface,
@@ -918,7 +1676,20 @@ class PlayerService:
         except Exception:
             return False
         if name == "Volume":
-            self._volume = min(1.0, max(0.0, float(plain)))
+            level = min(1.0, max(0.0, float(plain)))
+            if self._is_casting():
+                self._cast_volume = level
+                if level > 0:
+                    self._cast_muted = False
+                client = self._cast_client
+                if client is not None:
+                    try:
+                        client.set_volume(level)
+                    except Exception:  # noqa: BLE001 - loss surfaces async
+                        pass
+                self._announce()
+                return True
+            self._volume = level
             self._apply_fade_volume()
             self._announce()
             return True

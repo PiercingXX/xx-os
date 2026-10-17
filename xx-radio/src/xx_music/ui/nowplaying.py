@@ -16,6 +16,7 @@ from gi.repository import GLib, GObject, Gtk, Pango
 
 from xx_music.engine import LYRICS, RATE, Lyrics, Rating
 from xx_music.tasks import Generation
+from xx_music.ui import cast as cast_ui
 from xx_music.ui import common, css, fmt, menus
 from xx_music.ui.player import SLEEP_END_OF_SONG, SLEEP_OFF
 from xx_music.ui.queue_page import QueueView
@@ -183,6 +184,14 @@ class NowPlaying:
         root.add_css_class("xx-mu-np")
         root.add_css_class("xx-mu")
         root.append(self._top_bar())
+        self.cast_line = cast_ui.playing_line(self.ui)
+        self.cast_line.set_margin_start(16)
+        self.cast_line.set_margin_end(16)
+        root.append(self.cast_line)
+        self.cast_vol = cast_ui.volume_row(self.ui)
+        self.cast_vol.set_margin_start(16)
+        self.cast_vol.set_margin_end(16)
+        root.append(self.cast_vol)
         self.stack = Gtk.Stack()
         self.stack.set_vexpand(True)
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
@@ -211,6 +220,9 @@ class NowPlaying:
         collapse = common.icon_button("go-down-symbolic", "Close the player",
                                       self.close, 22)
         bar.append(collapse)
+        self.cast_btn = cast_ui.cast_button(self.ui, 18)
+        self.cast_btn.set_valign(Gtk.Align.CENTER)
+        bar.append(self.cast_btn)
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         bar.append(spacer)
@@ -380,6 +392,13 @@ class NowPlaying:
     # -- updating --------------------------------------------------------------------
     def update(self) -> None:
         player = self.ui.player
+        cast = player.cast
+        cast_ui.sync_line(self.cast_line, cast)
+        self.cast_vol.sync(cast)
+        if player.casting:
+            self.cast_btn.add_css_class("on")
+        else:
+            self.cast_btn.remove_css_class("on")
         track = player.track
         if track is None:
             return

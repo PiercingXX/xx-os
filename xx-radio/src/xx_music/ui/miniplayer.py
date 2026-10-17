@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from gi.repository import GLib, Gtk
 
+from xx_music.ui import cast as cast_ui
 from xx_music.ui import common
 from xx_ui import widgets
 
@@ -57,6 +58,9 @@ class MiniPlayer:
                                        "Next song", player.next, 22)
         self.next.add_css_class("xx-mu-key")
         row.append(self.next)
+        self.cast = cast_ui.cast_button(self.ui, 20)
+        self.cast.set_valign(Gtk.Align.CENTER)
+        row.append(self.cast)
         self.widget.append(row)
         self.bar = common.line(0.0, "Song progress")
         self.widget.append(self.bar)

@@ -143,14 +143,16 @@ def _tracks(*ids):
 
 def test_player1_xml_matches_the_spec():
     node = Gio.DBusNodeInfo.new_for_xml(api_mod.player_xml(SPEC))
-    assert len(node.interfaces) == 1
-    iface = node.interfaces[0]
+    ifaces = {i.name: i for i in node.interfaces}
+    assert SPEC.player_interface in ifaces
+    iface = ifaces[SPEC.player_interface]
     assert iface.name == "io.piercingxx.XXRadio.Player1"
     methods = {m.name: m for m in iface.methods}
     assert {m.name for m in iface.methods} == {
         "Play", "StartRadio", "Enqueue", "PlayAt", "Remove", "Move",
         "SetShuffle", "SetRepeat", "SetSleep", "Rate", "Download",
-        "RemoveDownload", "Snapshot", "Queue"}
+        "RemoveDownload", "Snapshot", "Queue", "ListCastDevices",
+        "CastTo", "StopCasting", "CastState"}
     assert [a.signature for a in methods["Play"].in_args] == ["s", "i", "s"]
     assert [a.signature for a in methods["Enqueue"].in_args] == ["s", "b"]
     assert [a.signature for a in methods["Move"].in_args] == ["i", "i"]
@@ -161,11 +163,18 @@ def test_player1_xml_matches_the_spec():
     assert [a.signature for a in methods["Snapshot"].out_args] == ["s"]
     assert [a.signature for a in methods["Queue"].out_args] == \
         ["u", "s", "i"]
+    assert [a.signature for a in methods["ListCastDevices"].out_args] == \
+        ["s"]
+    assert [a.signature for a in methods["CastTo"].in_args] == ["s"]
+    assert [a.signature for a in methods["CastState"].out_args] == ["s"]
+    props = {p.name: p for p in iface.properties}
+    assert props["CastState"].signature == "s"
     signals = {s.name: s for s in iface.signals}
     assert {a.signature for a in signals["Changed"].args} == {"s"}
     assert {a.signature for a in signals["QueueChanged"].args} == {"u"}
     assert {a.signature for a in signals["DownloadsChanged"].args} == {"u"}
     assert {a.signature for a in signals["Problem"].args} == {"s"}
+    assert {a.signature for a in signals["CastChanged"].args} == {"s"}
 
 
 def test_mpris_and_actions_xml():
@@ -208,7 +217,7 @@ def test_attach_registers_all_paths_and_names(tmp_path):
     by_path = {}
     for path, name, _handler in conn.objects:
         by_path.setdefault(path, set()).add(name)
-    assert by_path[SPEC.player_object_path] == {SPEC.player_interface}
+    assert by_path[SPEC.player_object_path] >= {SPEC.player_interface}
     assert by_path["/org/mpris/MediaPlayer2"] >= {
         "org.mpris.MediaPlayer2", "org.mpris.MediaPlayer2.Player",
         "org.freedesktop.DBus.Properties",
