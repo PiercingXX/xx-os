@@ -74,6 +74,7 @@ class HomePage:
         root.append(widgets.page_header("Home"))
         root.append(self.loading)
         self.scroll = common.scroller(self.body)
+        common.pull_to_refresh(self.scroll, self.reload)
         root.append(self.scroll)
         self.widget = root
         ui.on_downloads(self._repaint)

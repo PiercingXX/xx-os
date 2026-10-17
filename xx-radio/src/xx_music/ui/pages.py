@@ -51,7 +51,9 @@ class Page:
         self.header_slot.append(self.header())
         root.append(self.header_slot)
         root.append(self.loading)
-        root.append(common.scroller(self.body))
+        scroll = common.scroller(self.body)
+        common.pull_to_refresh(scroll, lambda: self.reload())
+        root.append(scroll)
         self.widget = root
         minimal.listen(self._minimal_changed)
 

@@ -69,7 +69,9 @@ class LibraryPage:
         root.append(widgets.page_header("Library"))
         root.append(self.loading)
         root.append(self.top)
-        root.append(common.scroller(self.body))
+        scroll = common.scroller(self.body)
+        common.pull_to_refresh(scroll, self.reload)
+        root.append(scroll)
         self.widget = root
         self._repaint = None
         ui.on_account(self._account_changed)

@@ -192,6 +192,30 @@ def scroller(child: Gtk.Widget) -> Gtk.ScrolledWindow:
     return scroll
 
 
+PULL_REFRESH_GAP_S = 2.0
+
+
+def pull_to_refresh(scroll: Gtk.ScrolledWindow, callback) -> None:
+    """Pull down past the top of ``scroll`` to call ``callback`` (owner:
+    "swipe down on xx-radio to refresh"). GTK reports the overscroll as
+    edge-overshot at the TOP edge; repeats within a short gap (one long
+    pull, a wheel held at the top) count once."""
+    import time
+
+    last = [0.0]
+
+    def _overshot(_scroll, pos) -> None:
+        if pos != Gtk.PositionType.TOP:
+            return
+        now = time.monotonic()
+        if now - last[0] < PULL_REFRESH_GAP_S:
+            return
+        last[0] = now
+        callback()
+
+    scroll.connect("edge-overshot", _overshot)
+
+
 def hscroll(child: Gtk.Widget) -> Gtk.ScrolledWindow:
     """A horizontal carousel that bleeds to the window edges."""
     scroll = Gtk.ScrolledWindow()

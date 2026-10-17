@@ -79,7 +79,9 @@ class SearchPage:
         root.append(bar)
         root.append(self.loading)
         root.append(self.filters)
-        root.append(common.scroller(self.body))
+        scroll = common.scroller(self.body)
+        common.pull_to_refresh(scroll, self.reload)
+        root.append(scroll)
         self.widget = root
         ui.io(ui.store.recents, self._got_recents, lambda _e: None)
         minimal.listen(self._minimal_changed)

@@ -369,6 +369,11 @@ class NowPlaying:
         self.album = common.label("", "xx-mu-meta", chars=30)
         texts.append(self.album)
         body.append(texts)
+        # Swipe the cover/stage to change songs, as in Minimal Mode:
+        # left = next, right = previous, up = queue.
+        swipe = Gtk.GestureSwipe.new()
+        swipe.connect("swipe", self._swiped)
+        body.add_controller(swipe)
         scroll = common.scroller(body)
         return scroll
 
