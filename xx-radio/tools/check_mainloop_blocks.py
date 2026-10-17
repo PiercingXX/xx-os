@@ -27,6 +27,9 @@ ALLOW = {
         "JS runtime version probe; callers are worker threads, never GTK.",
     ("xx_radio/youtube/resolver.py", "_run_payload"):
         "yt-dlp worker child; resolve() runs on stream-proxy/worker threads.",
+    ("xx_radio/engine_status.py", "_default_runner"):
+        "venv version probe / update steps; snapshot() and update() are "
+        "worker-only, the screen uses snapshot_async().",
     ("xx_radio/setup.py", "_default_runner"):
         "uv/npm/git steps of engine setup; run from setup's own worker.",
 }
