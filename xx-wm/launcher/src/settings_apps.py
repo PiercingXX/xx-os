@@ -320,12 +320,10 @@ class AppsSection(settings_page._Section):
             entries = list(win.app_index.entries)
         except Exception:
             entries = []
-        if not entries:
-            ui.fill(self._list_box, [ui.note_row('No apps indexed yet.')])
-            return
         rows = [ui.row(_display_name(win, entry),
                        _PACKAGES.get(getattr(entry, 'app_id', ''), ''),
                        on_activate=lambda r, e=entry: begin_uninstall(
                            win, r, e))
                 for entry in entries]
-        ui.fill(self._list_box, rows)
+        # Nothing indexed yet: the card hides instead of saying so.
+        ui.fill(self._list_box, rows, hide_empty=True)

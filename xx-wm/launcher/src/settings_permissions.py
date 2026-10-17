@@ -291,7 +291,7 @@ class PermissionsSection(settings_page._Section):
                     continue
                 rows.append(ui.row(item.get('app'), '%s · %s' % (
                     kind, age_text(seen, at))))
-        ui.fill(box, rows or [ui.note_row('No use in the last 24 h.')])
+        ui.fill(box, rows, hide_empty=True)
 
     def _render_apps(self, win) -> None:
         nav = getattr(win, '_perm_nav_box', None)

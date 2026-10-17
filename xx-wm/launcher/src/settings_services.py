@@ -48,14 +48,17 @@ class ServiceEntry:
     openrc_names: tuple
 
 
+# Titles name the daemon, not the feature: Wi-Fi, Bluetooth and Mobile
+# data have their own settings pages, so a 'Network' or 'Bluetooth' row
+# here read as a second copy of them (docs/settings-map.md).
 SERVICES: tuple = (
-    ServiceEntry('modem', 'Modem', 'Mobile data modem',
+    ServiceEntry('modem', 'ModemManager', 'Mobile data modem',
                  ('ModemManager.service',), ('modemmanager',)),
     ServiceEntry('eg25', 'EG25 modem helper', 'Quectel manager, when present',
                  ('eg25-manager.service',), ('eg25-manager',)),
-    ServiceEntry('network', 'Network', 'WiFi and wired connections',
+    ServiceEntry('network', 'NetworkManager', 'Wi-Fi and wired connections',
                  ('NetworkManager.service',), ('networkmanager',)),
-    ServiceEntry('bluetooth', 'Bluetooth', 'Bluetooth devices',
+    ServiceEntry('bluetooth', 'BlueZ', 'Bluetooth daemon',
                  ('bluetooth.service',), ('bluetooth',)),
     ServiceEntry('ssh', 'SSH server', 'Remote shell access',
                  ('sshd.service', 'ssh.service'), ('sshd',)),
