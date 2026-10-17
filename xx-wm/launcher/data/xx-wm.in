@@ -167,6 +167,12 @@ _xx_session_begin() {
     # Pulls graphical-session.target in through BindsTo, which
     # xdg-desktop-portal.service needs (Requisite=...).
     systemctl --user start xx-wm-session.target 2>/dev/null || true
+    # Portals outlive a session restart (the user manager stays up) and
+    # stay bound to the old, dead display: every GTK app then waits out a
+    # Settings timeout and paints light. Restart them on this display.
+    systemctl --user --no-block try-restart \
+        xdg-desktop-portal-gtk.service xdg-desktop-portal.service \
+        2>/dev/null || true
 }
 
 _xx_session_end() {
@@ -223,7 +229,9 @@ while :; do
     mkdir -p "$HOME/.local/share/xx-wm" 2>/dev/null || true
     chmod 700 "$HOME/.local/share/xx-wm" 2>/dev/null || true
     _xx_rotate_err_log
-    LD_PRELOAD="$_xx_preload" @python@ @shell_dir@/main.py "$@" 2>>"$_xx_err_log" &
+    # Portal opt-out is shell-only: main.py drops it once GTK is up.
+    ADW_DISABLE_PORTAL=1 GDK_DEBUG="${GDK_DEBUG:+$GDK_DEBUG,}no-portals" \
+        LD_PRELOAD="$_xx_preload" @python@ @shell_dir@/main.py "$@" 2>>"$_xx_err_log" &
     _child=$!
     wait "$_child"
     _st=$?

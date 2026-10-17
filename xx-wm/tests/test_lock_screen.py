@@ -445,3 +445,32 @@ class TestFingerprintVerifyArgv:
         )
         lock_screen.LockScreen._fp_thread(lock)
         assert idle[0][1] == (False,)
+
+
+def test_revealed_keypad_sits_low_and_clock_clears_cutout(monkeypatch):
+    # FLX1 at 600x1333: the revealed keypad hung from the top (clock under
+    # the punch-hole, lower half empty). Compact anchors it to the bottom.
+    import types
+    mod = _lock_screen_module()
+    align = types.SimpleNamespace(END='end', FILL='fill')
+    monkeypatch.setattr(mod, 'Gtk', types.SimpleNamespace(Align=align))
+
+    class _Box:
+        def __init__(self):
+            self.valign = None
+
+        def set_valign(self, value):
+            self.valign = value
+
+    ns = types.SimpleNamespace(_mid_box=_Box())
+    mod.LockScreen._set_clock_compact(ns, True)
+    assert ns._mid_box.valign == 'end'
+    mod.LockScreen._set_clock_compact(ns, False)
+    assert ns._mid_box.valign == 'fill'
+
+    import status_bar
+    monkeypatch.setattr(status_bar, 'resolve_height', lambda config, panel=None: 64)
+    assert mod._cutout_inset(object()) == 64
+    monkeypatch.setattr(status_bar, 'resolve_height',
+                        lambda config, panel=None: 1 / 0)
+    assert mod._cutout_inset(object()) == 0

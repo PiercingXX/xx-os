@@ -366,6 +366,17 @@ def _fp_list_enrolled() -> bool:
             and 'no fingers enrolled' not in out)
 
 
+
+def _cutout_inset(config) -> int:
+    """Top inset that keeps the camera cutout clear: the status bar's
+    per-device height (0 when it cannot be resolved)."""
+    try:
+        import status_bar
+        panel = status_bar.monitor_panel(Gdk.Display.get_default())
+        return int(status_bar.resolve_height(config, panel=panel))
+    except Exception:
+        return 0
+
 class LockScreen(Gtk.Window):
     def __init__(self, on_unlock: Callable[[], None],
                  config: ShellConfig,
@@ -573,6 +584,7 @@ class LockScreen(Gtk.Window):
 
         mid_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         mid_box.set_hexpand(True)
+        self._mid_box = mid_box
         mid_box.append(self._notif_box)
         mid_box.append(self._media)
         mid_box.append(self._pin_revealer)
@@ -618,6 +630,9 @@ class LockScreen(Gtk.Window):
         root.add_controller(swipe)
 
         root.append(grid)
+        # The status bar hides on the lock screen, so the lock keeps the
+        # camera cutout clear itself (FLX1 punch-hole: the clock sat in it).
+        root.set_margin_top(_cutout_inset(self._config))
         self._refresh_notifications()
         self._refresh_trust_line()
         return root
@@ -761,6 +776,12 @@ class LockScreen(Gtk.Window):
         top = getattr(self, '_top_pane', None)
         if top is not None:
             top.set_vexpand(not compact)
+        # Revealed keypad sits low, in thumb reach: on a tall screen (FLX1
+        # 600x1333) it used to hang from the top with half the screen empty.
+        mid = getattr(self, '_mid_box', None)
+        align = getattr(Gtk, 'Align', None)
+        if mid is not None and align is not None and hasattr(mid, 'set_valign'):
+            mid.set_valign(align.END if compact else align.FILL)
 
     def prepare(self) -> None:
         """Reset to the locked resting state before each present()."""

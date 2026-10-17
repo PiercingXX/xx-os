@@ -34,6 +34,24 @@ def drop_layer_shell_preload(environ=os.environ) -> None:
 drop_layer_shell_preload()
 
 
+def drop_portal_opt_out(environ=os.environ) -> None:
+    """Undo the shell-only portal opt-out set by the xx-wm wrapper.
+
+    The shell themes itself, so it starts with ADW_DISABLE_PORTAL=1 and
+    GDK_DEBUG=no-portals: a portal still bound to a previous session's
+    display made GTK startup wait out its Settings timeout (90 s of black
+    screen on the FLX1). Apps the shell launches must get the portal
+    (it carries the dark color-scheme), so both are dropped once GTK and
+    libadwaita have initialised."""
+    environ.pop('ADW_DISABLE_PORTAL', None)
+    flags = [flag for flag in environ.get('GDK_DEBUG', '').split(',')
+             if flag and flag != 'no-portals']
+    if flags:
+        environ['GDK_DEBUG'] = ','.join(flags)
+    else:
+        environ.pop('GDK_DEBUG', None)
+
+
 class XXWMApplication(Adw.Application):
     def __init__(self, replay_welcome: bool = False) -> None:
         super().__init__(
@@ -60,6 +78,7 @@ class XXWMApplication(Adw.Application):
         GLib.timeout_add_seconds(30, self._tick_focus_release)
 
     def do_activate(self) -> None:
+        drop_portal_opt_out()
         if self.props.active_window is not None:
             self.props.active_window.present()
             return
