@@ -356,11 +356,19 @@ def window():
     saved_widgets = sys.modules.pop('xx_ui.widgets', None)
     saved_widgets_attr = xx_ui.__dict__.pop('widgets', None)
     sys.modules.update(installed)
+    import settings_page as _sp
+    # The menu's slow summaries probe the real system (nmcli, pactl,
+    # UPower) on worker threads that outlive the test; under this
+    # fixture's fake gi they crashed the run when a later test swapped
+    # the modules mid-call. No real probes from these page builds.
+    saved_slow = _sp.slow_summaries
+    _sp.slow_summaries = lambda: {}
     try:
         import window
         sys.modules.pop('window', None)
         yield window
     finally:
+        _sp.slow_summaries = saved_slow
         for name, module in saved.items():
             if module is None:
                 sys.modules.pop(name, None)
@@ -569,10 +577,11 @@ class TestSettingsMenu:
         w = _bare(window)
         card = w._build_gestures_card()
         assert 'xx-set-card' in card.classes
-        assert len(card.children) == 6
+        # Long-press home + the four system swipes; the home side swipes
+        # moved to Home & launcher (Android parity).
+        assert len(card.children) == 5
         assert all('clicked' in row.handlers for row in card.children)
-        assert set(w._gesture_binding_labels) == {'swipe_left_home',
-                                                  'swipe_right_home'}
+        assert set(w._gesture_binding_labels) == {'long_press_home'}
         assert len(w._system_gesture_labels) == 4
 
 

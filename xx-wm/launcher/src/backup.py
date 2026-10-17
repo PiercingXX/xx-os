@@ -84,6 +84,10 @@ _BOOL_KEYS = (
     'prefer_dark',
     'home_to_recents',
     'search_auto_launch',
+    'status_bar_visible',
+    'auto_show_keyboard',
+    'swipe_left_enabled',
+    'swipe_right_enabled',
     'sound_ringtone',
     'sound_notifications',
     'dnd_enabled',
@@ -130,11 +134,15 @@ def export_backup(config) -> dict:
         'weather_temp_unit': config.weather_temp_unit,
         'weather_auto_location': config.weather_auto_location,
         'clock_24h': config.clock_24h,
+        'home_slot_count': config.data.get('home_slot_count'),
+        'date_time_mode': config.data.get('date_time_mode', 'date_time'),
+        'swipe_down_action': config.data.get('swipe_down_action'),
         'keyboard_layout': config.data.get('keyboard_layout', 'us'),
         'night_light_temp': config.data.get('night_light_temp', 2200),
     }
     for key in _BOOL_KEYS:
-        backup[key] = bool(config.data.get(key, False))
+        backup[key] = bool(config.data.get(
+            key, key in ('swipe_left_enabled', 'swipe_right_enabled')))
     for key in _LIST_KEYS:
         val = config.data.get(key, [])
         backup[key] = val if isinstance(val, list) else []
@@ -215,8 +223,20 @@ def validate_backup(payload: dict) -> tuple[bool, str | None]:
     if payload.get('home_alignment', 'center') not in ('left', 'center', 'right'):
         return False, 'home_alignment must be left/center/right'
 
-    if payload.get('drawer_sort', 'default') not in ('default', 'az', 'install'):
-        return False, 'drawer_sort must be default/az/install'
+    from config import (DATE_TIME_MODES, DRAWER_SORTS, LEGACY_DRAWER_SORTS,
+                        SWIPE_DOWN_ACTIONS)
+    if payload.get('drawer_sort', 'default') not in (
+            DRAWER_SORTS + tuple(LEGACY_DRAWER_SORTS)):
+        return False, 'drawer_sort must be one of ' + '/'.join(DRAWER_SORTS)
+    count = payload.get('home_slot_count')
+    if count is not None and (isinstance(count, bool)
+                              or not isinstance(count, int)
+                              or not 0 <= count <= 8):
+        return False, 'home_slot_count must be 0-8 or null'
+    if payload.get('date_time_mode', 'date_time') not in DATE_TIME_MODES:
+        return False, 'date_time_mode must be off/date_only/date_time'
+    if payload.get('swipe_down_action') not in (None,) + SWIPE_DOWN_ACTIONS:
+        return False, 'swipe_down_action must be notifications/web_search/disabled'
     if payload.get('appearance_mode', 'theme') not in (
             'theme', 'light', 'dark', 'system'):
         return False, 'appearance_mode must be theme/light/dark/system'
@@ -308,11 +328,16 @@ def validate_backup(payload: dict) -> tuple[bool, str | None]:
         return False, 'gestures must be a dict'
     # gesture_config's own slot/value rule: actions are valid everywhere,
     # IPC verbs (gesture_bindings lisgd slots) only on the system-level slots.
-    from gesture_config import _DEFAULTS, _is_valid_value
+    from gesture_config import _DEFAULTS, _is_valid_value, is_valid_action
     for key, action in gestures.items():
         if key not in _DEFAULTS:
             return False, f'unknown gesture: {key}'
-        if not isinstance(action, str) or not _is_valid_value(key, action):
+        # Older backups may bind double-tap to any action; restore turns
+        # those into the off state of the Double Tap to Lock switch.
+        legacy_tap = (key == 'double_tap_home' and isinstance(action, str)
+                      and is_valid_action(action))
+        if not isinstance(action, str) or not (
+                _is_valid_value(key, action) or legacy_tap):
             return False, f'unknown gesture action: {action}'
 
     return True, None
@@ -377,6 +402,15 @@ def restore_backup(config, payload: dict) -> bool:
         data['clock_24h'] = payload['clock_24h']
     if isinstance(payload.get('weather_auto_location'), bool):
         data['weather_auto_location'] = payload['weather_auto_location']
+    if 'home_slot_count' in payload:
+        data['home_slot_count'] = payload['home_slot_count']
+    if 'date_time_mode' in payload:
+        data['date_time_mode'] = payload['date_time_mode']
+    if payload.get('swipe_down_action') is not None:
+        data['swipe_down_action'] = payload['swipe_down_action']
+    from config import LEGACY_DRAWER_SORTS
+    if data.get('drawer_sort') in LEGACY_DRAWER_SORTS:
+        data['drawer_sort'] = LEGACY_DRAWER_SORTS[data['drawer_sort']]
     if 'text_size_scale' in payload:
         data['text_size_scale'] = max(0.5, min(2.0, float(payload['text_size_scale'])))
     if 'auto_lock_timeout' in payload:
@@ -390,6 +424,8 @@ def restore_backup(config, payload: dict) -> bool:
             from gesture_config import GestureConfig
             gc = GestureConfig()
             for key, action in payload['gestures'].items():
+                if key == 'double_tap_home' and action != 'lock_screen':
+                    action = 'none'
                 gc._map[key] = action
             gc.save()
         except Exception:

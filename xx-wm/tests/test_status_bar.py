@@ -426,3 +426,12 @@ def test_home_scale_shrinks_only_home():
     css = window.launcher_text_css(1.0, 0.8)
     assert 'font-size: 43.2pt' in css      # home clock 54pt x 0.8
     assert 'font-size: 14pt' in css        # drawer app rows unchanged
+
+
+def test_show_status_bar_switch_governs_home_only():
+    # Android's "Show Status Bar" is about the launcher's screens; apps
+    # always keep their bar. Off by default, so home has no bar text.
+    import status_bar
+    assert status_bar.decide_content(True, show_on_home=True) is True
+    assert status_bar.decide_content(True, show_on_home=False) is False
+    assert status_bar.decide_content(False, show_on_home=False) is True

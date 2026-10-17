@@ -5,9 +5,8 @@ category subpage at its top and at every further viewport, and the
 sheets and menus that rows open. Shots go through snap.py's own
 renderer (SNAP_MULTI=1: ``snap_render`` per shot, the same 2x render and
 the same `snap: WARNING` line when the window is not 360x720) into
-$SNAP_SETTINGS_OUT/<theme>-<name>.png. Popovers are separate surfaces a
-window render cannot see, so while this driver runs the shell's popover
-plumbing shows its content inline, over a dim scrim, instead.
+$SNAP_SETTINGS_OUT/<theme>-<name>.png. Sheets draw inside the shell
+window, so the render shows them as they are.
 
 Read-only: opening rows only shows sheets and menus; nothing is
 committed, and no helper (privileged) call is made.
@@ -29,55 +28,14 @@ import settings_page as sp  # noqa: E402
 # display has no client pacing its frame clock.
 Gtk.Settings.get_default().set_property('gtk-enable-animations', False)
 
-# ---- inline popovers --------------------------------------------------
-
-_root = win.get_content()  # noqa: F821 - an AdwApplicationWindow
-_overlay = Gtk.Overlay()
-win.set_content(None)  # noqa: F821
-_overlay.set_child(_root)
-win.set_content(_overlay)  # noqa: F821
-_shown: list = []
-
-
-class _InlinePopover:
-    def __init__(self, layer):
-        self._layer = layer
-
-    def popdown(self):
-        _clear()
-
-    def connect(self, *_args):
-        return 0
+# ---- sheets ---------------------------------------------------------------
+# Menus and prompts are in-window sheets (action_sheet.py), so the window
+# render shows them exactly as the phone does; nothing is patched.
 
 
 def _clear():
-    while _shown:
-        _overlay.remove_overlay(_shown.pop())
+    win._sheet_host.close_all()  # noqa: F821
 
-
-def _inline_popover(anchor, content):
-    _clear()
-    layer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-    layer.add_css_class('snap-scrim')
-    # A real popover hangs off its row inside the settings tree.
-    layer.add_css_class('xx-settings')
-    content.set_valign(Gtk.Align.START)
-    content.set_margin_top(96)
-    content.set_margin_start(20)
-    content.set_margin_end(20)
-    layer.append(content)
-    _overlay.add_overlay(layer)
-    _shown.append(layer)
-    return _InlinePopover(layer)
-
-
-win.item_actions._show_popover = _inline_popover  # noqa: F821
-_scrim = Gtk.CssProvider()
-_scrim.load_from_data(
-    b'.snap-scrim { background-color: rgba(0, 0, 0, 0.55); }')
-Gtk.StyleContext.add_provider_for_display(
-    win.get_display(), _scrim,  # noqa: F821
-    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 5)
 
 # ---- capture ------------------------------------------------------------
 
@@ -175,11 +133,16 @@ def _charge(custom: bool):
 SHEETS = [
     # (shot name, category, row title to tap, or a callable that opens it)
     ('sheet-apn', 'network', 'Access point (APN)'),
-    ('menu-alignment', 'home', 'Alignment'),
-    ('menu-widget-tap', 'home', 'Weather'),
-    ('sheet-reorder', 'home', 'Rearrange widgets…'),
-    ('sheet-location', 'home', 'Manual location'),
-    ('menu-swipe', 'home', 'Swipe up (short)'),
+    ('menu-slots', 'home', 'Home Slot Count'),
+    ('menu-alignment', 'home', 'Text Alignment'),
+    ('menu-datetime', 'home', 'Date/Time Mode'),
+    ('sheet-widgets', 'home', 'Widgets'),
+    ('sheet-location', 'home', 'Manual Location'),
+    ('menu-sort', 'home', 'Sort Mode'),
+    ('sheet-help', 'home', 'Gestures'),
+    ('menu-swipe-app', 'home', 'Swipe Left App'),
+    ('menu-swipe-down', 'home', 'Swipe Down Action'),
+    ('menu-swipe', 'system', 'Swipe up (short)'),
     ('menu-charge', 'battery', lambda: _charge(False)),
     ('sheet-charge', 'battery', lambda: _charge(True)),
     ('sheet-pin', 'privacy', 'Change PIN'),

@@ -23,7 +23,9 @@ SETTINGS_CATEGORIES: tuple = (
     ('network', 'Network & internet', ('wifi', 'mobile', 'firewall')),
     ('devices', 'Connected devices', ('bluetooth', 'nearby')),
     ('display', 'Display & appearance', ('appearance', 'display')),
-    ('home', 'Home & launcher', ('launcher', 'gestures')),
+    # The Android launcher's preference screen (docs/launcher-settings-
+    # parity.md); the system-wide edge swipes live under System.
+    ('home', 'Home & launcher', ('launcher',)),
     ('sound', 'Sound', ('sound', 'captions', 'recording')),
     ('battery', 'Battery', ('battery', 'standby', 'charging',
                             'batteryuse')),
@@ -31,8 +33,8 @@ SETTINGS_CATEGORIES: tuple = (
     ('privacy', 'Privacy & security', ('lock', 'smart_lock', 'permissions',
                                        'security', 'findmy', 'medical')),
     ('storage', 'Storage & backup', ('storage', 'backup')),
-    ('system', 'System', ('system', 'keyboard', 'services', 'developer',
-                          'about', 'shell')),
+    ('system', 'System', ('system', 'keyboard', 'gestures', 'services',
+                          'developer', 'about', 'shell')),
 )
 
 # Menu cards: categories that belong together share one rounded card.
@@ -149,10 +151,10 @@ def slow_summaries() -> dict:
     return out
 
 
-# Home side-swipe gestures the user can bind to an app in Settings
+# Home side swipes (Home & launcher › Gestures; drawer pick status text)
 _GESTURE_TITLES = {
-    'swipe_left_home': 'Swipe left',
-    'swipe_right_home': 'Swipe right',
+    'swipe_left_home': 'Swipe Left App',
+    'swipe_right_home': 'Swipe Right App',
 }
 
 # System-level lisgd slots (design.md "Gestures"): they fire over any
@@ -432,10 +434,15 @@ class BackupSection(_Section):
         win._restore_btn = ui.nav_row(
             'Restore settings', 'From an xx-wm backup file',
             lambda r: win._on_restore_backup(r))
+        import settings_launcher
         settings_group = ui.group(self.title, [
             ui.nav_row('Export settings', 'Home, theme, gestures',
                        lambda _r: win._on_export_backup()),
-            win._restore_btn])
+            win._restore_btn,
+            # Android keeps "Reset home layout" under Backup & Restore.
+            ui.nav_row(settings_launcher.RESET_TITLE,
+                       settings_launcher.RESET_SUMMARY,
+                       lambda _r: settings_launcher.confirm_reset_home(win))])
         if not self._source:
             sources = filebackup.backup_sources()
             self._source = sources[0] if sources else ''
@@ -905,10 +912,12 @@ class DeveloperSection(_Section):
 
 class GesturesSection(_Section):
     key = 'gestures'
-    title = 'Swipes'
+    title = 'Navigation gestures'
 
     def build(self, win) -> list:
-        # The gestures block stays the last section by contract.
+        # The gestures block stays the last section by contract. These
+        # are the phone's own navigation swipes (Android keeps them in
+        # system settings, not in the launcher).
         return [ui.caption(self.title), win._build_gestures_card(),
                 ui.footnote('Up, down and edge swipes work over any app.')]
 
@@ -1220,21 +1229,22 @@ class SettingsPage:
     def _refresh_gesture_labels(self) -> None:
         win = self._win
         for key, label in win._gesture_binding_labels.items():
-            label.set_text(win._gesture_binding_text(key))
+            label.set_text(self._long_press_text() if key == 'long_press_home'
+                           else win._gesture_binding_text(key))
         for key, label in win._system_gesture_labels.items():
             label.set_text(win._gesture_binding_text(key))
 
     def _build_gestures_card(self):
-        """Home swipes then the four system (lisgd) swipes: one value row
-        each, the binding as its subtitle; a tap opens the choices."""
+        """Long-press on home, then the four system (lisgd) swipes: one
+        value row each, the binding as its subtitle; a tap opens the
+        choices. The home side swipes are on Home & launcher."""
         win = self._win
         rows = []
-        for key, title in _GESTURE_TITLES.items():
-            row = ui.nav_row(
-                '%s on home' % title, win._gesture_binding_text(key),
-                lambda r, k=key, t=title: self._pick_home_swipe(r, k, t))
-            win._gesture_binding_labels[key] = row.subtitle_label
-            rows.append(row)
+        row = ui.nav_row(
+            'Long-press home', self._long_press_text(),
+            lambda r: self._pick_long_press(r))
+        win._gesture_binding_labels['long_press_home'] = row.subtitle_label
+        rows.append(row)
         for key, title in _SYSTEM_GESTURE_TITLES.items():
             row = ui.nav_row(
                 title, win._gesture_binding_text(key),
@@ -1243,12 +1253,40 @@ class SettingsPage:
             rows.append(row)
         return ui.card(rows)
 
-    def _pick_home_swipe(self, anchor, key: str, title: str) -> None:
+    _LONG_PRESS_CHOICES = (('edit', 'Edit home'), ('settings', 'Settings'),
+                           ('none', 'Nothing'))
+
+    def _long_press_text(self) -> str:
         win = self._win
+        try:
+            action = win.gesture_config.get('long_press_home') or 'edit'
+        except Exception:
+            action = 'edit'
+        return dict(self._LONG_PRESS_CHOICES).get(action, 'Edit home')
+
+    def _pick_long_press(self, anchor) -> None:
+        """Long-press on the home background (Linux: Android always
+        opens its settings; here edit mode is the default because home
+        slots are edited there)."""
+        win = self._win
+        try:
+            current = win.gesture_config.get('long_press_home') or 'edit'
+        except Exception:
+            current = 'edit'
+        values = [value for value, _label in self._LONG_PRESS_CHOICES]
+
+        def _set(value: str) -> None:
+            try:
+                win.gesture_config.set('long_press_home', value)
+            except (ValueError, AttributeError):
+                return
+            win._refresh_gesture_labels()
+
         win.item_actions._show_action_menu(
-            anchor, '%s on home' % title,
-            [('Choose app…', lambda: win._pick_gesture_app(key, title)),
-             ('Clear', lambda: win._clear_gesture_app(key))])
+            anchor, 'Long-press home',
+            [(label, lambda v=value: _set(v))
+             for value, label in self._LONG_PRESS_CHOICES],
+            checked=values.index(current) if current in values else None)
 
     def _pick_system_gesture(self, anchor, key: str, title: str) -> None:
         win = self._win

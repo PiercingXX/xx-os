@@ -46,6 +46,10 @@ def theme_css(preset: ThemePreset, scale: float = 1.0) -> str:
     font-weight: 400;
     color: {preset.foreground};
 }}
+/* Empty slot "· · ·": the Android 40% alpha. */
+.home-item-btn.empty-slot .home-item-label {{
+    opacity: 0.4;
+}}
 .home-folder-indicator {{
     font-size: {_pt(14, scale)};
     font-weight: 400;
@@ -154,6 +158,11 @@ _HOME_ACCESSIBLE_LABEL = 'Home'
 _HOME_ACCESSIBLE_DESCRIPTION = 'Open app drawer. Open launcher settings.'
 
 
+# An empty home slot (Android home_slot_empty / its a11y string).
+EMPTY_SLOT_TEXT = '· · ·'
+EMPTY_SLOT_ACCESSIBLE = 'Empty home slot %d, tap to choose an app'
+
+
 def slot_accessible_label(label: str, index: int) -> str:
     """Screen-reader label for an app slot: `Phone, home slot 3`."""
     return f'{label}, home slot {index + 1}'
@@ -200,7 +209,9 @@ class HomeLauncher(Gtk.Box):
                  on_edit_action: Callable[[str, Gtk.Widget], None] | None = None,
                  is_paused_fn: Callable[[str], bool] | None = None,
                  get_alignment_fn: Callable[[], str] | None = None,
-                 on_status_fn: Callable[[str], None] | None = None) -> None:
+                 on_status_fn: Callable[[str], None] | None = None,
+                 get_empty_count_fn: Callable[[], int] | None = None,
+                 on_empty_tap: Callable[[], None] | None = None) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.set_vexpand(True)
         self._open_dialer = open_dialer_fn
@@ -214,6 +225,8 @@ class HomeLauncher(Gtk.Box):
         self._is_paused = is_paused_fn or (lambda app_id: False)
         self._get_alignment = get_alignment_fn or (lambda: 'center')
         self._on_status = on_status_fn or (lambda message: None)
+        self._get_empty_count = get_empty_count_fn or (lambda: 0)
+        self._on_empty_tap = on_empty_tap or (lambda: None)
         self._open_folder_index: int | None = None
         self.edit_mode = False
         self._build()
@@ -277,6 +290,19 @@ class HomeLauncher(Gtk.Box):
                 self.append(self._make_folder_row(slot, idx))
                 if idx == open_idx:
                     self.append(self._make_member_dropdown(slot))
+        # Android "Home Slot Count" past the filled slots: dim "· · ·"
+        # rows; a tap picks an app for the slot.
+        try:
+            empty = max(0, int(self._get_empty_count()))
+        except Exception:
+            empty = 0
+        for offset in range(empty):
+            row = self._make_row(
+                EMPTY_SLOT_TEXT, lambda: self._on_empty_tap(),
+                accessible_label=EMPTY_SLOT_ACCESSIBLE % (
+                    len(slots) + offset + 1))
+            row.add_css_class('empty-slot')
+            self.append(row)
 
     def _build_edit_rows(self, slots: list[dict]) -> None:
         for idx, slot in enumerate(slots):
