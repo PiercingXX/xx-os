@@ -1,0 +1,162 @@
+{
+  "properties": {
+    "updated": "2026-08-25T12:30:00+00:00",
+    "units": "us",
+    "periods": [
+      {
+        "number": 1,
+        "name": "This Afternoon",
+        "startTime": "2026-08-25T13:00:00-06:00",
+        "endTime": "2026-08-25T14:00:00-06:00",
+        "isDaytime": "true",
+        "temperature": 91,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 10 },
+        "icon": "https://api.weather.gov/icons/land/day/sct?size=medium"
+      },
+      {
+        "number": 2,
+        "name": "Mid Afternoon",
+        "startTime": "2026-08-25T14:00:00-06:00",
+        "endTime": "2026-08-25T15:00:00-06:00",
+        "isDaytime": "true",
+        "temperature": 92,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 20 },
+        "icon": "https://api.weather.gov/icons/land/day/sct?size=medium"
+      },
+      {
+        "number": 3,
+        "name": "Late Afternoon",
+        "startTime": "2026-08-25T15:00:00-06:00",
+        "endTime": "2026-08-25T16:00:00-06:00",
+        "isDaytime": "true",
+        "temperature": 90,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 30 },
+        "icon": "https://api.weather.gov/icons/land/day/sct?size=medium"
+      },
+      {
+        "number": 4,
+        "name": "Early Evening",
+        "startTime": "2026-08-25T16:00:00-06:00",
+        "endTime": "2026-08-25T17:00:00-06:00",
+        "isDaytime": "true",
+        "temperature": 88,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 20 },
+        "icon": "https://api.weather.gov/icons/land/day/sct?size=medium"
+      },
+      {
+        "number": 5,
+        "name": "Evening",
+        "startTime": "2026-08-25T17:00:00-06:00",
+        "endTime": "2026-08-25T18:00:00-06:00",
+        "isDaytime": "true",
+        "temperature": 85,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 10 },
+        "icon": "https://api.weather.gov/icons/land/day/sct?size=medium"
+      },
+      {
+        "number": 6,
+        "name": "Evening",
+        "startTime": "2026-08-25T18:00:00-06:00",
+        "endTime": "2026-08-25T19:00:00-06:00",
+        "isDaytime": "true",
+        "temperature": 82,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 40 },
+        "icon": "https://api.weather.gov/icons/land/day/sct?size=medium"
+      },
+      {
+        "number": 7,
+        "name": "Evening",
+        "startTime": "2026-08-25T19:00:00-06:00",
+        "endTime": "2026-08-25T20:00:00-06:00",
+        "isDaytime": "true",
+        "temperature": 78,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 30 },
+        "icon": "https://api.weather.gov/icons/land/day/sct?size=medium"
+      },
+      {
+        "number": 8,
+        "name": "Night",
+        "startTime": "2026-08-25T20:00:00-06:00",
+        "endTime": "2026-08-25T21:00:00-06:00",
+        "isDaytime": "false",
+        "temperature": 74,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 20 },
+        "icon": "https://api.weather.gov/icons/land/night/sct?size=medium"
+      },
+      {
+        "number": 9,
+        "name": "Night",
+        "startTime": "2026-08-25T21:00:00-06:00",
+        "endTime": "2026-08-25T22:00:00-06:00",
+        "isDaytime": "false",
+        "temperature": 70,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 10 },
+        "icon": "https://api.weather.gov/icons/land/night/sct?size=medium"
+      },
+      {
+        "number": 10,
+        "name": "Night",
+        "startTime": "2026-08-25T22:00:00-06:00",
+        "endTime": "2026-08-25T23:00:00-06:00",
+        "isDaytime": "false",
+        "temperature": 66,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 5 },
+        "icon": "https://api.weather.gov/icons/land/night/sct?size=medium"
+      },
+      {
+        "number": 11,
+        "name": "Overnight",
+        "startTime": "2026-08-25T23:00:00-06:00",
+        "endTime": "2026-08-26T00:00:00-06:00",
+        "isDaytime": "false",
+        "temperature": 63,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 15 },
+        "icon": "https://api.weather.gov/icons/land/night/sct?size=medium"
+      },
+      {
+        "number": 12,
+        "name": "Overnight",
+        "startTime": "2026-08-26T00:00:00-06:00",
+        "endTime": "2026-08-26T01:00:00-06:00",
+        "isDaytime": "false",
+        "temperature": 61,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 25 },
+        "icon": "https://api.weather.gov/icons/land/night/sct?size=medium"
+      },
+      {
+        "number": 13,
+        "name": "Overnight",
+        "startTime": "2026-08-26T01:00:00-06:00",
+        "endTime": "2026-08-26T02:00:00-06:00",
+        "isDaytime": "false",
+        "temperature": 59,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 90 },
+        "icon": "https://api.weather.gov/icons/land/night/sct?size=medium"
+      },
+      {
+        "number": 14,
+        "name": "Early Morning",
+        "startTime": "2026-08-26T02:00:00-06:00",
+        "endTime": "2026-08-26T03:00:00-06:00",
+        "isDaytime": "false",
+        "temperature": 57,
+        "temperatureUnit": "F",
+        "probabilityOfPrecipitation": { "unitCode": "wmoUnit:percent", "value": 10 },
+        "icon": "https://api.weather.gov/icons/land/night/sct?size=medium"
+      }
+    ]
+  }
+}

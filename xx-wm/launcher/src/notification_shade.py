@@ -459,6 +459,8 @@ class Notification:
 class NotificationShade(Gtk.Window):
     def __init__(self, dnd_state: object | None = None,
                  focus_state: object | None = None,
+                 nope_state: object | None = None,
+                 on_nope_changed=None,
                  on_open_settings: object | None = None,
                  on_power: object | None = None,
                  hud: object | None = None,
@@ -470,6 +472,7 @@ class NotificationShade(Gtk.Window):
         self.add_css_class('shade-window')
         self._dnd = dnd_state
         self._focus = focus_state
+        self._nope = nope_state
         self._on_open_settings = on_open_settings
         self._on_power = on_power
         self._hud = hud
@@ -520,7 +523,9 @@ class NotificationShade(Gtk.Window):
         # sliders resolve the same preset (theme == 'custom' included).
         # Long-presses on its tiles open Settings via the shade callback.
         self.quick_actions = QuickActionsPanel(
-            dnd_state=dnd_state, focus_state=focus_state, hud=hud,
+            dnd_state=dnd_state, focus_state=focus_state,
+            nope_state=nope_state, on_nope_changed=on_nope_changed,
+            hud=hud,
             config=self._config,
             on_open_settings=self._open_settings_section,
             on_open_uri=self._open_uri)
@@ -1201,7 +1206,44 @@ class NotificationShade(Gtk.Window):
         if callable(callback):
             callback()
 
+    def _nope_blocks_notif(self, notif: Notification) -> bool:
+        """Nope gate for shade row taps: a blocked launch shows a brief
+        Nope banner instead of opening the app."""
+        nope = getattr(self, '_nope', None)
+        if nope is None:
+            return False
+        try:
+            blocked = bool(nope.is_blocked(notif.desktop_entry or ''))
+        except Exception:
+            return False
+        if not blocked:
+            return False
+        try:
+            self.hide_shade()
+        except Exception:
+            pass
+        try:
+            text = nope.notice_text(
+                notif.app_name or notif.desktop_entry or 'App')
+        except Exception:
+            text = 'Nope.'
+        self._show_nope_banner(text)
+        return True
+
+    def _show_nope_banner(self, text: str) -> None:
+        try:
+            banner = self.get_application()._ensure_banner()
+        except Exception:
+            return
+        try:
+            banner.show_notification(
+                999906, 'Nope-Mode', 'Nope.', text, '', [], None)
+        except Exception:
+            pass
+
     def _on_notif_tapped(self, notif: Notification) -> None:
+        if self._nope_blocks_notif(notif):
+            return
         default = next((a for a in notif.actions if a[0] == 'default'), None)
         if default is not None:
             self._invoke_notif_action(notif, default[0])
@@ -1213,6 +1255,8 @@ class NotificationShade(Gtk.Window):
 
         Resident rows stay: the spec keeps them after invocation.
         """
+        if self._nope_blocks_notif(notif):
+            return
         daemon = getattr(self, '_notif_daemon', None)
         if daemon is not None:
             try:

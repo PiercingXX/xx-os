@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108" role="img" aria-label="xx-weather app mark">
+  <!-- Sun from the Android ic_launcher_foreground vector (circle + four rays).
+       No hue: weather on Ink. Stand-in until the owner's xx-weather mark lands. -->
+  <rect width="108" height="108" rx="22" fill="#000000"/>
+  <path d="M54,54 m-10,0 a10,10 0 1,1 20,0 a10,10 0 1,1 -20,0" fill="none" stroke="#FFFFFF" stroke-width="4"/>
+  <path d="M54,36 L54,40 M54,68 L54,72 M36,54 L40,54 M68,54 L72,54" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+</svg>

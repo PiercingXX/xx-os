@@ -637,9 +637,12 @@ class TestTileSettingsSection:
         assert quick_actions.tile_settings_section('data') == 'mobile'
         assert quick_actions.tile_settings_section('airplane') == 'mobile'
 
+    def test_nope_long_press_opens_nope_settings(self):
+        assert quick_actions.tile_settings_section('nope') == 'nope'
+
     def test_everything_else_is_none(self):
         for key in ('torch', 'dnd', 'focus', 'auto_br', 'location',
-                    'hotspot', 'nope'):
+                    'hotspot'):
             assert quick_actions.tile_settings_section(key) is None
 
 

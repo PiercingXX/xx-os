@@ -1,0 +1,4 @@
+#!/bin/sh
+# Launcher for xx-files: run the installed package from the datadir.
+export PYTHONPATH="@app_dir@${PYTHONPATH:+:$PYTHONPATH}"
+exec "@python@" -m xx_files "$@"

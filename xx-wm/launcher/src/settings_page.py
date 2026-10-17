@@ -12,7 +12,8 @@ _SETTINGS_SECTION_KEYS = ('wifi', 'bluetooth', 'mobile', 'apps', 'appearance',
                           'standby', 'permissions', 'smart_lock',
                           'charging', 'batteryuse', 'screentime', 'medical',
                           'recording', 'captions', 'nearby', 'findmy', 'about',
-                          'storage', 'security', 'services', 'firewall')
+                          'storage', 'security', 'services', 'firewall',
+                          'nope')
 
 # The top-level menu (Android Settings style): one row per category, each
 # opening a subpage that holds only its sections, in this order. Grouped
@@ -29,7 +30,7 @@ SETTINGS_CATEGORIES: tuple = (
     ('sound', 'Sound', ('sound', 'captions', 'recording')),
     ('battery', 'Battery', ('battery', 'standby', 'charging',
                             'batteryuse')),
-    ('apps', 'Apps', ('screentime', 'apps')),
+    ('apps', 'Apps', ('screentime', 'apps', 'nope')),
     ('privacy', 'Privacy & security', ('lock', 'smart_lock', 'permissions',
                                        'security', 'findmy', 'medical')),
     ('storage', 'Storage & backup', ('storage', 'backup')),
@@ -941,6 +942,7 @@ import settings_keyboard
 import settings_launcher
 import settings_lock
 import settings_medical
+import settings_nope
 import settings_permissions
 import settings_screentime
 import settings_security
@@ -966,6 +968,7 @@ SETTINGS_SECTIONS: list[tuple[str, type[_Section]]] = [
     ('services', settings_services.ServicesSection),
     ('firewall', settings_firewall.FirewallSection),
     ('apps', settings_apps.AppsSection),
+    ('nope', settings_nope.NopeSection),
     ('appearance', AppearanceSection),
     ('display', settings_display.DisplaySection),
     ('keyboard', settings_keyboard.KeyboardSection),

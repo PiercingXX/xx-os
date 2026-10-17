@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=io.piercingxx.XXFiles
+Exec=@bindir@/xx-files --gapplication-service

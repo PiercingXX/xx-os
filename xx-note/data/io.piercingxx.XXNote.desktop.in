@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=xx-note
+GenericName=Notes
+Comment=Markdown notes as plain files
+Exec=@bindir@/xx-note
+Icon=io.piercingxx.XXNote
+DBusActivatable=false
+Terminal=false
+Categories=Utility;Office;
+StartupNotify=true

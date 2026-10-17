@@ -157,6 +157,9 @@ class HomePage:
         """Launch an app or command from a home slot."""
         win = self._win
         app_id = slot.get('app_id')
+        from nope_mode import blocks_window
+        if app_id and blocks_window(win, str(app_id), slot.get('label', 'App')):
+            return
         if app_id and win.focus_state.is_paused_app(str(app_id)):
             win._show_focus_notice(slot.get('label', 'App'))
             return
@@ -303,13 +306,20 @@ class HomePage:
             _open_settings(win)
 
     def _open_weather_app(self) -> None:
-        """Default weather tap: an installed weather app, else a web
-        search for "weather". The refresh already runs in the background."""
+        """Default weather tap: xx-weather when installed, else an
+        installed weather app, else a web search for "weather". The
+        refresh already runs in the background."""
         win = self._win
         try:
             entries = list(win.app_index.entries)
         except (AttributeError, TypeError):
             entries = []
+        for entry in entries:
+            app_id = str(getattr(entry, 'app_id', ''))
+            if app_id.removesuffix('.desktop').casefold() == (
+                    'io.piercingxx.xxweather'):
+                win._launch_entry(entry)
+                return
         for entry in entries:
             app_id = str(getattr(entry, 'app_id', ''))
             if app_id.removesuffix('.desktop').casefold() == (

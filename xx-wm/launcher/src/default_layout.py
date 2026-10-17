@@ -42,8 +42,8 @@ STOCK_HIDDEN_APPS = [
     'mobi.phosh.MobileSettings',
 ]
 
-_NOTES_CANDIDATES = ['org.gnome.Notes', 'net.cozic.joplin_desktop', 'md.obsidian.Obsidian',
-                     'org.gnome.TextEditor']
+_NOTES_CANDIDATES = ['io.piercingxx.XXNote', 'org.gnome.Notes', 'net.cozic.joplin_desktop',
+                     'md.obsidian.Obsidian', 'org.gnome.TextEditor']
 # Android-container apps: FuriOS prefixes desktop ids with 'android.',
 # Waydroid with 'waydroid.' — carry both variants for every package
 _AUDIOBOOK_CANDIDATES = ['com.audiobookshelf.app', 'android.com.audiobookshelf.app',
@@ -71,7 +71,8 @@ _SOFTPHONE_CANDIDATES = [
 _CALENDAR_CANDIDATES = ['io.piercingxx.XXCalendar', 'org.gnome.Calendar', 'gnome-calendar',
                         'android.com.google.android.calendar',
                         'waydroid.com.google.android.calendar']
-_CALCULATOR_CANDIDATES = ['org.gnome.Calculator', 'gnome-calculator']
+_CALCULATOR_CANDIDATES = ['io.piercingxx.XXCalculator', 'org.gnome.Calculator',
+                          'gnome-calculator']
 _CAMERA_CANDIDATES = ['furios-camera', 'org.postmarketos.Megapixels',
                       'org.gnome.Snapshot', 'megapixels']
 _PHOTOS_CANDIDATES = [
@@ -81,6 +82,8 @@ _PHOTOS_CANDIDATES = [
     'io.furios.Gallery',
     'org.gnome.Loupe',
 ]
+_WEATHER_CANDIDATES = ['io.piercingxx.XXWeather', 'org.gnome.Weather']
+_FILES_CANDIDATES = ['io.piercingxx.XXFiles']
 
 
 def _find_desktop_app(app_id: str) -> str | None:
@@ -217,7 +220,9 @@ class DefaultLayoutResolver:
             children.append({'label': name, 'app_id': app_id})
         for label, candidates in (('Calculator', _CALCULATOR_CANDIDATES),
                                   ('Camera', _CAMERA_CANDIDATES),
-                                  ('Photos', _PHOTOS_CANDIDATES)):
+                                  ('Photos', _PHOTOS_CANDIDATES),
+                                  ('Weather', _WEATHER_CANDIDATES),
+                                  ('Files', _FILES_CANDIDATES)):
             member = self._app_member(label, candidates)
             if member:
                 children.append(member)

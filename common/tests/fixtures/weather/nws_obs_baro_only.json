@@ -1,0 +1,14 @@
+{
+  "properties": {
+    "@type": "wx:ObservationStationLatest",
+    "temperature": { "value": 23.9, "unitCode": "wmoUnit:degC" },
+    "dewpoint": { "value": 10.0, "unitCode": "wmoUnit:degC" },
+    "relativeHumidity": { "value": 44, "unitCode": "wmoUnit:percent" },
+    "barometricPressure": { "value": 101360, "unitCode": "wmoUnit:Pa" },
+    "visibility": { "value": 16090, "unitCode": "wmoUnit:m" },
+    "windSpeed": { "value": 18.5, "unitCode": "wmoUnit:km_h-1" },
+    "windDirection": { "value": 210, "unitCode": "wmoUnit:degree_(angle)" },
+    "icon": "https://api.weather.gov/icons/land/day/sct?size=medium",
+    "textDescription": "Partly Cloudy"
+  }
+}

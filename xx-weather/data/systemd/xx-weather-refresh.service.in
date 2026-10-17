@@ -1,0 +1,6 @@
+[Unit]
+Description=xx-weather background refresh (one pass, then exit)
+
+[Service]
+Type=oneshot
+ExecStart=@bindir@/xx-weather --refresh-once

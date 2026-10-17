@@ -132,6 +132,7 @@ class AppItemActions:
                  on_changed: Callable[[], None],
                  on_status: Callable[[str], None],
                  focus_state: object | None = None,
+                 nope_state: object | None = None,
                  on_popover_changed: Callable[[bool], None] | None = None,
                  on_keyboard: Callable[[bool], None] | None = None,
                  real_name_fn: Callable[[str], str | None] | None = None,
@@ -144,6 +145,7 @@ class AppItemActions:
         self._on_changed = on_changed
         self._on_status = on_status
         self._focus = focus_state
+        self._nope = nope_state
         self._on_popover_changed = on_popover_changed
         self._on_keyboard = on_keyboard
         self._real_name_fn = real_name_fn
@@ -510,6 +512,17 @@ class AppItemActions:
 
     def _run_desktop_action(self, entry: AppEntry, action_id: str,
                             display: str) -> None:
+        try:
+            nope = getattr(self, '_nope', None)
+            blocked = bool(nope is not None and nope.is_blocked(entry.app_id))
+        except Exception:
+            blocked = False
+        if blocked:
+            try:
+                self._on_status(nope.notice_text(display or entry.name))
+            except Exception:
+                pass
+            return
         if self.launch_desktop_action(entry, action_id):
             try:
                 self._config.record_launch(entry.app_id)

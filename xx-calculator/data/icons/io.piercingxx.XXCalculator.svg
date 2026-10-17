@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108" role="img" aria-label="xx-calculator app mark">
+  <!-- Stand-in in the house glyph language until the owner's xx-calculator mark lands: + − × = on a 2x2 grid (stroke 4, round caps). -->
+  <rect width="108" height="108" rx="22" fill="#000000"/>
+  <g stroke="#FFFFFF" stroke-width="4" stroke-linecap="round">
+    <path d="M40,32 L54,32 M47,25 L47,39" fill="none"/>
+    <path d="M62,32 L76,32" fill="none"/>
+    <path d="M40,62 L54,76 M54,62 L40,76" fill="none"/>
+    <path d="M62,68 L76,68 M62,76 L76,76" fill="none"/>
+  </g>
+</svg>

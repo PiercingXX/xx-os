@@ -149,6 +149,21 @@ install_deps() {
     fi
     install_portals
     install_media_deps
+    install_notes_deps
+}
+
+install_notes_deps() {
+    # Runtime stack for xx-note: libsecret holds the WebDAV password
+    # (never in config). Name evidence: install_media_deps below uses
+    # these exact names on all three distros.
+    echo "Installing notes app dependencies..."
+    if [ "$PKG" = apk ]; then
+        pkg_install libsecret
+    elif [ "$PKG" = pacman ]; then
+        pkg_install libsecret
+    else
+        pkg_install gir1.2-secret-1
+    fi
 }
 
 install_media_deps() {
@@ -362,7 +377,7 @@ link_squeekboard_layouts() {
 # The XX apps live next to xx-wm in the monorepo. xx-find is deliberately
 # absent: Find My Device is built but must not be installed or run until the
 # owner turns it on. One app failing to build never blocks the shell.
-XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-email xx-vitals xx-share xx-captions xx-auto xx-radio xx-audiobook"
+XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-calculator xx-email xx-vitals xx-share xx-captions xx-auto xx-radio xx-audiobook xx-note xx-weather xx-files"
 
 install_apps() {
     for app in $XX_APPS; do

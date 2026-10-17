@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=xx-files
+GenericName=Files
+Comment=Tree-first local file manager
+Exec=@bindir@/xx-files %U
+Icon=io.piercingxx.XXFiles
+DBusActivatable=true
+Terminal=false
+Categories=Utility;FileManager;System;
+StartupNotify=true
+MimeType=inode/directory;
+X-Purism-FormFactor=Workstation;Mobile;

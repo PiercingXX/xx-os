@@ -889,6 +889,10 @@ class DrawerPage:
                 f'{win.config.label_for(entry.app_id, entry.name)} '
                 'will never freeze.')
             return
+        from nope_mode import blocks_window
+        if blocks_window(win, entry.app_id,
+                         win.config.label_for(entry.app_id, entry.name)):
+            return
         if win.focus_state.is_paused_app(entry.app_id):
             win._show_focus_notice(win.config.label_for(entry.app_id, entry.name))
             return

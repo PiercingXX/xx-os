@@ -325,6 +325,19 @@ class XXWMApplication(Adw.Application):
         urgency = hints.get('urgency', 1)
         is_alarm = category.startswith('alarm') or urgency == 2
 
+        # Nope: notifications from blocked apps are dropped outright —
+        # never held, never shown (Android fallback cancels them).
+        nope = getattr(self._shell, 'nope_state', None) if self._shell else None
+        try:
+            nope_drop = bool(nope is not None and nope.silences(
+                desktop_entry, app_name))
+        except Exception:
+            nope_drop = False
+        if nope_drop:
+            _log.debug('notification %d dropped by Nope: %s', notif_id,
+                       desktop_entry or app_name)
+            return
+
         # Focus: notifications from paused apps are held outright — no sound,
         # not in the shade — and released in one batch when focus ends
         focus = getattr(self._shell, 'focus_state', None)
@@ -391,6 +404,7 @@ class XXWMApplication(Adw.Application):
             self._banner = BannerWindow(
                 config=getattr(self._shell, 'config', None),
                 notif_daemon=self._notif_daemon,
+                nope_state=getattr(self._shell, 'nope_state', None),
             )
             try:
                 self._banner.set_application(self)

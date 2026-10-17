@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.piercingxx.XXWeather</id>
+  <name>xx-weather</name>
+  <summary>ZIP-code weather from the National Weather Service</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>
+      Linux phone port of the PiercingXX Android xx-weather app. ZIP in,
+      forecast out: current conditions, 24-hour strip, 10-day outlook and
+      optional rain/freeze alerts from api.weather.gov (US only, no
+      location tracking), enriched by Open-Meteo. Works offline from the
+      last-good cache with an honest updated stamp.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.piercingxx.XXWeather.desktop</launchable>
+</component>

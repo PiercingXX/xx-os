@@ -1,0 +1,53 @@
+{
+  "latitude": 39.7392,
+  "longitude": -104.9903,
+  "timezone": "America/Denver",
+  "current_units": {
+    "time": "iso8601",
+    "interval": "seconds",
+    "temperature_2m": "°F",
+    "relative_humidity_2m": "%",
+    "apparent_temperature": "°F",
+    "is_day": "",
+    "weather_code": "wmo code",
+    "wind_speed_10m": "mph",
+    "wind_direction_10m": "°",
+    "surface_pressure": "hPa",
+    "pressure_msl": "hPa",
+    "dew_point_2m": "°F",
+    "uv_index": "",
+    "visibility": "ft"
+  },
+  "current": {
+    "time": "2026-08-25T12:00",
+    "interval": 900,
+    "temperature_2m": 88.2,
+    "relative_humidity_2m": 41,
+    "apparent_temperature": 86.5,
+    "is_day": 1,
+    "weather_code": 2,
+    "wind_speed_10m": 7.4,
+    "wind_direction_10m": 180,
+    "surface_pressure": 846.5,
+    "pressure_msl": 1013.4,
+    "dew_point_2m": 62.1,
+    "uv_index": 6.2,
+    "visibility": 188976
+  },
+  "hourly": {
+    "time": ["2026-08-25T12:00", "2026-08-25T13:00", "2026-08-25T14:00"],
+    "temperature_2m": [88.2, 89.0, 89.4],
+    "precipitation_probability": [10, 20, 15],
+    "weather_code": [2, 3, 2],
+    "is_day": [1, 1, 1]
+  },
+  "daily": {
+    "time": ["2026-08-25"],
+    "weather_code": [2],
+    "temperature_2m_max": [91.0],
+    "temperature_2m_min": [64.0],
+    "precipitation_probability_max": [20],
+    "sunrise": ["2026-08-25T06:24"],
+    "sunset": ["2026-08-25T19:52"]
+  }
+}

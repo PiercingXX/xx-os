@@ -92,6 +92,7 @@ _BOOL_KEYS = (
     'sound_notifications',
     'dnd_enabled',
     'focus_enabled',
+    'nope_enabled',
     'night_light',
     'night_light_schedule',
 )
@@ -102,6 +103,8 @@ _LIST_KEYS = (
     'dnd_starred_numbers',
     'focus_apps',
     'focus_schedules',
+    'nope_apps',
+    'nope_schedules',
     'smart_lock_bt_devices',
     'smart_lock_wifi_ssids',
 )
