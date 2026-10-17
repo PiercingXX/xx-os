@@ -176,7 +176,7 @@ def build(app, ctx) -> Adw.ApplicationWindow:
     xx_ui.apply(app)
     style.install()
     window = Adw.ApplicationWindow(application=app)
-    window.set_title("XX-Audiobook")
+    window.set_title("xx-audiobook")
     window.set_default_size(360, 720)
     window.set_decorated(False)
     shell = Shell(window, ctx)

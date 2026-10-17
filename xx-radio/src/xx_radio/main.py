@@ -35,7 +35,7 @@ def _can_rate(engine: music.Engine, track: music.Track | None) -> bool:
 
 SPEC = AppSpec(
     app_id=__app_id__,
-    name="XX-Radio",
+    name="xx-radio",
     dir_name="xx-radio",
     mpris_suffix="xx_radio",
     engine_factory=youtube.create,

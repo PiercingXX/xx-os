@@ -1,6 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=XX-Radio
+Name=xx-radio
+GenericName=Music
 Comment=Unofficial YouTube Music player for Linux phones
 Exec=@bindir@/xx-radio
 Icon=io.piercingxx.XXRadio

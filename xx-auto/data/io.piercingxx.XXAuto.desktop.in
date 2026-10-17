@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=xx-auto
+GenericName=Driving
 Comment=Driving screen for a phone in a car mount
 Exec=@bindir@/xx-auto
+Icon=io.piercingxx.XXAuto
 DBusActivatable=false
 Terminal=false
 Categories=Utility;

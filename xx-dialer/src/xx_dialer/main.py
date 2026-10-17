@@ -336,7 +336,7 @@ def run_gui(args: list[str]) -> int:
             import xx_ui  # noqa: E402
 
             window = Adw.ApplicationWindow(application=self)
-            window.set_title("XX Dialer")
+            window.set_title("xx-dialer")
             window.set_decorated(False)
             window.set_default_size(360, 720)
             xx_ui.apply(window)

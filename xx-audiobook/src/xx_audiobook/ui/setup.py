@@ -30,7 +30,7 @@ from xx_audiobook.ui import common, style
 from xx_audiobook.ui.library import deferred
 from xx_ui import widgets
 
-APP_NAME = "XX-Audiobook"
+APP_NAME = "xx-audiobook"
 REWIND_CHOICES = (0, 2, 5, 10)
 SPEED_CHOICES = (0.75, 1.0, 1.25, 1.5, 2.0)
 SUBSYSTEM_NAMES = {"ha": "Home Assistant", "db": "Database",
@@ -595,7 +595,7 @@ class NoAccessView:
     def render(self) -> None:
         body = self.body
         common.clear(body)
-        body.append(common.caps("XX-Audiobook"))
+        body.append(common.caps("xx-audiobook"))
         mark = common.glyph("action-unavailable-symbolic", 40)
         mark.set_halign(Gtk.Align.START)
         mark.set_margin_top(32)

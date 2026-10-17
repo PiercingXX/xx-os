@@ -116,7 +116,7 @@ class SettingsPage(Adw.NavigationPage):
 class AboutPage(Adw.NavigationPage):
     """Version, license and the open-source licenses page."""
 
-    APP_NAME = "Contacts"
+    APP_NAME = "xx-contacts"
 
     def __init__(self, navigation: Adw.NavigationView) -> None:
         super().__init__()

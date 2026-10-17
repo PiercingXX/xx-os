@@ -292,7 +292,7 @@ class ContactsWindow(Adw.ApplicationWindow):
         self._watcher = ChangeWatcher(db_path, self._on_external_changed)
         self._photos_dir = os.path.join(
             os.path.dirname(os.path.abspath(db_path)), "photos")
-        self.set_title("Contacts")
+        self.set_title("xx-contacts")
         self.set_decorated(False)
         self.set_default_size(360, 720)
 
@@ -368,7 +368,7 @@ class ContactsWindow(Adw.ApplicationWindow):
         root.append(self._chips_slot)
         root.append(middle)
         root.append(search_bar)
-        list_page = Adw.NavigationPage(child=root, title="Contacts")
+        list_page = Adw.NavigationPage(child=root, title="xx-contacts")
         navigation.push(list_page)
         self.set_content(navigation)
         self.set_size_request(320, 640)

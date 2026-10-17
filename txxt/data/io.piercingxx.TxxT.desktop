@@ -1,6 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=TxxT
+GenericName=Messages
 Comment=Text-first SMS/MMS client
 DBusActivatable=true
 Exec=txxt %U

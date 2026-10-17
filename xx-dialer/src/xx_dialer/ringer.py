@@ -42,7 +42,7 @@ ACTION_TARGET_HINT = "x-xx-wm-action-target"
 REPLACES_SILENCED = 1
 REPLACES_MISSED = 2
 
-APP_NAME = "XX Dialer"
+APP_NAME = "xx-dialer"
 
 _ACTION_CALL_BACK = "call-back"
 _ACTION_RING_NEXT = "ring-next-time"

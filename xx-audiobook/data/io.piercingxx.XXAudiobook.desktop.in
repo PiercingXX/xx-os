@@ -1,6 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=XX-Audiobook
+Name=xx-audiobook
+GenericName=Audiobooks
 Comment=Self-hosted audiobooks for Linux phones
 Exec=@bindir@/xx-audiobook
 Icon=io.piercingxx.XXAudiobook

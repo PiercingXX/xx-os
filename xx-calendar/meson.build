@@ -80,6 +80,25 @@ install_data(
   install_dir: join_paths(datadir, 'metainfo'),
 )
 
+# App icon -> hicolor theme (Icon=io.piercingxx.XXCalendar in the desktop)
+install_data(
+  'data/icons/io.piercingxx.XXCalendar.svg',
+  install_dir: join_paths(datadir, 'icons', 'hicolor', 'scalable', 'apps'),
+)
+
+# D-Bus activation for the GUI: the desktop entry is DBusActivatable,
+# so the bus must know how to start it (only the Calendar store
+# service existed before, and launchers failed silently). Name= must
+# equal the desktop app id, never the store service name, or the GUI
+# would exit as a secondary instance.
+configure_file(
+  input: 'data/io.piercingxx.XXCalendar.service.in',
+  output: 'io.piercingxx.XXCalendar.service',
+  configuration: desktop_conf,
+  install: true,
+  install_dir: join_paths(datadir, 'dbus-1', 'services'),
+)
+
 # Session activation file -> prefix/share/dbus-1/services/
 # Lets the session bus start `xx-calendar --service` on first use and
 # re-activate it after an idle exit. Name= must equal the owned name.

@@ -174,7 +174,7 @@ class EmailApplication(Adw.Application):
         window = self.props.active_window
         if window is None:
             window = Adw.ApplicationWindow(application=self)
-            window.set_title("XX Email")
+            window.set_title("xx-email")
             window.set_default_size(360, 720)
             window.set_decorated(False)
             self._overlay = Adw.ToastOverlay()

@@ -290,6 +290,13 @@ configure_file(
   install_dir: join_paths(get_option('datadir'), 'applications'),
 )
 
+# Shell icon -> hicolor theme (Icon=io.piercingxx.XXWM in the desktop).
+install_data(
+  'data/icons/io.piercingxx.XXWM.svg',
+  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor',
+                          'scalable', 'apps'),
+)
+
 # Session launcher (phoc wrapper) → $prefix/libexec/xx-wm-session
 # Wayland session entry → $prefix/share/wayland-sessions/xx-wm.desktop
 # Display managers only scan *.desktop here — a .session suffix is ignored.

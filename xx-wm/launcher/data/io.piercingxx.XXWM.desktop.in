@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=XX-WM
+GenericName=Phone shell
 Comment=Text-first Linux phone shell
 Exec=@bindir@/xx-wm
+Icon=io.piercingxx.XXWM
 Terminal=false
 Categories=Utility;System;
 StartupNotify=true

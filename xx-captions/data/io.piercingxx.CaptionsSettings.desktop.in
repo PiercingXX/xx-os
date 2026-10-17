@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=xx-captions
+GenericName=Live Captions
+Comment=On-device live captions and call transcription
+Exec=@bindir@/xx-captions --settings
+Icon=io.piercingxx.CaptionsSettings
+Terminal=false
+Categories=Utility;Accessibility;
+StartupNotify=true
+DBusActivatable=false
+X-Purism-FormFactor=Workstation;Mobile;

@@ -1,9 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=XX Email
+Name=xx-email
+GenericName=Email
 Comment=Telemetry-free Gmail client
 Exec=@bindir@/xx-email
-Icon=mail-unread
+Icon=io.piercingxx.XXEmail
 Terminal=false
 Categories=Network;Email;
 StartupNotify=true

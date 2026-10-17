@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=xx-share
+GenericName=Nearby Share
 Comment=Nearby file sharing (LocalSend-compatible)
 Exec=@bindir@/xx-share --send %F
+Icon=io.piercingxx.XXShare
+DBusActivatable=false
 MimeType=*/*;
 Categories=Utility;Network;
 StartupNotify=false
