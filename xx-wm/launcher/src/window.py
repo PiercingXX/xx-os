@@ -923,6 +923,12 @@ class ShellWindow(Adw.ApplicationWindow):
         # app drawer, down runs the configured action (default: shade)
         current = self.stack.get_visible_child_name()
         if abs(vel_y) > abs(vel_x) * 1.5:
+            if current == 'settings':
+                # Vertical swipes in Settings are scrolling: any upward
+                # swipe used to leave Settings and a quick downward one
+                # opened the shade, so scrolling the list closed it.
+                # Leave with the back arrow or the system back gesture.
+                return
             if vel_y > 300:
                 if current == 'apps' and self._drawer_swipe_down_home():
                     self.go_home()
@@ -930,9 +936,7 @@ class ShellWindow(Adw.ApplicationWindow):
                 self._dispatch_gesture_action(
                     self.gesture_config.get('swipe_down_top') or 'notification_shade')
             elif vel_y < 0:
-                if current == 'settings':
-                    self._leave_settings()
-                elif current == 'apps':
+                if current == 'apps':
                     try:
                         self.apps_search.grab_focus()
                     except Exception:
