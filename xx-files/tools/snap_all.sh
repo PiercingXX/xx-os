@@ -1,6 +1,7 @@
 #!/bin/sh
-# Seeded screenshots of every xx-files screen in amoled + paper at
-# 360x720, plus graphite/aura spot checks and a 320 px fit check:
+# Seeded screenshots of every xx-files screen in amoled + paper on the
+# FLX1 canvas (450x1000), the main screens at 360x800, plus fit probes
+# (320 px wide, text-size-scale 1.3) and graphite/aura spot checks:
 #   xx-files/tools/snap_all.sh OUTDIR
 # Exits non-zero on any snap WARNING (phone-fit breach).
 set -u
@@ -30,6 +31,7 @@ seed_home() {
     printf 'fake-jpeg %.0s' $(seq 1 800) > "$home/Pictures/photo.jpg"
     printf 'fake-mp4 %.0s' $(seq 1 800) > "$home/Pictures/clip.mp4"
     printf 'fake-jpeg %.0s' $(seq 1 600) > "$home/Pictures/Camera/shot.jpg"
+    printf 'fake-jpeg %.0s' $(seq 1 700) > "$home/Pictures/Camera/sunset over the harbour.jpg"
     printf 'fake-mp3 %.0s' $(seq 1 400) > "$home/Music/song.mp3"
     printf 'binary %.0s' $(seq 1 100) > "$home/Downloads/setup.bin"
 }
@@ -47,13 +49,13 @@ seed_trash() {
 }
 
 snap_one() {
-    # $1=theme $2=name $3=size $4=scenario $5=extra-env
-    theme=$1 name=$2 size=$3 scenario=$4 extra=$5
-    home="$WORK/home-$theme"
-    out="$WORK/$theme-$name.png"
-    err="$WORK/$theme-$name.err"
+    # $1=profile (theme, or "large") $2=name $3=size $4=scenario $5=extra-env
+    profile=$1 name=$2 size=$3 scenario=$4 extra=$5
+    home="$WORK/home-$profile"
+    out="$WORK/$profile-$name.png"
+    err="$WORK/$profile-$name.err"
     attempt=0
-    while [ "$attempt" -lt 3 ]; do
+    while [ "$attempt" -lt 5 ]; do
         attempt=$((attempt + 1))
         rm -f "$out"
         if HOME="$home" XDG_CONFIG_HOME="$home/.config" \
@@ -66,74 +68,99 @@ snap_one() {
             -- -m xx_files 2>"$err"; then
             if grep -q 'snap: WARNING' "$err"; then
                 cat "$err" >&2
-                fail "$theme $name: phone-fit breach"
+                fail "$profile $name: phone-fit breach"
             fi
             if [ -s "$out" ]; then
-                echo "shot $theme $name $size"
+                echo "shot $profile $name $size"
                 return 0
             fi
         fi
-        sleep 1
+        sleep 2
     done
-    fail "snap failed: $theme $name ($(tail -n 3 "$err" 2>/dev/null))"
+    fail "snap failed: $profile $name ($(tail -n 3 "$err" 2>/dev/null))"
 }
 
-for theme in $THEMES graphite aura; do
-    home="$WORK/home-$theme"
+for profile in $THEMES graphite aura large; do
+    home="$WORK/home-$profile"
     mkdir -p "$home/.config/xx-wm" "$home/.config/xx-files" \
         "$home/.local/share"
-    printf '{"theme": "%s"}' "$theme" > "$home/.config/xx-wm/config.json"
+    if [ "$profile" = large ]; then
+        printf '{"theme": "paper", "text_size_scale": 1.3}' \
+            > "$home/.config/xx-wm/config.json"
+    else
+        printf '{"theme": "%s"}' "$profile" > "$home/.config/xx-wm/config.json"
+    fi
     seed_home "$home"
     seed_trash "$home/.local/share" "$home"
 done
 
-states="volumes files tree grid search multiselect properties new_folder rename delete_confirm actions sort_menu trash trash_empty empty_folder blocked progress"
+# Every state on the FLX1 canvas (450x1000), the main ones at 360x800.
+states="volumes files deep tree grid search multiselect actions properties new_folder rename delete_confirm view progress trash trash_actions trash_empty empty_folder blocked"
+phone="volumes files tree actions view trash"
 
 for theme in $THEMES; do
-    for name in $states; do
-        snap_one "$theme" "portrait-$name" "360x720" "$name" ""
+    for state in $states; do
+        snap_one "$theme" "flx1-$state" "450x1000" "$state" ""
     done
-    snap_one "$theme" "small-files" "320x640" "files" ""
-    snap_one "$theme" "small-trash" "320x640" "trash" ""
+    for state in $phone; do
+        snap_one "$theme" "phone-$state" "360x800" "$state" ""
+    done
 done
 
-for theme in graphite aura; do
-    snap_one "$theme" "portrait-files" "360x720" "files" ""
+# Fit probes: 320 px wide, large text (scale 1.3), two more presets.
+# (snap_one assigns $name: sh has no locals, so loops use other names.)
+for probe in files actions properties; do
+    snap_one paper "narrow-$probe" "320x640" "$probe" ""
+    snap_one large "big-$probe" "360x800" "$probe" ""
 done
+snap_one large "big-view" "360x800" "view" ""
+snap_one graphite "flx1-files" "450x1000" "files" ""
+snap_one aura "flx1-actions" "450x1000" "actions" ""
+
+sheet() {
+    # $1=out file $2=tile, then label:shot pairs
+    out=$1 tile=$2
+    shift 2
+    args=""
+    for pair in "$@"; do
+        args="$args -label ${pair%%:*} $WORK/${pair#*:}.png"
+    done
+    # shellcheck disable=SC2086
+    montage $args -tile "$tile" -geometry +4+4 -background black \
+        -fill white -pointsize 28 "$OUTDIR/$out" \
+        || fail "montage failed for $out"
+}
 
 for theme in $THEMES; do
-    # shellcheck disable=SC2086
-    montage -label 'volumes' "$WORK/$theme-portrait-volumes.png" \
-        -label 'files' "$WORK/$theme-portrait-files.png" \
-        -label 'tree' "$WORK/$theme-portrait-tree.png" \
-        -label 'grid' "$WORK/$theme-portrait-grid.png" \
-        -label 'search' "$WORK/$theme-portrait-search.png" \
-        -label 'multiselect' "$WORK/$theme-portrait-multiselect.png" \
-        -label 'properties' "$WORK/$theme-portrait-properties.png" \
-        -label 'new-folder' "$WORK/$theme-portrait-new_folder.png" \
-        -tile 4x2 -geometry +4+4 -background black \
-        -fill white -pointsize 28 "$OUTDIR/sheet-$theme-1.png" \
-        || fail "montage failed for $theme sheet 1"
-    montage -label 'rename' "$WORK/$theme-portrait-rename.png" \
-        -label 'delete' "$WORK/$theme-portrait-delete_confirm.png" \
-        -label 'actions' "$WORK/$theme-portrait-actions.png" \
-        -label 'sort' "$WORK/$theme-portrait-sort_menu.png" \
-        -label 'trash' "$WORK/$theme-portrait-trash.png" \
-        -label 'trash-empty' "$WORK/$theme-portrait-trash_empty.png" \
-        -label 'empty' "$WORK/$theme-portrait-empty_folder.png" \
-        -label 'blocked' "$WORK/$theme-portrait-blocked.png" \
-        -tile 4x2 -geometry +4+4 -background black \
-        -fill white -pointsize 28 "$OUTDIR/sheet-$theme-2.png" \
-        || fail "montage failed for $theme sheet 2"
-    montage -label 'progress' "$WORK/$theme-portrait-progress.png" \
-        -label '320-files' "$WORK/$theme-small-files.png" \
-        -label '320-trash' "$WORK/$theme-small-trash.png" \
-        -tile 3x1 -geometry +4+4 -background black \
-        -fill white -pointsize 28 "$OUTDIR/sheet-$theme-3.png" \
-        || fail "montage failed for $theme sheet 3"
+    sheet "sheet-$theme-1.png" 5x1 \
+        "volumes:$theme-flx1-volumes" "files:$theme-flx1-files" \
+        "deep:$theme-flx1-deep" "tree:$theme-flx1-tree" \
+        "grid:$theme-flx1-grid"
+    sheet "sheet-$theme-2.png" 5x1 \
+        "search:$theme-flx1-search" "select:$theme-flx1-multiselect" \
+        "actions:$theme-flx1-actions" "properties:$theme-flx1-properties" \
+        "view:$theme-flx1-view"
+    sheet "sheet-$theme-3.png" 5x1 \
+        "new-folder:$theme-flx1-new_folder" "rename:$theme-flx1-rename" \
+        "delete:$theme-flx1-delete_confirm" "progress:$theme-flx1-progress" \
+        "blocked:$theme-flx1-blocked"
+    sheet "sheet-$theme-4.png" 4x1 \
+        "trash:$theme-flx1-trash" "trash-row:$theme-flx1-trash_actions" \
+        "trash-empty:$theme-flx1-trash_empty" \
+        "empty:$theme-flx1-empty_folder"
+    sheet "sheet-$theme-360.png" 6x1 \
+        "volumes:$theme-phone-volumes" "files:$theme-phone-files" \
+        "tree:$theme-phone-tree" "actions:$theme-phone-actions" \
+        "view:$theme-phone-view" "trash:$theme-phone-trash"
     cp "$WORK/$theme-"*.png "$OUTDIR/"
 done
-cp "$WORK/graphite-"*.png "$WORK/aura-"*.png "$OUTDIR/"
+sheet "sheet-fit.png" 5x2 \
+    "320-files:paper-narrow-files" "320-actions:paper-narrow-actions" \
+    "320-props:paper-narrow-properties" "graphite:graphite-flx1-files" \
+    "aura:aura-flx1-actions" \
+    "large-files:large-big-files" "large-actions:large-big-actions" \
+    "large-props:large-big-properties" "large-view:large-big-view"
+cp "$WORK/graphite-"*.png "$WORK/aura-"*.png "$WORK/large-"*.png "$OUTDIR/"
 rm -rf "$WORK"
 trap - EXIT
-echo "wrote $OUTDIR/sheet-{amoled,paper}-{1,2,3}.png"
+echo "wrote $OUTDIR/sheet-{amoled,paper}-{1,2,3,4,360}.png and sheet-fit.png"

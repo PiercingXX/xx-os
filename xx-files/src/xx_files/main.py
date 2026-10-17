@@ -4,6 +4,12 @@ Volumes + tree/list/grid browsing, breadcrumbs, sort, search,
 multi-select, copy/move/rename/delete (freedesktop Trash), new folder,
 open-with, share via xx-share, properties, progress with cancel.
 
+Look (Android tree list in the PiercingXX brand): the path IS the
+header (muted ancestors, current folder in text, a faint slash between),
+one overflow, a hairline, then text-first rows. No title, no status
+line, no empty-state copy: an empty folder shows nothing. Row actions,
+dialogs and the View sheet slide up from the bottom over a scrim.
+
 Headless-safe import: Gtk/Adw load lazily so pure tests never need a
 display. Workers own every directory read and file operation; results
 post back with GLib.idle_add.
@@ -14,20 +20,53 @@ import os
 
 from .prefs import Settings, load as load_settings, save as save_settings
 
+# Sizes that must follow the user's text scale come from the shared
+# xx_ui classes (xx-title, xx-secondary, xx-btn, ...); this sheet only
+# adds geometry and the theme's named colors, so every preset (and a
+# live switch) restyles it.
 APP_CSS = """
-.xx-files-title { font-size: 20px; font-weight: 400; }
-.xx-files-crumb { min-height: 44px; padding: 0 10px; }
-.xx-files-row { min-height: 64px; padding: 6px 0; border-radius: 0; }
-.xx-files-row-title { font-size: 16px; font-weight: 500; }
-.xx-files-row-sub { font-size: 14px; }
-.xx-files-grid-cell { min-width: 72px; padding: 8px 2px; }
-.xx-files-view button { min-width: 0; padding-left: 10px; padding-right: 10px; }
-.xx-files-grid-name { font-size: 13px; }
-.xx-files-sheet { border-top: 1px solid @borders; padding: 12px 20px 20px; }
-.xx-files-sheet-title { font-size: 18px; font-weight: 500; }
-.xx-files-action { min-height: 48px; }
-.xx-files-status { padding: 4px 20px 8px; }
+.xx-files-top { min-height: 56px; padding: 4px 4px 4px 4px; }
+.xx-files-rule { min-height: 1px; background-color: @borders; }
+button.xx-files-crumb { min-height: 44px; min-width: 0; padding: 0 4px;
+  border-radius: 0; color: @insensitive_fg_color; }
+button.xx-files-crumb.current { color: @window_fg_color; }
+.xx-files-crumb-sep { color: @borders; }
+entry.xx-files-search { background-color: @card_bg_color; border: none;
+  box-shadow: none; border-radius: 12px; min-height: 44px;
+  padding: 0 12px; margin: 8px 20px 4px; }
+row.xx-files-row { padding: 8px 20px; border-radius: 0; }
+row.xx-files-row:active { background-color: @card_bg_color; }
+row.xx-files-message { padding: 16px 20px; }
+.xx-files-guide { color: @insensitive_fg_color; }
+.xx-files-row check { min-width: 18px; min-height: 18px;
+  border: 1px solid @insensitive_fg_color; border-radius: 3px;
+  background: none; box-shadow: none; }
+.xx-files-row check:checked { background-color: @window_fg_color;
+  color: @window_bg_color; border-color: @window_fg_color; }
+.xx-files-grid-cell { padding: 12px 2px; }
+.xx-files-grid-name { color: @window_fg_color; }
+.xx-files-selbar { border-top: 1px solid @borders; padding: 4px 4px 8px 20px; }
+.xx-files-scrim { background-color: alpha(@window_bg_color, 0.72); }
+.xx-files-sheet { background-color: @card_bg_color;
+  border-top: 1px solid @borders; border-radius: 16px 16px 0 0;
+  padding: 8px 0 12px; }
+.xx-files-sheet-head { padding: 12px 20px 8px; }
+button.xx-files-action { min-height: 48px; padding: 0 20px; border-radius: 0; }
+button.xx-files-action:active { background-color: @insensitive_bg_color; }
+.xx-files-dialog { padding: 0 20px; }
+.xx-files-buttons { padding: 12px 12px 0 20px; }
+.xx-files-prop { padding-top: 6px; padding-bottom: 6px; }
+.xx-files-sheet switch { border: 1px solid @borders; }
+.xx-files-sheet entry.xx-entry { background-color: @window_bg_color;
+  border: 1px solid @borders; }
+.xx-files-sheet entry.xx-entry:focus { border-color: @window_fg_color; }
+.xx-files-sheet .xx-segmented { margin-top: 8px; }
+.xx-files-sheet progressbar trough { min-height: 4px; border-radius: 2px; }
+.xx-files-sheet progressbar progress { min-height: 4px; border-radius: 2px; }
 """
+
+VIEWS = (("list", "List"), ("tree", "Tree"), ("grid", "Grid"))
+SORTS = (("name", "Name"), ("size", "Size"), ("date", "Date"))
 
 
 def _require_gtk():
@@ -72,6 +111,14 @@ def _tap_to_focus(entry) -> None:
     entry.add_controller(focus)
 
 
+def pretty_path(path: str, home: str) -> str:
+    """``~`` for the home prefix, the path otherwise."""
+    home = home.rstrip("/")
+    if home and (path == home or path.startswith(home + "/")):
+        return "~" + path[len(home):]
+    return path
+
+
 class FilesWindow:
     """Main window; built inside an Adw.ApplicationWindow."""
 
@@ -102,6 +149,7 @@ class FilesWindow:
         self._alive = True
         self._list_error: dict = {"status": "ok"}
         self._kids: dict[str, list[dict]] = {}
+        self._sheet_modal = False
 
         self.win = Adw.ApplicationWindow(application=app)
         self.win.set_title("xx-files")
@@ -113,96 +161,66 @@ class FilesWindow:
         except Exception:
             self._theme_unsub = None
 
+        overlay = Gtk.Overlay()
+        self.win.set_content(overlay)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        root.add_css_class("xx-page-body")
-        self.win.set_content(root)
+        overlay.set_child(root)
 
-        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        top.set_margin_start(12)
-        top.set_margin_end(12)
-        top.set_margin_top(12)
-        self.back_btn = Gtk.Button.new_from_icon_name(
-            "go-previous-symbolic")
-        self.back_btn.add_css_class("xx-btn")
-        self.back_btn.add_css_class("xx-btn-icon")
-        self.back_btn.set_tooltip_text("Back")
-        self.back_btn.connect("clicked", lambda _b: self.go_back())
+        # Header: back, the path, search, overflow. The path is the title.
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        top.add_css_class("xx-files-top")
+        self.back_btn = self._icon_button("go-previous-symbolic", "Back",
+                                          self.go_back)
         top.append(self.back_btn)
-        title = Gtk.Label(label="xx-files")
-        title.add_css_class("xx-files-title")
-        title.add_css_class("xx-display")
-        title.set_xalign(0.0)
-        title.set_hexpand(True)
-        title.set_ellipsize(Pango.EllipsizeMode.END)
-        title.set_max_width_chars(12)
-        top.append(title)
-        self.search_btn = Gtk.Button.new_from_icon_name(
-            "system-search-symbolic")
-        self.search_btn.add_css_class("xx-btn")
-        self.search_btn.add_css_class("xx-btn-icon")
-        self.search_btn.set_tooltip_text("Search")
-        self.search_btn.connect("clicked",
-                                lambda _b: self._toggle_search())
+        self.crumb_scroll = Gtk.ScrolledWindow()
+        self.crumb_scroll.set_policy(Gtk.PolicyType.EXTERNAL,
+                                     Gtk.PolicyType.NEVER)
+        self.crumb_scroll.set_hexpand(True)
+        self.crumb_scroll.set_valign(Gtk.Align.CENTER)
+        self.crumb_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                                 spacing=0)
+        self.crumb_scroll.set_child(self.crumb_box)
+        try:
+            adj = self.crumb_scroll.get_hadjustment()
+            adj.connect("changed", self._pin_crumbs_right)
+        except Exception:
+            pass
+        top.append(self.crumb_scroll)
+        self.search_btn = self._icon_button("system-search-symbolic",
+                                            "Search", self._toggle_search)
         top.append(self.search_btn)
         self.overflow_btn = Gtk.MenuButton()
         self.overflow_btn.add_css_class("xx-btn")
         self.overflow_btn.add_css_class("xx-btn-icon")
         self.overflow_btn.set_icon_name("view-more-symbolic")
         self.overflow_btn.set_tooltip_text("More actions")
+        self.overflow_btn.set_valign(Gtk.Align.CENTER)
         top.append(self.overflow_btn)
         root.append(top)
-
-        self.crumb_scroll = Gtk.ScrolledWindow()
-        self.crumb_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
-                                     Gtk.PolicyType.NEVER)
-        self.crumb_scroll.set_margin_start(12)
-        self.crumb_scroll.set_margin_end(12)
-        self.crumb_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                                 spacing=2)
-        self.crumb_scroll.set_child(self.crumb_box)
-        root.append(self.crumb_scroll)
+        rule = Gtk.Box()
+        rule.add_css_class("xx-files-rule")
+        root.append(rule)
 
         self.search_revealer = Gtk.Revealer()
         self.search_revealer.set_transition_type(
             Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.search_entry = Gtk.SearchEntry()
+        self.search_entry.add_css_class("xx-files-search")
         self.search_entry.set_placeholder_text("Search this folder")
-        self.search_entry.set_margin_start(20)
-        self.search_entry.set_margin_end(20)
-        self.search_entry.set_margin_top(4)
         self.search_entry.connect("search-changed",
                                   self._on_search_changed)
         _tap_to_focus(self.search_entry)
         self.search_revealer.set_child(self.search_entry)
         root.append(self.search_revealer)
 
-        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        toolbar.set_margin_start(20)
-        toolbar.set_margin_end(20)
-        toolbar.set_margin_top(4)
-        self.view_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                                spacing=0)
-        self.view_box.add_css_class("linked")
-        self.view_box.add_css_class("xx-files-view")
-        self.view_btns: dict[str, object] = {}
-        for key, tip in (("list", "List"), ("tree", "Tree"),
-                         ("grid", "Grid")):
-            btn = Gtk.ToggleButton(label=tip)
-            btn.set_tooltip_text(tip)
-            btn.connect("toggled", self._on_view_toggled, key)
-            self.view_box.append(btn)
-            self.view_btns[key] = btn
-        toolbar.append(self.view_box)
-        root.append(toolbar)
-
         self.scroll = Gtk.ScrolledWindow()
         self.scroll.set_policy(Gtk.PolicyType.NEVER,
                                Gtk.PolicyType.AUTOMATIC)
         self.scroll.set_vexpand(True)
-        self.scroll.set_margin_top(4)
         self.list_box = Gtk.ListBox()
         self.list_box.add_css_class("xx-list")
         self.list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.list_box.set_margin_top(4)
         self.list_box.connect("row-activated", self._on_row_activated)
         self.scroll.set_child(self.list_box)
         root.append(self.scroll)
@@ -213,49 +231,41 @@ class FilesWindow:
         self.grid_scroll.set_vexpand(True)
         self.flow = Gtk.FlowBox()
         self.flow.set_valign(Gtk.Align.START)
-        self.flow.set_max_children_per_line(3)
-        self.flow.set_min_children_per_line(2)
-        self.flow.set_column_spacing(6)
-        self.flow.set_row_spacing(6)
+        self.flow.set_homogeneous(True)
+        self.flow.set_max_children_per_line(4)
+        self.flow.set_min_children_per_line(3)
+        self.flow.set_column_spacing(0)
+        self.flow.set_row_spacing(4)
+        self.flow.set_margin_start(12)
+        self.flow.set_margin_end(12)
+        self.flow.set_margin_top(8)
         self.flow.set_selection_mode(Gtk.SelectionMode.NONE)
         self.flow.connect("child-activated", self._on_grid_activated)
         self.grid_scroll.set_child(self.flow)
         self.grid_scroll.set_visible(False)
         root.append(self.grid_scroll)
 
-        self.status = Gtk.Label(label="")
-        self.status.add_css_class("xx-caption")
-        self.status.set_xalign(0.0)
-        self.status.set_ellipsize(Pango.EllipsizeMode.NONE)
-        self.status.set_max_width_chars(32)
-        status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        status_box.add_css_class("xx-files-status")
-        status_box.append(self.status)
-        root.append(status_box)
-
+        # Selection bar: count + Done, then the four verbs spread out.
         self.sel_revealer = Gtk.Revealer()
         self.sel_revealer.set_transition_type(
             Gtk.RevealerTransitionType.SLIDE_UP)
-        sel_bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        sel_bar.set_margin_start(20)
-        sel_bar.set_margin_end(20)
-        sel_bar.set_margin_bottom(12)
+        sel_bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        sel_bar.add_css_class("xx-files-selbar")
         sel_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.sel_label = Gtk.Label(label="")
         self.sel_label.add_css_class("xx-secondary")
         self.sel_label.set_xalign(0.0)
         self.sel_label.set_hexpand(True)
         self.sel_label.set_ellipsize(Pango.EllipsizeMode.NONE)
-        self.sel_label.set_max_width_chars(20)
+        self.sel_label.set_max_width_chars(16)
         sel_top.append(self.sel_label)
-        cancel = Gtk.Button.new_with_label("Done")
-        cancel.connect("clicked", lambda _b: self._clear_selection())
-        sel_top.append(cancel)
+        done = self._text_button("Done", self._end_selection)
+        sel_top.append(done)
         sel_bar.append(sel_top)
         sel_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                              spacing=4)
-        sel_actions.set_halign(Gtk.Align.CENTER)
+                              spacing=0)
         sel_actions.set_homogeneous(True)
+        sel_actions.set_margin_end(16)
         for name, tip, cb in (
                 ("edit-copy-symbolic", "Copy",
                  lambda: self._stage_selection(False)),
@@ -265,98 +275,154 @@ class FilesWindow:
                  lambda: self._ask_delete(sorted(self.selection))),
                 ("send-to-symbolic", "Share",
                  lambda: self._share_paths(sorted(self.selection)))):
-            btn = Gtk.Button.new_from_icon_name(name)
-            btn.add_css_class("xx-btn")
-            btn.add_css_class("xx-btn-icon")
-            btn.set_tooltip_text(tip)
-            btn.connect("clicked", lambda _b, f=cb: f())
-            sel_actions.append(btn)
+            sel_actions.append(self._icon_button(name, tip, cb))
         sel_bar.append(sel_actions)
         self.sel_revealer.set_child(sel_bar)
         root.append(self.sel_revealer)
 
-        self.sheet_revealer = Gtk.Revealer()
-        self.sheet_revealer.set_transition_type(
-            Gtk.RevealerTransitionType.SLIDE_UP)
+        # Bottom sheet over a scrim; tapping the scrim dismisses it.
+        self.sheet_layer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                                   spacing=0)
+        self.sheet_layer.set_visible(False)
+        scrim = Gtk.Box()
+        scrim.add_css_class("xx-files-scrim")
+        scrim.set_vexpand(True)
+        tap = Gtk.GestureClick.new()
+        tap.connect("released", lambda *_: self._dismiss_sheet())
+        scrim.add_controller(tap)
+        self.sheet_layer.append(scrim)
         self.sheet_scroll = Gtk.ScrolledWindow()
         self.sheet_scroll.set_policy(Gtk.PolicyType.NEVER,
                                      Gtk.PolicyType.AUTOMATIC)
         self.sheet_scroll.set_propagate_natural_height(True)
-        try:
-            self.sheet_scroll.set_max_content_height(320)
-        except Exception:
-            pass
+        self.sheet_scroll.add_css_class("xx-files-sheet")
         self.sheet_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                                 spacing=8)
-        self.sheet_box.add_css_class("xx-files-sheet")
+                                 spacing=0)
         self.sheet_scroll.set_child(self.sheet_box)
-        self.sheet_revealer.set_child(self.sheet_scroll)
-        root.append(self.sheet_revealer)
+        self.sheet_layer.append(self.sheet_scroll)
+        overlay.add_overlay(self.sheet_layer)
 
-        self._build_menus()
+        keys = Gtk.EventControllerKey.new()
+        keys.connect("key-pressed", self._on_key)
+        self.win.add_controller(keys)
+
+        self._register_actions()
         self._refresh_roots()
         self._watch_volumes()
         self._render_chrome()
         self.refresh()
 
+    # -- small builders ---------------------------------------------
+    def _icon_button(self, icon: str, tip: str, callback):
+        Gtk = self._Gtk
+        btn = Gtk.Button.new_from_icon_name(icon)
+        btn.add_css_class("xx-btn")
+        btn.add_css_class("xx-btn-icon")
+        btn.set_tooltip_text(tip)
+        btn.set_valign(Gtk.Align.CENTER)
+        btn.connect("clicked", lambda _b: callback())
+        return btn
+
+    def _text_button(self, text: str, callback, kind: str = "text"):
+        btn = self._Gtk.Button.new_with_label(text)
+        btn.add_css_class("xx-btn")
+        btn.add_css_class({"text": "xx-btn-text",
+                           "primary": "xx-btn-primary",
+                           "danger": "xx-btn-danger"}[kind])
+        if kind != "text":
+            btn.set_margin_start(4)
+        child = btn.get_child()
+        if child is not None:
+            _cond_ellipsize(child, self._Pango, text, 16)
+            child.set_margin_start(12)
+            child.set_margin_end(12)
+        btn.connect("clicked", lambda _b: callback())
+        return btn
+
+    def _label(self, text: str, cls: str, chars: int = 28,
+               wrap: bool = False):
+        label = self._Gtk.Label(label=text)
+        label.add_css_class(cls)
+        label.set_xalign(0.0)
+        if wrap:
+            label.set_wrap(True)
+            label.set_wrap_mode(self._Pango.WrapMode.WORD_CHAR)
+            label.set_ellipsize(self._Pango.EllipsizeMode.NONE)
+            label.set_max_width_chars(chars)
+        else:
+            _cond_ellipsize(label, self._Pango, text, chars)
+        return label
+
+    def _segmented(self, items, current: str, on_pick):
+        """Joined caps choices (xx_ui segmented look), one selected."""
+        Gtk = self._Gtk
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box.add_css_class("xx-segmented")
+        box.set_homogeneous(True)
+        last = len(items) - 1
+        for index, (key, text) in enumerate(items):
+            btn = Gtk.Button.new_with_label(text.upper())
+            btn.add_css_class("seg-first" if index == 0 else
+                              "seg-last" if index == last else "seg-mid")
+            if key == current:
+                btn.add_css_class("seg-selected")
+            btn.connect("clicked", lambda _b, k=key: on_pick(k))
+            box.append(btn)
+        return box
+
     # -- menus ------------------------------------------------------
-    def _build_menus(self) -> None:
+    def _register_actions(self) -> None:
         Gio = self._Gio
-        menu = Gio.Menu()
-        menu.append("New folder", "app.new-folder")
-        menu.append("Paste", "app.paste")
-        menu.append("Trash", "app.trash")
-        menu.append("Volumes", "app.volumes")
-        self.overflow_btn.set_menu_model(menu)
         app = self.win.get_application()
-        for name, cb in (("new-folder", lambda *_: self._ask_new_folder()),
-                         ("paste", lambda *_: self._paste()),
-                         ("trash", lambda *_: self.show_trash()),
-                         ("volumes", lambda *_: self.show_volumes())):
+        for name, cb in (("new-folder", self._ask_new_folder),
+                         ("paste", self._paste),
+                         ("view", self._show_view_sheet),
+                         ("trash", self.show_trash),
+                         ("volumes", self.show_volumes),
+                         ("empty-trash", self._ask_empty_trash)):
             action = Gio.SimpleAction.new(name, None)
-            action.connect("activate", cb)
+            action.connect("activate", lambda *_a, f=cb: f())
             app.add_action(action)
-        show = Gio.SimpleAction.new_stateful(
-            "show-hidden", None,
-            self._GLib.Variant.new_boolean(self.settings.show_hidden))
-        show.connect("activate", self._on_show_hidden)
-        app.add_action(show)
-        menu.append_item(Gio.MenuItem.new("Show hidden", "app.show-hidden"))
-        sort_menu = Gio.Menu()
-        for key, label in (("name", "Name"), ("size", "Size"),
-                           ("date", "Date")):
-            sort_menu.append_item(Gio.MenuItem.new(label, f"app.sort::{key}"))
-        sort_action = Gio.SimpleAction.new_stateful(
-            "sort", self._GLib.VariantType.new("s"),
-            self._GLib.Variant.new_string(self.settings.sort))
-        sort_action.connect("activate", self._on_sort)
-        app.add_action(sort_action)
-        menu.append_submenu("Sort", sort_menu)
 
-    def _on_show_hidden(self, action, _param) -> None:
-        value = not action.get_state().get_boolean()
-        action.set_state(self._GLib.Variant.new_boolean(value))
-        self.settings.show_hidden = value
-        save_settings(self.settings)
-        self.refresh()
+    def _rebuild_menu(self) -> None:
+        """Overflow lists only what makes sense here: Paste appears once
+        something is staged, Empty Trash only inside Trash."""
+        menu = self._Gio.Menu()
+        if self.mode == "browse":
+            menu.append("New folder", "app.new-folder")
+            if self.clip:
+                menu.append("Paste", "app.paste")
+            menu.append("View", "app.view")
+            menu.append("Trash", "app.trash")
+            menu.append("Volumes", "app.volumes")
+        elif self.mode == "trash":
+            if self.trash_rows:
+                menu.append("Empty Trash", "app.empty-trash")
+            menu.append("Volumes", "app.volumes")
+        else:
+            menu.append("Trash", "app.trash")
+        self.overflow_btn.set_menu_model(menu)
 
-    def _on_sort(self, action, param) -> None:
-        action.set_state(param)
-        self.settings.sort = param.get_string()
-        save_settings(self.settings)
-        self.refresh()
+    def _set_sort(self, key: str) -> None:
+        if self.settings.sort != key:
+            self.settings.sort = key
+            save_settings(self.settings)
+            self._render_rows()
+        self._show_view_sheet()
 
-    def _on_view_toggled(self, btn, key: str) -> None:
-        if not btn.get_active():
-            return
-        for other_key, other in self.view_btns.items():
-            if other_key != key and other.get_active():
-                other.set_active(False)
+    def _set_view(self, key: str) -> None:
         if self.settings.view != key:
             self.settings.view = key
             save_settings(self.settings)
             self._render_chrome()
             self._render_rows()
+        self._show_view_sheet()
+
+    def _set_show_hidden(self, value: bool) -> None:
+        if self.settings.show_hidden != value:
+            self.settings.show_hidden = value
+            save_settings(self.settings)
+            self.refresh()
 
     def _toggle_search(self) -> None:
         open_ = not self.search_revealer.get_reveal_child()
@@ -369,6 +435,16 @@ class FilesWindow:
     def _on_search_changed(self, entry) -> None:
         self.query = entry.get_text().strip().casefold()
         self._render_rows()
+
+    def _on_key(self, _ctrl, keyval, _code, _state) -> bool:
+        if keyval == self._Gdk.KEY_Escape:
+            if self.sheet_layer.get_visible():
+                self._dismiss_sheet()
+                return True
+            if self.selecting:
+                self._end_selection()
+                return True
+        return False
 
     # -- theme ------------------------------------------------------
     def _apply_theme(self) -> None:
@@ -385,19 +461,26 @@ class FilesWindow:
             if display is not None:
                 self._Gtk.StyleContext.add_provider_for_display(
                     display, provider,
-                    self._Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                    self._Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
         except Exception:
             pass
 
     # -- navigation -------------------------------------------------
+    def _home(self) -> str:
+        return os.environ.get("XX_FILES_HOME") or os.path.expanduser("~")
+
     def _refresh_roots(self) -> None:
         from .ops import discover_roots, removable_mounts
 
-        home = os.environ.get("XX_FILES_HOME") or os.path.expanduser("~")
-        try:
-            mounts = removable_mounts()
-        except Exception:
-            mounts = []
+        home = self._home()
+        mounts: list = []
+        # Seeded demo renders list only the seeded home, never this
+        # machine's real media.
+        if not os.environ.get("XX_FILES_SCENARIO"):
+            try:
+                mounts = removable_mounts()
+            except Exception:
+                mounts = []
         self.roots = discover_roots(home, mounts)
         if not any(r.root_path == self.cwd for r in self.roots):
             self.cwd = home
@@ -418,14 +501,20 @@ class FilesWindow:
     def show_volumes(self) -> None:
         self.mode = "volumes"
         self._clear_selection()
+        self._close_search()
         self._render_chrome()
         self._render_rows()
 
     def show_trash(self) -> None:
         self.mode = "trash"
         self._clear_selection()
+        self._close_search()
         self._render_chrome()
         self.refresh_trash()
+
+    def _close_search(self) -> None:
+        if self.search_revealer.get_reveal_child():
+            self._toggle_search()
 
     def open_path(self, path: str) -> None:
         from .volumes import containing
@@ -443,6 +532,12 @@ class FilesWindow:
         from .volumes import back_dest
         from .volumes import Dest
 
+        if self.sheet_layer.get_visible():
+            self._dismiss_sheet()
+            return
+        if self.selecting:
+            self._end_selection()
+            return
         dest = back_dest(self.mode == "volumes", self.mode == "trash",
                          self.cwd, list(self.roots))
         if dest is Dest.FINISH:
@@ -461,7 +556,6 @@ class FilesWindow:
         if self._list_job is not None:
             self._list_job.cancel()
         self._kids = {}
-        self._set_status("Loading…")
         path, show_hidden = self.cwd, self.settings.show_hidden
 
         def on_done(result: dict) -> None:
@@ -502,7 +596,6 @@ class FilesWindow:
         from .ops import trash_dirs
         from .trash_info import list_entries
 
-        self._set_status("Loading…")
         files_dir, info_dir = trash_dirs()
 
         def on_done(entries: list) -> None:
@@ -510,12 +603,14 @@ class FilesWindow:
                 return
             self.trash_rows = entries
             self._render_rows()
+            self._rebuild_menu()
 
         def on_error(_exc: Exception) -> None:
             if not self._alive:
                 return
             self.trash_rows = []
             self._render_rows()
+            self._rebuild_menu()
 
         jobs.submit(lambda job: list_entries(files_dir, info_dir),
                     on_done=on_done, on_error=on_error)
@@ -534,33 +629,42 @@ class FilesWindow:
 
             root = self._current_root()
             crumbs = split(self.cwd, root, self.root_label)
+        last = len(crumbs) - 1
         for index, label in enumerate(crumbs):
             if index:
-                sep = Gtk.Image.new_from_icon_name("go-next-symbolic")
-                sep.set_pixel_size(16)
-                sep.set_valign(Gtk.Align.CENTER)
+                sep = Gtk.Label(label="/")
+                sep.add_css_class("xx-files-crumb-sep")
+                sep.add_css_class("xx-body")
+                sep.set_margin_start(2)
+                sep.set_margin_end(2)
                 self.crumb_box.append(sep)
             btn = Gtk.Button.new_with_label(label)
+            btn.add_css_class("xx-btn")
             btn.add_css_class("xx-files-crumb")
+            if index == last:
+                btn.add_css_class("current")
             btn.connect("clicked", self._on_crumb, index)
             child = btn.get_child()
             if child is not None:
                 try:
-                    _cond_ellipsize(child, self._Pango, label, 10)
+                    _cond_ellipsize(child, self._Pango, label,
+                                    18 if index == last else 10)
                 except Exception:
                     pass
             self.crumb_box.append(btn)
-        for key, btn in self.view_btns.items():
-            if btn.get_active() != (self.settings.view == key):
-                btn.set_active(self.settings.view == key)
         browsing = self.mode == "browse"
         grid = browsing and self.settings.view == "grid"
         self.scroll.set_visible(not grid)
         self.grid_scroll.set_visible(grid)
-        self.view_box.set_visible(browsing)
+        self.search_btn.set_visible(browsing)
+        self.back_btn.set_visible(self.mode != "volumes")
+        self.crumb_box.set_margin_start(16 if self.mode == "volumes" else 0)
+        self._rebuild_menu()
+
+    def _pin_crumbs_right(self, adj) -> None:
+        """Keep the current folder in view as the path grows."""
         try:
-            adj = self.crumb_scroll.get_hadjustment()
-            adj.set_value(adj.get_upper())
+            adj.set_value(adj.get_upper() - adj.get_page_size())
         except Exception:
             pass
 
@@ -581,7 +685,9 @@ class FilesWindow:
             return
         from .breadcrumbs import navigate_to
 
-        self.open_path(navigate_to(self.cwd, self._current_root(), index))
+        target = navigate_to(self.cwd, self._current_root(), index)
+        if target != self.cwd:
+            self.open_path(target)
 
     # -- rows -------------------------------------------------------
     def _visible_rows(self) -> list[dict]:
@@ -683,7 +789,6 @@ class FilesWindow:
         from . import jobs
 
         self.expanded.add(path)
-        self._set_status("Loading…")
         show_hidden = self.settings.show_hidden
 
         def on_done(result: tuple[str, list[dict]]) -> None:
@@ -706,107 +811,74 @@ class FilesWindow:
             self.flow.remove(child)
             child = self.flow.get_child_at_index(0)
         if self.mode == "volumes":
-            self._render_volume_rows()
+            for vol in self.roots:
+                self.list_box.append(self._volume_row(vol))
         elif self.mode == "trash":
-            self._render_trash_rows()
+            for entry in self.trash_rows:
+                self.list_box.append(self._trash_row(entry))
+        elif self._list_error.get("status") != "ok":
+            # One quiet line where the rows would be; nothing else.
+            if self._list_error.get("status") == "blocked":
+                from .directory_contents import BLOCKED_COPY
+
+                text = BLOCKED_COPY
+            else:
+                text = self._list_error.get("message") or "Could not open"
+            self.list_box.append(self._message_row(text))
         elif self.settings.view == "grid":
             for item in self._visible_rows():
                 self.flow.append(self._grid_cell(item))
-            self._update_status_grid()
         elif self.settings.view == "tree":
-            nodes = self._tree_nodes()
-            if not nodes and self.query:
-                self.list_box.append(self._message_row("No matches."))
-            for item in nodes:
+            for item in self._tree_nodes():
                 self.list_box.append(self._browse_row(item))
-            self._update_status_list(len(nodes))
         else:
-            items = self._visible_rows()
-            if self._at_volume_root():
-                self.list_box.append(self._volumes_row())
-            if not items and self._list_error.get("status") == "ok":
-                self.list_box.append(self._message_row(
-                    "No matches." if self.query else "Empty."))
-            elif self._list_error.get("status") == "blocked":
-                from .directory_contents import BLOCKED_COPY
-
-                self.list_box.append(self._message_row(BLOCKED_COPY))
-            elif self._list_error.get("status") == "failed":
-                self.list_box.append(self._message_row(
-                    self._list_error.get("message", "Could not open")))
-            for item in items:
+            for item in self._visible_rows():
                 self.list_box.append(self._browse_row(item))
-            self._update_status_list(len(items))
         self._update_selection_bar()
 
-    def _at_volume_root(self) -> bool:
-        from .volumes import is_volume_root
-
-        return is_volume_root(self.cwd, [r.root_path for r in self.roots])
-
     def _message_row(self, text: str):
-        Gtk, Pango = self._Gtk, self._Pango
-        row = Gtk.ListBoxRow()
+        row = self._Gtk.ListBoxRow()
+        row.add_css_class("xx-files-message")
         row.set_activatable(False)
-        label = Gtk.Label(label=text)
-        label.add_css_class("xx-secondary")
-        label.set_xalign(0.0)
-        label.set_margin_start(20)
-        label.set_wrap(True)
-        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        label.set_max_width_chars(28)
-        row.set_child(label)
+        row.set_child(self._label(text, "xx-secondary", 32, wrap=True))
         return row
 
-    def _volumes_row(self):
+    def _row_shell(self, name: str):
         Gtk = self._Gtk
         row = Gtk.ListBoxRow()
-        row.set_name("↑ Volumes")
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        box.set_margin_start(20)
-        box.set_margin_end(20)
-        label = Gtk.Label(label="↑ Volumes")
-        label.add_css_class("xx-files-row-title")
-        label.set_xalign(0.0)
-        label.set_hexpand(True)
-        label.set_ellipsize(self._Pango.EllipsizeMode.NONE)
-        label.set_max_width_chars(20)
-        box.append(label)
+        row.add_css_class("xx-files-row")
+        row.set_name(name)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
         row.set_child(box)
-        return row
+        return row, box
 
-    def _render_volume_rows(self) -> None:
-        for vol in self.roots:
-            self.list_box.append(self._volume_row(vol))
-        self._set_status(f"{len(self.roots)} locations")
-
-    def _volume_row(self, vol) -> object:
-        Gtk, Pango = self._Gtk, self._Pango
-        row = Gtk.ListBoxRow()
-        row.set_name("vol:" + vol.root_path)
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        box.set_margin_start(20)
-        box.set_margin_end(20)
-        icon = ("drive-harddisk-symbolic" if vol.is_primary
-                else "drive-removable-media-symbolic")
-        img = Gtk.Image.new_from_icon_name(icon)
-        img.set_pixel_size(24)
-        box.append(img)
+    def _row_texts(self, box, title: str, sub: str) -> None:
+        Gtk = self._Gtk
         texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         texts.set_hexpand(True)
-        title = Gtk.Label(label=vol.label)
-        title.add_css_class("xx-files-row-title")
-        title.set_xalign(0.0)
-        _cond_ellipsize(title, Pango, vol.label, 20)
-        texts.append(title)
-        sub = Gtk.Label(label=vol.root_path)
-        sub.add_css_class("xx-secondary")
-        sub.add_css_class("xx-files-row-sub")
-        sub.set_xalign(0.0)
-        _cond_ellipsize(sub, Pango, vol.root_path, 24)
-        texts.append(sub)
+        texts.set_valign(Gtk.Align.CENTER)
+        texts.append(self._label(title, "xx-title", 22))
+        if sub:
+            texts.append(self._label(sub, "xx-secondary", 26))
         box.append(texts)
-        row.set_child(box)
+
+    def _row_icon(self, box, icon: str) -> None:
+        img = self._Gtk.Image.new_from_icon_name(icon)
+        img.set_pixel_size(22)
+        img.set_valign(self._Gtk.Align.CENTER)
+        box.append(img)
+
+    def _volume_row(self, vol) -> object:
+        row, box = self._row_shell("vol:" + vol.root_path)
+        if vol.is_primary:
+            icon = "user-home-symbolic"
+        elif vol.is_removable:
+            icon = "drive-removable-media-symbolic"
+        else:
+            icon = "folder-symbolic"
+        self._row_icon(box, icon)
+        self._row_texts(box, vol.label,
+                        pretty_path(vol.root_path, self._home()))
         return row
 
     def _second_line(self, item: dict) -> str:
@@ -822,52 +894,27 @@ class FilesWindow:
                                 modified_ms)
 
     def _browse_row(self, item: dict):
-        Gtk, Pango = self._Gtk, self._Pango
+        Gtk = self._Gtk
         from .row import icon_for_kind
 
         entry = item["entry"]
-        row = Gtk.ListBoxRow()
-        row.set_name("file:" + entry.path)
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        box.set_margin_start(20)
-        box.set_margin_end(20)
-        if item["depth"]:
-            pad = Gtk.Label(label=" " * (item["depth"] * 2))
-            pad.add_css_class("xx-secondary")
-            box.append(pad)
+        row, box = self._row_shell("file:" + entry.path)
+        if item["guide"]:
+            # `tree`-style guide in front of the glyph, like Android.
+            guide = self._label(item["guide"].rstrip(), "xx-secondary", 24)
+            guide.add_css_class("xx-files-guide")
+            guide.set_valign(Gtk.Align.CENTER)
+            box.append(guide)
         if self.selecting:
             check = Gtk.CheckButton()
             check.set_active(entry.path in self.selection)
             check.set_can_focus(False)
+            check.set_can_target(False)
+            check.set_valign(Gtk.Align.CENTER)
             box.append(check)
-        img = Gtk.Image.new_from_icon_name(
-            icon_for_kind(item["kind"],
-                          bool(item.get("expanded"))))
-        img.set_pixel_size(24)
-        box.append(img)
-        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        texts.set_hexpand(True)
-        shown = item["guide"] + entry.name
-        title = Gtk.Label(label=shown)
-        title.add_css_class("xx-files-row-title")
-        title.set_xalign(0.0)
-        _cond_ellipsize(title, Pango, shown, 20)
-        texts.append(title)
-        second = self._second_line(item)
-        sub = Gtk.Label(label=second)
-        sub.add_css_class("xx-secondary")
-        sub.add_css_class("xx-files-row-sub")
-        sub.set_xalign(0.0)
-        _cond_ellipsize(sub, Pango, second, 24)
-        texts.append(sub)
-        box.append(texts)
-        if item.get("expanded") is not None:
-            exp = Gtk.Image.new_from_icon_name(
-                "go-down-symbolic" if item["expanded"]
-                else "go-next-symbolic")
-            exp.set_pixel_size(20)
-            box.append(exp)
-        row.set_child(box)
+        self._row_icon(box, icon_for_kind(item["kind"],
+                                          bool(item.get("expanded"))))
+        self._row_texts(box, entry.name, self._second_line(item))
         long_press = Gtk.GestureLongPress.new()
         long_press.connect("pressed", self._on_long_press, entry.path,
                            entry.is_dir)
@@ -881,21 +928,25 @@ class FilesWindow:
         entry = item["entry"]
         cell = Gtk.FlowBoxChild()
         cell.set_name("file:" + entry.path)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.add_css_class("xx-files-grid-cell")
-        box.set_size_request(100, -1)
         img = Gtk.Image.new_from_icon_name(icon_for_kind(item["kind"]))
-        img.set_pixel_size(44)
+        img.set_pixel_size(36)
         img.set_halign(Gtk.Align.CENTER)
         box.append(img)
         label = Gtk.Label(label=entry.name)
+        label.add_css_class("xx-time")
         label.add_css_class("xx-files-grid-name")
+        label.set_justify(Gtk.Justification.CENTER)
         label.set_xalign(0.5)
         label.set_wrap(True)
         label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        label.set_ellipsize(Pango.EllipsizeMode.NONE)
-        label.set_max_width_chars(6)
+        label.set_lines(2)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_max_width_chars(8)
         box.append(label)
+        if self.selecting and entry.path in self.selection:
+            cell.add_css_class("selected")
         cell.set_child(box)
         long_press = Gtk.GestureLongPress.new()
         long_press.connect("pressed", self._on_long_press, entry.path,
@@ -903,65 +954,26 @@ class FilesWindow:
         cell.add_controller(long_press)
         return cell
 
-    def _render_trash_rows(self) -> None:
-        for entry in self.trash_rows:
-            self.list_box.append(self._trash_row(entry))
-        if not self.trash_rows:
-            self.list_box.append(self._message_row(
-                "Empty. Deleted files stay here until you remove them."))
-            self._set_status("Trash is empty")
-        else:
-            self._set_status(f"{len(self.trash_rows)} in Trash")
-
     def _trash_row(self, entry) -> object:
-        Gtk, Pango = self._Gtk, self._Pango
-        row = Gtk.ListBoxRow()
-        row.set_name("trash:" + entry.trash_path)
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        box.set_margin_start(20)
-        box.set_margin_end(20)
-        img = Gtk.Image.new_from_icon_name("user-trash-symbolic")
-        img.set_pixel_size(24)
-        box.append(img)
-        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        texts.set_hexpand(True)
-        title = Gtk.Label(label=entry.display_name)
-        title.add_css_class("xx-files-row-title")
-        title.set_xalign(0.0)
-        _cond_ellipsize(title, Pango, entry.display_name, 20)
-        texts.append(title)
+        from .filekind import of
+        from .row import icon_for_kind
+
+        row, box = self._row_shell("trash:" + entry.trash_path)
+        is_dir = os.path.isdir(entry.trash_path)
+        self._row_icon(box, icon_for_kind(of(entry.display_name,
+                                             is_dir).value))
         origin = entry.original_path or "Original unknown"
-        sub = Gtk.Label(label=origin)
-        sub.add_css_class("xx-secondary")
-        sub.add_css_class("xx-files-row-sub")
-        sub.set_xalign(0.0)
-        _cond_ellipsize(sub, Pango, origin, 24)
-        texts.append(sub)
-        box.append(texts)
-        row.set_child(box)
-        long_press = Gtk.GestureLongPress.new()
+        self._row_texts(box, entry.display_name,
+                        pretty_path(origin, self._home()))
+        long_press = self._Gtk.GestureLongPress.new()
         long_press.connect("pressed", self._on_trash_long_press,
                            entry.trash_path)
         row.add_controller(long_press)
         return row
 
-    def _update_status_list(self, count: int) -> None:
-        if self._list_error.get("status") != "ok":
-            self._set_status("Could not read this folder")
-            return
-        noun = "item" if count == 1 else "items"
-        hidden = " · hidden shown" if self.settings.show_hidden else ""
-        self._set_status(f"{count} {noun}{hidden}")
-
-    def _update_status_grid(self) -> None:
-        self._update_status_list(len(self._visible_rows()))
-
     # -- activation -------------------------------------------------
     def _row_target(self, row) -> tuple[str, bool] | None:
         name = row.get_name() or ""
-        if name == "↑ Volumes":
-            self.show_volumes()
-            return None
         if name.startswith("vol:"):
             self.open_path(name[4:])
             return None
@@ -1028,6 +1040,11 @@ class FilesWindow:
                              trash_path: str) -> None:
         self._show_trash_actions(trash_path)
 
+    def _start_selection(self, path: str) -> None:
+        self.selecting = True
+        self.selection = {path}
+        self._render_rows()
+
     def _toggle_selected(self, path: str) -> None:
         if path in self.selection:
             self.selection.discard(path)
@@ -1035,6 +1052,10 @@ class FilesWindow:
             self.selection.add(path)
         if not self.selection:
             self.selecting = False
+        self._render_rows()
+
+    def _end_selection(self) -> None:
+        self._clear_selection()
         self._render_rows()
 
     def _clear_selection(self) -> None:
@@ -1047,82 +1068,92 @@ class FilesWindow:
         show = self.selecting and bool(self.selection)
         self.sel_revealer.set_reveal_child(show)
         if show:
-            n = len(self.selection)
-            text = f"{n} selected"
+            text = f"{len(self.selection)} selected"
             self.sel_label.set_text(text)
-            _cond_ellipsize(self.sel_label, self._Pango, text, 20)
-
-    def _set_status(self, text: str) -> None:
-        self.status.set_text(text)
-        _cond_ellipsize(self.status, self._Pango, text, 32)
+            _cond_ellipsize(self.sel_label, self._Pango, text, 16)
 
     def _stage_selection(self, is_cut: bool) -> None:
         self.clip = [(p, is_cut) for p in sorted(self.selection)]
-        verb = "Cut" if is_cut else "Copied"
-        n = len(self.clip)
-        self._clear_selection()
-        self._render_rows()
-        self._set_status(f"{verb} {n} for paste")
+        self._end_selection()
+        self._rebuild_menu()
 
     # -- bottom sheets ----------------------------------------------
-    def _open_sheet(self, title: str) -> object:
-        Gtk = self._Gtk
+    def _open_sheet(self, title: str = "", modal: bool = False,
+                    head_cls: str = "xx-dialog-title") -> object:
         while (child := self.sheet_box.get_first_child()) is not None:
             self.sheet_box.remove(child)
-        head = Gtk.Label(label=title)
-        head.add_css_class("xx-files-sheet-title")
-        head.set_xalign(0.0)
-        _cond_ellipsize(head, self._Pango, title, 24)
-        self.sheet_box.append(head)
-        self.sheet_revealer.set_reveal_child(True)
+        if title:
+            head = self._label(title, head_cls, 24)
+            head.add_css_class("xx-files-sheet-head")
+            self.sheet_box.append(head)
+        self._sheet_modal = modal
+        try:
+            height = self.win.get_height() or 720
+            self.sheet_scroll.set_max_content_height(int(height * 0.7))
+        except Exception:
+            pass
+        self.sheet_layer.set_visible(True)
         return self.sheet_box
 
     def _close_sheet(self) -> None:
-        self.sheet_revealer.set_reveal_child(False)
+        self._sheet_modal = False
+        self.sheet_layer.set_visible(False)
 
-    def _sheet_buttons(self, box, labels: list[tuple[str, object]]) -> None:
+    def _dismiss_sheet(self) -> None:
+        """Scrim tap / Escape: closes anything but a running job."""
+        if not self._sheet_modal:
+            self._close_sheet()
+
+    def _sheet_body(self, box, text: str) -> None:
+        body = self._label(text, "xx-secondary", 30, wrap=True)
+        body.add_css_class("xx-files-dialog")
+        box.append(body)
+
+    def _sheet_buttons(self, box, buttons: list) -> None:
+        """Right-aligned: Cancel as text, the verb filled."""
         Gtk = self._Gtk
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        row.add_css_class("xx-files-buttons")
         row.set_halign(Gtk.Align.END)
-        for label, cb in labels:
-            btn = Gtk.Button.new_with_label(label)
-            btn.add_css_class("xx-btn")
-            btn.connect("clicked", lambda _b, f=cb: f())
-            try:
-                child = btn.get_child()
-                if child is not None:
-                    child.set_ellipsize(self._Pango.EllipsizeMode.NONE)
-                    child.set_max_width_chars(16)
-            except Exception:
-                pass
-            row.append(btn)
+        for spec in buttons:
+            text, cb = spec[0], spec[1]
+            kind = spec[2] if len(spec) > 2 else "text"
+            row.append(self._text_button(text, cb, kind))
         box.append(row)
 
-    def _sheet_entry(self, box, initial: str = ""):
-        Gtk = self._Gtk
-        entry = Gtk.Entry()
+    def _sheet_entry(self, box, initial: str = "", placeholder: str = ""):
+        entry = self._Gtk.Entry()
+        entry.add_css_class("xx-entry")
         entry.set_text(initial)
+        entry.set_placeholder_text(placeholder)
         entry.set_hexpand(True)
+        entry.set_max_width_chars(20)
+        entry.set_margin_start(20)
+        entry.set_margin_end(20)
+        entry.set_margin_top(4)
         box.append(entry)
         return entry
 
+    def _sheet_action(self, box, text: str, callback) -> None:
+        btn = self._Gtk.Button()
+        btn.add_css_class("xx-files-action")
+        btn.add_css_class("xx-menu-row")
+        label = self._label(text, "xx-body", 24)
+        label.set_hexpand(True)
+        btn.set_child(label)
+        btn.connect("clicked", lambda _b: callback())
+        box.append(btn)
+
     def _show_note(self, title: str, body: str) -> None:
         box = self._open_sheet(title)
-        label = self._Gtk.Label(label=body)
-        label.add_css_class("xx-secondary")
-        label.set_xalign(0.0)
-        label.set_wrap(True)
-        label.set_wrap_mode(self._Pango.WrapMode.WORD_CHAR)
-        label.set_max_width_chars(28)
-        box.append(label)
+        self._sheet_body(box, body)
         self._sheet_buttons(box, [("OK", self._close_sheet)])
 
     def _ask_new_folder(self) -> None:
         if self.mode != "browse":
-            self._show_note("New folder", "Open a folder first.")
             return
         box = self._open_sheet("New folder")
-        entry = self._sheet_entry(box)
+        entry = self._sheet_entry(box, placeholder="Folder name")
 
         def save() -> None:
             from . import jobs
@@ -1140,13 +1171,13 @@ class FilesWindow:
                                 f"{name} already exists here.")
                 return
             self._close_sheet()
-            self._set_status("Creating…")
             jobs.submit(do_mkdir, target,
                         on_done=lambda _p: self.refresh(),
                         on_error=lambda e: self._op_failed(e))
 
+        entry.connect("activate", lambda _e: save())
         self._sheet_buttons(box, [("Cancel", self._close_sheet),
-                                  ("Create", save)])
+                                  ("Create", save, "primary")])
         entry.grab_focus()
 
     def _ask_rename(self, path: str) -> None:
@@ -1173,24 +1204,16 @@ class FilesWindow:
                 self._confirm_overwrite(path, target)
                 return
             self._close_sheet()
-            self._run_op(do_rename, path, target,
-                         done_text="Renamed")
+            self._run_op(do_rename, path, target)
 
+        entry.connect("activate", lambda _e: save())
         self._sheet_buttons(box, [("Cancel", self._close_sheet),
-                                  ("Rename", save)])
+                                  ("Rename", save, "primary")])
         entry.grab_focus()
 
     def _confirm_overwrite(self, source: str, target: str) -> None:
         box = self._open_sheet("Replace file?")
-        label = self._Gtk.Label(
-            label=f"{os.path.basename(target)} already exists. "
-                  "Replace it?")
-        label.add_css_class("xx-secondary")
-        label.set_xalign(0.0)
-        label.set_wrap(True)
-        label.set_wrap_mode(self._Pango.WrapMode.WORD_CHAR)
-        label.set_max_width_chars(28)
-        box.append(label)
+        self._sheet_body(box, f"{os.path.basename(target)} already exists.")
 
         def replace() -> None:
             from . import jobs
@@ -1203,65 +1226,55 @@ class FilesWindow:
                         on_error=lambda e: self._op_failed(e))
 
         self._sheet_buttons(box, [("Cancel", self._close_sheet),
-                                  ("Replace", replace)])
+                                  ("Replace", replace, "danger")])
 
     def _ask_delete(self, paths: list[str]) -> None:
         n = len(paths)
         box = self._open_sheet("Move to Trash?")
-        label = self._Gtk.Label(
-            label=f"{n} item{'s' if n != 1 else ''} will go to Trash.")
-        label.add_css_class("xx-secondary")
-        label.set_xalign(0.0)
-        label.set_wrap(True)
-        label.set_wrap_mode(self._Pango.WrapMode.WORD_CHAR)
-        label.set_max_width_chars(28)
-        box.append(label)
+        what = os.path.basename(paths[0]) if n == 1 else f"{n} items"
+        self._sheet_body(box, what)
 
         def delete() -> None:
             from . import jobs
             from .ops import do_trash
 
             self._close_sheet()
-            self._clear_selection()
-            self._set_status("Moving to Trash…")
+            self._end_selection()
             jobs.submit(do_trash, paths,
                         on_done=lambda _r: self.refresh(),
                         on_error=lambda e: self._op_failed(e))
 
         self._sheet_buttons(box, [("Cancel", self._close_sheet),
-                                  ("Move to Trash", delete)])
+                                  ("Move to Trash", delete, "primary")])
 
     def _show_properties(self, path: str) -> None:
         from .mime import from_extension
         from .row import human_size, iso_date
 
+        Gtk = self._Gtk
         box = self._open_sheet(os.path.basename(path) or path)
-        lines: list[str] = []
+        facts: list[tuple[str, str]] = []
         try:
             stat = os.stat(path)
-            lines.append(f"Size  {human_size(stat.st_size)}")
-            lines.append(f"Modified  {iso_date(int(stat.st_mtime * 1000))}")
+            facts.append(("Size", human_size(stat.st_size)))
+            facts.append(("Modified", iso_date(int(stat.st_mtime * 1000))))
         except OSError:
             pass
-        if not os.path.isdir(path):
-            lines.append(f"Type  {from_extension(path)}")
-        else:
+        if os.path.isdir(path):
             count, _hidden = self._count_now(path)
-            lines.append(f"Contents  {count} items")
-        path_label = self._Gtk.Label(label=path)
-        path_label.add_css_class("xx-secondary")
-        path_label.set_xalign(0.0)
-        path_label.set_wrap(True)
-        path_label.set_wrap_mode(self._Pango.WrapMode.WORD_CHAR)
-        path_label.set_max_width_chars(28)
-        box.append(path_label)
-        for line in lines:
-            row = self._Gtk.Label(label=line)
-            row.add_css_class("xx-secondary")
-            row.set_xalign(0.0)
-            _cond_ellipsize(row, self._Pango, line, 28)
-            box.append(row)
-        self._sheet_buttons(box, [("Close", self._close_sheet)])
+            facts.append(("Contents", f"{count} items"))
+        else:
+            facts.append(("Type", from_extension(path)))
+        facts.append(("Where", pretty_path(os.path.dirname(path) or "/",
+                                          self._home())))
+        for key, value in facts:
+            fact = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            fact.add_css_class("xx-files-dialog")
+            fact.add_css_class("xx-files-prop")
+            fact.append(self._label(key.upper(), "xx-caption", 24))
+            fact.append(self._label(value, "xx-body", 30,
+                                    wrap=key == "Where"))
+            box.append(fact)
 
     def _count_now(self, path: str) -> tuple[int, int]:
         from .ops import count_visible
@@ -1271,17 +1284,13 @@ class FilesWindow:
     def _show_file_actions(self, path: str, is_dir: bool) -> None:
         from .menu_actions import for_type
 
-        box = self._open_sheet(os.path.basename(path))
+        box = self._open_sheet(os.path.basename(path), head_cls="xx-secondary")
         for action in for_type(is_dir):
-            btn = self._Gtk.Button.new_with_label(action.value.capitalize())
-            btn.add_css_class("xx-files-action")
-            btn.connect("clicked", self._on_file_action, action, path)
-            box.append(btn)
-        self._sheet_buttons(box, [("Cancel", self._close_sheet),
-                                  ("Select", lambda: (
-                                      self._close_sheet(),
-                                      self._on_long_press(None, 0, 0,
-                                                          path, is_dir)))])
+            self._sheet_action(box, action.value.capitalize(),
+                               lambda a=action: self._on_file_action(
+                                   None, a, path))
+        self._sheet_action(box, "Select", lambda: (
+            self._close_sheet(), self._start_selection(path)))
 
     def _on_file_action(self, _btn, action, path: str) -> None:
         from .menu_actions import Action
@@ -1296,10 +1305,10 @@ class FilesWindow:
             self._share_paths([path])
         elif action is Action.COPY:
             self.clip = [(path, False)]
-            self._set_status("Copied 1 for paste")
+            self._rebuild_menu()
         elif action is Action.CUT:
             self.clip = [(path, True)]
-            self._set_status("Cut 1 for paste")
+            self._rebuild_menu()
         elif action is Action.RENAME:
             self._ask_rename(path)
         elif action is Action.DELETE:
@@ -1308,36 +1317,72 @@ class FilesWindow:
             self._show_properties(path)
 
     def _show_trash_actions(self, trash_path: str) -> None:
-        box = self._open_sheet(os.path.basename(trash_path))
-        restore = self._Gtk.Button.new_with_label("Restore")
-        restore.add_css_class("xx-files-action")
-        restore.connect("clicked", lambda _b: (
+        box = self._open_sheet(os.path.basename(trash_path),
+                               head_cls="xx-secondary")
+        self._sheet_action(box, "Restore", lambda: (
             self._close_sheet(), self._restore_entry(trash_path)))
-        box.append(restore)
-        forever = self._Gtk.Button.new_with_label("Delete forever")
-        forever.add_css_class("xx-files-action")
-        forever.connect("clicked", lambda _b: (
-            self._close_sheet(), self._delete_forever([trash_path])))
-        box.append(forever)
-        self._sheet_buttons(box, [("Cancel", self._close_sheet),
-                                  ("Empty Trash",
-                                   lambda: (self._close_sheet(),
-                                            self._empty_trash()))])
+        self._sheet_action(box, "Delete forever",
+                           lambda: self._ask_delete_forever(trash_path))
+
+    def _ask_delete_forever(self, trash_path: str) -> None:
+        box = self._open_sheet("Delete forever?")
+        self._sheet_body(box, os.path.basename(trash_path))
+        self._sheet_buttons(box, [
+            ("Cancel", self._close_sheet),
+            ("Delete", lambda: (self._close_sheet(),
+                                self._delete_forever([trash_path])),
+             "danger")])
+
+    def _ask_empty_trash(self) -> None:
+        n = len(self.trash_rows)
+        box = self._open_sheet("Empty Trash?")
+        self._sheet_body(box, "1 item" if n == 1 else f"{n} items")
+        self._sheet_buttons(box, [
+            ("Cancel", self._close_sheet),
+            ("Empty", lambda: (self._close_sheet(), self._empty_trash()),
+             "danger")])
+
+    def _show_view_sheet(self) -> None:
+        """List/Tree/Grid, sort and hidden files in one place."""
+        Gtk = self._Gtk
+        box = self._open_sheet("View")
+        for caption, items, current, pick in (
+                ("Layout", VIEWS, self.settings.view, self._set_view),
+                ("Sort", SORTS, self.settings.sort, self._set_sort)):
+            group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            group.add_css_class("xx-files-dialog")
+            group.add_css_class("xx-files-prop")
+            group.append(self._label(caption.upper(), "xx-caption", 24))
+            group.append(self._segmented(items, current, pick))
+            box.append(group)
+        hidden = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        hidden.add_css_class("xx-files-dialog")
+        hidden.add_css_class("xx-files-prop")
+        title = self._label("Show hidden", "xx-body", 20)
+        title.set_hexpand(True)
+        title.set_valign(Gtk.Align.CENTER)
+        hidden.append(title)
+        switch = Gtk.Switch()
+        switch.add_css_class("xx-switch")
+        switch.set_active(self.settings.show_hidden)
+        switch.set_valign(Gtk.Align.CENTER)
+        switch.connect("notify::active",
+                       lambda s, _p: self._set_show_hidden(s.get_active()))
+        hidden.append(switch)
+        box.append(hidden)
 
     # -- operations -------------------------------------------------
-    def _run_op(self, func, *args, done_text: str = "Done") -> None:
+    def _run_op(self, func, *args) -> None:
         from . import jobs
 
         if self._op_job is not None:
             self._op_job.cancel()
-        self._set_status("Working…")
 
         def on_done(_result) -> None:
             if not self._alive:
                 return
             self._op_job = None
             self._close_sheet()
-            self._set_status(done_text)
             if self.mode == "trash":
                 self.refresh_trash()
             else:
@@ -1367,20 +1412,16 @@ class FilesWindow:
         from .clip import can_paste
         from .ops import do_paste
 
-        if self.mode != "browse":
-            self._show_note("Paste", "Open a folder first.")
+        if self.mode != "browse" or not self.clip:
             return
-        if not can_paste(self.clip[0] if self.clip else None,
-                         os.access(self.cwd, os.W_OK)):
-            if not self.clip:
-                self._show_note("Paste", "Nothing copied yet.")
-            else:
-                self._show_note("Paste", "This folder is read-only.")
+        if not can_paste(self.clip[0], os.access(self.cwd, os.W_OK)):
+            self._show_note("Paste", "This folder is read-only.")
             return
         items = list(self.clip)
         cwd = self.cwd
         self.clip = []
-        self._show_progress("Pasting…")
+        self._rebuild_menu()
+        self._show_progress("Pasting")
         progress = self._progress_cb
 
         def on_done(_made) -> None:
@@ -1396,7 +1437,6 @@ class FilesWindow:
             self._op_job = None
             if isinstance(exc, jobs.Cancelled):
                 self._close_sheet()
-                self._set_status("Cancelled")
                 self.refresh()
             else:
                 self._op_failed(exc)
@@ -1408,22 +1448,16 @@ class FilesWindow:
 
     def _show_progress(self, title: str) -> None:
         Gtk = self._Gtk
-        box = self._open_sheet(title)
+        box = self._open_sheet(title, modal=True)
         self._progress_bar = Gtk.ProgressBar()
-        self._progress_bar.set_show_text(True)
+        self._progress_bar.add_css_class("xx-files-dialog")
+        self._progress_bar.set_margin_top(8)
         box.append(self._progress_bar)
-        self._progress_label = Gtk.Label(label="Starting…")
-        self._progress_label.add_css_class("xx-secondary")
-        self._progress_label.set_xalign(0.0)
-        self._progress_label.set_ellipsize(self._Pango.EllipsizeMode.NONE)
-        self._progress_label.set_max_width_chars(28)
+        self._progress_label = self._label("", "xx-secondary", 28)
+        self._progress_label.add_css_class("xx-files-dialog")
+        self._progress_label.set_margin_top(8)
         box.append(self._progress_label)
-        cancel = Gtk.Button.new_with_label("Cancel")
-        cancel.connect("clicked", lambda _b: self._cancel_op())
-        cancel_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        cancel_box.set_halign(Gtk.Align.END)
-        cancel_box.append(cancel)
-        box.append(cancel_box)
+        self._sheet_buttons(box, [("Cancel", self._cancel_op)])
 
     def _progress_cb(self, done: int, total: int) -> None:
         from .row import human_size
@@ -1466,9 +1500,7 @@ class FilesWindow:
                     return candidate
             return None
 
-        self._set_status("Restoring…")
-        self._run_op(lambda job: do_restore(job, trash_path, find_info()),
-                     done_text="Restored")
+        self._run_op(lambda job: do_restore(job, trash_path, find_info()))
 
     def _delete_forever(self, trash_paths: list[str]) -> None:
         from .ops import do_delete_forever, trash_dirs
@@ -1480,14 +1512,12 @@ class FilesWindow:
                                    os.path.basename(path) + ".trashinfo")
             if os.path.isfile(sidecar):
                 victims.append(sidecar)
-        self._run_op(do_delete_forever, victims, done_text="Deleted")
+        self._run_op(do_delete_forever, victims)
 
     def _empty_trash(self) -> None:
         from .ops import do_empty_trash
 
-        self._set_status("Emptying Trash…")
-        self._run_op(lambda job: do_empty_trash(job),
-                     done_text="Trash is empty")
+        self._run_op(lambda job: do_empty_trash(job))
 
     def _share_paths(self, paths: list[str]) -> None:
         from .ops import share_files
@@ -1501,7 +1531,7 @@ class FilesWindow:
 
     # -- demo seeding (snaps) ---------------------------------------
     def seed_demo(self, scenario: str) -> None:
-        home = os.environ.get("XX_FILES_HOME") or os.path.expanduser("~")
+        home = self._home()
         self._refresh_roots()
         docs = os.path.join(home, "Documents")
         if scenario in ("blocked",):
@@ -1515,7 +1545,8 @@ class FilesWindow:
             empty = os.path.join(home, "Documents", "Empty folder")
             self.open_path(empty)
             return
-        if scenario in ("trash", "trash_empty", "progress"):
+        if scenario in ("trash", "trash_empty", "trash_actions",
+                        "progress"):
             if scenario == "trash_empty":
                 self.trash_rows = []
                 self.mode = "trash"
@@ -1523,11 +1554,18 @@ class FilesWindow:
                 self._render_rows()
             elif scenario == "progress":
                 self.open_root_home()
-                self._show_progress("Pasting…")
+                self.clip = [(os.path.join(docs, "report.pdf"), False)]
+                self._show_progress("Pasting")
                 self._progress_bar.set_fraction(0.45)
                 self._progress_label.set_text("45.0 MB of 100.0 MB")
             else:
                 self.show_trash()
+                if scenario == "trash_actions":
+                    from .ops import trash_dirs
+
+                    files_dir, _info = trash_dirs()
+                    self._show_trash_actions(
+                        os.path.join(files_dir, "draft.txt"))
             return
         self.open_root_home()
         if scenario == "volumes":
@@ -1544,17 +1582,21 @@ class FilesWindow:
             self.settings.view = "grid"
             self._render_chrome()
             self._render_rows()
+        elif scenario == "deep":
+            self.open_path(os.path.join(home, "Pictures", "Camera"))
         elif scenario == "search":
+            self.open_path(os.path.join(home, "Pictures"))
             self.search_revealer.set_reveal_child(True)
             self.search_entry.set_text("pho")
             self.query = "pho"
             self._render_rows()
         elif scenario == "multiselect":
+            self.open_path(os.path.join(home, "Pictures"))
             photos = [os.path.join(home, "Pictures", n)
                       for n in sorted(os.listdir(os.path.join(
                           home, "Pictures")))]
             self.selecting = True
-            self.selection = set(photos[:2])
+            self.selection = set(photos[1:3])
             self._render_rows()
         elif scenario == "properties":
             self._show_properties(os.path.join(docs, "notes.txt"))
@@ -1566,13 +1608,12 @@ class FilesWindow:
             self._ask_delete([os.path.join(docs, "notes.txt")])
         elif scenario == "actions":
             self._show_file_actions(os.path.join(docs, "notes.txt"), False)
-        elif scenario == "sort_menu":
-            self._open_sort_sheet()
+        elif scenario in ("sort_menu", "view"):
+            self._show_view_sheet()
 
     def open_root_home(self) -> None:
-        home = os.environ.get("XX_FILES_HOME") or os.path.expanduser("~")
         self.root_label = "Home"
-        self.cwd = home
+        self.cwd = self._home()
         self.mode = "browse"
         self._clear_selection()
         self._render_chrome()
@@ -1585,32 +1626,13 @@ class FilesWindow:
         box = self._open_sheet("New folder")
         self._sheet_entry(box, "New trip")
         self._sheet_buttons(box, [("Cancel", self._close_sheet),
-                                  ("Create", self._close_sheet)])
+                                  ("Create", self._close_sheet, "primary")])
 
     def _open_rename_sheet(self, path: str) -> None:
         box = self._open_sheet("Rename")
         self._sheet_entry(box, os.path.basename(path))
         self._sheet_buttons(box, [("Cancel", self._close_sheet),
-                                  ("Rename", self._close_sheet)])
-
-    def _open_sort_sheet(self) -> None:
-        Gtk = self._Gtk
-        box = self._open_sheet("Sort by")
-        current = self.settings.sort
-        for key, label in (("name", "Name"), ("size", "Size"),
-                           ("date", "Date")):
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            mark = Gtk.CheckButton()
-            mark.set_active(key == current)
-            mark.set_sensitive(False)
-            mark.set_can_focus(False)
-            row.append(mark)
-            text = Gtk.Label(label=label)
-            text.set_xalign(0.0)
-            text.set_hexpand(True)
-            row.append(text)
-            box.append(row)
-        self._sheet_buttons(box, [("Close", self._close_sheet)])
+                                  ("Rename", self._close_sheet, "primary")])
 
 
 class FilesApp:

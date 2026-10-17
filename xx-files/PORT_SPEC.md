@@ -145,8 +145,18 @@ works live.
 
 ## 3. Screens (snap_all states)
 
-volumes, files (list), tree, grid, search, multiselect, properties,
-new_folder, rename, delete_confirm, trash, trash_empty_state,
-empty_folder, blocked, progress, sort_menu — each in amoled + paper
-at 360x720, plus graphite/aura spot checks and a 320-px-wide fit
-check of the main listing.
+volumes, files (list), deep (nested path), tree, grid, search,
+multiselect, actions, properties, view (layout, sort, show hidden),
+new_folder, rename, delete_confirm, progress, trash, trash_actions,
+trash_empty, empty_folder, blocked — each in amoled + paper on the FLX1
+canvas (450x1000), the main ones at 360x800, plus 320 px and
+text-size-scale 1.3 fit checks and graphite/aura spot checks.
+
+Design rules applied (owner's minimal pass): the path is the header
+(no app title), one overflow whose entries depend on the place (Paste
+only with something staged, Empty Trash only inside Trash), no status
+line or toasts for direct actions, no empty-state copy (an empty
+folder or Trash shows nothing), one quiet line for an unreadable
+folder, row and trash actions in a bottom sheet over a scrim, and a
+confirm only for destructive verbs (Move to Trash, Delete forever,
+Empty Trash, Replace).
