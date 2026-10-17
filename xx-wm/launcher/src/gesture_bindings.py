@@ -106,8 +106,11 @@ def detect_touch_device(sys_input: Path | None = None) -> str | None:
 
 
 def _kill_lisgd() -> None:
-    subprocess.run(
-        ['pkill', '-x', 'lisgd'], check=False,
+    # Fire-and-forget: restart_lisgd never reads the kill result (pkill
+    # exits after signalling, not after death), so waiting changes nothing.
+    # OSError (no pkill) still propagates to restart_lisgd, as before.
+    subprocess.Popen(
+        ['pkill', '-x', 'lisgd'], close_fds=True,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 

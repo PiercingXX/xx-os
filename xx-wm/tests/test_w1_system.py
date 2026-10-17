@@ -160,6 +160,7 @@ class FakeBluez:
         self.powered = powered
         self.pair_error = pair_error
         self.calls: list[tuple] = []
+        self.async_calls: list[tuple] = []
         self.registered: list = []
         self.unregistered: list = []
         self.props = {
@@ -173,6 +174,10 @@ class FakeBluez:
             self.ADAPTER: {'org.bluez.Adapter1': {}},
             self.DEVICE: {'org.bluez.Device1': {'Address': self.ADDRESS}},
         }
+
+    def call(self, service, path, iface, method, params, *rest):
+        self.async_calls.append((service, path, iface, method, params))
+        return None
 
     def call_sync(self, service, path, iface, method, params, *rest):
         self.calls.append((service, path, iface, method, params))
@@ -300,6 +305,24 @@ class TestDiscoveryAsync:
             12, on_done=lambda ok: (got.append(ok), done.set()))
         assert done.wait(5)
         assert got == [False]
+
+
+class TestStopDiscoveryAsync:
+    def test_stop_sends_async_without_sync_call(self, monkeypatch):
+        bus = _fake_bluez(monkeypatch, FakeBluez())
+        assert system_settings._stop_bt_discovery(FakeBluez.ADAPTER) is False
+        assert len(bus.async_calls) == 1
+        assert bus.async_calls[0][:4] == (
+            'org.bluez', FakeBluez.ADAPTER,
+            system_settings._ADAPTER_IFACE, 'StopDiscovery')
+        assert bus.calls == []
+
+    def test_stop_without_adapter_is_noop(self, monkeypatch):
+        bus = _fake_bluez(monkeypatch, FakeBluez())
+        monkeypatch.setattr(system_settings, '_adapter_path',
+                            lambda bus=None: None)
+        assert system_settings._stop_bt_discovery(None) is False
+        assert bus.async_calls == []
 
 
 # ---------------------------------------------------------------------------

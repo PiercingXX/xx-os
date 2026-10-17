@@ -18,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 
 import gesture_config
 from gesture_bindings import (
-    ACTION_TO_VERB, DEFAULT_VERBS, detect_touch_device, generate_bindings,
-    restart_lisgd,
+    ACTION_TO_VERB, DEFAULT_VERBS, _kill_lisgd, detect_touch_device,
+    generate_bindings, restart_lisgd,
 )
 from gesture_config import GestureConfig
 
@@ -248,6 +248,13 @@ class TestLisgdRestart:
             kill_fn=lambda: None,
             which=lambda _n: '/usr/bin/lisgd',
         ) is False
+
+    def test_kill_is_fire_and_forget_popen(self, monkeypatch):
+        spawned: list = []
+        monkeypatch.setattr(subprocess, 'Popen',
+                            lambda argv, **_k: spawned.append(argv))
+        _kill_lisgd()
+        assert spawned == [['pkill', '-x', 'lisgd']]
 
 
 class TestCli:

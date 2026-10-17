@@ -70,13 +70,13 @@ ALLOW = {
     ('dialer.py', 'get_modem_emergency_numbers'):
         'documented worker-only; lock-screen modem thread.',
     ('display_manager.py', '_detect_output'):
-        'one-shot startup output probe.',
+        'first-blank output probe; result cached for later wlopm calls.',
     ('display_manager.py', '_wlopm'):
         'blank/wake power path; single bounded compositor call.',
     ('display_manager.py', '_brightnessctl'):
         'blank/wake power path; single bounded sysfs read.',
     ('display_manager.py', '_get_volume_pct'):
-        'volume-key HUD path; single bounded local read.',
+        'volume-key HUD read on the evdev reader thread; single bounded pactl call.',
     ('home_launcher.py', '_waydroid_session_running'):
         'waydroid-launch worker thread (moved off the home tap path).',
     ('lock_screen.py', '_fp_dbus_enrolled'):
@@ -86,7 +86,7 @@ ALLOW = {
     ('lock_screen.py', '_fp_thread'):
         'fingerprint verify worker thread.',
     ('modem_monitor.py', 'bus_name_has_owner'):
-        'single bounded local GetNameOwner probe (500 ms cap), no scan.',
+        'call/SMS signal-callback GetNameOwner probe (500 ms cap), no scan.',
     ('modem_monitor.py', 'resolve_modem_path'):
         'telephony workers (dial/sms threads).',
     ('modem_monitor.py', 'voice_create_and_start'):
@@ -117,8 +117,6 @@ ALLOW = {
         'tile query worker (_query_tile_states).',
     ('quick_actions.py', '_bluez_set'):
         'user-initiated single BlueZ property write (pinned sync snap-back).',
-    ('quick_actions.py', '_get_wifi_ssid'):
-        'tile detail worker (_query_tile_details), --rescan no.',
     ('quick_actions.py', '_get_bt_device_name'):
         'tile detail worker (_query_tile_details).',
     ('quick_actions.py', '_active_hotspot_path'):
@@ -133,8 +131,6 @@ ALLOW = {
         'location toggle path; single bounded agent registration.',
     ('quick_actions.py', '_unregister'):
         'location toggle path; single bounded agent release.',
-    ('quick_actions.py', '_get_brightness_pct'):
-        'slider expand batch worker (_read_slider_values).',
     ('quick_actions.py', '_get_volume_pct'):
         'slider expand batch worker (_read_slider_values).',
     ('settings_page.py', '_gsm_connection_name'):
@@ -178,8 +174,6 @@ ALLOW = {
         'settings pairing worker.',
     ('system_settings.py', '_start_bt_discovery_sync'):
         'start_bt_discovery worker thread.',
-    ('system_settings.py', '_stop_bt_discovery'):
-        'discovery timeout callback; single bounded adapter call.',
     ('system_settings.py', 'pair_bt_device'):
         'settings _run_bg worker (user-initiated pair).',
     ('system_settings.py', 'connect_bt_device'):
@@ -191,7 +185,7 @@ ALLOW = {
     ('system_settings.py', 'systemd_unit_state'):
         'settings _run_bg worker (unprivileged state read).',
     ('system_status.py', 'wifi_ssid'):
-        'status_line_async worker, --rescan no.',
+        'status_line_async worker and tile SSID detail source, --rescan no.',
     ('system_status.py', 'modem_paths'):
         'status_line_async worker.',
     ('system_status.py', 'mobile_signal'):
@@ -202,14 +196,8 @@ ALLOW = {
         'weather auto-fix worker thread (weather-locate); bounded GeoClue calls.',
     ('wayland_bindings.py', 'generate_protocol_bindings'):
         'xx-wm-wayland-bindings worker; cached per pywayland version.',
-    ('window.py', '_work'):
-        'osk-visible worker thread (moved off tap/swipe paths).',
-    ('osk.py', 'set_visible'):
-        'async D-Bus SetVisible first; call_sync only where bus.call is missing.',
     ('output_capture.py', '_run'):
         'grim worker thread spawned by capture(); never runs on the GTK loop.',
-    ('gesture_bindings.py', '_kill_lisgd'):
-        'single bounded local pkill; respawn is fire-and-forget Popen.',
     ('xxdb_daemon.py', '_default_shell_runner'):
         'xxdb service process, no GTK main loop; runner injectable.',
     ('xxdb_daemon.py', '_default_screenshot'):

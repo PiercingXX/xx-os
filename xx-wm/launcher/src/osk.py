@@ -19,11 +19,7 @@ def set_visible(visible: bool) -> None:
             GLib.Variant('(b)', (visible,)), None,
             Gio.DBusCallFlags.NONE,
         )
-        async_call = getattr(bus, 'call', None)
-        if callable(async_call):
-            async_call(*payload, 2000, None, None, None)
-        else:
-            bus.call_sync(*payload, 500, None)
+        bus.call(*payload, 2000, None, None, None)
     except Exception as error:
         from shell_log import get_logger
         get_logger('osk').warning(

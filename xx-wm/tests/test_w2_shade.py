@@ -1001,13 +1001,11 @@ class TestBrightnessRow:
 class TestTileDetailLookups:
     def test_ssid_parses_active_network(self, monkeypatch):
         import shutil
-
-        class _Result:
-            stdout = 'no:OtherNet\nyes:HomeNet\nno:Third\n'
+        import system_status
 
         monkeypatch.setattr(shutil, 'which', lambda name: '/usr/bin/nmcli')
-        monkeypatch.setattr(quick_actions.subprocess, 'run',
-                            lambda *a, **k: _Result())
+        monkeypatch.setattr(system_status.subprocess, 'check_output',
+                            lambda *a, **k: 'no:OtherNet\nyes:HomeNet\nno:Third\n')
         assert quick_actions._get_wifi_ssid() == 'HomeNet'
 
     def test_ssid_none_without_nmcli(self, monkeypatch):
@@ -1017,13 +1015,11 @@ class TestTileDetailLookups:
 
     def test_ssid_none_when_offline(self, monkeypatch):
         import shutil
-
-        class _Result:
-            stdout = 'no:OtherNet\n'
+        import system_status
 
         monkeypatch.setattr(shutil, 'which', lambda name: '/usr/bin/nmcli')
-        monkeypatch.setattr(quick_actions.subprocess, 'run',
-                            lambda *a, **k: _Result())
+        monkeypatch.setattr(system_status.subprocess, 'check_output',
+                            lambda *a, **k: 'no:OtherNet\n')
         assert quick_actions._get_wifi_ssid() is None
 
     def _bt_bus(self, objects):

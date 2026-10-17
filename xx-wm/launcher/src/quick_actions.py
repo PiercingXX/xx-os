@@ -364,19 +364,13 @@ def _get_wifi_ssid() -> str | None:
     import shutil
     if shutil.which('nmcli') is None:
         return None
+    from system_status import wifi_ssid
     try:
-        out = subprocess.run(
-            ['nmcli', '-t', '-f', 'ACTIVE,SSID', 'dev', 'wifi',
-             'list', '--rescan', 'no'],
-            capture_output=True, text=True, timeout=3,
-        ).stdout
+        result = wifi_ssid()
     except Exception:
         return None
-    for line in out.splitlines():
-        active, _, ssid = line.partition(':')
-        if active.strip() == 'yes' and ssid.strip():
-            return ssid.strip()
-    return None
+    result = (result or '').strip()
+    return result or None
 
 
 def _variant_text(value: object) -> object:
@@ -799,22 +793,26 @@ _SLIDER_DEFAULT_PCT = 50
 _SLIDER_APPLY_DEBOUNCE_MS = 200
 
 
-def _get_brightness_pct() -> int:
-    try:
-        out = subprocess.check_output(['brightnessctl', 'get'], text=True, timeout=1).strip()
-        max_out = subprocess.check_output(['brightnessctl', 'max'], text=True, timeout=1).strip()
-        current, max_val = int(out), int(max_out)
-        return int(current * 100 / max_val) if max_val else _SLIDER_DEFAULT_PCT
-    except Exception:
-        pass
-    for path in Path('/sys/class/backlight').glob('*/brightness'):
+def _read_sysfs_brightness_pct(
+    backlight_root: Path = Path('/sys/class/backlight'),
+) -> int | None:
+    """Brightness percent from kernel backlight sysfs nodes (unprivileged
+    instant reads, the same nodes brightnessctl reports); None when no
+    node parses."""
+    for path in backlight_root.glob('*/brightness'):
         try:
             current = int(path.read_text())
             max_val = int((path.parent / 'max_brightness').read_text())
-            return int(current * 100 / max_val) if max_val else _SLIDER_DEFAULT_PCT
+            if max_val:
+                return int(current * 100 / max_val)
         except (OSError, ValueError):
             pass
-    return _SLIDER_DEFAULT_PCT
+    return None
+
+
+def _get_brightness_pct() -> int:
+    pct = _read_sysfs_brightness_pct()
+    return _SLIDER_DEFAULT_PCT if pct is None else pct
 
 
 def _set_brightness_pct(pct: int) -> None:

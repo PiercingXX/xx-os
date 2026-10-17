@@ -713,15 +713,21 @@ def start_bt_discovery(seconds: int = 12, on_done=None) -> bool:
 
 
 def _stop_bt_discovery(adapter: str | None = None) -> bool:
+    """StopDiscovery without blocking the timeout callback that fires it.
+
+    The reply is never consumed (this runs one-shot from a GLib timeout),
+    so the async call is a genuine off-loop send; failures stay silent,
+    as when the sync version raised.
+    """
     try:
         from gi.repository import Gio
         bus = _bluez_bus()
         target = adapter or _adapter_path(bus)
         if target is None:
             return False
-        bus.call_sync(_BLUEZ, target, _ADAPTER_IFACE,
-                      'StopDiscovery', None, None,
-                      Gio.DBusCallFlags.NONE, 5000, None)
+        bus.call(_BLUEZ, target, _ADAPTER_IFACE,
+                 'StopDiscovery', None, None,
+                 Gio.DBusCallFlags.NONE, 5000, None, None)
     except Exception:
         pass
     return False

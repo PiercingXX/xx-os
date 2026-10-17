@@ -379,3 +379,44 @@ class TestExpandGetterBatch:
         assert '_read_slider_values()' in src
         assert '_get_brightness_pct' not in src
         assert '_get_volume_pct' not in src
+
+
+# --- sysfs brightness read (no brightnessctl spawn on expand) -----------------
+
+class TestSysfsBrightnessRead:
+    def _tree(self, root, nodes):
+        for name, files in nodes.items():
+            node = root / name
+            node.mkdir(parents=True, exist_ok=True)
+            for filename, content in files.items():
+                (node / filename).write_text(content)
+
+    def test_reads_percent_from_first_node(self, tmp_path):
+        self._tree(tmp_path, {'intel_backlight': {
+            'brightness': '40\n', 'max_brightness': '200\n'}})
+        assert quick_actions._read_sysfs_brightness_pct(tmp_path) == 20
+
+    def test_zero_brightness_is_zero_not_default(self, tmp_path):
+        self._tree(tmp_path, {'intel_backlight': {
+            'brightness': '0\n', 'max_brightness': '200\n'}})
+        assert quick_actions._read_sysfs_brightness_pct(tmp_path) == 0
+
+    def test_missing_nodes_give_none(self, tmp_path):
+        assert quick_actions._read_sysfs_brightness_pct(tmp_path) is None
+
+    def test_getter_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setattr(quick_actions, '_read_sysfs_brightness_pct',
+                            lambda: None)
+        assert quick_actions._get_brightness_pct() == \
+            quick_actions._SLIDER_DEFAULT_PCT
+
+    def test_getter_keeps_zero(self, monkeypatch):
+        monkeypatch.setattr(quick_actions, '_read_sysfs_brightness_pct',
+                            lambda: 0)
+        assert quick_actions._get_brightness_pct() == 0
+
+    def test_getter_spawns_no_process(self):
+        import inspect
+        src = inspect.getsource(quick_actions._get_brightness_pct)
+        assert 'subprocess' not in src
+        assert 'check_output' not in src

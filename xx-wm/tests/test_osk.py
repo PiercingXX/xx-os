@@ -40,8 +40,8 @@ def test_helper_owns_setvisible_and_attach():
     assert 'def set_visible' in text
     assert 'def set_layer_keyboard' in text
     assert 'def attach' in text
-    assert "bus.call_sync" in text
-    assert 'async_call' in text
+    assert 'bus.call_sync' not in text
+    assert 'bus.call(' in text
     assert 'KeyboardMode.EXCLUSIVE' in text
     assert 'KeyboardMode.NONE' in text
 

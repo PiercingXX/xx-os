@@ -521,33 +521,13 @@ def _set_osk_visible(visible: bool) -> None:
     headless seam the tap-outside test drives: monkeypatching Gio's
     bus_get_sync lets a test assert the SetVisible payload without a display.
 
-    The bus round-trip runs on a worker thread: tap and swipe paths call
-    this synchronously, and a 500 ms call_sync on the GTK thread would
-    stall the gesture that asked for the keyboard. Returns the thread so
-    tests can join it.
+    The osk helper sends SetVisible with the async D-Bus call, so tap and
+    swipe paths never block on the round-trip and no worker thread is
+    needed. A D-Bus failure (squeekboard absent, bus down) is logged by
+    the helper rather than crashing the shell.
     """
-    import threading
-
-    def _work() -> None:
-        from gi.repository import Gio
-        try:
-            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-            bus.call_sync(
-                'sm.puri.OSK0', '/sm/puri/OSK0', 'sm.puri.OSK0', 'SetVisible',
-                GLib.Variant('(b)', (visible,)), None,
-                Gio.DBusCallFlags.NONE, 500, None,
-            )
-        except Exception as error:
-            # A D-Bus failure (squeekboard absent, bus down) must not crash
-            # the shell, but it is a real fault on a data path — log it
-            # rather than silently dropping the show/hide request.
-            from shell_log import get_logger
-            get_logger('window').warning(
-                'set-OSK-visible(%s) over D-Bus failed: %s', visible, error)
-
-    worker = threading.Thread(target=_work, daemon=True, name='osk-visible')
-    worker.start()
-    return worker
+    from osk import set_visible
+    set_visible(bool(visible))
 
 
 class ShellWindow(Adw.ApplicationWindow):

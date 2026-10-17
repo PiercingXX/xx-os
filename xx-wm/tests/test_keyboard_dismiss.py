@@ -84,7 +84,7 @@ def _install_dbus(window):
     calls = []
 
     class FakeBus:
-        def call_sync(self, *args):
+        def call(self, *args):
             calls.append(args)
 
     gio.BusType = types.SimpleNamespace(SESSION='session')
@@ -102,7 +102,7 @@ def test_hide_keyboard_sends_setvisible_false(window):
     """_set_osk_visible(False) -- the seam _hide_keyboard() drives -- tells
     squeekboard to disappear."""
     calls = _install_dbus(window)
-    window._set_osk_visible(False).join(timeout=5)
+    window._set_osk_visible(False)
 
     assert len(calls) == 1
     name, path, iface, method, params = calls[0][:5]
@@ -115,7 +115,7 @@ def test_show_keyboard_sends_setvisible_true(window):
     """_set_osk_visible(True) -- the seam _show_keyboard() drives -- still
     raises squeekboard after the 20.1 refactor."""
     calls = _install_dbus(window)
-    window._set_osk_visible(True).join(timeout=5)
+    window._set_osk_visible(True)
 
     assert len(calls) == 1
     params = calls[0][4]
