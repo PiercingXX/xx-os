@@ -97,3 +97,14 @@ configure_file(
   install: true,
   install_dir: join_paths(get_option('datadir'), 'dbus-1', 'services'),
 )
+
+# D-Bus activation for notification actions: the shell auto-starts
+# this on HandleNotificationAction so Archive / Mark read work after
+# the oneshot poller exits.
+configure_file(
+  input: 'data/dbus-1/io.piercingxx.XXEmail.Daemon.service.in',
+  output: 'io.piercingxx.XXEmail.Daemon.service',
+  configuration: dbus_conf,
+  install: true,
+  install_dir: join_paths(get_option('datadir'), 'dbus-1', 'services'),
+)

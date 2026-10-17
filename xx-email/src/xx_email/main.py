@@ -1643,5 +1643,9 @@ def main(argv=None) -> int:
         from xx_email import daemon as daemon_mod
 
         return daemon_mod.run_daemon_tick()
+    if "--actions-service" in args[1:]:
+        from xx_email import actions as actions_mod
+
+        return actions_mod.run()
     app = EmailApplication()
     return app.run(args)

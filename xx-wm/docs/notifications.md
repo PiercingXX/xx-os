@@ -60,3 +60,35 @@ with actions `call-back` / `ring-next-time` / `block-contact`, plus
 unknown callers; grouped cards carry no actions). The
 service implements `HandleNotificationAction` with the same `(u, s)`
 signature and dispatches on the action key it posted.
+
+## Posted-id guard
+
+`HandleNotificationAction` must ignore notification ids the service
+did not post: anything else is a silent no-op, so a replayed or
+foreign id can never trigger an unrelated action. Every adopter
+tracks the ids it posted, bounded (64 entries), and persisted when
+the service can exit while its cards stay live:
+
+- xx-dialer: in-memory set plus the `posted_notif` store table, which
+  also survives the policy service's idle-exits.
+- TxxT: bounded in-memory map (the daemon runs for the whole
+  session; server ids die with the shell daemon on reboot, so
+  persisting buys nothing).
+- xx-email: the `notif_actions` store table, written on each Notify
+  reply, read back by the activatable actions service below.
+
+## xx-email action target
+
+The oneshot poller exits while its cards stay live, so every mail
+card carries
+
+```
+x-xx-wm-action-target:
+  "io.piercingxx.XXEmail.Daemon /io/piercingxx/XXEmail/Daemon io.piercingxx.XXEmail.Daemon1"
+```
+
+with actions `default` (Open) / `archive` / `mark-read`. Taps reach
+`io.piercingxx.XXEmail.Daemon1.HandleNotificationAction(u, s)` on the
+activatable `io.piercingxx.XXEmail.Daemon` service (`xx-email
+--actions-service`), which routes posted ids through the table above
+and idle-exits.

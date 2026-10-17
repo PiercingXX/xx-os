@@ -35,7 +35,6 @@ from pathlib import Path
 from xx_email import db
 from xx_email import notify as notify_mod
 from xx_email import snooze as snooze_mod
-from xx_email import __app_id__ as GUI_APP_ID
 
 DAEMON_BUS_NAME = "io.piercingxx.XXEmail.Daemon"
 
@@ -66,7 +65,6 @@ def load_shell_config(path: Path | None = None) -> dict:
 DEFAULT_INTERVAL_MINUTES = 15
 BATTERY_SAVER_FACTOR = 2
 STATE_FILE_NAME = "daemon_state.json"
-ACTION_GRACE_SECONDS = 120
 
 
 def effective_interval_minutes(config_minutes: int,
@@ -222,15 +220,17 @@ class ActionHandler:
 
 def run_tick(conn, make_engine, connection, client_for_account, *,
              now_ms: int, app_config=None,
-             shell_config: dict | None = None) -> dict:
+             shell_config: dict | None = None,
+             posted_sink=None) -> dict:
     """One background pass: sync, notify, outbox (in engine), wakes.
 
     make_engine(account) builds a SyncEngine; connection is the
     session-bus handle for Notify (or None to skip delivery while
     still computing payloads); client_for_account(account) builds a
-    Gmail client for wake restores. Returns {"outcomes", "notified"
-    ({account: server_id}), "payloads" ({account: payload}),
-    "wakes"}.
+    Gmail client for wake restores. posted_sink(server_id, account,
+    thread_id) records each posted card for the actions service.
+    Returns {"outcomes", "notified" ({account: server_id}),
+    "payloads" ({account: payload}), "wakes"}.
     """
     if app_config is None:
         from xx_email import config as config_mod
@@ -292,7 +292,21 @@ def run_tick(conn, make_engine, connection, client_for_account, *,
         payloads[account] = payload
 
         def _recorded(server_id: int, _account=account) -> None:
-            notified[_account] = int(server_id)
+            try:
+                sid = int(server_id)
+            except (TypeError, ValueError):
+                sid = 0
+            notified[_account] = sid
+            if posted_sink is not None and sid > 0:
+                try:
+                    thread_id = (payloads.get(_account) or {}).get(
+                        "thread_id", "")
+                except Exception:
+                    thread_id = ""
+                try:
+                    posted_sink(sid, _account, thread_id or "")
+                except Exception:
+                    pass
 
         try:
             notify_mod.send_notification(connection, payload,
@@ -317,94 +331,45 @@ def action_target(server_map: dict, server_id: int):
     return server_map.get(key)
 
 
-def on_action_signal(conn, sender: str, path: str, interface: str,
-                     signal: str, params, user_data) -> None:
-    """org.freedesktop.Notifications ActionInvoked dispatch.
+#: How long the tick waits for Notify replies before exiting.
+REPLY_WAIT_SECONDS = 15
 
-    user_data is (server_map, handler, db_opener, client_for, opener):
-    unknown ids are ignored; Open launches the thread URI; Archive /
-    Mark read run on a worker thread. Full seven-arg shape, like the
-    shell's own signal handlers.
+
+def collect_posted_replies(result) -> None:
+    """Pump the main loop until every Notify reply lands, or timeout.
+
+    The posted_sink calls in run_tick fire on these replies, so the
+    actions service can route taps after this process exits. Quits
+    early once every payload has its server id. Never raises.
     """
-    _ = (conn, sender, path, interface, signal)
     try:
-        server_map, handler, db_opener, client_for, opener = user_data
-    except (TypeError, ValueError):
-        return
-    try:
-        server_id, action_key = params.unpack()
+        payloads = result.get("payloads") or {}
+        notified = result.get("notified") or {}
+        if not payloads or len(notified) >= len(payloads):
+            return
     except Exception:
         return
-    found = action_target(server_map, server_id)
-    if found is None:
-        return
-    account, payload = found
-    thread_id = (payload or {}).get("thread_id", "")
-    if action_key in (notify_mod.ACTION_OPEN, "open"):
-        uri = notify_mod.open_thread_uri(account, thread_id)
-        try:
-            opener(uri)
-        except Exception:
-            pass
-        return
-    if action_key not in (notify_mod.ACTION_ARCHIVE,
-                          notify_mod.ACTION_MARK_READ):
-        return
-
-    def _blocking() -> None:
-        handle = db_opener()
-        try:
-            client = client_for(account)
-            try:
-                handler.handle(handle, client, account, action_key,
-                               thread_id)
-            finally:
-                closer = getattr(client, "close", None)
-                if callable(closer):
-                    try:
-                        closer()
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        finally:
-            try:
-                handle.close()
-            except Exception:
-                pass
-
-    import concurrent.futures
-
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
     try:
-        pool.submit(_blocking)
-    finally:
-        pool.shutdown(wait=False)
+        from gi.repository import GLib
+    except (ImportError, ValueError):
+        return
+    loop = GLib.MainLoop()
 
+    def _tick() -> bool:
+        try:
+            if len(notified) >= len(payloads):
+                loop.quit()
+                return False
+        except Exception:
+            pass
+        return True
 
-def subscribe_actions(connection, server_map: dict,
-                      handler: ActionHandler, db_opener,
-                      client_for_account, opener):
-    """Listen for ActionInvoked while the tick process lingers."""
-    from gi.repository import Gio
-
-    return connection.signal_subscribe(
-        None, notify_mod.NOTIF_INTERFACE, "ActionInvoked",
-        notify_mod.NOTIF_OBJECT_PATH, None,
-        Gio.DBusSignalFlags.NONE, on_action_signal,
-        (server_map, handler, db_opener, client_for_account,
-         opener))
-
-
-def own_daemon_bus_name() -> None:
-    """Own the daemon name (async); never the GUI application_id."""
-    from gi.repository import Gio
-
-    assert DAEMON_BUS_NAME != GUI_APP_ID, \
-        "daemon must not own the GUI application_id"
-    Gio.bus_own_name(
-        Gio.BusType.SESSION, DAEMON_BUS_NAME,
-        Gio.BusNameOwnerFlags.NONE, None, None, None, None, None)
+    GLib.timeout_add(250, _tick)
+    GLib.timeout_add_seconds(REPLY_WAIT_SECONDS, loop.quit)
+    try:
+        loop.run()
+    except Exception:
+        pass
 
 
 def run_daemon_tick() -> int:
@@ -465,8 +430,11 @@ def run_daemon_tick() -> int:
             bus = Gio.bus_get_sync(None, None)
         except Exception:
             bus = None
+        sink = posted_sink_for_db(
+            setup_mod.ensure_app_dirs()["data"] / db.DB_FILE_NAME)
         result = run_tick(conn, _make_engine, bus, _client_for,
-                          now_ms=now_ms, app_config=stored)
+                          now_ms=now_ms, app_config=stored,
+                          posted_sink=sink)
     finally:
         try:
             conn.close()
@@ -477,7 +445,7 @@ def run_daemon_tick() -> int:
     except Exception:
         pass
     if bus is not None and result.get("payloads"):
-        _linger_for_actions(bus, result)
+        collect_posted_replies(result)
     return 0
 
 
@@ -521,40 +489,31 @@ def production_client_for(account: str) -> _LiveClient:
     return _LiveClient(account, worker, seed)
 
 
-def _linger_for_actions(bus, result) -> None:
-    """Stay briefly for notification actions, then exit.
+def posted_sink_for_db(db_path):
+    """posted_sink writing through its own connection per call.
 
-    The unit is oneshot, so without a linger Archive / Mark read taps
-    would arrive after the sender left the bus. Open taps always work
-    (the shell activates the GUI via the .desktop entry).
+    Each Notify reply may arrive on the main-loop thread after the
+    tick's own connection closed, and connections never cross
+    threads, so every call opens, writes, and closes.
     """
-    from gi.repository import Gio, GLib
-
-    from xx_email import setup as setup_mod
-
-    handler = ActionHandler()
-    server_map: dict[int, tuple] = {}
-    for account, payload in (result.get("payloads") or {}).items():
-        server_map[int(payload.get("replaces_id", 0))] = \
-            (account, payload)
-
-    def _opener(uri: str) -> None:
+    def _sink(server_id: int, account: str, thread_id: str) -> None:
         try:
-            Gio.AppInfo.launch_default_for_uri(uri, None)
+            stamp = int(time.time() * 1000)
+        except Exception:
+            stamp = 0
+        try:
+            handle = db.open_db(db_path)
+        except Exception:
+            return
+        try:
+            db.record_posted_notif(handle, server_id, account,
+                                   thread_id, stamp)
         except Exception:
             pass
+        finally:
+            try:
+                handle.close()
+            except Exception:
+                pass
 
-    def _db_opener():
-        from xx_email import db as db_mod
-
-        return db_mod.open_db(
-            setup_mod.ensure_app_dirs()["data"] / db_mod.DB_FILE_NAME)
-
-    subscribe_actions(bus, server_map, handler, _db_opener,
-                      production_client_for, _opener)
-    loop = GLib.MainLoop()
-    GLib.timeout_add_seconds(ACTION_GRACE_SECONDS, loop.quit)
-    try:
-        loop.run()
-    except Exception:
-        pass
+    return _sink

@@ -585,7 +585,8 @@ def test_daemon_never_owns_gui_bus_name():
         "org.freedesktop.Notifications"
     daemon_source = (SRC / "daemon.py").read_text(encoding="utf-8")
     assert "io.piercingxx.XXEmail.Daemon" in daemon_source
-    assert "org.freedesktop.Notifications" in daemon_source
+    notify_source = (SRC / "notify.py").read_text(encoding="utf-8")
+    assert "org.freedesktop.Notifications" in notify_source
 
 
 def test_notify_reply_types_are_variant_types():

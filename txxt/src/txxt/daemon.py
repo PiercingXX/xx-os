@@ -705,6 +705,11 @@ def stage_mms_attachments(
 
 # ---- inbound pipeline ----
 
+#: Posted notification ids remembered for HandleNotificationAction.
+#: Dicts keep insertion order, so the oldest entry evicts first.
+NOTIFICATION_MAP_CAP = 64
+
+
 @dataclass
 class PipelineOutcome:
     disposition: blocking.MessageDisposition
@@ -730,6 +735,9 @@ class InboundPipeline:
         self._auto_reply_send = auto_reply_send
         self._action_target = action_target
         self._notification_map: dict[int, int] = {}
+        # Posted notification ids stay in memory only: the daemon runs
+        # for the whole session (no idle-exit), while server ids die
+        # with the shell daemon on reboot, so persisting buys nothing.
 
     def _display_name(self, number: str) -> str:
         if self._contacts is not None:
@@ -820,6 +828,9 @@ class InboundPipeline:
             return False, None
         if notification_id is not None and conversation_id is not None:
             self._notification_map[notification_id] = conversation_id
+            while len(self._notification_map) > NOTIFICATION_MAP_CAP:
+                self._notification_map.pop(
+                    next(iter(self._notification_map)))
         return notification_id is not None, notification_id
 
     def conversation_for_notification(self, notification_id: int) -> int | None:

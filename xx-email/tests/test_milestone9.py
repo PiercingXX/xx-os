@@ -343,8 +343,11 @@ def _seed_tick_db(path: Path) -> None:
 
 def _run_tick_driver(mode: str, db_path: Path) -> dict:
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent /
-                            "src")
+    env["PYTHONPATH"] = os.pathsep.join((
+        str(Path(__file__).resolve().parent.parent / "src"),
+        str(Path(__file__).resolve().parent.parent.parent /
+            "common"),
+    ))
     completed = subprocess.run(
         [sys.executable, _TICK_DRIVER, mode, str(db_path)],
         env=env, capture_output=True, text=True, timeout=120,
@@ -384,7 +387,9 @@ def test_tick_notifies_when_shell_policy_is_clear(tmp_path):
     assert markers.get("BODY") == "Bob"
     assert markers.get("HINTS") == \
         "{'desktop-entry': 'io.piercingxx.XXEmail', " \
-        "'category': 'email.arrived', 'urgency': 1}"
+        "'category': 'email.arrived', 'urgency': 1, " \
+        "'x-xx-wm-action-target': 'io.piercingxx.XXEmail.Daemon " \
+        "/io/piercingxx/XXEmail/Daemon io.piercingxx.XXEmail.Daemon1'}"
     assert markers.get("REPLYTYPE") == "(u)"
 
 
@@ -394,18 +399,21 @@ def test_tick_notifies_when_shell_policy_is_clear(tmp_path):
 def test_hints_seam_builds_one_real_variant(tmp_path):
     markers = _run_tick_driver("hints", tmp_path / "unused.db")
     assert markers.get("HINT_KEYS") == \
-        "['category', 'desktop-entry', 'urgency']"
+        "['category', 'desktop-entry', 'urgency', " \
+        "'x-xx-wm-action-target']"
     assert markers.get("HINT_TYPES_OK") == "True"
     assert markers.get("TUPLE_APP") == "io.piercingxx.XXEmail"
     assert markers.get("TUPLE_REPLACES") == "7"
     assert markers.get("TUPLE_HINTS") == \
         "{'desktop-entry': 'io.piercingxx.XXEmail', " \
-        "'category': 'email.arrived', 'urgency': 1}"
+        "'category': 'email.arrived', 'urgency': 1, " \
+        "'x-xx-wm-action-target': 'io.piercingxx.XXEmail.Daemon " \
+        "/io/piercingxx/XXEmail/Daemon io.piercingxx.XXEmail.Daemon1'}"
     assert markers.get("TUPLE_LEN") == "8"
     source = (SRC / "notify.py").read_text(encoding="utf-8")
     assert source.count("notification_hints()") >= 2
     assert "TODO" not in source
-    assert "x-xx-wm-action-target" not in source
+    assert "x-xx-wm-action-target" in source
 
 
 # ------------------------------------------------------- static page guards

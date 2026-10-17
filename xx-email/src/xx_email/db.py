@@ -947,3 +947,66 @@ def all_snooze_wakes(conn: sqlite3.Connection) -> list[SnoozeWake]:
             for r in conn.execute(
                 "SELECT * FROM snooze_wakes"
                 " ORDER BY accountEmail, threadId")]
+
+
+#: Posted summary cards remembered for HandleNotificationAction. One
+#: row per server id; the poller exits while cards stay live, so the
+#: activatable actions service reads them back from here. Bounded:
+#: the oldest rows evict past the cap.
+POSTED_NOTIF_CAP = 64
+
+_POSTED_NOTIF_DDL = (
+    "CREATE TABLE IF NOT EXISTS notif_actions"
+    " (serverId INTEGER PRIMARY KEY, accountEmail TEXT NOT NULL,"
+    " threadId TEXT NOT NULL, postedAt INTEGER NOT NULL)"
+)
+
+
+def record_posted_notif(conn: sqlite3.Connection, server_id: int,
+                        account: str, thread_id: str,
+                        posted_at: int) -> None:
+    """Remember one posted card; oldest rows evict past the cap."""
+    try:
+        notif_id = int(server_id)
+    except (TypeError, ValueError):
+        return
+    if notif_id <= 0:
+        return
+    try:
+        stamp = int(posted_at)
+    except (TypeError, ValueError):
+        stamp = 0
+    with conn:
+        conn.execute(_POSTED_NOTIF_DDL)
+        conn.execute(
+            "INSERT INTO notif_actions"
+            " (serverId, accountEmail, threadId, postedAt)"
+            " VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(serverId) DO UPDATE SET accountEmail=?,"
+            " threadId=?, postedAt=?",
+            (notif_id, account or "", thread_id or "", stamp,
+             account or "", thread_id or "", stamp),
+        )
+        conn.execute(
+            "DELETE FROM notif_actions WHERE serverId NOT IN"
+            " (SELECT serverId FROM notif_actions"
+            " ORDER BY postedAt DESC, serverId DESC LIMIT ?)",
+            (POSTED_NOTIF_CAP,),
+        )
+
+
+def posted_notif_for(conn: sqlite3.Connection,
+                     server_id: int) -> tuple[str, str] | None:
+    """(account, thread) posted under `server_id`, else None."""
+    try:
+        notif_id = int(server_id)
+    except (TypeError, ValueError):
+        return None
+    conn.execute(_POSTED_NOTIF_DDL)
+    row = conn.execute(
+        "SELECT accountEmail, threadId FROM notif_actions"
+        " WHERE serverId = ?",
+        (notif_id,)).fetchone()
+    if row is None:
+        return None
+    return (row["accountEmail"], row["threadId"])

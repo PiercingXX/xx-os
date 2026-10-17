@@ -299,6 +299,24 @@ class TestInboundPipeline:
         assert pipe.conversation_for_notification(outcome.notification_id) == \
             outcome.conversation_id
 
+    def test_notification_map_evicts_oldest_past_cap(self):
+        from txxt.daemon import NOTIFICATION_MAP_CAP
+
+        store = Store.memory()
+        pipe = pipeline(store, notify_bus=FakeNotifyBus())
+        first = pipe.handle_sms("+1555", "one")
+        for index in range(NOTIFICATION_MAP_CAP + 5):
+            pipe.handle_sms(f"+1600{index:04d}", f"msg {index}")
+        assert len(pipe._notification_map) == NOTIFICATION_MAP_CAP
+        assert pipe.conversation_for_notification(
+            first.notification_id) is None
+
+    def test_unknown_notification_id_maps_to_nothing(self):
+        store = Store.memory()
+        pipe = pipeline(store, notify_bus=FakeNotifyBus())
+        pipe.handle_sms("+1555", "hi")
+        assert pipe.conversation_for_notification(999999) is None
+
     def test_action_target_hint_rides_posted_cards(self):
         from txxt import notify as notify_mod
 

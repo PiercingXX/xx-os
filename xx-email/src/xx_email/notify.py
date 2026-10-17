@@ -21,6 +21,8 @@ from __future__ import annotations
 import urllib.parse
 import zlib
 
+from xx_phone.schedules import schedule_matches
+
 APP_ID = "io.piercingxx.XXEmail"
 OPEN_URI_SCHEME = "io.piercingxx.XXEmail"
 
@@ -31,6 +33,23 @@ NOTIF_INTERFACE = "org.freedesktop.Notifications"
 ACTION_OPEN = "default"
 ACTION_ARCHIVE = "archive"
 ACTION_MARK_READ = "mark-read"
+
+#: Shell hint carrying the action target (``"<bus> <path> <iface>"``).
+#: The shell auto-starts that service and calls its
+#: ``HandleNotificationAction(u id, s action_key)`` when the user taps
+#: an action, so Archive / Mark read still work after the poller exits.
+#: The bus name duplicates daemon.DAEMON_BUS_NAME (importing it here
+#: would cycle); a static test pins them equal.
+ACTION_TARGET_HINT = "x-xx-wm-action-target"
+ACTION_BUS_NAME = "io.piercingxx.XXEmail.Daemon"
+ACTION_OBJECT_PATH = "/io/piercingxx/XXEmail/Daemon"
+ACTION_INTERFACE = "io.piercingxx.XXEmail.Daemon1"
+
+
+def action_target_value() -> str:
+    """Render the ``x-xx-wm-action-target`` hint for posted cards."""
+    return f"{ACTION_BUS_NAME} {ACTION_OBJECT_PATH} {ACTION_INTERFACE}"
+
 
 MAX_SENDERS_IN_BODY = 5
 
@@ -193,14 +212,15 @@ def notification_hints():
 
     Values are GLib.Variant (never nested prebuilt a{sv} Variants —
     the caller passes this plain dict into one Variant constructor).
-    Shell-specific action-target hints, if the shell ever documents
-    them, land here and nowhere else.
+    The action-target hint routes Archive / Mark read taps to the
+    activatable actions service after the poller exits.
     """
     from gi.repository import GLib
 
     return {"desktop-entry": GLib.Variant("s", APP_ID),
             "category": GLib.Variant("s", "email.arrived"),
-            "urgency": GLib.Variant("y", 1)}
+            "urgency": GLib.Variant("y", 1),
+            ACTION_TARGET_HINT: GLib.Variant("s", action_target_value())}
 
 
 def _notify_variant(summary: str, body: str, actions: list[str],
@@ -241,49 +261,6 @@ def send_notification(connection, payload: dict, done=None,
         NOTIF_BUS_NAME, NOTIF_OBJECT_PATH, NOTIF_INTERFACE, "Notify",
         params, GLib.VariantType.new("(u)"),
         Gio.DBusCallFlags.NONE, -1, None, _reply)
-
-
-def _parse_hhmm(value: object):
-    """Minutes since midnight for "HH:MM", else None."""
-    import re
-
-    if not isinstance(value, str):
-        return None
-    match = re.match(r"^(\d{1,2}):(\d{2})$", value)
-    if not match:
-        return None
-    hours, minutes = int(match.group(1)), int(match.group(2))
-    if hours > 23 or minutes > 59:
-        return None
-    return hours * 60 + minutes
-
-
-def schedule_matches(schedules, now) -> bool:
-    """True when any shell DnD/focus schedule covers `now`.
-
-    Mirrors ref/xx-wm launcher/src/dnd.py: days are Monday-first
-    0-6, overnight ranges wrap with the day check on the start day.
-    Malformed entries never match.
-    """
-    for sched in schedules or []:
-        if not isinstance(sched, dict):
-            continue
-        days = sched.get("days")
-        start = _parse_hhmm(sched.get("start"))
-        end = _parse_hhmm(sched.get("end"))
-        if not isinstance(days, list) or start is None or end is None:
-            continue
-        minutes = now.hour * 60 + now.minute
-        weekday = now.weekday()
-        if start <= end:
-            if weekday in days and start <= minutes < end:
-                return True
-        else:
-            if weekday in days and minutes >= start:
-                return True
-            if (weekday - 1) % 7 in days and minutes < end:
-                return True
-    return False
 
 
 def app_muted(shell_config: dict | None, now_ts: float) -> bool:

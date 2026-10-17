@@ -105,6 +105,74 @@ def _mode_tick(db_path: str, shell: dict) -> None:
         print(f"REPLYTYPE: {call['reply_type'].dup_string()}")
 
 
+def _mode_actions(db_path: str) -> None:
+    from xx_email import actions as actions_mod
+
+    conn = db_mod.open_db(db_path)
+    try:
+        db_mod.upsert_account(conn, db_mod.Account(
+            email=ACCOUNT, display_name="Dev", history_id="100",
+            last_sync_at=1_700_000_000_000))
+        db_mod.upsert_threads(conn, [db_mod.Thread(
+            account_email=ACCOUNT, id="t1", snippet="s",
+            subject="Sub", from_address="ada@example.com",
+            from_name="Ada", date=1_700_000_000_000,
+            message_count=1, unread_count=1, has_attachments=False,
+            starred=False, in_inbox=True, categories="",
+            labels_csv="INBOX,UNREAD")])
+        db_mod.record_posted_notif(conn, 77, ACCOUNT, "t1",
+                                   1_700_000_000_000)
+    finally:
+        conn.close()
+    opened = []
+    service = actions_mod.ActionsService(
+        db_opener=lambda: db_mod.open_db(db_path),
+        client_for=lambda _account: _QuietClient(),
+        opener=opened.append, spawn=lambda fn: fn(),
+        idle=lambda fn, *args: fn(*args))
+
+    class _Params:
+        def __init__(self, values) -> None:
+            self._values = values
+
+        def unpack(self):
+            return self._values
+
+    class _Invocation:
+        def __init__(self) -> None:
+            self.value = None
+            self.error = None
+
+        def return_value(self, variant):
+            self.value = variant
+
+        def return_dbus_error(self, name, message):
+            self.error = (name, message)
+
+    invocation = _Invocation()
+    service.handle_method_call(None, None, actions_mod.OBJECT_PATH,
+                               actions_mod.INTERFACE,
+                               "HandleNotificationAction",
+                               _Params((77, "default")), invocation)
+    print(f"VALUE: {invocation.value.unpack()!r}")
+    print(f"ERROR: {invocation.error!r}")
+    print(f"OPENED: {opened!r}")
+
+    unknown = _Invocation()
+    service.handle_method_call(None, None, actions_mod.OBJECT_PATH,
+                               actions_mod.INTERFACE,
+                               "HandleNotificationAction",
+                               _Params((999, "archive")), unknown)
+    print(f"UNKNOWN_VALUE: {unknown.value.unpack()!r}")
+    print(f"UNKNOWN_ERROR: {unknown.error!r}")
+
+    bad = _Invocation()
+    service.handle_method_call(None, None, actions_mod.OBJECT_PATH,
+                               actions_mod.INTERFACE, "Nope",
+                               _Params((77, "default")), bad)
+    print(f"BAD_ERROR: {'present' if bad.error else 'missing'}")
+
+
 def _mode_hints() -> None:
     hints = notify_mod.notification_hints()
     print(f"HINT_KEYS: {sorted(hints)}")
@@ -127,6 +195,8 @@ def main() -> int:
             _mode_tick(sys.argv[2], {})
         elif mode == "hints":
             _mode_hints()
+        elif mode == "actions":
+            _mode_actions(sys.argv[2])
         else:
             print(f"unknown mode {mode}")
             return 2
