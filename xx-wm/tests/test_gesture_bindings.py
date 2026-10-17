@@ -249,12 +249,34 @@ class TestLisgdRestart:
             which=lambda _n: '/usr/bin/lisgd',
         ) is False
 
-    def test_kill_is_fire_and_forget_popen(self, monkeypatch):
-        spawned: list = []
-        monkeypatch.setattr(subprocess, 'Popen',
-                            lambda argv, **_k: spawned.append(argv))
-        _kill_lisgd()
-        assert spawned == [['pkill', '-x', 'lisgd']]
+    def test_kill_targets_only_existing_pids(self):
+        killed: list = []
+        _kill_lisgd(pids=[11, 12], kill=lambda pid, sig: killed.append(pid))
+        assert killed == [11, 12]
+
+    def test_kill_never_races_the_replacement(self, monkeypatch):
+        # The old pkill ran after the new lisgd spawned and killed it.
+        import gesture_bindings
+        order: list = []
+        monkeypatch.setattr(gesture_bindings, '_lisgd_pids', lambda: [7])
+        monkeypatch.setattr(gesture_bindings.os, 'kill',
+                            lambda pid, sig: order.append(('kill', pid)))
+        assert restart_lisgd(
+            '/usr/bin', touch_dev='/dev/input/event3',
+            spawn=lambda argv, **_k: order.append(('spawn', argv[0])),
+            which=lambda _n: '/usr/bin/lisgd') is True
+        assert order == [('kill', 7), ('spawn', '/usr/bin/lisgd')]
+
+    def test_lisgd_pids_reads_proc(self, tmp_path):
+        import os as _os
+        for pid, comm in ((5, 'lisgd'), (6, 'phoc'), (7, 'lisgd')):
+            d = tmp_path / str(pid)
+            d.mkdir()
+            (d / 'comm').write_text(comm + '\n')
+        (tmp_path / 'self').mkdir()
+        from gesture_bindings import _lisgd_pids
+        assert sorted(_lisgd_pids(tmp_path, uid=_os.getuid())) == [5, 7]
+        assert _lisgd_pids(tmp_path, uid=_os.getuid() + 1) == []
 
 
 class TestCli:

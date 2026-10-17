@@ -105,13 +105,36 @@ def detect_touch_device(sys_input: Path | None = None) -> str | None:
     return None
 
 
-def _kill_lisgd() -> None:
-    # Fire-and-forget: restart_lisgd never reads the kill result (pkill
-    # exits after signalling, not after death), so waiting changes nothing.
-    # OSError (no pkill) still propagates to restart_lisgd, as before.
-    subprocess.Popen(
-        ['pkill', '-x', 'lisgd'], close_fds=True,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def _lisgd_pids(proc: Path = Path('/proc'), uid: int | None = None) -> list[int]:
+    """PIDs of this user's running lisgd, read from /proc (no subprocess)."""
+    uid = os.getuid() if uid is None else uid
+    pids: list[int] = []
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if (entry / 'comm').read_text().strip() != 'lisgd':
+                continue
+            if entry.stat().st_uid != uid:
+                continue
+        except OSError:
+            continue
+        pids.append(int(entry.name))
+    return pids
+
+
+def _kill_lisgd(pids=None, kill=None) -> None:
+    # Only the lisgd instances that exist *now*. A fire-and-forget
+    # `pkill -x lisgd` raced the replacement spawned right after it and
+    # killed that too: every shell start left the session with no
+    # gestures (owner stuck inside an app on the FLX1).
+    import signal
+    kill = kill or os.kill
+    for pid in (_lisgd_pids() if pids is None else pids):
+        try:
+            kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
 
 
 def restart_lisgd(
