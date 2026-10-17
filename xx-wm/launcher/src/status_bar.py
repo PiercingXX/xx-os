@@ -322,7 +322,9 @@ window.xx-statusbar {{
 .xx-statusbar-root {{
     background: {bg};
     color: alpha({fg}, 0.90);
-    padding: 0 16px;
+    /* Clear of rounded display corners: inset sides, text on the
+       bottom edge of the strip. */
+    padding: 0 28px 6px 28px;
 }}
 .xx-statusbar-time {{
     font-size: 13px;
@@ -395,7 +397,9 @@ if _HAS_GTK:
 
             self.time_label = Gtk.Label(xalign=0)
             self.time_label.add_css_class('xx-statusbar-time')
-            self.time_label.set_valign(Gtk.Align.CENTER)
+            # Bottom of the strip, not its middle: on the FLX1 a centred
+            # clock sat in the panel's rounded top-left corner, cut off.
+            self.time_label.set_valign(Gtk.Align.END)
             self.set_start_widget(self.time_label)
 
             keepout = Gtk.Box()
@@ -403,7 +407,7 @@ if _HAS_GTK:
             self.set_center_widget(keepout)
 
             self._right = Gtk.Box(spacing=7)
-            self._right.set_valign(Gtk.Align.CENTER)
+            self._right.set_valign(Gtk.Align.END)
             self._right.set_halign(Gtk.Align.END)
             self.set_end_widget(self._right)
 
