@@ -14,7 +14,7 @@ from xx_music import __version__ as core_version
 from xx_music import diagnostics
 from xx_music.cache import VALID_CAP_CHOICES_GB
 from xx_music.engine import STREAM
-from xx_music.ui import common, fmt
+from xx_music.ui import common, css, fmt
 from xx_ui import widgets
 
 LOG_LINES = 200
@@ -164,7 +164,8 @@ class SettingsPage:
         meter = common.vbox(8)
         meter.add_css_class("xx-mu-block")
         meter.set_margin_bottom(8)
-        top = common.hbox(8)
+        top = Gtk.Box.new(Gtk.Orientation.VERTICAL if css.large_text()
+                          else Gtk.Orientation.HORIZONTAL, 8)
         figure = common.label(fmt.size(used), "xx-mu-h2 xx-mu-num", chars=10)
         figure.set_hexpand(True)
         figure.set_ellipsize(0)

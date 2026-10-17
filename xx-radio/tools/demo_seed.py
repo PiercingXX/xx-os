@@ -304,7 +304,7 @@ class DemoFirstRun:
         def run(index: int = 0) -> bool:
             if index < stop:
                 on_progress(steps[index])
-                GLib.timeout_add(40, lambda: run(index + 1))
+                GLib.timeout_add(20, lambda: run(index + 1))
                 return False
             if self.outcome == "failed":
                 on_error(RuntimeError("could not install packages: "
@@ -313,7 +313,7 @@ class DemoFirstRun:
                 on_done({})
             return False
 
-        GLib.timeout_add(40, run)
+        GLib.timeout_add(20, run)
 
 
 def demo_downloads(_ui):

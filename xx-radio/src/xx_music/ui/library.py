@@ -14,7 +14,7 @@ from gi.repository import Gtk
 from xx_music.engine import (ERROR_TEXT, LIBRARY, ErrorKind, Item,
                              LibrarySection, Track)
 from xx_music.tasks import Generation
-from xx_music.ui import common, fmt, menus
+from xx_music.ui import common, css, fmt, menus
 from xx_music.ui.context import ACTIVE, DONE, FAILED, QUEUED, DownloadRow
 from xx_ui import widgets
 
@@ -227,7 +227,8 @@ class LibraryPage:
         box = common.vbox(8)
         box.add_css_class("xx-mu-block")
         box.set_margin_top(8)
-        top = common.hbox(8)
+        top = Gtk.Box.new(Gtk.Orientation.VERTICAL if css.large_text()
+                          else Gtk.Orientation.HORIZONTAL, 8)
         figure = common.label(fmt.size(used), "xx-mu-h2 xx-mu-num", chars=10)
         figure.set_hexpand(True)
         figure.set_ellipsize(0)

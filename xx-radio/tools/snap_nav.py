@@ -238,9 +238,12 @@ elif TARGET == "banner-signedout":
 elif TARGET == "banner-mix":
     ui.player.backend.offline = True
     ui.player.backend._push()
-elif TARGET.startswith("firstrun"):
+elif TARGET.startswith("firstrun") and TARGET != "firstrun":
     def _start():
         screen = shell.first_run_widget
-        if screen is not None and TARGET != "firstrun":
-            screen.xx_screen.start()
-    later(500, _start)
+        if screen is None:
+            return True  # the first-run check is still on the worker
+        screen.xx_screen.start()
+        return False
+
+    GLib.timeout_add(50, _start)  # noqa: F821
