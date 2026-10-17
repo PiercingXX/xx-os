@@ -50,6 +50,9 @@ install_data(
     'src/xx_audiobook/fmt.py',
     'src/xx_audiobook/browse.py',
     'src/xx_audiobook/bookmarks.py',
+    'src/xx_audiobook/reviews.py',
+    'src/xx_audiobook/stats.py',
+    'src/xx_audiobook/zones.py',
   ],
   install_dir: join_paths(app_datadir, 'xx_audiobook'),
 )

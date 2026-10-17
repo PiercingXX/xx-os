@@ -424,7 +424,7 @@ def _unattended_harness(tmp_path, autologin=True):
 
 
 _UNATTENDED_FUNCS = ['msg_box', 'pkg_install', 'install_deps',
-                     'install_portals',
+                     'install_portals', 'install_media_deps',
                      'download_nerd_font_fallback', 'install_fonts',
                      'install_logind_dropin', 'link_squeekboard_layouts',
                      'check_layer_shell', 'detect_phoc_device', 'select_phoc_scale',
@@ -448,6 +448,8 @@ def test_unattended_full_run_no_whiptail(tmp_path):
     log_text = paths['log'].read_text()
     assert 'py3-wayland' in log_text
     assert 'py3-pywayland' not in log_text
+    assert 'gst-plugins-good' in log_text
+    assert 'py3-ytmusicapi' in log_text
     assert 'usermod -aG input' in log_text
     assert 'Virtual-1' in (tmp_path / 'phoc.ini').read_text()
     link = paths['home'] / '.local' / 'share' / 'squeekboard' / 'keyboards'

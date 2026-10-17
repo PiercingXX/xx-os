@@ -148,6 +148,48 @@ install_deps() {
         pkg_install wlsunset
     fi
     install_portals
+    install_media_deps
+}
+
+install_media_deps() {
+    # Runtime stack for the media apps (xx-radio, xx-audiobook). One app
+    # failing to build never blocks the shell: pkg_install only warns.
+    # Name evidence: xx-radio PORT_SPEC.md 2.1 (apk search on the pmOS
+    # v26.06 VM, Alpine aports, Arch pacman -Si, Debian madison) and
+    # xx-radio/docs/M0-findings.md (measured on FuriOS forky).
+    echo "Installing media app dependencies..."
+    if [ "$PKG" = apk ]; then
+        # GStreamer (playbin; Opus/WebM needs good+base, AAC needs libav)
+        # plus its GI use; libsecret holds the sign-in tokens.
+        pkg_install gstreamer gst-plugins-base gst-plugins-good \
+            gst-plugins-bad gst-libav py3-gst libsecret
+        # xx-radio base: distro ytmusicapi + yt-dlp (the app's engine venv
+        # is the fast path when they lag); nodejs runs the JS challenges
+        # and the token helper. git (helper clone) is in the base deps.
+        # Alpine's nodejs ships without npm (checked on pmOS v26.06); the
+        # token-helper setup needs it.
+        pkg_install py3-ytmusicapi yt-dlp nodejs npm
+    elif [ "$PKG" = pacman ]; then
+        pkg_install gstreamer gst-plugins-base gst-plugins-good \
+            gst-plugins-bad gst-libav gst-python libsecret
+        pkg_install python-ytmusicapi yt-dlp nodejs npm
+    else
+        # FuriOS is Debian forky: no curl/pip/python3-venv by default, so
+        # the engine venv is a first-run concern, not installed here.
+        # Core libgstreamer follows as a dependency of the plugin packages.
+        pkg_install gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav \
+            gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+            python3-gst-1.0 gir1.2-secret-1
+        # trixie's nodejs is 20 (below the floor of 22); forky has 24.
+        # python3-ytmusicapi is on its own line: not in trixie, and one
+        # missing name must not fail yt-dlp/nodejs/npm with it.
+        pkg_install yt-dlp nodejs npm
+        pkg_install python3-ytmusicapi
+    fi
+    # libadwaita and gtk4-layer-shell come from the base deps above; neither
+    # media app uses Gtk4LayerShell or the GstAudio/GstPbutils typelibs
+    # (only Gst 1.0), so no extra gir is installed for them.
 }
 
 install_portals() {
@@ -309,7 +351,7 @@ link_squeekboard_layouts() {
 # The XX apps live next to xx-wm in the monorepo. xx-find is deliberately
 # absent: Find My Device is built but must not be installed or run until the
 # owner turns it on. One app failing to build never blocks the shell.
-XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-email xx-vitals xx-share xx-captions xx-auto"
+XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-email xx-vitals xx-share xx-captions xx-auto xx-radio xx-audiobook"
 
 install_apps() {
     for app in $XX_APPS; do
