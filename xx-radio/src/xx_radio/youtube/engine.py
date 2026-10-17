@@ -1,11 +1,10 @@
 """The YouTube Music engine (unofficial; see README.md).
 
-Implements the catalog half of the xx_music.engine contract over
-ytmusicapi: search, suggestions, home, moods, charts, library, pages,
-radio, lyrics and ratings. Stream resolution (``resolve``) arrives with
-the M2 resolver and account storage (``sign_in``/``sign_out``) with M7
-auth; until then they keep the base class ``UNSUPPORTED`` answer and the
-``STREAM``/``SIGN_IN`` capabilities stay off.
+Catalog over ytmusicapi plus stream resolution over the resolver child
+and sign-in over the account manager. Pass a resolver to advertise
+``STREAM`` and an account manager to advertise ``SIGN_IN``; without
+them ``resolve`` reports ``HELPER_MISSING`` and sign-in stays
+``UNSUPPORTED``, while the catalog keeps working on system packages.
 
 Constructing the engine does no I/O and imports neither ytmusicapi nor
 yt-dlp; every blocking call runs on the caller's worker thread.
@@ -50,10 +49,31 @@ class YouTubeMusicEngine(e.Engine):
     capabilities = CAPABILITIES
 
     def __init__(self, engine_dir: Path | str,
-                 catalog_client: catalog.Catalog | None = None) -> None:
+                 catalog_client: catalog.Catalog | None = None,
+                 resolver: Any | None = None,
+                 account: Any | None = None) -> None:
         self.engine_dir = Path(engine_dir)
         self.catalog = (catalog_client if catalog_client is not None
                         else catalog.Catalog())
+        self.resolver = resolver
+        self.account = account
+        caps = set(CAPABILITIES)
+        if resolver is not None:
+            caps.add(e.STREAM)
+        if account is not None:
+            caps.add(e.SIGN_IN)
+        self.capabilities = frozenset(caps)
+
+    def _account_signed_in(self) -> bool:
+        if self.account is None:
+            return False
+        try:
+            return bool(self.account.state().signed_in)
+        except Exception:
+            return False
+
+    def _is_signed_in(self) -> bool:
+        return bool(self.catalog.signed_in or self._account_signed_in())
 
     def status(self) -> e.EngineStatus:
         try:
@@ -63,7 +83,56 @@ class YouTubeMusicEngine(e.Engine):
             status = probe.status_from(probe.Installed(), _dt.date.today())
         return e.EngineStatus(
             can_browse=status.can_browse, can_play=status.can_play,
-            signed_in=self.catalog.signed_in, components=status.components)
+            signed_in=self._is_signed_in(), components=status.components)
+
+    def sign_in(self, credentials: dict[str, str]) -> str:
+        if self.account is None:
+            self._unsupported("sign_in")
+        try:
+            pasted = (credentials.get("paste") or credentials.get("headers")
+                      or credentials.get("cookie") or "")
+            label = (credentials.get("account")
+                     or credentials.get("account_name") or "")
+            brand = credentials.get("brand_user")
+            state = self.account.sign_in_with_headers(pasted, label, brand)
+        except e.EngineError:
+            raise
+        except Exception as exc:
+            raise e.EngineError(e.ErrorKind.OTHER, str(exc)[:200]) from exc
+        return state.account_name
+
+    def sign_out(self) -> None:
+        if self.account is None:
+            self._unsupported("sign_out")
+        try:
+            self.account.sign_out()
+        except e.EngineError:
+            raise
+        except Exception as exc:
+            raise e.EngineError(e.ErrorKind.OTHER, str(exc)[:200]) from exc
+
+    def resolve(self, track_id: str, *, low_data: bool = False
+                ) -> e.StreamSource:
+        if self.resolver is None:
+            raise e.EngineError(e.ErrorKind.HELPER_MISSING,
+                                "youtube: playback engine is not set up")
+        try:
+            if self.account is not None:
+                signed = self._account_signed_in()
+                try:
+                    self.resolver.signed_in = signed
+                except AttributeError:
+                    pass
+                if signed:
+                    try:
+                        self.account.ensure_cookie_jar()
+                    except Exception:
+                        pass
+            return self.resolver.resolve(track_id, low_data=low_data)
+        except e.EngineError:
+            raise
+        except Exception as exc:
+            raise e.EngineError(e.ErrorKind.OTHER, str(exc)[:200]) from exc
 
     def search(self, query: str, kind: e.ItemKind | None = None,
                limit: int = 20) -> e.SearchResults:
@@ -102,7 +171,47 @@ class YouTubeMusicEngine(e.Engine):
         return self.catalog.fetch(e.CHARTS, "get_charts", parse.parse_charts,
                                   country)
 
+    def _library_via_account(
+            self, section: e.LibrarySection) -> list[e.Item] | None:
+        if self.account is None or self.catalog.signed_in:
+            return None
+        if not self._account_signed_in():
+            return None
+        try:
+            raw = self.account.fetch_library(section, limit=100)
+        except e.EngineError:
+            raise
+        except Exception as exc:
+            raise e.EngineError(e.ErrorKind.OTHER, str(exc)[:200]) from exc
+        try:
+            if section == e.LibrarySection.PLAYLISTS:
+                return parse.parse_library_playlists(raw)
+            if section == e.LibrarySection.SONGS:
+                tracks = parse.parse_library_songs(raw)
+                return [e.Item(e.ItemKind.TRACK, t.id, t.title,
+                               t.artist_line, t.art_url, t) for t in tracks]
+            if section == e.LibrarySection.ALBUMS:
+                return parse.parse_library_albums(raw)
+            if section == e.LibrarySection.ARTISTS:
+                return parse.parse_library_artists(raw)
+            if section == e.LibrarySection.LIKED:
+                tracks = parse.parse_liked_songs(raw)
+                return [e.Item(e.ItemKind.TRACK, t.id, t.title,
+                               t.artist_line, t.art_url, t) for t in tracks]
+            return parse.parse_history(raw)
+        except e.EngineError as exc:
+            self.catalog.health.note_failure(e.LIBRARY, exc.kind)
+            raise
+        except Exception as exc:
+            self.catalog.health.note_failure(e.LIBRARY, e.ErrorKind.OTHER)
+            raise e.EngineError(e.ErrorKind.OTHER,
+                                f"youtube: library: {exc!r}") from exc
+
     def library(self, section: e.LibrarySection) -> list[e.Item]:
+        via_account = self._library_via_account(section)
+        if via_account is not None:
+            self.catalog.health.note_success(e.LIBRARY)
+            return via_account
         if not self.catalog.signed_in:
             raise e.EngineError(e.ErrorKind.AUTH_REQUIRED, "youtube: library")
         if section == e.LibrarySection.PLAYLISTS:
@@ -174,6 +283,16 @@ class YouTubeMusicEngine(e.Engine):
         return result
 
     def rate(self, track_id: str, rating: e.Rating) -> None:
+        if not self.catalog.signed_in and self._account_signed_in():
+            try:
+                self.account.set_rating(track_id, rating)
+            except e.EngineError:
+                raise
+            except Exception as exc:
+                raise e.EngineError(e.ErrorKind.OTHER,
+                                    str(exc)[:200]) from exc
+            self.catalog.health.note_success(e.RATE)
+            return
         if not self.catalog.signed_in:
             raise e.EngineError(e.ErrorKind.AUTH_REQUIRED, "youtube: rate")
         self.catalog.fetch(e.RATE, "rate_song", lambda got: None, track_id,
@@ -185,4 +304,23 @@ class YouTubeMusicEngine(e.Engine):
 
 def create(context) -> YouTubeMusicEngine:
     """Engine factory named by xx_radio.main.SPEC."""
-    return YouTubeMusicEngine(context.paths.engine_dir())
+    from xx_radio.account import AccountManager
+    from xx_radio.youtube import resolver as resolver_mod
+    from xx_radio.youtube.auth import LibsecretStore
+
+    paths = context.paths
+    engine_dir = paths.engine_dir()
+    app_runtime = paths.runtime_dir()
+    if app_runtime.name == paths.dir_name and app_runtime.parent != app_runtime:
+        account_runtime = app_runtime.parent
+    else:
+        account_runtime = app_runtime
+    try:
+        helper_ready = probe.generator_present(engine_dir)
+    except Exception:
+        helper_ready = False
+    account = AccountManager(LibsecretStore(), account_runtime)
+    wired = resolver_mod.Resolver(
+        engine_dir, runtime_dir=app_runtime, signed_in=False,
+        helper_ready=bool(helper_ready))
+    return YouTubeMusicEngine(engine_dir, resolver=wired, account=account)

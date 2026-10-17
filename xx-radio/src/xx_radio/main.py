@@ -59,6 +59,7 @@ class RadioApplication(Adw.Application):
     def __init__(self) -> None:
         super().__init__(application_id=SPEC.app_id,
                          flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        self._player_client = None
 
     def do_activate(self) -> None:
         window = self.props.active_window
@@ -68,13 +69,34 @@ class RadioApplication(Adw.Application):
         from xx_music.ui.shell import build_window
 
         SPEC.paths().ensure_app_dirs()
-        build_window(self, SPEC).present()
+        window = build_window(self, SPEC)
+        window.xx_player_client = None
+        Gio.bus_get(Gio.BusType.SESSION, None, self._on_bus_ready,
+                    window)
+        window.present()
+
+    def _on_bus_ready(self, _source, result, window) -> None:
+        try:
+            connection = Gio.bus_get_finish(result)
+        except Exception:
+            return
+        try:
+            from xx_music.player.client import PlayerClient
+
+            client = PlayerClient(connection, SPEC)
+        except Exception:
+            return
+        self._player_client = client
+        try:
+            window.xx_player_client = client
+        except Exception:
+            pass
 
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if "--player-service" in args:
-        from xx_music.player import service as service_mod
+        from xx_radio import service as service_mod
 
         return service_mod.main(SPEC)
     app = RadioApplication()

@@ -125,11 +125,15 @@ def test_overrides_keep_contract_signatures():
     for name in CATALOG_METHODS:
         assert name in yt.YouTubeMusicEngine.__dict__, name
     for name in ("sign_in", "sign_out", "resolve"):
-        assert name not in yt.YouTubeMusicEngine.__dict__, name
+        assert name in yt.YouTubeMusicEngine.__dict__, name
+    bare = yt.YouTubeMusicEngine("/tmp")
+    for name, args, kind in (
+            ("sign_in", ({},), e.ErrorKind.UNSUPPORTED),
+            ("sign_out", (), e.ErrorKind.UNSUPPORTED),
+            ("resolve", ("x",), e.ErrorKind.HELPER_MISSING)):
         with pytest.raises(e.EngineError) as caught:
-            getattr(yt.YouTubeMusicEngine("/tmp"), name)(
-                *{"sign_in": ({},), "sign_out": (), "resolve": ("x",)}[name])
-        assert caught.value.kind == e.ErrorKind.UNSUPPORTED
+            getattr(bare, name)(*args)
+        assert caught.value.kind == kind, name
 
 
 def test_capabilities_are_the_catalog_half():
