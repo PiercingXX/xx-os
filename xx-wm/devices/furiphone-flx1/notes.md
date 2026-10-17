@@ -13,7 +13,7 @@ FuriLabs FLX1. In hand, not yet used for XX-WM testing.
 
 ## phoc scale (20.5)
 
-Per-device phoc.ini fragment: `launcher/data/phoc/furiphone-flx1.ini` (output `HWCOMPOSER-1`, scale **3**). `install.sh` prompts for the device and copies the fragment over the installed `phoc.ini`.
+Per-device phoc.ini fragment: `launcher/data/phoc/furiphone-flx1.ini` (output `HWCOMPOSER-1`, scale **2**: hwcomposer's mode is 720x1600, so 360x800 logical, matching stock FuriOS). `install.sh` prompts for the device and copies the fragment over the installed `phoc.ini`.
 
 ## Why it matters here
 

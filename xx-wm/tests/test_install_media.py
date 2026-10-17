@@ -187,16 +187,11 @@ def test_radio_meson_packages_and_activation():
         assert service in text, f'radio meson misses {service}'
 
 
-def test_audiobook_meson_lists_every_module():
-    book = _sibling('xx-audiobook')
-    text = (book / 'meson.build').read_text()
-    missing = []
-    for src in ('src/xx_audiobook/*.py', 'src/xx_audiobook/ui/*.py',
-                'src/xx_audiobook/service/*.py'):
-        for path in sorted(book.glob(src)):
-            if f"'{path.relative_to(book)}'" not in text:
-                missing.append(str(path.relative_to(book)))
-    assert not missing, f'audiobook meson misses modules: {missing}'
+def test_audiobook_meson_installs_whole_package():
+    # install_subdir ships every module; a hand-kept list once missed one.
+    text = (_sibling('xx-audiobook') / 'meson.build').read_text()
+    assert "install_subdir(\n  join_paths('src', 'xx_audiobook')" in text
+    assert "'src/xx_audiobook/" not in text
 
 
 def test_audiobook_meson_units_and_activation():
