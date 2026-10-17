@@ -28,6 +28,7 @@ from gesture_config import GestureConfig
 # mapping instead. Order matters: it is lisgd's argument order.
 LEGACY_BINDINGS = [
     '1,DU,B,S,R,/usr/bin/xx-wm-ipc gesture.keyboard',
+    '1,DU,B,M,R,/usr/bin/xx-wm-ipc gesture.home',
     '1,DU,B,L,R,/usr/bin/xx-wm-ipc gesture.home',
     '1,UD,T,*,R,/usr/bin/xx-wm-ipc gesture.shade',
     '1,LR,L,*,R,/usr/bin/xx-wm-ipc gesture.back',
@@ -37,6 +38,7 @@ LEGACY_BINDINGS = [
 # Defaults resolve through _DEFAULTS action names mapped via ACTION_TO_VERB.
 DEFAULT_BINDINGS = [
     '1,DU,B,S,R,/usr/bin/xx-wm-ipc gesture.home',
+    '1,DU,B,M,R,/usr/bin/xx-wm-ipc gesture.switcher',
     '1,DU,B,L,R,/usr/bin/xx-wm-ipc gesture.switcher',
     '1,UD,T,*,R,/usr/bin/xx-wm-ipc gesture.shade',
     '1,LR,L,*,R,/usr/bin/xx-wm-ipc gesture.back',
@@ -93,8 +95,9 @@ class TestRebinding:
         }), encoding='utf-8')
         got = generate_bindings('/usr/bin')
         assert got[0].endswith('gesture.switcher')
-        assert got[3].endswith('gesture.home')
+        # [1], [2]: swipe_up_long M and L; [3]: shade; [4], [5]: edges
         assert got[4].endswith('gesture.home')
+        assert got[5].endswith('gesture.home')
 
     def test_action_names_map_to_ipc_verbs(self, tmp_path):
         (tmp_path / 'gestures.json').write_text(json.dumps({
@@ -105,7 +108,8 @@ class TestRebinding:
         }), encoding='utf-8')
         assert generate_bindings('/usr/bin') == [
             '1,DU,B,S,R,/usr/bin/xx-wm-ipc gesture.home',
-            '1,DU,B,L,R,/usr/bin/xx-wm-ipc gesture.switcher',
+            '1,DU,B,M,R,/usr/bin/xx-wm-ipc gesture.switcher',
+    '1,DU,B,L,R,/usr/bin/xx-wm-ipc gesture.switcher',
             '1,UD,T,*,R,/usr/bin/xx-wm-ipc gesture.shade',
             '1,LR,L,*,R,/usr/bin/xx-wm-ipc gesture.back',
             '1,RL,R,*,R,/usr/bin/xx-wm-ipc gesture.back',
@@ -158,10 +162,11 @@ class TestRebinding:
         # explode is dropped → schema default home → gesture.home
         assert got[0].endswith('gesture.home')
         # launch: is in-shell; lisgd keeps DEFAULT_VERBS for the slot
-        assert got[1].endswith('gesture.home')
+        assert got[1].endswith('gesture.home')   # swipe_up_long, M
+        assert got[2].endswith('gesture.home')   # swipe_up_long, L
         # camera is a valid unmapped action → DEFAULT_VERBS shade
-        assert got[2].endswith('gesture.shade')
-        assert got[3].endswith('gesture.back')
+        assert got[3].endswith('gesture.shade')
+        assert got[4].endswith('gesture.back')
 
     def test_unmapped_action_uses_default_verb(self, tmp_path):
         (tmp_path / 'gestures.json').write_text(json.dumps({
@@ -291,3 +296,10 @@ class TestCli:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def test_medium_bottom_swipe_opens_the_switcher():
+    # lisgd classes a 1/3-2/3 screen swipe as M; with only S and L bound
+    # the switcher was unreachable on the FLX1.
+    lines = generate_bindings('/usr/bin')
+    assert '1,DU,B,M,R,/usr/bin/xx-wm-ipc gesture.switcher' in lines

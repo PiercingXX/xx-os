@@ -40,7 +40,11 @@ from gesture_config import IPC_VERBS, GestureConfig
 # wrapper hardcoded before bindings became generated.
 _LISGD_GEOMETRY: dict[str, tuple[str, ...]] = {
     'swipe_up_short': ('1,DU,B,S,R',),
-    'swipe_up_long': ('1,DU,B,L,R',),
+    # lisgd: S < 1/3 screen height, M 1/3-2/3, L > 2/3. Medium must map
+    # too: with only S and L bound, a natural 'swipe further' landed in
+    # M and did nothing, and L needs a 2/3-screen drag (no switcher on
+    # the FLX1).
+    'swipe_up_long': ('1,DU,B,M,R', '1,DU,B,L,R'),
     'swipe_down_top': ('1,UD,T,*,R',),
     'swipe_left_edge': ('1,LR,L,*,R', '1,RL,R,*,R'),
 }

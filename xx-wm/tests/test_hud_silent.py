@@ -148,8 +148,9 @@ class TestBrightnessSliderWiresHud:
             quick_actions.QuickActionsPanel.__init__).parameters
         assert 'hud' in params
 
-    def test_brightness_change_applies_and_flashes_hud(self, monkeypatch):
-        """A drag ending at 63 applies 63 AND flashes it on the HUD — once."""
+    def test_brightness_change_applies_without_hud_flash(self, monkeypatch):
+        """A drag ending at 63 applies 63 once, and flashes nothing: the
+        owner asked for no brightness popup."""
         applied: list[int] = []
         monkeypatch.setattr(quick_actions, '_set_brightness_pct',
                             lambda pct: applied.append(pct))
@@ -162,7 +163,7 @@ class TestBrightnessSliderWiresHud:
         _TIMER_GLIB.fire_all()
 
         assert applied == [63]
-        assert hud.brightness_calls == [63]
+        assert hud.brightness_calls == []
 
     def test_drag_ticks_collapse_to_one_apply_with_final_value(self, monkeypatch):
         """N value-changed ticks inside one window → exactly one apply, and it
@@ -178,21 +179,7 @@ class TestBrightnessSliderWiresHud:
         _TIMER_GLIB.fire_all()
 
         assert applied == [80]
-        assert hud.brightness_calls == [80]
-
-    def test_separate_drags_flash_each_final_level(self, monkeypatch):
-        """Two drags with a settled window between them flash twice."""
-        monkeypatch.setattr(quick_actions, '_set_brightness_pct',
-                            lambda pct: None)
-        hud = _FakeHud()
-        panel = _bare_panel(hud=hud)
-
-        panel._on_brightness_changed(10)
-        _TIMER_GLIB.fire_all()
-        panel._on_brightness_changed(80)
-        _TIMER_GLIB.fire_all()
-
-        assert hud.brightness_calls == [10, 80]
+        assert hud.brightness_calls == []
 
     def test_no_hud_still_applies_brightness_without_crashing(self, monkeypatch):
         """Silent absence: without a HUD the brightness change still applies and
@@ -206,12 +193,6 @@ class TestBrightnessSliderWiresHud:
         _TIMER_GLIB.fire_all()
 
         assert applied == [42]
-
-    def test_show_brightness_hud_noop_when_absent(self):
-        """_show_brightness_hud is a fire-and-forget no-op with no HUD wired:
-        it must not raise and must return None (never a value or a crash)."""
-        panel = _bare_panel(hud=None)
-        assert panel._show_brightness_hud(75) is None  # silent absence, no-op
 
     def test_slider_handlers_route_through_debounced_queue(self):
         """Both sliders' value-changed handlers must route through the debounce

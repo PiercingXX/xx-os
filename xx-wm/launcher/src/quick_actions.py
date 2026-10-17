@@ -1058,7 +1058,7 @@ class QuickActionsPanel(Gtk.Box):
         self._on_open_uri = on_open_uri
         # Volume/brightness HUD overlay (plan T3/T4). Optional: when absent the
         # sliders still adjust brightness/volume, just without an on-screen
-        # indicator (silent absence — see _show_brightness_hud).
+        # indicator (silent absence).
         self._hud = hud
         # The shade threads its LIVE config down so theme == 'custom' renders
         # the derived palette; the fallback keeps direct no-arg construction
@@ -1449,10 +1449,6 @@ class QuickActionsPanel(Gtk.Box):
             else:
                 self._vol_slider = slider
 
-        try:
-            self._build_captions_row()
-        except Exception:
-            pass
 
     def _set_readout(self, key: str, pct: int) -> None:
         readout = (getattr(self, '_readouts', None) or {}).get(key)
@@ -1491,17 +1487,9 @@ class QuickActionsPanel(Gtk.Box):
         return False
 
     def _apply_brightness(self, pct: int) -> None:
+        # No HUD flash: the owner doesn't want a brightness popup; the slider
+        # itself shows the level.
         _set_brightness_pct(pct)
-        self._show_brightness_hud(pct)
-
-    def _show_brightness_hud(self, pct: int) -> None:
-        """Flash the current brightness level on the HUD overlay (if one is wired).
-
-        Silent absence: without a HUD the brightness change already happened in
-        _apply_brightness; this is a fire-and-forget no-op, never a crash.
-        """
-        if self._hud is not None:
-            self._hud.show_brightness(pct)
 
     def _on_tile_toggled(self, btn: Gtk.ToggleButton, tile: _TileDef) -> None:
         if self._updating:
@@ -1628,9 +1616,6 @@ class QuickActionsPanel(Gtk.Box):
             btn = (getattr(self, '_tile_buttons', None) or {}).get('captions')
             if btn is not None:
                 btn.set_active(button_active)
-            row_btn = getattr(self, '_captions_row_btn', None)
-            if row_btn is not None:
-                row_btn.set_active(button_active)
         except Exception:
             pass
         finally:
@@ -1667,76 +1652,6 @@ class QuickActionsPanel(Gtk.Box):
                 lbl.set_text(label)
             except Exception:
                 pass
-        row_label = getattr(self, '_captions_row_label', None)
-        if row_label is not None:
-            try:
-                row_label.set_text(label)
-            except Exception:
-                pass
-        row_btn = getattr(self, '_captions_row_btn', None)
-        if row_btn is not None:
-            try:
-                row_btn.set_label(self._captions_row_action())
-            except Exception:
-                pass
-
-    def _captions_row_action(self) -> str:
-        try:
-            state = _captions_controller(self).tile_state
-        except Exception:
-            return 'Turn on'
-        return {'on': 'Turn off', 'starting': 'Stop',
-                'no-model': 'Get model', 'error': 'Retry'}.get(state,
-                                                               'Turn on')
-
-    def _on_captions_row_toggled(self, btn) -> None:
-        if getattr(self, '_updating', False):
-            return
-        ctrl = _captions_controller(self)
-        if ctrl is None:
-            return
-        try:
-            if ctrl.tile_state == 'no-model':
-                ctrl.open_model_screen()
-            else:
-                ctrl.set_enabled(bool(btn.get_active()))
-        except Exception:
-            pass
-        self._refresh_captions_ui()
-
-    def _build_captions_row(self) -> None:
-        """Compact captions toggle next to the volume row: the contract's
-        HUD entry, same state as the tile in a smaller footprint."""
-        self._captions_row = None
-        self._captions_row_label = None
-        self._captions_row_btn = None
-        if not _captions_installed():
-            return
-        try:
-            from gi.repository import Pango
-            ellipsize = Pango.EllipsizeMode.END
-        except Exception:
-            ellipsize = None
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        row.add_css_class('qa-row')
-        lbl = Gtk.Label(label='CAPTIONS', xalign=0)
-        lbl.add_css_class('qa-slider-label')
-        state = Gtk.Label(label='Off', xalign=0)
-        state.add_css_class('qa-readout')
-        state.set_hexpand(True)
-        if ellipsize is not None:
-            state.set_ellipsize(ellipsize)
-        btn = Gtk.ToggleButton(label='Turn on')
-        btn.add_css_class('qa-row-btn')
-        btn.connect('toggled', self._on_captions_row_toggled)
-        row.append(lbl)
-        row.append(state)
-        row.append(btn)
-        self.sliders_box.append(row)
-        self._captions_row = row
-        self._captions_row_label = state
-        self._captions_row_btn = btn
-        self._refresh_captions_ui()
 
     def _query_tile_states(self) -> dict[str, bool]:
         """Read every tile state; blocking D-Bus goes here, off-thread."""

@@ -196,7 +196,7 @@ class TestSliderDebounce:
         timer_glib.fire_all()
 
         assert applied == [90]
-        assert hud.brightness_calls == [90]
+        assert hud.brightness_calls == []  # no brightness popup
 
     def test_drag_ticks_collapse_to_one_volume_apply(self, timer_glib,
                                                      monkeypatch):

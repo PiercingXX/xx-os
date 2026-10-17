@@ -148,10 +148,10 @@ def _launch_cmd(cmd: list[str]) -> None:
 
 
 def folder_row_markup(label: str) -> str:
-    """Folder slot text: the escaped name plus a smaller, dimmed chevron."""
+    """Folder slot text: just the escaped name. No chevron: the owner's
+    folders read as plain words on home, like every other slot."""
     from gi.repository import GLib
-    return (GLib.markup_escape_text(label)
-            + ' <span size="52%" alpha="60%">›</span>')
+    return GLib.markup_escape_text(label)
 
 
 _HOME_ACCESSIBLE_LABEL = 'Home'
@@ -424,7 +424,7 @@ class HomeLauncher(Gtk.Box):
 
     def _make_folder_row(self, slot: dict, idx: int) -> Gtk.Button:
         from gi.repository import Pango
-        # One label (name + dimmed chevron as markup) filling the row, for
+        # One label (the folder name) filling the row, for
         # the same rounding reason as _make_row.
         row = Gtk.Label()
         row.set_markup(folder_row_markup(slot.get('label', '')))
