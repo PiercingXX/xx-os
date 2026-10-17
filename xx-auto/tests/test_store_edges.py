@@ -72,3 +72,46 @@ def test_mpris_sort_and_metadata():
          "mpris:length": 1000})
     assert (title, artist, length) == ("T", "A", 1000)
     assert parse_metadata({}) == ("", "", "", 0)
+
+
+def test_mpris_suite_sort_covers_real_radio_and_audiobook():
+    from xx_auto import media_apps as media_mod
+    from xx_auto.drive_tiles import Tile, tile_for
+
+    radio = Track(media_mod.RADIO_MPRIS_BUS, identity="XX-Radio",
+                  desktop_entry=media_mod.RADIO_DESKTOP_ID,
+                  title="FM", last_active_ms=1)
+    book = Track(media_mod.AUDIOBOOK_MPRIS_BUS, identity="XX-Audiobook",
+                 desktop_entry=media_mod.AUDIOBOOK_DESKTOP_ID,
+                 title="Ch", last_active_ms=2)
+    other = Track("org.mpris.MediaPlayer2.vlc", identity="VLC",
+                  title="Song", last_active_ms=99)
+    ordered = sort_players([other, radio, book])
+    assert [track.bus_name for track in ordered] == [
+        media_mod.AUDIOBOOK_MPRIS_BUS, media_mod.RADIO_MPRIS_BUS,
+        "org.mpris.MediaPlayer2.vlc"]
+    assert tile_for(radio.desktop_entry, radio.identity) is Tile.RADIO
+    assert tile_for(book.desktop_entry, book.identity) is Tile.AUDIOBOOK
+
+
+def test_demo_tracks_use_real_suite_ids_and_actions():
+    from xx_auto import demo as demo_mod
+    from xx_auto import media_apps as media_mod
+    from xx_auto.drive_tiles import Tile, tile_for
+
+    snap = demo_mod.snapshot_for("quick_pick")
+    by_bus = {track.bus_name: track for track in snap.tracks}
+    radio = by_bus[media_mod.RADIO_MPRIS_BUS]
+    book = by_bus[media_mod.AUDIOBOOK_MPRIS_BUS]
+    assert radio.desktop_entry == media_mod.RADIO_DESKTOP_ID
+    assert book.desktop_entry == media_mod.AUDIOBOOK_DESKTOP_ID
+    assert tile_for(radio.desktop_entry, radio.identity) is Tile.RADIO
+    assert tile_for(book.desktop_entry, book.identity) is Tile.AUDIOBOOK
+    assert [action.action_id
+            for action in radio.actions] == ["like", "dislike"]
+    assert [action.icon_name
+            for action in radio.actions] == [media_mod.THUMB_UP_ICON,
+                                             media_mod.THUMB_DOWN_ICON]
+    assert [action.action_id for action in book.actions] == [
+        "skip-back", "bookmark", "skip-forward"]
+    assert all(action.icon_name == "" for action in book.actions)

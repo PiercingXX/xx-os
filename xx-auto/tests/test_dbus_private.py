@@ -141,9 +141,16 @@ FAKE_BUS = textwrap.dedent("""\
             Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT
             | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
     conn = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-    Player(conn, "org.mpris.MediaPlayer2.suitebook", "xx-audiobook",
-           "io.piercingxx.Audiobook", "Playing", "Chapter 7", "The Book",
-           [("rewind", "-15s", "", True)])
+    Player(conn, "org.mpris.MediaPlayer2.xx_audiobook", "XX-Audiobook",
+           "io.piercingxx.XXAudiobook", "Playing", "Chapter 7", "The Book",
+           [("skip-back", "Back 30s", "", True),
+            ("bookmark", "Bookmark", "", True),
+            ("skip-forward", "Forward 30s", "", True)])
+    Player(_new_conn(), "org.mpris.MediaPlayer2.xx_radio", "XX-Radio",
+           "io.piercingxx.XXRadio", "Paused", "Slow Morning Light",
+           "Harbor FM",
+           [("like", "Like", "xx-auto-thumb-up-symbolic", True),
+            ("dislike", "Dislike", "xx-auto-thumb-down-symbolic", True)])
     Player(_new_conn(), "org.mpris.MediaPlayer2.plain", "Plain",
            "org.example.Plain", "Paused", "Song", "Singer", [])
     Contacts(conn)
@@ -184,17 +191,38 @@ def test_mpris_list_sort_read_and_actions(private_bus):
     try:
         conn = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         names = mpris_mod.list_player_names(conn)
-        assert "org.mpris.MediaPlayer2.suitebook" in names
+        radio_bus = "org.mpris.MediaPlayer2.xx_radio"
+        book_bus = "org.mpris.MediaPlayer2.xx_audiobook"
+        assert radio_bus in names
+        assert book_bus in names
         tracks = [mpris_mod.read_track(conn, name) for name in names]
+        by_bus = {track.bus_name: track for track in tracks}
         ordered = mpris_mod.sort_players(tracks)
-        assert ordered[0].desktop_entry == "io.piercingxx.Audiobook"
-        assert ordered[0].title == "Chapter 7"
-        assert ordered[0].actions[0].action_id == "rewind"
+        assert [track.desktop_entry for track in ordered] == [
+            "io.piercingxx.XXAudiobook", "io.piercingxx.XXRadio",
+            "org.example.Plain"]
+        assert by_bus[book_bus].title == "Chapter 7"
+        assert [action.action_id
+                for action in by_bus[book_bus].actions] == [
+            "skip-back", "bookmark", "skip-forward"]
+        assert [action.action_id
+                for action in by_bus[radio_bus].actions] == [
+            "like", "dislike"]
+        assert by_bus[radio_bus].actions[0].icon_name == \
+            "xx-auto-thumb-up-symbolic"
+        assert by_bus[radio_bus].actions[1].icon_name == \
+            "xx-auto-thumb-down-symbolic"
+        from xx_auto.drive_tiles import Tile, tile_for
+
+        assert tile_for(by_bus[radio_bus].desktop_entry,
+                        by_bus[radio_bus].identity) is Tile.RADIO
+        assert tile_for(by_bus[book_bus].desktop_entry,
+                        by_bus[book_bus].identity) is Tile.AUDIOBOOK
         assert mpris_mod.read_actions(conn, names[0]) == []
-        suite_name = "org.mpris.MediaPlayer2.suitebook"
-        mpris_mod.send_player_method(conn, suite_name, "PlayPause")
-        again = mpris_mod.read_track(conn, suite_name)
+        mpris_mod.send_player_method(conn, book_bus, "PlayPause")
+        again = mpris_mod.read_track(conn, book_bus)
         assert again.status == "Paused"
+        mpris_mod.activate_action(conn, radio_bus, "like")
     finally:
         fake.terminate()
         fake.wait(timeout=10)

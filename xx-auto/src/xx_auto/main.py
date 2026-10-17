@@ -640,10 +640,40 @@ class AutoWindow:
 
     # -- tile actions ------------------------------------------------------
     def _on_tile_radio(self, _btn) -> None:
-        self._open_players_sheet()
+        from .drive_tiles import Tile
+
+        self._open_tile_app(Tile.RADIO)
 
     def _on_tile_audio(self, _btn) -> None:
-        self._open_players_sheet()
+        from .drive_tiles import Tile
+
+        self._open_tile_app(Tile.AUDIOBOOK)
+
+    def _open_tile_app(self, tile) -> None:
+        """A media tile opens its player when one is on the bus, else it
+        launches the tile's app (Radio -> xx-radio when nothing radio is
+        playing). The lookup is by tile, never by app id, so another app
+        built on the shared music core takes the sheet path as well."""
+        from .drive_tiles import Tile, tile_for
+
+        for track in self.snapshot.tracks:
+            if tile_for(track.desktop_entry, track.identity) is tile:
+                self._open_players_sheet()
+                return
+
+        def _work():
+            from . import media_apps as media_mod
+
+            if tile is Tile.RADIO:
+                ok = media_mod.launch_radio()
+                note = "Radio is not installed."
+            else:
+                ok = media_mod.launch_audiobook()
+                note = "Audiobook is not installed."
+            if not ok:
+                self._GLib.idle_add(self._set_note, note)
+
+        self._run_worker(_work)
 
     def _on_tile_maps(self, _btn) -> None:
         def _work():
@@ -1041,6 +1071,7 @@ class AutoWindow:
             try:
                 from gi.repository import Gio
 
+                from . import media_apps as media_mod
                 from . import mpris as mpris_mod
 
                 conn = Gio.bus_get_sync(Gio.BusType.SESSION, None)
@@ -1056,19 +1087,38 @@ class AutoWindow:
                         tracks.append(track)
                     except Exception:
                         continue
-                self._GLib.idle_add(self._got_tracks, tracks)
+                try:
+                    installed = media_mod.installed()
+                except Exception:
+                    installed = dict(self.snapshot.installed)
+                self._GLib.idle_add(self._got_tracks, tracks, installed)
             except Exception:
                 pass
 
         threading.Thread(target=_work, daemon=True).start()
         return True
 
-    def _got_tracks(self, tracks) -> bool:
+    def _got_tracks(self, tracks, installed=None) -> bool:
+        if installed is None:
+            installed = dict(self.snapshot.installed)
         if not tracks and self.snapshot.tracks:
+            if installed != self.snapshot.installed:
+                self.snapshot = DriveSnapshot(
+                    tracks=self.snapshot.tracks, installed=installed,
+                    maps_title=self.snapshot.maps_title,
+                    maps_sub=self.snapshot.maps_sub,
+                    note=self.snapshot.note)
+                self.refresh()
             return False
         if tracks:
             self.snapshot = DriveSnapshot(
-                tracks=tracks, installed={"radio": True, "audiobook": True},
+                tracks=tracks, installed=installed,
+                maps_title=self.snapshot.maps_title,
+                maps_sub=self.snapshot.maps_sub, note=self.snapshot.note)
+            self.refresh()
+        elif installed != self.snapshot.installed:
+            self.snapshot = DriveSnapshot(
+                tracks=[], installed=installed,
                 maps_title=self.snapshot.maps_title,
                 maps_sub=self.snapshot.maps_sub, note=self.snapshot.note)
             self.refresh()

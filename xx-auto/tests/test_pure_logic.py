@@ -113,5 +113,62 @@ def test_drive_tiles_gating():
 def test_drive_tile_for_player():
     assert tile_for("io.piercingxx.Radio") is Tile.RADIO
     assert tile_for("io.piercingxx.Audiobook", "xx-audiobook") is Tile.AUDIOBOOK
+    assert tile_for("io.piercingxx.XXRadio", "XX-Radio") is Tile.RADIO
+    assert tile_for("io.piercingxx.XXAudiobook",
+                    "XX-Audiobook") is Tile.AUDIOBOOK
     assert tile_for("", "Harbor Radio") is Tile.RADIO
     assert tile_for("org.mpris.vlc", "VLC") is None
+
+
+def test_media_apps_installed_by_desktop_id():
+    from xx_auto import media_apps as media_mod
+
+    assert media_mod.RADIO_DESKTOP_ID == "io.piercingxx.XXRadio"
+    assert media_mod.AUDIOBOOK_DESKTOP_ID == "io.piercingxx.XXAudiobook"
+    assert media_mod.RADIO_MPRIS_BUS == "org.mpris.MediaPlayer2.xx_radio"
+    assert media_mod.AUDIOBOOK_MPRIS_BUS == \
+        "org.mpris.MediaPlayer2.xx_audiobook"
+
+    class Info:
+        def __init__(self, desktop_id):
+            self._desktop_id = desktop_id
+
+        def launch(self, *_args):
+            return True
+
+    present = {media_mod.RADIO_DESKTOP_FILE}
+
+    class Desktop:
+        @staticmethod
+        def new(desktop_id):
+            if desktop_id in present:
+                return Info(desktop_id)
+            raise TypeError("constructor returned NULL")  # PyGObject 3.52
+
+    assert media_mod.installed(Desktop) == {"radio": True,
+                                            "audiobook": False}
+    assert media_mod.is_installed(media_mod.RADIO_DESKTOP_FILE,
+                                  Desktop) is True
+    assert media_mod.launch_radio(Desktop) is True
+    assert media_mod.launch_audiobook(Desktop) is False
+    assert media_mod.launch("gone.desktop", Desktop) is False
+
+
+def test_thumb_glyphs_cover_radio_like_dislike():
+    from pathlib import Path
+
+    from xx_auto import media_apps as media_mod
+
+    icons = Path(__file__).parent.parent / "src" / "xx_auto" / "icons"
+    for name in (media_mod.THUMB_UP_ICON, media_mod.THUMB_DOWN_ICON):
+        assert (icons / f"{name}.svg").is_file()
+
+    radio_main = Path(__file__).parent.parent.parent / "xx-radio" / \
+        "src" / "xx_radio" / "main.py"
+    if not radio_main.is_file():
+        import pytest
+
+        pytest.skip("xx-radio tree is not next to xx-auto")
+    spec_text = radio_main.read_text(encoding="utf-8")
+    assert media_mod.THUMB_UP_ICON in spec_text
+    assert media_mod.THUMB_DOWN_ICON in spec_text

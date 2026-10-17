@@ -28,20 +28,35 @@ Theme: shared `common/xx_ui`; every preset works live; `always_ink`
   Tapping a row `Raise()`s that player and `Play()`s it when it is
   not playing.
 - Suite preference: names whose MPRIS `DesktopEntry` is
-  `io.piercingxx.*` (e.g. a future xx-audiobook) sort first, in
-  most-recent order; all other players follow. Two fake suite names
-  (`io.piercingxx.Radio`, `io.piercingxx.Audiobook`) are recognised
-  the same way so the Radio/Audiobook tiles invert correctly.
+  `io.piercingxx.*` sort first, in most-recent order; all other
+  players follow. That covers the radio app `io.piercingxx.XXRadio`
+  (MPRIS `org.mpris.MediaPlayer2.xx_radio`) and the audiobook app
+  `io.piercingxx.XXAudiobook` (MPRIS
+  `org.mpris.MediaPlayer2.xx_audiobook`), so the Radio/Audiobook
+  tiles invert correctly. Another app built on the shared music core
+  registers the same way and is treated the same; no
+  player-specific code anywhere in this path (AU4 holds).
+- Installed detection: each tile checks its desktop id
+  (`io.piercingxx.XXRadio.desktop`,
+  `io.piercingxx.XXAudiobook.desktop`) via `Gio.DesktopAppInfo`
+  (`media_apps.installed`, resolved on the poll worker). Missing →
+  the tile reads `not installed` and stays insensitive.
+- Tile taps: when the tile's player is on the bus the tap opens the
+  quick-pick sheet; when it is not (nothing playing for that tile)
+  the tap launches the tile's app instead (Radio → xx-radio,
+  Audiobook → xx-audiobook). The lookup is by tile, never by app
+  id, so another music-core app takes the sheet path as well.
 - Custom buttons (thumbs): MPRIS has no standard. Optional extension
   `io.piercingxx.XXAuto.Actions1` at `/org/mpris/MediaPlayer2`:
   `ListActions() → a(sssb)` rows of `(id, label, icon_name, enabled)`
   plus `ActivateAction(in s id)`. Rendered in session order when a
   player offers the interface; cards stay correct without it
-  (transport only). No player-specific code either way (AU4 holds).
-  Each button draws its `icon_name` from the icon theme (else its
-  label) on the same 72 px keys as the transport. Adwaita has no
-  thumbs, so xx-auto ships `xx-auto-thumb-up-symbolic` and
-  `xx-auto-thumb-down-symbolic` for players to name.
+  (transport only). Each button draws its `icon_name` from the icon
+  theme (else its label) on the same 72 px keys as the transport.
+  Adwaita has no thumbs, so xx-auto ships
+  `xx-auto-thumb-up-symbolic` and `xx-auto-thumb-down-symbolic`:
+  xx-radio names them for Like/Dislike, and the audiobook app's
+  skip/bookmark rows carry no icon names, so they render as labels.
 
 ### M2. Navigation tile (AU7)
 
