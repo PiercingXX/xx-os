@@ -218,10 +218,62 @@ test_keyboard_layout_id (void)
   g_autofree char *variant =
     pos_xx_theme_keyboard_layout_id_from_path (variant_path);
 
-  g_assert_cmpstr (missing, ==, "us+colemak");
-  g_assert_cmpstr (garbage, ==, "us+colemak");
+  g_assert_cmpstr (missing, ==, "us");
+  g_assert_cmpstr (garbage, ==, "us");
   g_assert_cmpstr (custom, ==, "de");
   g_assert_cmpstr (variant, ==, "us+dvorak");
+}
+
+
+static void
+test_keyboard_layout_piercing (void)
+{
+  g_autofree char *path = write_config ("{\"keyboard_layout\": \"piercing-num\"}");
+  g_autofree char *id = pos_xx_theme_keyboard_layout_id_from_path (path);
+
+  g_assert_cmpstr (id, ==, "piercing-num");
+}
+
+
+static void
+assert_order (const char *primary, const char * const *expected)
+{
+  g_auto (GStrv) order = pos_xx_theme_layout_order (primary);
+  int len = 0;
+
+  for (; expected[len] != NULL; len++);
+  g_assert_cmpint (g_strv_length (order), ==, len);
+  for (int i = 0; i < len; i++)
+    g_assert_cmpstr (order[i], ==, expected[i]);
+}
+
+
+static void
+test_layout_order (void)
+{
+  const char *colemak[] = { "us+colemak", "us", "piercing-num", NULL };
+  const char *qwerty[] = { "us", "piercing-num", NULL };
+  const char *piercing[] = { "piercing-num", "us", NULL };
+  const char *fallback[] = { "us", "piercing-num", NULL };
+
+  assert_order ("us+colemak", colemak);
+  assert_order ("us", qwerty);
+  assert_order ("piercing-num", piercing);
+  assert_order ("US", qwerty);
+  assert_order ("garbage!!", fallback);
+  assert_order (NULL, fallback);
+}
+
+
+static void
+test_layout_order_from_path (void)
+{
+  g_autofree char *path = write_config ("{\"keyboard_layout\": \"piercing-num\"}");
+  g_auto (GStrv) order = pos_xx_theme_layout_order_from_path (path);
+
+  g_assert_cmpint (g_strv_length (order), ==, 2);
+  g_assert_cmpstr (order[0], ==, "piercing-num");
+  g_assert_cmpstr (order[1], ==, "us");
 }
 
 
@@ -258,6 +310,11 @@ main (int argc, char *argv[])
                    test_unknown_font_falls_back);
   g_test_add_func ("/pos/xx-theme/keyboard-layout-id",
                    test_keyboard_layout_id);
+  g_test_add_func ("/pos/xx-theme/keyboard-layout-piercing",
+                   test_keyboard_layout_piercing);
+  g_test_add_func ("/pos/xx-theme/layout-order", test_layout_order);
+  g_test_add_func ("/pos/xx-theme/layout-order-from-path",
+                   test_layout_order_from_path);
   g_test_add_func ("/pos/xx-theme/config-path-shape", test_config_path_shape);
 
   return g_test_run ();

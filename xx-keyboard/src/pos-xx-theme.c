@@ -13,7 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define XX_DEFAULT_LAYOUT_ID "us+colemak"
+#define XX_DEFAULT_LAYOUT_ID "us"
 
 
 char *
@@ -432,6 +432,54 @@ pos_xx_theme_keyboard_layout_id_from_path (const char *path)
     }
   }
   return g_strdup (XX_DEFAULT_LAYOUT_ID);
+}
+
+
+static char *
+normalize_layout_id (const char *text)
+{
+  g_autofree char *copy = NULL;
+
+  if (!valid_layout_id (text))
+    return NULL;
+  copy = g_strdup (text);
+  g_strstrip (copy);
+  for (char *p = copy; *p != '\0'; p++)
+    *p = g_ascii_tolower (*p);
+  return g_steal_pointer (&copy);
+}
+
+
+char **
+pos_xx_theme_layout_order (const char *primary)
+{
+  g_autofree char *norm = normalize_layout_id (primary);
+  const char *first = norm != NULL ? norm : XX_DEFAULT_LAYOUT_ID;
+  const char *fallbacks[] = { XX_LAYOUT_QWERTY_ID, XX_LAYOUT_PIERCING_ID, NULL };
+  GPtrArray *order = g_ptr_array_new_with_free_func (g_free);
+
+  g_ptr_array_add (order, g_strdup (first));
+  for (int i = 0; fallbacks[i] != NULL; i++) {
+    gboolean seen = FALSE;
+    for (guint j = 0; j < order->len; j++) {
+      if (g_strcmp0 (g_ptr_array_index (order, j), fallbacks[i]) == 0) {
+        seen = TRUE;
+        break;
+      }
+    }
+    if (!seen)
+      g_ptr_array_add (order, g_strdup (fallbacks[i]));
+  }
+  g_ptr_array_add (order, NULL);
+  return (char **) g_ptr_array_free (order, FALSE);
+}
+
+
+char **
+pos_xx_theme_layout_order_from_path (const char *path)
+{
+  g_autofree char *primary = pos_xx_theme_keyboard_layout_id_from_path (path);
+  return pos_xx_theme_layout_order (primary);
 }
 
 

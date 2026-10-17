@@ -289,6 +289,11 @@ pos_activation_filter_set_foreign_toplevel_manager (PosActivationFilter *self,
                                                     gpointer             foreign_toplevel_manager)
 {
   self->foreign_toplevel_manager = foreign_toplevel_manager;
+  /* A compositor without foreign-toplevel (older phoc still has it,
+   * but don't depend on it): no per-app filtering, everything may
+   * activate the OSK. */
+  if (foreign_toplevel_manager == NULL)
+    return;
   zwlr_foreign_toplevel_manager_v1_add_listener (foreign_toplevel_manager,
                                                  &zwlr_foreign_toplevel_manager_listener,
                                                  self);

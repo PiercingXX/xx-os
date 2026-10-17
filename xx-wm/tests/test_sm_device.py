@@ -419,12 +419,13 @@ class TestKeyboard:
         text = (Path(__file__).parent.parent / 'launcher' / 'data'
                 / 'xx-wm-session.in').read_text()
         assert 'keyboard_layout' in text
-        assert 'us+colemak' in text
+        assert "cfg.get('keyboard_layout', 'us')" in text
+        assert 'piercing-num' in text
 
     def test_config_default_and_backup(self, tmp_path, monkeypatch):
         import config
         import backup
-        assert config.DEFAULT_CONFIG['keyboard_layout'] == 'us+colemak'
+        assert config.DEFAULT_CONFIG['keyboard_layout'] == 'us'
         monkeypatch.setenv('HOME', str(tmp_path))
         cfg = config.ShellConfig()
         cfg.set('keyboard_layout', 'de')

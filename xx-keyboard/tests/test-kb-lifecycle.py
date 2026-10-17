@@ -12,6 +12,11 @@ dereferenced the already-cleared osk list (SEGV in
 pos_input_surface_update_glide), plus the registry global-order crash
 in pos_output/pos_wayland.
 
+--data-control wlr simulates older phoc (FuriPhone FLX1: zwlr only, no
+ext) and none simulates no data control at all; the keyboard must reach
+running state in both instead of exiting with "Failed to find all
+Wayland globals".
+
 Stdlib only. Skips (exit 77) when dbus-daemon is unavailable.
 """
 import argparse
@@ -55,7 +60,8 @@ class FakeComp:
     GTK3 need, answers syncs, sends one layer-surface configure and swallows
     everything else by size. Unknown requests never desync the stream."""
 
-    def __init__(self, rundir, name):
+    def __init__(self, rundir, name, data_control="ext"):
+        self.data_control = data_control
         self.logf = open(os.path.join(rundir, "comp.log"), "w")
         self.sockpath = os.path.join(rundir, name)
         try:
@@ -101,6 +107,14 @@ class FakeComp:
         return self.serial
 
     def send_globals(self, reg):
+        # --data-control wlr simulates older phoc (e.g. 0.44 on the
+        # FuriPhone FLX1: zwlr only, no ext); none simulates a
+        # compositor with no data control at all (paste stays disabled).
+        dc_globals = {
+            "ext": [("ext_data_control_manager_v1", 1)],
+            "wlr": [("zwlr_data_control_manager_v1", 2)],
+            "none": [],
+        }[self.data_control]
         for i, (iface, ver) in enumerate([
                 ("wl_compositor", 4),
                 ("wl_shm", 1),
@@ -113,8 +127,7 @@ class FakeComp:
                 ("zwlr_layer_shell_v1", 4),
                 ("zwlr_foreign_toplevel_manager_v1", 3),
                 ("zphoc_device_state_v1", 2),
-                ("ext_data_control_manager_v1", 2),
-        ], start=1):
+        ] + dc_globals, start=1):
             self.event(reg, 0, pack_u(i) + pack_str(iface) + pack_u(ver))
 
     def bind_init(self, new_id, iface):
@@ -181,6 +194,8 @@ class FakeComp:
             ("zwp_virtual_keyboard_manager_v1", 0): "zwp_virtual_keyboard_v1",
             ("ext_data_control_manager_v1", 0): "ext_data_control_source_v1",
             ("ext_data_control_manager_v1", 1): "ext_data_control_device_v1",
+            ("zwlr_data_control_manager_v1", 0): "zwlr_data_control_source_v1",
+            ("zwlr_data_control_manager_v1", 1): "zwlr_data_control_device_v1",
             ("zwlr_layer_shell_v1", 0): "zwlr_layer_surface_v1",
             ("zwlr_layer_surface_v1", 5): "xdg_popup",
         }
@@ -316,6 +331,7 @@ def main():
     ap.add_argument("--binary", required=True)
     ap.add_argument("--schema-dir", required=True)
     ap.add_argument("--dict-dir", required=True)
+    ap.add_argument("--data-control", choices=("ext", "wlr", "none"), default="ext")
     args = ap.parse_args()
 
     if shutil.which("dbus-daemon") is None:
@@ -326,7 +342,7 @@ def main():
         return 1
 
     rundir = tempfile.mkdtemp(prefix="kb-lifecycle-")
-    comp = FakeComp(rundir, "fake-0")
+    comp = FakeComp(rundir, "fake-0", data_control=args.data_control)
     server = threading.Thread(target=comp.serve, daemon=True)
     server.start()
 

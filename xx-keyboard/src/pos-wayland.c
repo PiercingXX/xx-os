@@ -50,6 +50,7 @@ struct _PosWayland {
   struct zxdg_output_manager_v1           *zxdg_output_manager_v1;
   struct zphoc_device_state_v1            *zphoc_device_state_v1;
   struct ext_data_control_manager_v1      *ext_data_control_manager;
+  struct zwlr_data_control_manager_v1     *wlr_data_control_manager;
   GPtrArray                               *outputs;
 
   gboolean                                 ready;
@@ -91,6 +92,12 @@ registry_handle_global (void               *data,
   } else if (!strcmp (interface, ext_data_control_manager_v1_interface.name)) {
     self->ext_data_control_manager = wl_registry_bind (registry, name,
                                                        &ext_data_control_manager_v1_interface, 1);
+  } else if (!strcmp (interface, zwlr_data_control_manager_v1_interface.name)) {
+    if (self->wlr_data_control_manager == NULL) {
+      self->wlr_data_control_manager = wl_registry_bind (registry, name,
+                                                         &zwlr_data_control_manager_v1_interface,
+                                                         MIN (2, version));
+    }
   } else if (!strcmp (interface, "wl_output")) {
     struct wl_output *wl_output = wl_registry_bind (registry, name, &wl_output_interface, 4);
     PosOutput *output = pos_output_new (g_steal_pointer (&wl_output));
@@ -217,6 +224,7 @@ pos_wayland_dispose (GObject *object)
   g_clear_pointer (&self->zxdg_output_manager_v1, zxdg_output_manager_v1_destroy);
   g_clear_pointer (&self->zphoc_device_state_v1, zphoc_device_state_v1_destroy);
   g_clear_pointer (&self->ext_data_control_manager, ext_data_control_manager_v1_destroy);
+  g_clear_pointer (&self->wlr_data_control_manager, zwlr_data_control_manager_v1_destroy);
 
   g_clear_pointer (&self->outputs, g_ptr_array_unref);
 
@@ -350,6 +358,15 @@ pos_wayland_get_ext_data_control_manager_v1 (PosWayland *self)
   return self->ext_data_control_manager;
 }
 
+
+struct zwlr_data_control_manager_v1 *
+pos_wayland_get_zwlr_data_control_manager_v1 (PosWayland *self)
+{
+  g_assert (POS_IS_WAYLAND (self));
+
+  return self->wlr_data_control_manager;
+}
+
 /**
  * pos_wayland_get_outputs:
  * @self: The #PosWayland singleton
@@ -383,17 +400,72 @@ pos_wayland_get_n_outputs (PosWayland *self)
 }
 
 
+/**
+ * pos_data_control_pick:
+ * @has_ext: Whether the compositor offers `ext_data_control_manager_v1`
+ * @has_wlr: Whether the compositor offers `zwlr_data_control_manager_v1`
+ *
+ * Pick which data-control protocol to use for the clipboard. The ext
+ * protocol is the successor so it wins when both are offered; the wlr
+ * protocol keeps older compositors (e.g. phoc 0.44 on the FuriPhone
+ * FLX1) working. Neither means paste stays disabled.
+ *
+ * Returns: The protocol variant to use
+ */
+PosDataControlVariant
+pos_data_control_pick (gboolean has_ext, gboolean has_wlr)
+{
+  if (has_ext)
+    return POS_DATA_CONTROL_EXT;
+  if (has_wlr)
+    return POS_DATA_CONTROL_WLR;
+  return POS_DATA_CONTROL_NONE;
+}
+
+
+/**
+ * pos_wayland_have_required:
+ * @has_input_method: Whether the input-method manager was bound
+ * @has_virtual_keyboard: Whether the virtual-keyboard manager was bound
+ * @has_seat: Whether a seat was bound
+ * @has_layer_shell: Whether the layer shell was bound
+ *
+ * Check the globals genuinely needed to type: without the
+ * input-method and virtual-keyboard managers (plus a seat to bind
+ * them to) no key events can flow, and without the layer shell the
+ * keyboard has no surface. Pure helper so tests can cover the
+ * policy without a Wayland display.
+ *
+ * Returns: %TRUE when the keyboard can run
+ */
+gboolean
+pos_wayland_have_required (gboolean has_input_method,
+                           gboolean has_virtual_keyboard,
+                           gboolean has_seat,
+                           gboolean has_layer_shell)
+{
+  return has_input_method && has_virtual_keyboard && has_seat && has_layer_shell;
+}
+
+
+/* Optional globals and what is lost without them:
+ * - ext/zwlr data-control: clipboard paste (PosClipboardManager runs
+ *   device-less and reports no text, the paste action stays disabled).
+ * - zwlr foreign-toplevel: per-app activation filtering and layout
+ *   overrides (PosActivationFilter without a manager allows everything).
+ * - zphoc device-state: hiding the OSK while a hardware keyboard is
+ *   attached (PosHwTracker without device state assumes none).
+ * - zxdg output-manager: logical output size (PosOutput still learns
+ *   geometry from wl_output, PosSizeManager falls back to the default
+ *   height). Hence only the four typing-critical globals gate readiness.
+ */
 gboolean
 pos_wayland_has_wl_protcols (PosWayland *self)
 {
   g_assert (POS_WAYLAND (self));
 
-  return (self->input_method_manager &&
-          self->zwp_virtual_keyboard_manager_v1 &&
-          self->wl_seat &&
-          self->zwlr_foreign_toplevel_manager_v1 &&
-          self->layer_shell &&
-          self->zxdg_output_manager_v1 &&
-          self->zphoc_device_state_v1 &&
-          self->ext_data_control_manager);
+  return pos_wayland_have_required (self->input_method_manager != NULL,
+                                    self->zwp_virtual_keyboard_manager_v1 != NULL,
+                                    self->wl_seat != NULL,
+                                    self->layer_shell != NULL);
 }

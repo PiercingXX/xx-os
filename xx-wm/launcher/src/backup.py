@@ -130,7 +130,7 @@ def export_backup(config) -> dict:
         'weather_temp_unit': config.weather_temp_unit,
         'weather_auto_location': config.weather_auto_location,
         'clock_24h': config.clock_24h,
-        'keyboard_layout': config.data.get('keyboard_layout', 'us+colemak'),
+        'keyboard_layout': config.data.get('keyboard_layout', 'us'),
         'night_light_temp': config.data.get('night_light_temp', 2200),
     }
     for key in _BOOL_KEYS:

@@ -286,9 +286,26 @@ create_input_surface (PosApp *self)
                               pos_wayland_get_wl_seat (wayland));
   vk_driver = pos_vk_driver_new (virtual_keyboard);
   completer_manager = pos_completer_manager_new ();
-  clipboard_manager =
-    pos_clipboard_manager_new (pos_wayland_get_ext_data_control_manager_v1 (wayland),
-                               pos_wayland_get_wl_seat (wayland));
+  /* Data control is optional: prefer ext, fall back to wlr for older
+   * compositors (e.g. phoc 0.44 on the FuriPhone FLX1), and run
+   * without clipboard support when neither is offered. */
+  switch (pos_data_control_pick (pos_wayland_get_ext_data_control_manager_v1 (wayland) != NULL,
+                                 pos_wayland_get_zwlr_data_control_manager_v1 (wayland) != NULL)) {
+  case POS_DATA_CONTROL_EXT:
+    clipboard_manager =
+      pos_clipboard_manager_new (pos_wayland_get_ext_data_control_manager_v1 (wayland),
+                                 pos_wayland_get_wl_seat (wayland));
+    break;
+  case POS_DATA_CONTROL_WLR:
+    clipboard_manager =
+      pos_clipboard_manager_new_wlr (pos_wayland_get_zwlr_data_control_manager_v1 (wayland),
+                                     pos_wayland_get_wl_seat (wayland));
+    break;
+  case POS_DATA_CONTROL_NONE:
+  default:
+    g_info ("No data-control protocol, running without clipboard support");
+    break;
+  }
 
   im =
     pos_input_method_new (pos_wayland_get_zwp_input_method_manager_v2 (wayland),
