@@ -19,9 +19,13 @@ _SETTINGS_SECTION_KEYS = ('wifi', 'bluetooth', 'mobile', 'apps', 'appearance',
 # opening a subpage that holds only its sections, in this order. Grouped
 # the way a phone user looks for things: radios first, then how the phone
 # looks and sounds, then power and apps, then the protective and
-# maintenance pages, System last.
+# maintenance pages, System last. Every section has exactly one home
+# (docs/settings-map.md): Network & internet is connectivity only; what
+# the phone serves (wireless debugging, services, the incoming-connection
+# firewall) sits together on System, where Android keeps Developer
+# options and its running services.
 SETTINGS_CATEGORIES: tuple = (
-    ('network', 'Network & internet', ('wifi', 'mobile', 'firewall')),
+    ('network', 'Network & internet', ('wifi', 'mobile')),
     ('devices', 'Connected devices', ('bluetooth', 'nearby')),
     ('display', 'Display & appearance', ('appearance', 'display')),
     # The Android launcher's preference screen (docs/launcher-settings-
@@ -34,8 +38,8 @@ SETTINGS_CATEGORIES: tuple = (
     ('privacy', 'Privacy & security', ('lock', 'smart_lock', 'permissions',
                                        'security', 'findmy', 'medical')),
     ('storage', 'Storage & backup', ('storage', 'backup')),
-    ('system', 'System', ('system', 'keyboard', 'gestures', 'services',
-                          'developer', 'about', 'shell')),
+    ('system', 'System', ('system', 'keyboard', 'gestures', 'developer',
+                          'services', 'firewall', 'about', 'shell')),
 )
 
 # Menu cards: categories that belong together share one rounded card.
@@ -698,7 +702,6 @@ class AboutSection(_Section):
     def __init__(self) -> None:
         self._detail_box = None
         self._head_rows: list = []
-        self._storage_row = None
         self._modem_props = None
         self._imei_revealed = False
         self._last_res = None
@@ -712,16 +715,14 @@ class AboutSection(_Section):
             shell_version = '0.1.1'
         self._head_rows = [ui.row('Version', 'XX-WM %s' % shell_version),
                            ui.row('Device', win._get_device_name())]
-        about = ui.group(self.title, self._head_rows +
-                         [ui.note_row('Loading device info…')])
+        about = ui.group(self.title, list(self._head_rows))
         self._detail_box = about[1]
-        self._storage_row = ui.nav_row(
-            'Storage', 'Checking…', lambda _r: win.open_settings('storage'))
-        logs_row = ui.nav_row(
+        # Storage has its own menu entry (Storage & backup); About keeps
+        # no second way in.
+        logs = ui.group('Logs', [ui.nav_row(
             'Logs', 'Shell and system logs',
-            lambda _r: settings_launcher.open_logs(win))
-        more = ui.group('More', [self._storage_row, logs_row])
-        return about + more
+            lambda _r: settings_launcher.open_logs(win))])
+        return about + logs
 
     def refresh(self, win) -> None:
         def _work():
@@ -738,7 +739,6 @@ class AboutSection(_Section):
                     settings_device.read_thermal_zones()),
                 'net': settings_device.net_summary(),
                 'modem': settings_device.modem_summary(),
-                'storage': settings_device.storage_summary_text(),
             }
 
         _run_bg(_work, lambda res: self._render(win, res))
@@ -773,14 +773,15 @@ class AboutSection(_Section):
                  for iface in sorted(ips)
                  if ips.get(iface) and not iface.startswith(_VIRTUAL_IFACES)
                  ][:3]
+        # Android's About phone label; the network settings themselves
+        # live on Network & internet.
         rows.append(ui.nav_row(
-            'Network', '\n'.join(shown) if shown else 'Unavailable',
+            'IP address', '\n'.join(shown) if shown else 'Unavailable',
             lambda r: win.item_actions._show_action_menu(
-                r, 'Network', [('Close', lambda: None)],
+                r, 'IP address', [('Close', lambda: None)],
                 subtitle=self._net_text or 'Unavailable')))
         ui.fill(self._detail_box, rows)
         self._last_res = res
-        ui.set_subtitle(self._storage_row, res.get('storage', '?'))
 
     def _modem_row(self, win):
         props = self._modem_props or {}
@@ -1479,17 +1480,15 @@ class SettingsPage:
     @staticmethod
     def _show_audio(box, devices, kind: str, on_pick) -> None:
         """Output/microphone card: one row per device, the default one
-        marked in its subtitle; a tap makes that device the default."""
+        marked in its subtitle; a tap makes that device the default. No
+        devices (or no audio system): the card and its caption hide."""
         if box is None:
-            return
-        if devices is None:
-            ui.fill(box, [ui.note_row('Audio system unavailable.')])
             return
         rows = [ui.row(device.description,
                        'Default %s' % kind if device.is_default else '',
                        on_activate=lambda _r, d=device: on_pick(d))
-                for device in devices]
-        ui.fill(box, rows or [ui.note_row('No %s devices.' % kind)])
+                for device in devices or []]
+        ui.fill(box, rows, hide_empty=True)
 
     def _on_source_selected(self, source) -> None:
         import system_settings
@@ -1654,30 +1653,27 @@ class SettingsPage:
         win.item_actions._show_action_menu(
             widget, ssid,
             [('Connect', lambda: win._connect_wifi(ssid, None)),
-             ('Forget', lambda: self._confirm_forget_wifi(widget, ssid)),
+             ('Forget', lambda: self._forget_wifi(ssid)),
              ('Cancel', lambda: None)])
 
-    def _confirm_forget_wifi(self, anchor, ssid: str) -> None:
+    def _forget_wifi(self, ssid: str) -> None:
+        """Forget runs straight from the network's menu, as on Android:
+        picking Forget there is the decision, so no second popup."""
         import system_settings
 
         win = self._win
-        win.item_actions._show_action_menu(
-            anchor, f'Forget {ssid}?',
-            [('Forget', lambda: win._run_bg(
-                lambda: system_settings.forget_wifi(ssid),
-                lambda result: (
-                    win._show_status(result[1] if result else 'Forget failed.'),
-                    win._refresh_wifi()))),
-             ('Cancel', lambda: None)])
+        win._run_bg(
+            lambda: system_settings.forget_wifi(ssid),
+            lambda result: (
+                win._show_status(result[1] if result else 'Forget failed.'),
+                win._refresh_wifi()))
 
     def _show_wifi(self, networks) -> None:
+        # Unavailable or nothing found: just the Scan rows (the Wi-Fi
+        # row's subtitle already says why), no empty-state line.
         win = self._win
-        if networks is None:
-            self._fill_wifi_list(
-                [ui.note_row('Wi-Fi is unavailable on this device.')])
-            return
         rows = []
-        for net in networks[:12]:
+        for net in (networks or [])[:12]:
             if net.in_use:
                 detail = 'Connected'
             elif net.security == 'open':
@@ -1689,7 +1685,7 @@ class SettingsPage:
             rows.append(ui.row(
                 net.ssid or '(hidden network)', detail,
                 on_activate=lambda r, n=net: win._on_wifi_selected(n, r)))
-        self._fill_wifi_list(rows or [ui.note_row('No networks found.')])
+        self._fill_wifi_list(rows)
 
     def _on_wifi_selected(self, net, widget) -> None:
         win = self._win
@@ -1697,8 +1693,7 @@ class SettingsPage:
             win.item_actions._show_action_menu(
                 widget, net.ssid,
                 [('Disconnect', lambda: self._on_wifi_disconnect(net)),
-                 ('Forget',
-                  lambda: self._confirm_forget_wifi(widget, net.ssid)),
+                 ('Forget', lambda: self._forget_wifi(net.ssid)),
                  ('Details', lambda: self._on_wifi_details(net, widget))])
             return
         if net.security == 'open':
@@ -1916,13 +1911,11 @@ class SettingsPage:
             win._show_status(f'Could not start service: {err}')
 
     def _show_bt_devices(self, devices) -> None:
+        # Unavailable or none yet: just the Scan row (the Bluetooth row's
+        # subtitle already says why), no empty-state line.
         win = self._win
-        if devices is None:
-            self._fill_bt_list(
-                [ui.note_row('Bluetooth is unavailable on this device.')])
-            return
         rows = []
-        for dev in devices[:12]:
+        for dev in (devices or [])[:12]:
             if dev.connected:
                 state = 'Connected'
             elif dev.paired:
@@ -1932,8 +1925,7 @@ class SettingsPage:
             rows.append(ui.row(dev.name or dev.address, state,
                                on_activate=lambda _r, d=dev:
                                win._on_bt_selected(d)))
-        self._fill_bt_list(
-            rows or [ui.note_row('No devices yet. Scan to find some.')])
+        self._fill_bt_list(rows)
 
     def _on_bt_selected(self, dev) -> None:
         import system_settings
@@ -1953,7 +1945,7 @@ class SettingsPage:
             getattr(win, '_bt_list_box', None),
             dev.name or dev.address,
             [(link, lambda: self._on_bt_link(dev)),
-             ('Forget', lambda: self._confirm_forget_bt(dev)),
+             ('Forget', lambda: self._forget_bt(dev)),
              ('Rename', lambda: self._on_bt_rename(dev))])
 
     def _on_bt_link(self, dev) -> None:
@@ -1972,19 +1964,17 @@ class SettingsPage:
                 win._refresh_bluetooth()),
         )
 
-    def _confirm_forget_bt(self, dev) -> None:
+    def _forget_bt(self, dev) -> None:
+        """Forget runs straight from the device's menu: picking Forget
+        there is the decision, so no second popup."""
         import system_settings
 
         win = self._win
-        win.item_actions._show_action_menu(
-            getattr(win, '_bt_list_box', None),
-            f'Forget {dev.name or dev.address}?',
-            [('Forget', lambda: win._run_bg(
-                lambda: system_settings.forget_bt_device(dev.address),
-                lambda result: (
-                    win._show_status(result[1] if result else 'Forget failed.'),
-                    win._refresh_bluetooth()))),
-             ('Cancel', lambda: None)])
+        win._run_bg(
+            lambda: system_settings.forget_bt_device(dev.address),
+            lambda result: (
+                win._show_status(result[1] if result else 'Forget failed.'),
+                win._refresh_bluetooth()))
 
     def _on_bt_rename(self, dev) -> None:
         import system_settings

@@ -1423,10 +1423,14 @@ class TestWifiSelectedMenu:
         assert called == ['HomeNet']
         assert refreshed == [1]
 
-    def test_forget_needs_confirm(self, fake_gi, monkeypatch):
+    def test_forget_runs_without_second_popup(self, fake_gi, monkeypatch):
+        # Owner: no confirmation popups for direct actions. Forget in the
+        # network's menu is the decision (Android forgets at once too).
         win = self._win(fake_gi)
+        forgot = []
         monkeypatch.setattr(
-            system_settings, 'forget_wifi', lambda ssid, run=None: (True, 'ok'))
+            system_settings, 'forget_wifi',
+            lambda ssid, run=None: (forgot.append(ssid), (True, 'ok'))[1])
         refreshed = []
         win._refresh_wifi = lambda: refreshed.append(1)
         net = SimpleNamespace(ssid='HomeNet', security='WPA2', in_use=True)
@@ -1434,10 +1438,8 @@ class TestWifiSelectedMenu:
         page._on_wifi_selected(net, object())
         _title, choices = win._menus[0]
         dict(choices)['Forget']()
-        assert len(win._menus) == 2
-        _title2, choices2 = win._menus[1]
-        assert [label for label, _cb in choices2] == ['Forget', 'Cancel']
-        dict(choices2)['Forget']()
+        assert len(win._menus) == 1
+        assert forgot == ['HomeNet']
         assert refreshed == [1]
 
     def test_details_show_fields(self, fake_gi, monkeypatch):
@@ -1494,19 +1496,20 @@ class TestBtSelectedMenu:
         assert [label for label, _cb in choices] == [
             'Connect', 'Forget', 'Rename']
 
-    def test_forget_needs_confirm(self, fake_gi, monkeypatch):
+    def test_forget_runs_without_second_popup(self, fake_gi, monkeypatch):
         page, win = self._page(fake_gi)
+        forgot = []
         monkeypatch.setattr(
-            system_settings, 'forget_bt_device', lambda address: (True, 'Forgotten'))
+            system_settings, 'forget_bt_device',
+            lambda address: (forgot.append(address), (True, 'Forgotten'))[1])
         win._refresh_bluetooth = lambda scan=False: None
         dev = SimpleNamespace(name='Pods', address='AA:BB', paired=True,
                               connected=True)
         page._on_bt_selected(dev)
         _title, choices = win._menus[0]
         dict(choices)['Forget']()
-        assert len(win._menus) == 2
-        _title2, choices2 = win._menus[1]
-        assert [label for label, _cb in choices2] == ['Forget', 'Cancel']
+        assert len(win._menus) == 1
+        assert forgot == ['AA:BB']
 
     def test_rename_opens_entry(self, fake_gi, monkeypatch):
         page, win = self._page(fake_gi)

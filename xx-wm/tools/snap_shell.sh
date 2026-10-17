@@ -156,7 +156,7 @@ EOF
 
 # Wizard nav scripts are parametrized by theme at run time (first window
 # is the wizard; preview the theme, then jump to the page).
-WIZ_PAGES="welcome pin pin_confirm theme timezone tour_swipe_up tour_swipe_down tour_swipe_side info_shade info_focus info_files"
+WIZ_PAGES="welcome pin pin_confirm theme status_bar timezone tour_swipe_up tour_swipe_down tour_swipe_side info_shade info_focus info_files"
 wiz_nav() {
     # $1 = theme, $2 = page
     _t=$1 _p=$2

@@ -868,8 +868,9 @@ class TestPermissionsSection:
         nav = _labels(win._perm_nav_box)
         assert nav == ['Camera', '0 allowed', 'Microphone', '0 allowed',
                        'Location', '0 allowed', 'Network', '0 blocked']
-        assert 'No use in the last 24 h.' in [
-            w.label_text() for w in win._perm_recent_box.children]
+        # Nothing used: the Recently used card hides, no empty-state line.
+        assert win._perm_recent_box.children == []
+        assert win._perm_recent_box.get_visible() is False
         assert any('Native apps reach camera' in (w.label_text() or '')
                    for w in widgets if 'xx-set-footnote' in w.classes)
 

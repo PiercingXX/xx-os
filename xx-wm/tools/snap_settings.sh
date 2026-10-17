@@ -2,8 +2,9 @@
 # Render the in-shell Settings (menu, every category subpage at each
 # viewport, and the sheets/menus its rows open) for every theme.
 #   xx-wm/tools/snap_settings.sh OUTDIR [theme ...]
-# Same seeded temp HOME and 360x720 / zero-`snap: WARNING` gate as
-# snap_shell.sh. One shell launch per theme drives every shot
+# Same seeded temp HOME and zero-`snap: WARNING` gate as snap_shell.sh,
+# at 360x720 (SNAP_SIZE=450x1000 renders another phone, e.g. the FLX1
+# at scale 1.6). One shell launch per theme drives every shot
 # (snap_settings_nav.py, SNAP_MULTI); themes render in parallel, each on
 # its own session bus (the shell is a single-instance app). Output:
 # sheet-<theme>-settings-<n>.png contact sheets (KEEP_SHOTS=1 also keeps
@@ -11,6 +12,7 @@
 set -u
 REPO=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 OUTDIR=${1:?usage: snap_settings.sh OUTDIR [theme ...]}
+SIZE=${SNAP_SIZE:-360x720}
 shift || true
 if [ "$#" -gt 0 ]; then
     THEMES="$*"
@@ -66,7 +68,7 @@ run_theme() {
         XDG_DATA_DIRS="$_home/.local/share" \
         SNAP_MULTI=1 SNAP_SETTINGS_OUT="$_shots" SNAP_SETTINGS_THEME="$_theme" \
         SNAP_SETTINGS_ONLY="${SNAP_SETTINGS_ONLY:-}" \
-        dbus-run-session -- python3 "$REPO/scripts/snap.py" --out "$_shots/done.png" --delay 2.0 \
+        dbus-run-session -- python3 "$REPO/scripts/snap.py" --out "$_shots/done.png" --delay 2.0 --size "$SIZE" \
         --path "$REPO/common" --path "$REPO/xx-wm/launcher/src" \
         --script "$REPO/xx-wm/tools/snap_settings_nav.py" \
         -- "$REPO/xx-wm/launcher/src/main.py" >"$WORK/$_theme.out" 2>"$_err"
@@ -103,7 +105,7 @@ for theme in $THEMES; do
         _n=$((_n + 1))
         if [ "$_n" = 8 ]; then
             # shellcheck disable=SC2086
-            montage $_batch -tile 4x2 -geometry 360x720+4+4 -background black \
+            montage $_batch -tile 4x2 -geometry "$SIZE+4+4" -background black \
                 -fill white -pointsize 20 \
                 "$OUTDIR/sheet-$theme-settings-$_page.png" || status=1
             _n=0 _page=$((_page + 1)) _batch=""
@@ -111,7 +113,7 @@ for theme in $THEMES; do
     done
     if [ -n "$_batch" ]; then
         # shellcheck disable=SC2086
-        montage $_batch -tile 4x2 -geometry 360x720+4+4 -background black \
+        montage $_batch -tile 4x2 -geometry "$SIZE+4+4" -background black \
             -fill white -pointsize 20 \
             "$OUTDIR/sheet-$theme-settings-$_page.png" || status=1
     fi

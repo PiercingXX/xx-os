@@ -342,8 +342,7 @@ class ScreenTimeSection(settings_page._Section):
                 self._display_name(win, app_id), detail,
                 lambda r, a=app_id, c=current: self._app_menu(
                     win, r, a, c, a in over)))
-        ui.fill(self._apps_box,
-                rows or [ui.note_row('No screen time yet today.')])
+        ui.fill(self._apps_box, rows, hide_empty=True)
 
     def _app_menu(self, win, anchor, app_id: str, current: int,
                   is_over: bool) -> None:
