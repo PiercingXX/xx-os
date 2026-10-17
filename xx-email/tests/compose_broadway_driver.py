@@ -21,7 +21,9 @@ import gi  # noqa: E402
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gtk  # noqa: E402
+
+from xx_testing.broadway_wait import pump_until as _wait_until  # noqa: E402
 
 Gtk.init()
 opened = Gdk.Display.open(os.environ.get("BROADWAY_DISPLAY", ""))
@@ -49,12 +51,6 @@ def _hook_errors() -> None:
             traceback.format_exception(exc_type, exc, tb)))
 
     sys.excepthook = _collect
-
-
-def _pump(seconds: float) -> None:
-    loop = GLib.MainLoop()
-    GLib.timeout_add(int(seconds * 1000), loop.quit)
-    loop.run()
 
 
 def _open_db():
@@ -300,13 +296,18 @@ def _scenario_smoke() -> None:
     mailbox_window = _show(mailbox, "Mailbox")
     thread_window = _show(thread, "Thread")
     mailbox.load()
-    _pump(0.6)
+    if not _wait_until(mailbox_window.get_mapped, timeout_s=10.0):
+        raise AssertionError("email compose: mailbox never mapped")
     mailbox._on_refreshed({"ok": True, "reauth": True, "new_ids": []})
-    _pump(0.3)
+    if not _wait_until(mailbox._reauth_banner.get_visible,
+                       timeout_s=10.0):
+        raise AssertionError("email compose: reauth banner never shown")
     print("REAUTH_BANNER:", mailbox._reauth_banner.get_visible())
     print("REAUTH_CAPTION_EMPTY:", mailbox._sync_line.get_text() == "")
     mailbox._on_refreshed({"ok": True, "reauth": False, "new_ids": []})
-    _pump(0.3)
+    if not _wait_until(lambda: not mailbox._reauth_banner.get_visible(),
+                       timeout_s=10.0):
+        raise AssertionError("email compose: reauth banner never cleared")
     search = search_page_mod.SearchPage(ACCOUNT, hooks, _toast)
     hint_buttons = []
     kid = search._hints.get_first_child()
@@ -323,13 +324,15 @@ def _scenario_smoke() -> None:
     thread_window.destroy()
     reply_page = _build_compose(reply_initial, False, "REPLY_TO")
     reply_window = _show(reply_page, "Reply")
-    _pump(0.5)
+    if not _wait_until(reply_window.get_mapped, timeout_s=10.0):
+        raise AssertionError("email compose: reply never mapped")
     print("REPLY_ANY_FOCUSED:", _subtree_focused(reply_page))
     print("REPLY_ENTRY_FOCUSED:", _entry_focused(reply_page))
     reply_window.destroy()
     new_page = _build_compose(new_initial, True)
     new_window = _show(new_page, "Compose")
-    _pump(0.5)
+    if not _wait_until(new_window.get_mapped, timeout_s=10.0):
+        raise AssertionError("email compose: compose never mapped")
     print("NEW_TO_FOCUSED:", _focus_inside(new_window,
                                            new_page._to))
     new_window.destroy()

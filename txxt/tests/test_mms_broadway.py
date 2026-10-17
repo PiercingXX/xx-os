@@ -93,6 +93,21 @@ def _child_main():
             context.iteration(False)
         assert errors == [], f"exceptions during main-loop pump: {errors!r}"
 
+    try:
+        from xx_testing.broadway_wait import iterate_until as _wait_until
+    except ImportError:  # pragma: no cover
+        _wait_until = None
+
+    def pump_until(predicate, timeout_s: float = 10.0,
+                   message: str = "condition never held") -> None:
+        if _wait_until is None:  # pragma: no cover
+            pump(timeout_s)
+            assert predicate(), message
+            return
+        assert _wait_until(predicate,
+                           timeout_s=timeout_s) is True, message
+        assert errors == [], f"exceptions during main-loop pump: {errors!r}"
+
     window = None
     app = None
     try:
@@ -103,10 +118,13 @@ def _child_main():
         app.register(None)
         window = TxxtWindow(app)
         window.present()
-        pump(1.0)
+        pump_until(lambda: Gdk.Display.get_default() is not None
+                   and window._list_page._model.get_n_items() > 0,
+                   message="mms smoke: conversation list never loaded")
         assert Gdk.Display.get_default() is not None
         window.open_thread(CID_MMS)
-        pump(1.2)
+        pump_until(lambda: bool(window._thread_pages),
+                   message="mms smoke: mms thread page never opened")
         assert window._thread_pages, "mms thread page never opened"
         thread = window._thread_pages[-1]
         from txxt.thread_page import MessageItem
@@ -132,7 +150,9 @@ def _child_main():
         assert staged_source and os.path.isfile(staged_source), \
             "stage fixture missing"
         thread._stage_photo(staged_source)
-        pump(0.5)
+        pump_until(lambda: thread._staged_path is not None
+                   and thread._staged_row.get_visible() is True,
+                   message="mms smoke: staged photo never appeared")
         assert thread._staged_path is not None
         assert thread._staged_row.get_visible() is True
         thread._on_staged_clear()
@@ -194,6 +214,25 @@ def _free_display():
     return None
 
 
+def _wait_broadway_port(port: int, proc) -> bool:
+    """True once broadwayd listens on ``port`` with ``proc`` alive."""
+    from xx_testing.broadway_wait import poll_until
+
+    def _listening() -> bool:
+        if proc.poll() is not None:
+            return True
+        try:
+            with socket.create_connection(("127.0.0.1", port),
+                                          timeout=1):
+                return True
+        except OSError:
+            return False
+
+    if not poll_until(_listening, timeout_s=15.0, interval_s=0.1):
+        return False
+    return proc.poll() is None
+
+
 def _real_jpeg_bytes():
     import gi
 
@@ -244,10 +283,14 @@ def test_mms_broadway_attach_and_thumbnails():
                 ["gtk4-broadwayd", f":{candidate}"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            time.sleep(1.0)
-            if proc.poll() is None:
+            if _wait_broadway_port(8080 + candidate, proc):
                 number = candidate
                 break
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
             proc = None
         if number is None:
             pytest.fail("could not start gtk4-broadwayd on any display 5..99")

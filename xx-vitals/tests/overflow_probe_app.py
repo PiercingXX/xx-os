@@ -102,6 +102,17 @@ def main(argv: list[str]) -> int:
             print("FAIL: no _vitals_nav hooks on window")
             return 1
 
+        try:
+            from xx_testing.broadway_wait import iterate_until as _wait_until
+        except ImportError:  # pragma: no cover
+            _wait_until = None
+
+        def _surface_ready(root) -> bool:
+            try:
+                return bool(root.get_mapped())
+            except Exception:
+                return False
+
         plan: list = []
         for tab in ("home", "journal", "browse", "profile"):
             plan.append(("tab", tab))
@@ -137,12 +148,18 @@ def main(argv: list[str]) -> int:
             return False
 
         def settle(surface: str) -> bool:
+            root = (state["dialog"].get_child()
+                    if state["dialog"] is not None else window.get_child())
+            if _wait_until is not None:
+                if not _wait_until(lambda: _surface_ready(root),
+                                   timeout_s=5.0):
+                    print(f"FAIL: surface {surface} never mapped")
+                    _finish()
+                    return False
+            _dump_surface(root, surface)
             if state["dialog"] is not None:
-                _dump_surface(state["dialog"].get_child(), surface)
                 state["dialog"].close()
                 state["dialog"] = None
-            else:
-                _dump_surface(window.get_child(), surface)
             run_next()
             return False
 

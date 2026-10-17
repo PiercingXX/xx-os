@@ -29,7 +29,13 @@ this way too. Call shapes (tuple replies — `reply.unpack()[0]` first):
   `{phone, email, contact}`. Cancel = `("", "")`. Holds the call open
   for human time — call with a 5-minute budget (`PICK_TIMEOUT_MS` in
   `service_client`, with `pick_sync`/`pick_async` helpers) and never
-  from a UI thread without the async form.
+  from a UI thread without the async form. The headless service
+  launches `xx-contacts --pick KIND --reply-to TOKEN` and the GUI
+  reports back over `PickReply(s token, s uid, s value)` (GUI-side
+  `reply_pick_sync`/`reply_pick_async` helpers); no GTK runs in the
+  service process. A second concurrent pick fails, an unknown kind
+  fails, and a GUI that cannot start fails — the `Pick` contract
+  itself is unchanged.
 - Signal `Changed(t revision, as uids)`, sender-filtered on
   `io.piercingxx.Contacts`: invalidate per-uid caches, or re-`List`.
 

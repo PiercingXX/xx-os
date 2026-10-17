@@ -210,10 +210,12 @@ class ContactPickerPage(Adw.NavigationPage):
 def present_pick_dialog(kind: str, rows: list, on_done) -> bool:
     """Show the picker in its own window; False when there is no display.
 
-    The window is a bare ``Gtk.Window`` with no application: the service
-    process must never own the GUI app id (a second ``Gtk.Application``
-    here would fight the running app over its bus name). Closing the
-    window reports a cancel through ``on_done``.
+    In-process helper for tests and Broadway drivers: the window is a
+    bare ``Gtk.Window`` with no application. Production ``Pick`` never
+    calls this from the service — the service launches
+    ``xx-contacts --pick`` and the GUI reports back over
+    ``PickReply``. Closing the window reports a cancel through
+    ``on_done``.
     """
     from gi.repository import Gdk
 

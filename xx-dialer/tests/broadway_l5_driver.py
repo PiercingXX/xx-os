@@ -25,11 +25,13 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Gdk", "4.0")
 
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
 
 Adw.init()
 
 from xx_dialer.main import DialerDeps, build_dialer_view  # noqa: E402
+from xx_testing.broadway_wait import pump as _pump  # noqa: E402
+from xx_testing.broadway_wait import pump_until as _wait_until  # noqa: E402
 
 ERRORS: list[str] = []
 
@@ -42,12 +44,6 @@ def _hook(kind, value, tb) -> None:
 
 
 sys.excepthook = _hook
-
-
-def _pump(seconds: float) -> None:
-    loop = GLib.MainLoop()
-    GLib.timeout_add(int(seconds * 1000), loop.quit)
-    loop.run()
 
 
 class _Voice:
@@ -88,7 +84,8 @@ def main() -> int:
     window = Gtk.Window()
     window.set_child(view.widget)
     window.present()
-    _pump(1.0)
+    if not _wait_until(window.get_mapped, timeout_s=10.0):
+        raise AssertionError("dialer L5: window never mapped")
 
     pages = sorted(name for name in
                    ("recents", "keypad", "people", "rules", "setup")
@@ -96,7 +93,9 @@ def main() -> int:
     print("PAGES:", len(pages))
 
     view.stack.set_visible_child_name("rules")
-    _pump(0.3)
+    if not _wait_until(lambda: view.stack.get_visible_child_name()
+                       == "rules", timeout_s=10.0):
+        raise AssertionError("dialer L5: rules page never shown")
     rules_view = view.rules
     print("PRECEDENCE_ROWS:",
           _count_listbox(rules_view._preced_list))
@@ -117,8 +116,13 @@ def main() -> int:
     print("ENFORCE_ACTIVE:", enforce_btn.has_css_class("seg-selected"))
 
     view.stack.set_visible_child_name("people")
-    _pump(0.3)
+    if not _wait_until(lambda: view.stack.get_visible_child_name()
+                       == "people", timeout_s=10.0):
+        raise AssertionError("dialer L5: people page never shown")
     people_view = view.people
+    if not _wait_until(lambda: people_view._store.get_n_items() > 0,
+                       timeout_s=10.0):
+        raise AssertionError("dialer L5: people rows never loaded")
     print("PEOPLE_ITEMS:", people_view._store.get_n_items())
     headers = sum(1 for i in range(people_view._store.get_n_items())
                   if people_view._store.get_item(i).kind == "header")
@@ -130,8 +134,21 @@ def main() -> int:
     print("PEOPLE_FIRST_UID:", first_uid)
 
     view.stack.set_visible_child_name("setup")
-    _pump(1.5)
+    if not _wait_until(lambda: view.stack.get_visible_child_name()
+                       == "setup", timeout_s=10.0):
+        raise AssertionError("dialer L5: setup page never shown")
     setup_view = view.setup
+
+    def _setup_settled() -> bool:
+        try:
+            return all(
+                (detail.get_text() or "") not in ("", "Checking...")
+                for _key, (_glyph, detail) in setup_view._rows.items())
+        except Exception:
+            return False
+
+    if not _wait_until(_setup_settled, timeout_s=15.0):
+        raise AssertionError("dialer L5: setup rows never settled")
     details = [detail.get_text()
                for _key, (_glyph, detail) in setup_view._rows.items()]
     print("SETUP_ROWS:", len(details))
@@ -142,7 +159,9 @@ def main() -> int:
           setup_view._enforce_button.get_visible())
 
     view.stack.set_visible_child_name("rules")
-    _pump(0.2)
+    if not _wait_until(lambda: view.stack.get_visible_child_name()
+                       == "rules", timeout_s=10.0):
+        raise AssertionError("dialer L5: rules page never re-shown")
     rules_view._win_unknown.emit("clicked")
     _pump(0.3)
     rules_view._add_pattern.emit("clicked")
@@ -150,7 +169,9 @@ def main() -> int:
     print("DIALOGS:", "2")
 
     view.stack.set_visible_child_name("recents")
-    _pump(0.2)
+    if not _wait_until(lambda: view.stack.get_visible_child_name()
+                       == "recents", timeout_s=10.0):
+        raise AssertionError("dialer L5: recents page never re-shown")
     print("BADGE_AFTER:", view.recents.unread)
 
     window.destroy()

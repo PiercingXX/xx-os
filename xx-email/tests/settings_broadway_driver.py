@@ -22,7 +22,9 @@ import gi  # noqa: E402
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gtk  # noqa: E402
+
+from xx_testing.broadway_wait import pump_until as _wait_until  # noqa: E402
 
 import xx_ui  # noqa: E402
 
@@ -65,10 +67,12 @@ def _hook_errors() -> None:
     sys.excepthook = _collect
 
 
-def _pump(seconds: float) -> None:
-    loop = GLib.MainLoop()
-    GLib.timeout_add(int(seconds * 1000), loop.quit)
-    loop.run()
+def _push_visible(nav, page, label: str) -> None:
+    nav.push(page)
+    if not _wait_until(lambda: nav.get_visible_page() is page,
+                       timeout_s=10.0):
+        raise AssertionError(
+            f"email settings: {label} page never shown")
 
 
 def _open_db():
@@ -370,24 +374,25 @@ def _scenario_audit() -> None:
     nav = Adw.NavigationView()
     window.set_child(nav)
     window.present()
-    _pump(0.5)
+    if not _wait_until(window.get_mapped, timeout_s=10.0):
+        raise AssertionError("email settings: window never mapped")
 
     mailbox_page = mailbox_page_mod.MailboxPage(
         ACCOUNT, _MailboxHooks(), _toast)
-    nav.push(Adw.NavigationPage(title="Mailbox",
-                                child=mailbox_page))
+    _push_visible(nav, Adw.NavigationPage(title="Mailbox",
+                                          child=mailbox_page), "mailbox")
     mailbox_page.load()
-    _pump(0.6)
+    if not _wait_until(lambda: nav.get_visible_page() is not None,
+                       timeout_s=10.0):
+        raise AssertionError("email settings: mailbox never settled")
     _measure("mailbox", nav.get_visible_page())
 
-    nav.push(thread_page_mod.thread_dialog_page(
-        ACCOUNT, "t-long-1", _ThreadHooks(), _toast))
-    _pump(0.6)
+    _push_visible(nav, thread_page_mod.thread_dialog_page(
+        ACCOUNT, "t-long-1", _ThreadHooks(), _toast), "thread")
     _measure("thread", nav.get_visible_page())
 
-    nav.push(search_page_mod.search_dialog_page(
-        ACCOUNT, _SearchHooks(), _toast))
-    _pump(0.5)
+    _push_visible(nav, search_page_mod.search_dialog_page(
+        ACCOUNT, _SearchHooks(), _toast), "search")
     _measure("search", nav.get_visible_page())
 
     initial = {"to": ACCOUNT2, "cc": "", "bcc": "",
@@ -398,28 +403,26 @@ def _scenario_audit() -> None:
                "offer_count": 0, "show_cc_bcc": False}
     compose_page = compose_page_mod.ComposePage(
         ACCOUNT, initial, _ComposeHooks(), _toast)
-    nav.push(compose_page_mod.compose_navigation_page(
-        compose_page))
-    _pump(0.5)
+    _push_visible(nav, compose_page_mod.compose_navigation_page(
+        compose_page), "compose")
     _measure("compose", nav.get_visible_page())
 
     setup_page = setup_page_mod.SetupPage(
         _SetupHooks(), _toast, mode="add",
         client_id="x.apps.googleusercontent.com")
-    nav.push(setup_page_mod.setup_navigation_page(setup_page))
-    _pump(0.5)
+    _push_visible(nav, setup_page_mod.setup_navigation_page(setup_page),
+                  "setup")
     _measure("setup", nav.get_visible_page())
 
     logs_page = logs_page_mod.LogsPage(_LogsHooks(), _toast)
-    nav.push(logs_page_mod.logs_navigation_page(logs_page))
-    _pump(0.5)
+    _push_visible(nav, logs_page_mod.logs_navigation_page(logs_page),
+                  "logs")
     _measure("logs", nav.get_visible_page())
 
     settings_page = settings_page_mod.SettingsPage(
         _SettingsHooks(), _toast)
-    nav.push(settings_page_mod.settings_navigation_page(
-        settings_page))
-    _pump(0.6)
+    _push_visible(nav, settings_page_mod.settings_navigation_page(
+        settings_page), "settings")
     _measure("settings", nav.get_visible_page())
 
     bodies_text = bodies_mod.render_body(

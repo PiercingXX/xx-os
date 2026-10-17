@@ -3,7 +3,6 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -67,7 +66,12 @@ def test_broadway_window_builds():
     try:
         address = bus.stdout.readline().strip()
         assert address
-        time.sleep(1.0)
+        from xx_testing.broadway_wait import wait_until as _wait_until
+
+        display_num = int(str(display).lstrip(":"))
+        socket_path = workdir / f"broadway{display_num + 1}.socket"
+        _wait_until(socket_path.exists, timeout_s=15.0,
+                    message="xx-auto smoke: broadway socket never appeared")
         driver = DRIVER.replace("SRC", repr(SRC)).replace("COMMON",
                                                           repr(COMMON))
         env = dict(os.environ, GDK_BACKEND="broadway",

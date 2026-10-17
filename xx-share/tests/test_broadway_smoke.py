@@ -101,6 +101,21 @@ def _child_main():
             context.iteration(False)
         assert errors == [], f"exceptions during main-loop pump: {errors!r}"
 
+    try:
+        from xx_testing.broadway_wait import iterate_until as _wait_until
+    except ImportError:  # pragma: no cover
+        _wait_until = None
+
+    def pump_until(predicate, timeout_s: float = 10.0,
+                   message: str = "condition never held") -> None:
+        if _wait_until is None:  # pragma: no cover
+            pump(timeout_s)
+            assert predicate(), message
+            return
+        assert _wait_until(predicate,
+                           timeout_s=timeout_s) is True, message
+        assert errors == [], f"exceptions during main-loop pump: {errors!r}"
+
     def rows(box):
         found = []
         child = box.get_first_child()
@@ -130,12 +145,10 @@ def _child_main():
                  for name in ("hello.jpg", "notes.pdf")]
         window = ShareWindow(app, service, files)
         window.present()
-        pump(1.2)
-        for _ in range(40):
-            if (window.window.get_width(),
-                    window.window.get_height()) == (360, 720):
-                break
-            pump(0.2)
+        pump_until(
+            lambda: (window.window.get_width(),
+                     window.window.get_height()) == (360, 720),
+            message="share smoke: window never sized 360x720")
         assert Gdk.Display.get_default() is not None
         assert window.window.get_width() == 360
         assert window.window.get_height() == 720
@@ -177,17 +190,22 @@ def _child_main():
         assert len(rows(window.favorites_box)) == 1
         for name in ("history", "favorites", "settings", "share"):
             window._show_tab(name)
-            pump(0.3)
+            pump_until(
+                lambda _name=name: window.stack.get_visible_child_name()
+                == _name,
+                message=f"share smoke: tab {name} never shown")
             assert window.stack.get_visible_child_name() == name
             assert window.window.get_width() == 360
             assert window.window.get_height() == 720
         assert focus_inside_entry(window.window) is False
         window.show_incoming("sess-1", "Mara's Pixel",
                              ["IMG_20240612_184410.jpg"], 2412388)
-        pump(0.3)
+        pump_until(lambda: window._incoming_dialog is not None,
+                   message="share smoke: incoming dialog never opened")
         assert window._incoming_dialog is not None
         window._resolve_incoming("sess-1", "xx-share-decline")
-        pump(0.3)
+        pump_until(lambda: window._incoming_dialog is None,
+                   message="share smoke: incoming dialog never closed")
         assert window._incoming_dialog is None
         window.current_transfer = "tx-demo"
         window._idle_bus_progress("tx-demo", 512, 1024)

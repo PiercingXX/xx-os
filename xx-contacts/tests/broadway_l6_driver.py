@@ -22,7 +22,9 @@ import gi  # noqa: E402
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
+
+from xx_testing.broadway_wait import pump_until as _wait_until  # noqa: E402
 
 _ERRORS = []
 
@@ -33,41 +35,6 @@ def _note_error(text: str) -> None:
 
 sys.excepthook = lambda *args: _note_error("".join(
     traceback.format_exception(*args)))
-
-
-def _pump(seconds: float) -> None:
-    loop = GLib.MainLoop()
-    GLib.timeout_add(int(seconds * 1000), loop.quit)
-    loop.run()
-
-
-def _wait_until(predicate, timeout_s: float = 5.0) -> bool:
-    """Pump until ``predicate`` holds (bounded).
-
-    Fixed sleeps flake under load: the Broadway round trip can outlast
-    them, so a picker or reply read lands mid-transition. Poll in
-    small slices and settle briefly once the condition holds.
-    """
-    import time
-
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        _pump(0.05)
-        try:
-            if predicate():
-                break
-        except Exception:
-            pass
-    else:
-        try:
-            return bool(predicate())
-        except Exception:
-            return False
-    _pump(0.2)
-    try:
-        return bool(predicate())
-    except Exception:
-        return False
 
 
 def _focus_name(window: Gtk.Window) -> str:
@@ -138,6 +105,7 @@ def main(argv: list) -> None:
     from xx_contacts.list_ui import ContactsWindow
     from xx_contacts.phones import LookupIndex
     from xx_contacts.picker_ui import TITLES
+    from xx_contacts.picker_ui import present_pick_dialog
     from xx_contacts.service import ContactsService
 
     base = argv[1]
@@ -158,7 +126,8 @@ def main(argv: list) -> None:
             markers[f"PICK_{kind.upper()}_ROWS"] = str(len(rows))
             service = ContactsService(store, LookupIndex(), "US")
             invocation = _CaptureInvocation()
-            service.request_pick(kind, invocation)
+            service.request_pick(kind, invocation,
+                                 presenter=present_pick_dialog)
             _wait_until(lambda: _picker_window(TITLES[kind]) is not None)
             dialog = _picker_window(TITLES[kind])
             markers[f"PICK_{kind.upper()}_WINDOW"] = str(
@@ -178,7 +147,8 @@ def main(argv: list) -> None:
 
         cancel_service = ContactsService(store, LookupIndex(), "US")
         cancel_invocation = _CaptureInvocation()
-        cancel_service.request_pick("contact", cancel_invocation)
+        cancel_service.request_pick("contact", cancel_invocation,
+                                    presenter=present_pick_dialog)
         _wait_until(lambda: _picker_window(TITLES["contact"]) is not None)
         dialog = _picker_window(TITLES["contact"])
         nav = dialog.get_child()

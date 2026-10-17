@@ -43,7 +43,7 @@ import time
 import types
 
 src_dir, run_dir = sys.argv[1], sys.argv[2]
-display = ':71'
+display = sys.argv[3] if len(sys.argv) > 3 else ':71'
 os.environ['GDK_BACKEND'] = 'broadway'
 os.environ['BROADWAY_DISPLAY'] = display
 home = os.path.join(run_dir, 'home')
@@ -53,8 +53,9 @@ os.environ['XDG_CONFIG_HOME'] = os.path.join(home, '.config')
 os.environ['XDG_CACHE_HOME'] = os.path.join(home, '.cache')
 os.environ['XDG_DATA_HOME'] = os.path.join(home, '.local', 'share')
 os.environ['XDG_RUNTIME_DIR'] = run_dir
+port = sys.argv[4] if len(sys.argv) > 4 else '0'
 daemon = subprocess.Popen(
-    ['gtk4-broadwayd', display],
+    ['gtk4-broadwayd', '--port', port, display],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     for _i in range(200):
@@ -75,6 +76,31 @@ try:
 
     failures = []
     sys.excepthook = lambda *exc: failures.append(repr(exc[1]))
+
+    def _pump(seconds):
+        _loop = GLib.MainLoop()
+        GLib.timeout_add(int(seconds * 1000), _loop.quit)
+        _loop.run()
+
+    def _wait_until(predicate, timeout_s=10.0):
+        _deadline = time.time() + timeout_s
+        while time.time() < _deadline:
+            _pump(0.05)
+            try:
+                if predicate():
+                    break
+            except Exception:
+                pass
+        else:
+            try:
+                return bool(predicate())
+            except Exception:
+                return False
+        _pump(0.2)
+        try:
+            return bool(predicate())
+        except Exception:
+            return False
 
     def check(cond, label):
         if not cond:
@@ -111,6 +137,8 @@ try:
     win = window_mod.ShellWindow(app)
     win.present()
     win.set_default_size(360, 720)
+    if not _wait_until(lambda: win.is_visible()):
+        failures.append('drawer smoke: window never became visible')
 
     calc = entry('calc.desktop', 'Calculator', new_file, ('new-window',))
     win.app_index.entries = [
@@ -182,9 +210,8 @@ try:
     check(calc.desktop_app.launched_actions == ['new-window'],
           'desktop action launches')
 
-    loop = GLib.MainLoop()
-    GLib.timeout_add(3000, loop.quit)
-    loop.run()
+    _wait_until(lambda: not failures, timeout_s=3.0)
+    _pump(0.5)
     check(not failures, 'failures: %r' % (failures,))
     print('DRAWER SMOKE OK')
 finally:
@@ -195,16 +222,40 @@ finally:
 class TestDrawerBroadwaySmoke:
     def test_real_drawer_rows_markers_web_sort_gap(self, tmp_path):
         import shutil
+        import socket as _socket
         import subprocess as _subprocess
         if shutil.which('gtk4-broadwayd') is None:
             pytest.skip('needs gtk4-broadwayd')
         pytest.importorskip('gi')
         run_dir = tmp_path / 'broadway'
         run_dir.mkdir()
+
+        def _display_live(number: int) -> bool:
+            path = run_dir / f'broadway{number + 1}.socket'
+            if not path.exists():
+                return False
+            try:
+                with _socket.socket(
+                        _socket.AF_UNIX, _socket.SOCK_STREAM) as sock:
+                    sock.settimeout(2)
+                    sock.connect(str(path))
+            except OSError:
+                return False
+            return True
+
+        display = next(
+            (f':{number}' for number in range(71, 100)
+             if not _display_live(number)),
+            ':71')
+        with _socket.socket(
+                _socket.AF_INET, _socket.SOCK_STREAM) as _probe:
+            _probe.bind(('127.0.0.1', 0))
+            port = str(_probe.getsockname()[1])
         script = tmp_path / 'drawer_broadway_smoke.py'
         script.write_text(_DRAWER_BROADWAY_SMOKE)
         proc = _subprocess.run(
-            [sys.executable, str(script), str(SRC), str(run_dir)],
+            [sys.executable, str(script), str(SRC), str(run_dir), display,
+             port],
             capture_output=True, text=True, timeout=180)
         assert 'DRAWER SMOKE OK' in proc.stdout, (
             proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:])

@@ -289,3 +289,28 @@ def pick_async(kind: str, on_done, on_error=None) -> None:
 
     _call_async("Pick", _params("(s)", kind), "(ss)", _done, on_error,
                 PICK_TIMEOUT_MS)
+
+
+def reply_pick_sync(connection, token: str, uid: str,
+                    value: str) -> None:
+    """Report a pick-mode choice back to the holding ``Pick`` call.
+
+    Called by the ``--pick`` GUI once the user picks or cancels
+    (cancel is ``("", "")``); the service settles the caller's held
+    ``Pick`` from there. Blocking: the GUI calls this from a worker
+    thread, never the GTK main thread.
+    """
+    _call_sync(connection, "PickReply",
+               _params("(sss)", str(token), str(uid), str(value)), None)
+
+
+def reply_pick_async(token: str, uid: str, value: str, on_done,
+                     on_error=None) -> None:
+    """Async :func:`reply_pick_sync` for main-thread GUI use."""
+
+    def _done(_out) -> None:
+        on_done()
+
+    _call_async("PickReply",
+                _params("(sss)", str(token), str(uid), str(value)),
+                None, _done, on_error)

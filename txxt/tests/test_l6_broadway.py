@@ -96,6 +96,21 @@ def _child_main():
             context.iteration(False)
         assert errors == [], f"exceptions during main-loop pump: {errors!r}"
 
+    try:
+        from xx_testing.broadway_wait import iterate_until as _wait_until
+    except ImportError:  # pragma: no cover
+        _wait_until = None
+
+    def pump_until(predicate, timeout_s: float = 10.0,
+                   message: str = "condition never held") -> None:
+        if _wait_until is None:  # pragma: no cover
+            pump(timeout_s)
+            assert predicate(), message
+            return
+        assert _wait_until(predicate,
+                           timeout_s=timeout_s) is True, message
+        assert errors == [], f"exceptions during main-loop pump: {errors!r}"
+
     def focus_inside_entry(window):
         widget = window.get_focus()
         while widget is not None:
@@ -124,13 +139,17 @@ def _child_main():
         app.register(None)
         window = TxxtWindow(app)
         window.present()
-        pump(1.2)
+        pump_until(
+            lambda: window._list_page._quarantine_banner.get_visible()
+            is True,
+            message="l6 smoke: quarantine banner never appeared")
         assert window._list_page._quarantine_banner.get_visible() is True
         assert window._list_page._banner_label.get_text() == "1 held for review"
         assert focus_inside_entry(window) is False
 
         page = window.open_settings()
-        pump(0.8)
+        pump_until(lambda: window._navigation.get_visible_page() is page,
+                   message="l6 smoke: settings page never shown")
         page.refresh_subtitles()
         assert page.blocking_subtitle() == "1 numbers, 2 terms"
         assert page.quarantine_subtitle() == "1 held"
@@ -138,7 +157,9 @@ def _child_main():
             "appearance lives in the shell theme, not in TxxT settings"
         assert "Follow the shell theme" not in _label_texts(page)
         window._navigation.pop()
-        pump(0.5)
+        pump_until(lambda: window._navigation.get_visible_page()
+                   is window._list_page,
+                   message="l6 smoke: never popped back to the list")
 
         from txxt.list_presenter import parse_sms_uri
         from txxt.thread_page import ThreadPage
@@ -146,7 +167,12 @@ def _child_main():
         known = parse_sms_uri("sms:+15551230001?body=hello%20there")
         assert known is not None
         window.open_sms_target(known)
-        pump(0.8)
+        pump_until(
+            lambda: isinstance(window._navigation.get_visible_page(),
+                               ThreadPage)
+            and window._navigation.get_visible_page().conversation_id
+            == CID_A,
+            message="l6 smoke: sms: never opened the existing thread")
         top = window._navigation.get_visible_page()
         assert isinstance(top, ThreadPage)
         assert top.conversation_id == CID_A, \
@@ -155,14 +181,21 @@ def _child_main():
         fresh = parse_sms_uri("sms:+15550009999?body=ping")
         assert fresh is not None
         window.open_sms_target(fresh)
-        pump(0.8)
+        pump_until(
+            lambda: isinstance(window._navigation.get_visible_page(),
+                               ThreadPage)
+            and window._navigation.get_visible_page().conversation_id
+            != CID_A,
+            message="l6 smoke: sms: never started a new conversation")
         top = window._navigation.get_visible_page()
         assert isinstance(top, ThreadPage)
         assert top.conversation_id != CID_A, \
             "sms: to an unknown number starts a new conversation"
         assert top._entry.get_text() == "ping"
         window._navigation.pop_to_page(window._list_page)
-        pump(0.5)
+        pump_until(lambda: window._navigation.get_visible_page()
+                   is window._list_page,
+                   message="l6 smoke: never returned to the list")
 
         import json as _json
 
@@ -176,10 +209,16 @@ def _child_main():
         pump(1.5)
         assert _xx_theme.load().key == "paper"
         window._navigation.pop()
-        pump(0.5)
+        pump_until(lambda: window._navigation.get_visible_page()
+                   is window._list_page,
+                   message="l6 smoke: never returned to the list")
 
         window.open_blocking()
-        pump(1.2)
+        pump_until(
+            lambda: window._blocking_page is not None
+            and window._blocking_page._lists["sender"].get_row_at_index(
+                0) is not None,
+            message="l6 smoke: blocking page never loaded its rows")
         assert window._blocking_page is not None
         assert window._blocking_page._lists["sender"].get_row_at_index(0) is not None
         assert window._blocking_page._lists["keyword"].get_row_at_index(0) is not None
@@ -187,7 +226,10 @@ def _child_main():
         assert focus_inside_entry(window) is False
 
         window.open_quarantine()
-        pump(1.2)
+        pump_until(
+            lambda: window._quarantine_page is not None
+            and window._quarantine_page._model.get_n_items() == 1,
+            message="l6 smoke: quarantine page never showed its row")
         assert window._quarantine_page is not None
         assert window._quarantine_page._model.get_n_items() == 1
         item = window._quarantine_page._model.get_item(0)
@@ -236,6 +278,25 @@ def _free_display():
     return None
 
 
+def _wait_broadway_port(port: int, proc) -> bool:
+    """True once broadwayd listens on ``port`` with ``proc`` alive."""
+    from xx_testing.broadway_wait import poll_until
+
+    def _listening() -> bool:
+        if proc.poll() is not None:
+            return True
+        try:
+            with socket.create_connection(("127.0.0.1", port),
+                                          timeout=1):
+                return True
+        except OSError:
+            return False
+
+    if not poll_until(_listening, timeout_s=15.0, interval_s=0.1):
+        return False
+    return proc.poll() is None
+
+
 def test_broadway_l6_settings_blocking_quarantine():
     if shutil.which("gtk4-broadwayd") is None:
         pytest.skip("gtk4-broadwayd is missing")
@@ -264,10 +325,14 @@ def test_broadway_l6_settings_blocking_quarantine():
                 ["gtk4-broadwayd", f":{candidate}"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            time.sleep(1.0)
-            if proc.poll() is None:
+            if _wait_broadway_port(8080 + candidate, proc):
                 number = candidate
                 break
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
             proc = None
         if number is None:
             pytest.fail("could not start gtk4-broadwayd on any display 5..99")

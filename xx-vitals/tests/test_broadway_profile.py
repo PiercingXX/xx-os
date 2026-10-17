@@ -14,7 +14,6 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -26,14 +25,18 @@ DRIVER = Path(__file__).parent / "broadway_probe_app.py"
 
 def _wait_for_socket(run_dir: Path, proc: subprocess.Popen,
                      timeout_s: float = 10.0) -> bool:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
+    from xx_testing.broadway_wait import poll_until
+
+    def _socket_live() -> bool:
         if proc.poll() is not None:
-            return False
-        if list(run_dir.glob("broadway*.socket")):
             return True
-        time.sleep(0.1)
-    return False
+        return bool(list(run_dir.glob("broadway*.socket")))
+
+    if not poll_until(_socket_live, timeout_s=timeout_s,
+                      interval_s=0.1):
+        return False
+    return proc.poll() is None and bool(
+        list(run_dir.glob("broadway*.socket")))
 
 
 def test_profile_window_pumps_without_exceptions(tmp_path, monkeypatch):

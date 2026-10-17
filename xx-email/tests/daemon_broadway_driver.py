@@ -26,7 +26,9 @@ import gi  # noqa: E402
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402
+
+from xx_testing.broadway_wait import pump_until as _wait_until  # noqa: E402
 
 Gtk.init()
 opened = Gdk.Display.open(os.environ.get("BROADWAY_DISPLAY", ""))
@@ -56,10 +58,11 @@ def _hook_errors() -> None:
     sys.excepthook = _collect
 
 
-def _pump(seconds: float) -> None:
-    loop = GLib.MainLoop()
-    GLib.timeout_add(int(seconds * 1000), loop.quit)
-    loop.run()
+def _mapped(window) -> bool:
+    try:
+        return bool(window.get_mapped())
+    except Exception:
+        return False
 
 
 def _open_db():
@@ -269,7 +272,9 @@ def _scenario_smoke() -> None:
     mailbox_window = _show(mailbox, "Mailbox")
     thread_window = _show(thread, "Thread")
     mailbox.load()
-    _pump(0.8)
+    if not _wait_until(lambda: _mapped(mailbox_window)
+                       and _mapped(thread_window), timeout_s=10.0):
+        raise AssertionError("email daemon: pages never mapped")
     mailbox_window.destroy()
     thread_window.destroy()
     print("PAGES_OK: mailbox thread")

@@ -41,10 +41,19 @@ callbacks take exactly `(conn, result)` — do not pass `user_data`.
   Phone/email return the chosen number/address in `value`; contact
   returns the display name. A cancel (or closed window) returns
   `("", "")`. Unknown kinds and a second concurrent pick fail with
-  `InvalidArgument`; a service with no display fails with
+  `InvalidArgument`; a pick GUI that cannot start fails with
   `NotImplemented`. Prefer `xx-contacts --new --tel NUMBER` for
   "Add to contacts" (next section) — `Pick` holds the caller's D-Bus
   call open for human-scale time.
+
+The service itself never opens a window: on `Pick` it spawns
+`xx-contacts --pick KIND --reply-to TOKEN [--db PATH]` and the GUI
+sends the choice back over `PickReply(s token, s uid, s value)`
+(`reply_pick_sync` for worker threads, `reply_pick_async` on the GTK
+main thread), which settles the held call. The reply token travels
+only in the GUI command line, never in a log. If the app is already
+running, the `--pick` launch forwards to it through the normal
+`do_command_line` path and the pick opens on top.
 
 Signal `Changed(t revision, as uids)`
 : Emitted only by the service, on its own connection, after every

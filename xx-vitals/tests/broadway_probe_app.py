@@ -97,9 +97,27 @@ def main(argv: list[str]) -> int:
         window = shell.build_window(app, db, cfg, secrets)
         window.present()
 
-        loop = GLib.MainLoop()
-        GLib.timeout_add(3000, lambda: (loop.quit(), False)[1])
-        loop.run()
+        try:
+            from xx_testing.broadway_wait import pump_until as _wait_until
+        except ImportError:  # pragma: no cover
+            _wait_until = None
+
+        def _labels_settled() -> bool:
+            try:
+                texts = _label_texts(window)
+                return ("Queue: 2 queued" in texts
+                        and any(line.startswith("Last pull: 2026-")
+                                for line in texts))
+            except Exception:
+                return False
+
+        if _wait_until is not None:
+            if not _wait_until(_labels_settled, timeout_s=10.0):
+                errors.append("vitals probe: labels never settled")
+        else:  # pragma: no cover
+            loop = GLib.MainLoop()
+            GLib.timeout_add(3000, lambda: (loop.quit(), False)[1])
+            loop.run()
 
         labels = _label_texts(window)
         for text in labels:

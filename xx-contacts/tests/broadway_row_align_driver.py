@@ -21,7 +21,9 @@ import gi  # noqa: E402
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, GLib  # noqa: E402
+from gi.repository import Adw  # noqa: E402
+
+from xx_testing.broadway_wait import pump_until as _wait_until  # noqa: E402
 
 _ERRORS = []
 
@@ -32,41 +34,6 @@ def _note_error(text: str) -> None:
 
 sys.excepthook = lambda *args: _note_error("".join(
     traceback.format_exception(*args)))
-
-
-def _pump(seconds: float) -> None:
-    loop = GLib.MainLoop()
-    GLib.timeout_add(int(seconds * 1000), loop.quit)
-    loop.run()
-
-
-def _wait_until(predicate, timeout_s: float = 8.0) -> bool:
-    """Pump until ``predicate`` holds (bounded).
-
-    List rows lay out over frame ticks: a fixed sleep can expire
-    before any row is allocated, so the sweep below waits for real
-    allocations first instead of measuring zeros.
-    """
-    import time
-
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        _pump(0.05)
-        try:
-            if predicate():
-                break
-        except Exception:
-            pass
-    else:
-        try:
-            return bool(predicate())
-        except Exception:
-            return False
-    _pump(0.2)
-    try:
-        return bool(predicate())
-    except Exception:
-        return False
 
 
 def _seed(base: str):

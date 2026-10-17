@@ -80,7 +80,7 @@ def test_introspection_lists_full_interface():
     methods = {m.name: m for m in iface.methods}
     assert set(methods) == {"LookupNumber", "LookupEmail", "Search", "Get",
                             "List", "Create", "Update", "Delete", "SetTags",
-                            "UpdateTags", "Import", "Pick"}
+                            "UpdateTags", "Import", "Pick", "PickReply"}
     assert methods["LookupNumber"].in_args[0].signature == "s"
     assert methods["List"].in_args[0].signature == "t"
     assert methods["SetTags"].in_args[1].signature == "as"
@@ -91,6 +91,11 @@ def test_introspection_lists_full_interface():
     assert [a.signature for a in methods["Import"].in_args] == ["s"]
     assert [a.signature for a in methods["Import"].out_args] == [
         "u", "u", "u"]
+    assert [a.signature for a in methods["Pick"].in_args] == ["s"]
+    assert [a.signature for a in methods["Pick"].out_args] == ["s", "s"]
+    assert [a.signature for a in methods["PickReply"].in_args] == [
+        "s", "s", "s"]
+    assert methods["PickReply"].out_args == []
     signals = {s.name: s for s in iface.signals}
     assert set(signals) == {"Changed"}
     assert signals["Changed"].args[0].signature == "t"

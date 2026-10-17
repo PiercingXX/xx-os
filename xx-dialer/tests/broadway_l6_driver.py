@@ -23,11 +23,13 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Gdk", "4.0")
 
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
 
 Adw.init()
 
 from xx_dialer.main import DialerDeps, build_dialer_view  # noqa: E402
+from xx_testing.broadway_wait import pump as _pump  # noqa: E402
+from xx_testing.broadway_wait import pump_until as _wait_until  # noqa: E402
 
 ERRORS: list[str] = []
 
@@ -42,12 +44,6 @@ def _hook(kind, value, tb) -> None:
 
 
 sys.excepthook = _hook
-
-
-def _pump(seconds: float) -> None:
-    loop = GLib.MainLoop()
-    GLib.timeout_add(int(seconds * 1000), loop.quit)
-    loop.run()
 
 
 class _Voice:
@@ -90,7 +86,8 @@ def main() -> int:
     window = Gtk.Window()
     window.set_child(view.widget)
     window.present()
-    _pump(1.0)
+    if not _wait_until(window.get_mapped, timeout_s=10.0):
+        raise AssertionError("dialer L6: window never mapped")
 
     names = ("recents", "keypad", "people", "rules", "setup", "backup",
              "logs")
@@ -99,7 +96,9 @@ def main() -> int:
     print("PAGES:", len(pages))
 
     view.stack.set_visible_child_name("backup")
-    _pump(0.3)
+    if not _wait_until(lambda: view.stack.get_visible_child_name()
+                       == "backup", timeout_s=10.0):
+        raise AssertionError("dialer L6: backup page never shown")
     backup_view = view.backup
     print("BACKUP_STATUS:", backup_view._export_status.get_text())
     print("BACKUP_IMPORT_STATUS:", repr(backup_view._import_status
@@ -119,10 +118,23 @@ def main() -> int:
 
     applog.write("cards", "posted id=41 Silenced call %s" % ADA, home)
     view.stack.set_visible_child_name("logs")
-    _pump(0.3)
+    if not _wait_until(lambda: view.stack.get_visible_child_name()
+                       == "logs", timeout_s=10.0):
+        raise AssertionError("dialer L6: logs page never shown")
     logs_view = view.logs
     logs_view.refresh()
-    _pump(0.2)
+
+    def _preview_settled() -> bool:
+        try:
+            buffer = logs_view._preview.get_buffer()
+            preview = buffer.get_text(buffer.get_start_iter(),
+                                      buffer.get_end_iter(), False)
+            return "*********00" in preview
+        except Exception:
+            return False
+
+    if not _wait_until(_preview_settled, timeout_s=10.0):
+        raise AssertionError("dialer L6: logs preview never settled")
     buffer = logs_view._preview.get_buffer()
     preview = buffer.get_text(buffer.get_start_iter(),
                               buffer.get_end_iter(), False)
@@ -137,11 +149,15 @@ def main() -> int:
         row = logs_view._file_list.get_row_at_index(index)
     print("LOGS_ROWS:", len(rows))
     logs_view._clear_button.emit("clicked")
-    _pump(0.2)
+    if not _wait_until(lambda: len(logs_view.controller.files()) == 0,
+                       timeout_s=10.0):
+        raise AssertionError("dialer L6: logs never cleared")
     print("LOGS_AFTER_CLEAR:", len(logs_view.controller.files()))
 
     view.stack.set_visible_child_name("recents")
-    _pump(0.2)
+    if not _wait_until(lambda: view.stack.get_visible_child_name()
+                       == "recents", timeout_s=10.0):
+        raise AssertionError("dialer L6: recents page never re-shown")
 
     window.destroy()
     _pump(0.2)

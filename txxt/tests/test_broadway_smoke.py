@@ -110,6 +110,11 @@ def _child_main():
 
     from txxt.main import TxxtWindow
 
+    try:
+        from xx_testing.broadway_wait import iterate_until as _wait_until
+    except ImportError:  # pragma: no cover
+        _wait_until = None
+
     errors: list = []
     gtk_logs: list = []
     old_excepthook = sys.excepthook
@@ -137,6 +142,16 @@ def _child_main():
                 context.iteration(False)
             time.sleep(0.02)
             context.iteration(False)
+        assert errors == [], f"exceptions during main-loop pump: {errors!r}"
+
+    def pump_until(predicate, timeout_s: float = 10.0,
+                   message: str = "condition never held") -> None:
+        if _wait_until is None:  # pragma: no cover
+            pump(timeout_s)
+            assert predicate(), message
+            return
+        assert _wait_until(predicate,
+                           timeout_s=timeout_s) is True, message
         assert errors == [], f"exceptions during main-loop pump: {errors!r}"
 
     def focus_inside_entry(window):
@@ -178,7 +193,9 @@ def _child_main():
         app.register(None)
         window = TxxtWindow(app)
         window.present()
-        pump(1.2)
+        pump_until(
+            lambda: window._list_page._model.get_n_items() == 2,
+            message="txxt smoke: conversation list never showed 2 rows")
         assert Gdk.Display.get_default() is not None
         assert window._list_page._model.get_n_items() == 2
         for index in range(window._list_page._model.get_n_items()):
@@ -187,7 +204,8 @@ def _child_main():
         assert focus_inside_entry(window) is False
         assert_list_rules(window)
         window.open_thread(CID_A)
-        pump(1.2)
+        pump_until(lambda: bool(window._thread_pages),
+                   message="txxt smoke: thread page never opened")
         assert window._thread_pages, "thread page never opened"
         thread = window._thread_pages[-1]
         from txxt.thread_page import MessageItem, SeparatorItem
@@ -207,11 +225,13 @@ def _child_main():
         assert_list_rules(window)
         thread._search_bar.set_search_mode(True)
         thread._search_entry.set_text("Lorem")
-        pump(1.2)
+        pump_until(lambda: len(thread._matches) == 1,
+                   message="txxt smoke: in-thread search never matched")
         assert thread._search_bar.get_search_mode() is True
         assert len(thread._matches) == 1
         window._navigation.pop()
-        pump(1.2)
+        pump_until(lambda: focus_inside_entry(window) is False,
+                   message="txxt smoke: entry kept focus after pop")
         assert focus_inside_entry(window) is False
         assert_list_rules(window)
         assert errors == []
@@ -255,6 +275,25 @@ def _free_display():
     return None
 
 
+def _wait_broadway_port(port: int, proc) -> bool:
+    """True once broadwayd listens on ``port`` with ``proc`` alive."""
+    from xx_testing.broadway_wait import poll_until
+
+    def _listening() -> bool:
+        if proc.poll() is not None:
+            return True
+        try:
+            with socket.create_connection(("127.0.0.1", port),
+                                          timeout=1):
+                return True
+        except OSError:
+            return False
+
+    if not poll_until(_listening, timeout_s=15.0, interval_s=0.1):
+        return False
+    return proc.poll() is None
+
+
 def test_broadway_launch_thread_search_and_focus():
     if shutil.which("gtk4-broadwayd") is None:
         pytest.skip("gtk4-broadwayd is missing")
@@ -281,10 +320,14 @@ def test_broadway_launch_thread_search_and_focus():
                 ["gtk4-broadwayd", f":{candidate}"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            time.sleep(1.0)
-            if proc.poll() is None:
+            if _wait_broadway_port(8080 + candidate, proc):
                 number = candidate
                 break
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
             proc = None
         if number is None:
             pytest.fail("could not start gtk4-broadwayd on any display 5..99")

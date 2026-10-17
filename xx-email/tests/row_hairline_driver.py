@@ -23,7 +23,9 @@ import gi  # noqa: E402
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gtk  # noqa: E402
+
+from xx_testing.broadway_wait import pump_until as _wait_until  # noqa: E402
 
 Gtk.init()
 opened = Gdk.Display.open(os.environ.get("BROADWAY_DISPLAY", ""))
@@ -46,10 +48,27 @@ def _hook_errors() -> None:
     sys.excepthook = _collect
 
 
-def _pump(seconds: float) -> None:
-    loop = GLib.MainLoop()
-    GLib.timeout_add(int(seconds * 1000), loop.quit)
-    loop.run()
+def _row_count(window) -> int:
+    found = []
+
+    def _walk(widget) -> None:
+        try:
+            classes = widget.get_css_classes()
+        except Exception:  # noqa: BLE001
+            classes = ()
+        if "xx-row" in classes:
+            found.append(widget)
+        child = widget.get_first_child() \
+            if hasattr(widget, "get_first_child") else None
+        while child is not None:
+            _walk(child)
+            try:
+                child = child.get_next_sibling()
+            except Exception:  # noqa: BLE001
+                break
+
+    _walk(window)
+    return len(found)
 
 
 def _scenario_audit() -> None:
@@ -78,7 +97,10 @@ def _scenario_audit() -> None:
     window.set_child(scrolled)
     common_mod.replace_store(store, threads)
     window.present()
-    _pump(0.6)
+    if not _wait_until(lambda: _row_count(window) == 3, timeout_s=10.0):
+        raise AssertionError(
+            "email row hairline: 3 rows never rendered, got "
+            f"{_row_count(window)}")
 
     rows = []
 

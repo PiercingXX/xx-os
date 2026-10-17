@@ -36,6 +36,7 @@ from xx_dialer.main import (  # noqa: E402
     build_dialer_view,
 )
 from xx_dialer.service import BUS_NAME, INTERFACE, OBJECT_PATH  # noqa: E402
+from xx_testing.broadway_wait import pump_until as _wait_until  # noqa: E402
 
 HOME = Path(os.environ["XX_DIALER_TEST_HOME"])
 DB_FILE = HOME / ".local" / "share" / "xx-dialer" / "calls.db"
@@ -51,12 +52,6 @@ def _hook(kind, value, tb) -> None:
 
 
 sys.excepthook = _hook
-
-
-def _pump(seconds: float) -> None:
-    loop = GLib.MainLoop()
-    GLib.timeout_add(int(seconds * 1000), loop.quit)
-    loop.run()
 
 
 class _Voice:
@@ -123,7 +118,10 @@ def main() -> int:
         if not registered or remote:
             return 1
         app.activate()
-        _pump(1.0)
+        if not _wait_until(lambda: len(list(app.get_windows())) > 0,
+                           timeout_s=10.0):
+            sys.stderr.write("coexist: GUI window never opened\n")
+            return 1
         windows = list(app.get_windows())
         print("WINDOW:", len(windows) > 0, flush=True)
         if not windows:

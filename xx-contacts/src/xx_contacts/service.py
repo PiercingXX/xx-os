@@ -3,9 +3,10 @@
 Headless entry: ``python3 -m xx_contacts --service`` owns the bus name,
 serves ``/io/piercingxx/Contacts`` from the SQLite store with an
 in-memory lookup index, emits ``Changed`` on writes, and exits after
-60 s without a method call. ``Pick`` validates the kind, opens the
-pick-mode page (``picker_ui``) when the session has a display, and
-replies with the pick or with ``("", "")`` on cancel.
+60 s without a method call. ``Pick`` validates the kind, launches the
+``xx-contacts --pick`` GUI (which owns all GTK), and replies once the
+GUI reports back over ``PickReply`` — with the pick, or with
+``("", "")`` on cancel. The service itself never touches GTK.
 
 Method dispatch takes the exact Gio shapes (tuple ``GLib.Variant``
 parameters, ``invocation.return_value`` / ``invocation.return_dbus_error``)
@@ -118,6 +119,11 @@ INTROSPECTION_XML = """\
       <arg direction="out" type="s" name="uid"/>
       <arg direction="out" type="s" name="value"/>
     </method>
+    <method name="PickReply">
+      <arg direction="in" type="s" name="token"/>
+      <arg direction="in" type="s" name="uid"/>
+      <arg direction="in" type="s" name="value"/>
+    </method>
     <signal name="Changed">
       <arg type="t" name="revision"/>
       <arg type="as" name="uids"/>
@@ -159,10 +165,14 @@ class ContactsService:
         self._index = index
         self._default_region = default_region or "US"
         self._connection = None
-        self._pending_pick = None
+        self._pending_picks: dict[str, object] = {}
         #: Display hook for ``Pick``: ``(kind, rows, on_done) -> bool``.
-        #: None (default) shows the real GTK page; tests inject a fake.
+        #: None (default) launches the pick-mode GUI; tests inject a fake.
         self.pick_presenter = None
+        #: GUI-launch hook for ``Pick``: ``(kind, token) -> bool``.
+        #: None (default) spawns ``xx-contacts --pick``; tests inject
+        #: a fake that settles the pick through :meth:`reply_pick`.
+        self.pick_launcher = None
         self.last_activity = time.monotonic()
         if photos_dir is None:
             photos_dir = default_photos_dir(getattr(store, "path", ""))
@@ -197,19 +207,62 @@ class ContactsService:
 
     def pick_pending(self) -> bool:
         """True while a ``Pick`` invocation waits for the user to choose."""
-        return self._pending_pick is not None
+        return bool(self._pending_picks)
+
+    def reply_pick(self, token: str, uid: str, value: str) -> bool:
+        """Settle the held ``Pick`` for ``token``; False when unknown.
+
+        The GUI calls this over ``PickReply`` after the user picks or
+        cancels; a cancel reports ``("", "")``. ``Pick`` never writes,
+        so settling emits no ``Changed``.
+        """
+        from gi.repository import GLib
+
+        pending = self._pending_picks.pop(str(token or ""), None)
+        if pending is None:
+            return False
+        pending.return_value(
+            GLib.Variant("(ss)", (str(uid), str(value))))
+        self._touch()
+        return True
+
+    def _launch_pick_gui(self, kind: str, token: str) -> bool:
+        """Spawn the pick-mode GUI; False when it cannot start.
+
+        Never blocks: the child owns all GTK and reports back over
+        ``PickReply``. The reply token travels only in the child
+        command line, never in a log line.
+        """
+        import subprocess
+        import sys
+
+        db_path = getattr(getattr(self, "_store", None), "path", "") or ""
+        argv = [sys.executable, "-m", "xx_contacts",
+                "--pick", kind, "--reply-to", token]
+        if db_path and db_path != ":memory:":
+            argv += ["--db", db_path]
+        try:
+            subprocess.Popen(argv, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL,
+                             stdin=subprocess.DEVNULL,
+                             close_fds=True)
+        except Exception:
+            return False
+        return True
 
     def request_pick(self, kind: str, invocation,
                      presenter=None) -> None:
-        """Serve ``Pick``: validate the kind, show the picker, hold the call.
+        """Serve ``Pick``: validate the kind, launch the GUI, hold the call.
 
-        The method invocation stays open until the picker settles: a tap
-        replies ``(uid, value)``, a cancel or a closed window replies
-        ``("", "")``. ``Pick`` never writes, so it emits no ``Changed``.
-        A second ``Pick`` while one is open fails, and a session with no
-        display fails, instead of leaving the caller hanging.
+        The method invocation stays open until the pick-mode GUI
+        reports back over ``PickReply``: a tap replies ``(uid, value)``,
+        a cancel or a closed window replies ``("", "")``. ``Pick``
+        never writes, so it emits no ``Changed``. A second ``Pick``
+        while one is open fails, and a GUI that cannot start fails,
+        instead of leaving the caller hanging. The caller-visible
+        contract is unchanged: ``Pick(s kind) -> (s uid, s value)``.
         """
-        from gi.repository import GLib
+        import secrets
 
         from xx_contacts import picker as picker_module
         import xx_phone  # noqa: E402
@@ -219,7 +272,7 @@ class ContactsService:
         except ValueError as exc:
             invocation.return_dbus_error(ERROR_INVALID_ARGUMENT, str(exc))
             return
-        if self._pending_pick is not None:
+        if self._pending_picks:
             invocation.return_dbus_error(
                 ERROR_INVALID_ARGUMENT,
                 "a contact pick is already in progress")
@@ -227,30 +280,39 @@ class ContactsService:
         show = presenter
         if show is None:
             show = self.pick_presenter
-        if show is None:
-            from xx_contacts import picker_ui as picker_ui_module
+        token = secrets.token_urlsafe(16)
+        if show is not None:
+            rows = picker_module.build_pick_rows(
+                normalized, self._store.all_records(),
+                xx_phone.display_country(self._default_region))
 
-            show = picker_ui_module.present_pick_dialog
-        rows = picker_module.build_pick_rows(
-            normalized, self._store.all_records(),
-            xx_phone.display_country(self._default_region))
+            def _on_settled(uid: str, value: str,
+                            _token: str = token) -> None:
+                self.reply_pick(_token, uid, value)
 
-        def _on_settled(uid: str, value: str) -> None:
-            pending, self._pending_pick = self._pending_pick, None
-            if pending is None:
-                return
-            pending.return_value(
-                GLib.Variant("(ss)", (str(uid), str(value))))
+            self._pending_picks[token] = invocation
             self._touch()
-
-        self._pending_pick = invocation
+            try:
+                shown = bool(show(normalized, rows, _on_settled))
+            except Exception:
+                shown = False
+            if not shown:
+                self._pending_picks.pop(token, None)
+                invocation.return_dbus_error(
+                    ERROR_NOT_IMPLEMENTED,
+                    "contact picker needs a display")
+            return
+        launch = self.pick_launcher
+        if launch is None:
+            launch = self._launch_pick_gui
+        self._pending_picks[token] = invocation
         self._touch()
         try:
-            shown = bool(show(normalized, rows, _on_settled))
+            started = bool(launch(normalized, token))
         except Exception:
-            shown = False
-        if not shown:
-            self._pending_pick = None
+            started = False
+        if not started:
+            self._pending_picks.pop(token, None)
             invocation.return_dbus_error(
                 ERROR_NOT_IMPLEMENTED,
                 "contact picker needs a display")
@@ -583,6 +645,17 @@ class ContactsService:
                         "Pick takes exactly one argument: kind")
                 else:
                     self.request_pick(args[0], invocation)
+            elif method_name == "PickReply":
+                if len(tuple(args)) != 3:
+                    invocation.return_dbus_error(
+                        ERROR_INVALID_ARGUMENT,
+                        "PickReply takes token, uid and value")
+                elif not self.reply_pick(args[0], args[1], args[2]):
+                    invocation.return_dbus_error(
+                        ERROR_INVALID_ARGUMENT,
+                        "unknown pick token")
+                else:
+                    invocation.return_value(GLib.Variant("()", ()))
             else:
                 invocation.return_dbus_error(
                     ERROR_INVALID_ARGUMENT,
