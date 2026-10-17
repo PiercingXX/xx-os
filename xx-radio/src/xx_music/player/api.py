@@ -27,10 +27,20 @@ def player_xml(spec: AppSpec) -> str:
     <method name="RemoveDownload"><arg direction="in" type="s"/></method>
     <method name="Snapshot"><arg direction="out" type="s"/></method>
     <method name="Queue"><arg direction="out" type="u"/><arg direction="out" type="s"/><arg direction="out" type="i"/></method>
+    <method name="ListCastDevices"><arg direction="out" type="s"/></method>
+    <method name="CastTo"><arg direction="in" type="s"/></method>
+    <method name="StopCasting"/>
+    <method name="CastState"><arg direction="out" type="s"/></method>
+    <property name="CastState" type="s" access="read"/>
     <signal name="Changed"><arg type="s"/></signal>
     <signal name="QueueChanged"><arg type="u"/></signal>
     <signal name="DownloadsChanged"><arg type="u"/></signal>
     <signal name="Problem"><arg type="s"/><arg type="s"/></signal>
+    <signal name="CastChanged"><arg type="s"/></signal>
+  </interface>
+  <interface name="org.freedesktop.DBus.Properties">
+    <method name="Get"><arg direction="in" type="s"/><arg direction="in" type="s"/><arg direction="out" type="v"/></method>
+    <method name="GetAll"><arg direction="in" type="s"/><arg direction="out" type="a{{sv}}"/></method>
   </interface>
 </node>"""
 

@@ -25,6 +25,7 @@ from gi.repository import GLib, GObject, Gtk, Pango
 
 from xx_music.engine import LYRICS, RATE, Lyrics, Rating
 from xx_music.tasks import Generation
+from xx_music.ui import cast as cast_ui
 from xx_music.ui import common, css, fmt, menus, minimal
 from xx_music.ui.player import SLEEP_END_OF_SONG, SLEEP_OFF
 from xx_music.ui.queue_page import QueueView
@@ -210,6 +211,14 @@ class NowPlaying:
         self.words = minimal.active()
         root = self.widget
         root.append(self._top_bar())
+        self.cast_line = cast_ui.playing_line(self.ui)
+        self.cast_line.set_margin_start(16)
+        self.cast_line.set_margin_end(16)
+        root.append(self.cast_line)
+        self.cast_vol = cast_ui.volume_row(self.ui)
+        self.cast_vol.set_margin_start(16)
+        self.cast_vol.set_margin_end(16)
+        root.append(self.cast_vol)
         self.stack = Gtk.Stack()
         self.stack.set_vexpand(True)
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
@@ -248,6 +257,9 @@ class NowPlaying:
         collapse = common.icon_button("go-down-symbolic", "Close the player",
                                       self.close, 22)
         bar.append(collapse)
+        self.cast_btn = cast_ui.cast_button(self.ui, 18)
+        self.cast_btn.set_valign(Gtk.Align.CENTER)
+        bar.append(self.cast_btn)
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         bar.append(spacer)
@@ -263,12 +275,12 @@ class NowPlaying:
         return bar
 
     def _word_bar(self) -> Gtk.Widget:
-        """``close`` … ``sleep`` ``lyrics`` ``queue``: words, Strong while
-        on."""
+        """``close`` … ``cast`` ``sleep`` ``lyrics`` ``queue``: words,
+        Strong while on."""
         Tone = minimal.Tone
         bar = common.hbox(0)
-        bar.set_margin_start(28)
-        bar.set_margin_end(20)
+        bar.set_margin_start(24)
+        bar.set_margin_end(18)
         bar.set_margin_top(4)
         bar.set_margin_bottom(4)
         close = minimal.word_button("close", self.close, Tone.QUIET,
@@ -284,8 +296,13 @@ class NowPlaying:
             "lyrics", lambda: self.toggle("lyrics"), Tone.QUIET)
         self.queue_act = minimal.word_button(
             "queue", lambda: self.toggle("queue"), Tone.QUIET)
-        bar.append(minimal.flow([self.sleep_act, self.lyrics_act,
-                                 self.queue_act], spacing=0))
+        self.cast_btn = cast_ui.cast_button(self.ui)
+        for word in (self.cast_btn, self.sleep_act, self.lyrics_act,
+                     self.queue_act):
+            word.add_css_class("xx-mm-tight")
+        bar.append(minimal.flow([self.cast_btn, self.sleep_act,
+                                 self.lyrics_act, self.queue_act],
+                                spacing=0))
         bar.get_last_child().set_halign(Gtk.Align.END)
         return bar
 
@@ -553,6 +570,10 @@ class NowPlaying:
     # -- updating --------------------------------------------------------------------
     def update(self) -> None:
         player = self.ui.player
+        cast = player.cast
+        cast_ui.sync_line(self.cast_line, cast)
+        self.cast_vol.sync(cast)
+        cast_ui.set_casting(self.cast_btn, player.casting)
         track = player.track
         if track is None:
             return

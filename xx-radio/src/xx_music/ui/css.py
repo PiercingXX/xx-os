@@ -221,6 +221,7 @@ button.xx-mm-btn, .xx-mu button.xx-mm-btn, .xx-mu-sheet button.xx-mm-btn {
   min-height: 40px; min-width: 0; padding: 0 4px; }
 button.xx-mm-btn.xx-mm-word { padding: 0 8px; }
 button.xx-mm-btn.xx-mm-flush { padding-left: 0; }
+button.xx-mm-btn.xx-mm-word.xx-mm-tight { padding: 0 6px; }
 button.xx-mm-btn.xx-mm-flush-end { padding-right: 0; }
 button.xx-mm-btn:active label { opacity: 0.55; }
 button.xx-mm-btn:focus-visible { outline: 1px solid alpha(${fg}, 0.5); }

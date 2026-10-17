@@ -97,6 +97,22 @@ class PlayerClient:
         self._call("Snapshot", None, self._done_string(callback)
                    if callback else None)
 
+    def list_cast_devices(self, callback: Callable | None = None) -> None:
+        self._call("ListCastDevices", None, self._done_string(callback)
+                   if callback else None)
+
+    def cast_to(self, device_id: str,
+                callback: Callable | None = None) -> None:
+        self._call("CastTo", GLib.Variant(
+            "(s)", (str(device_id),)), callback)
+
+    def stop_casting(self, callback: Callable | None = None) -> None:
+        self._call("StopCasting", None, callback)
+
+    def cast_state(self, callback: Callable | None = None) -> None:
+        self._call("CastState", None, self._done_string(callback)
+                   if callback else None)
+
     def queue(self, callback: Callable | None = None) -> None:
         def on_reply(connection, result) -> None:
             try:

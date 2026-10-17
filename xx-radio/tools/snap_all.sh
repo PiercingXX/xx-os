@@ -84,22 +84,27 @@ banner-signedout banner-signedout seeded
 banner-mix banner-mix seeded
 kill-confirm kill-confirm seeded
 kill-toast kill-toast seeded
-killed-artists killed-artists seeded"
+killed-artists killed-artists seeded
+cast-sheet cast-sheet seeded
+casting casting seeded
+casting-sheet casting-sheet seeded"
 # Minimal Mode only: the live switch from Settings, both ways.
 MM_EXTRA="mm-toggle-on minimal-on seeded
 mm-toggle-off minimal-off seeded SNAP_MINIMAL=1
 mm-toggle-home minimal-on-home seeded"
 FIT320="home search-results artist album playing lyrics queue library-phone
 settings engine-updating signin firstrun-failed sheet-sleep-on search-menu
-welcome kill-confirm killed-artists"
+welcome kill-confirm killed-artists casting"
 SCALE2="home search-results album playing queue library-phone settings
 engine-ready signin firstrun welcome"
 
 home_for() {
-    # $1=theme $2=scenario $3=text scale
+    # $1=theme $2=scenario $3=text scale $4=variant: Minimal Mode saves
+    # its setting in HOME, so minimal renders get their own HOME and each
+    # live switch a private one (parallel jobs never see each other's).
     kind=seeded
     case $2 in empty|firstrun) kind=empty ;; esac
-    home="$WORK/home-$1-$kind-$3"
+    home="$WORK/home-$1-$kind-$3-$4"
     if [ ! -d "$home" ]; then
         mkdir -p "$home/.config/xx-wm"
         printf '{"theme": "%s", "text_size_scale": %s}' "$1" "$3" \
@@ -133,10 +138,15 @@ jobs="$WORK/jobs"
 add_job() {
     # $1=out $2=theme $3=scale $4=size $5=label
     set -- "$1" "$2" "$3" "$4" "$5" $(line_for "$5")
-    out=$1 theme=$2 scale=$3 size=$4
+    out=$1 theme=$2 scale=$3 size=$4 label=$5
     target=$6 scenario=$7
     shift 7
-    home=$(home_for "$theme" "$scenario" "$scale")
+    case $label in
+        mm-toggle-*) variant=$label ;;
+        mm-*) variant=mm ;;
+        *) variant=regular ;;
+    esac
+    home=$(home_for "$theme" "$scenario" "$scale" "$variant")
     # no trailing blank: xargs -L would join the next line
     echo "$out $home $size $target $scenario${*:+ $*}" >> "$jobs"
 }

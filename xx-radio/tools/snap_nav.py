@@ -173,6 +173,28 @@ elif TARGET == "killed-artists":
     ui.blocked.block("", "Copper Tide")
     shell.show("settings")
     later(200, settings.open_blocked)
+elif TARGET in ("cast-sheet", "casting", "casting-sheet"):
+    # A stand-in speaker list (the local backend has no Cast devices).
+    _speakers = [{"id": "sp-1", "name": "Living Room", "model": "Nest Audio"},
+                 {"id": "sp-2", "name": "Kitchen", "model": ""}]
+    _real_snapshot = ui.player.backend.snapshot
+
+    def _snapshot():
+        snap = _real_snapshot()
+        cast = dict(snap["cast"], available=True, devices=_speakers)
+        if TARGET != "cast-sheet":
+            cast.update(connectedId="sp-1", connectedName="Living Room",
+                        playing=True, volume=0.4)
+        snap["cast"] = cast
+        return snap
+
+    ui.player.backend.snapshot = _snapshot
+    ui.player.backend._push()
+    shell.open_now_playing()
+    if TARGET != "casting":
+        from xx_music.ui import cast as _cast_ui
+
+        later(200, lambda: _cast_ui.open_cast_sheet(ui))
 elif TARGET == "minimal-on":
     # Live: the regular window, then Minimal Mode switched on in Settings.
     shell.show("settings")

@@ -184,6 +184,32 @@ class PlayerModel:
     def offline(self) -> bool:
         return bool(self.snapshot.get("offline"))
 
+    @property
+    def cast(self) -> dict:
+        value = self.snapshot.get("cast")
+        return dict(value) if isinstance(value, dict) else {}
+
+    @property
+    def cast_name(self) -> str:
+        return str(self.cast.get("connectedName") or "")
+
+    @property
+    def casting(self) -> bool:
+        return bool(self.cast.get("connectedId"))
+
+    def refresh_cast(self) -> None:
+        self._send("refresh_cast")
+
+    def cast_to(self, device_id: str) -> None:
+        if device_id:
+            self._send("cast_to", str(device_id))
+
+    def stop_casting(self) -> None:
+        self._send("stop_casting")
+
+    def set_volume(self, level: float) -> None:
+        self._send("set_volume", min(1.0, max(0.0, float(level))))
+
     def rating(self, track_id: str) -> Rating:
         return self.ratings.get(track_id, Rating.NONE)
 
@@ -304,6 +330,12 @@ class LocalBackend:
             "problem": self.problem,
             "origin": self.queue.origin,
             "offline": self.offline,
+            "cast": {"available": False, "searching": False,
+                     "devices": [], "connectedId": None,
+                     "connectedName": "", "playing": False,
+                     "positionMs": 0, "durationMs": 0, "busy": False,
+                     "error": None, "volume": 1.0, "muted": False,
+                     "mediaId": None},
         }
 
     def fetch_queue(self) -> None:
@@ -428,6 +460,18 @@ class LocalBackend:
         self.calls.append("remove_download")
         self.removed.append(item_id)
 
+    def refresh_cast(self) -> None:
+        self.calls.append("refresh_cast")
+
+    def cast_to(self, device_id) -> None:
+        self.calls.append("cast_to")
+
+    def stop_casting(self) -> None:
+        self.calls.append("stop_casting")
+
+    def set_volume(self, level) -> None:
+        self.calls.append("set_volume")
+
 
 class DbusBackend:
     """The real player service over the session bus (all calls async)."""
@@ -455,7 +499,8 @@ class DbusBackend:
         except Exception:  # noqa: BLE001 - no session bus: stay empty
             return
         self.client = PlayerClient(self._conn, self.spec)
-        for member in ("Changed", "QueueChanged", "Problem"):
+        for member in ("Changed", "QueueChanged", "Problem",
+                       "CastChanged"):
             self._subs.append(self._conn.signal_subscribe(
                 self.spec.player_bus_name, self.spec.player_interface,
                 member, self.spec.player_object_path, None,
@@ -520,6 +565,8 @@ class DbusBackend:
             self.fetch_queue()
         elif member == "Problem":
             self.refresh()
+        elif member == "CastChanged":
+            self.refresh()
 
     def _mpris(self, method: str, params=None) -> None:
         from gi.repository import Gio
@@ -578,6 +625,35 @@ class DbusBackend:
     def remove_download(self, item_id) -> None:
         if self.client:
             self.client.remove_download(item_id)
+
+    def refresh_cast(self) -> None:
+        if self.client:
+            self.client.list_cast_devices(self._on_cast_devices)
+
+    def _on_cast_devices(self, payload, error) -> None:
+        if error is None and payload is not None and self.model:
+            self.refresh()
+
+    def cast_to(self, device_id) -> None:
+        if self.client:
+            self.client.cast_to(device_id,
+                                lambda *_a: self.refresh())
+
+    def stop_casting(self) -> None:
+        if self.client:
+            self.client.stop_casting(lambda *_a: self.refresh())
+
+    def set_volume(self, level) -> None:
+        from gi.repository import Gio, GLib
+
+        if self._conn is None:
+            return
+        self._conn.call(
+            self.spec.mpris_bus_name, MPRIS_PATH,
+            "org.freedesktop.DBus.Properties", "Set",
+            GLib.Variant("(ssv)", (MPRIS_PLAYER, "Volume",
+                                    GLib.Variant("d", float(level)))),
+            None, Gio.DBusCallFlags.NONE, 10000, None, None)
 
     # MPRIS2 transport
     def play_pause(self) -> None:

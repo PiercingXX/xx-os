@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from gi.repository import GLib, Gtk
 
+from xx_music.ui import cast as cast_ui
 from xx_music.ui import common, minimal
 from xx_ui import widgets
 
@@ -66,6 +67,8 @@ class MiniPlayer:
         self.play = minimal.bracket_button("play", player.play_pause,
                                            minimal.Tone.STRONG, size=14)
         row.append(self.play)
+        self.cast = cast_ui.cast_button(self.ui)
+        row.append(self.cast)
         self.widget.append(row)
 
     def _build_regular(self) -> None:
@@ -109,6 +112,9 @@ class MiniPlayer:
                                        "Next song", player.next, 22)
         self.next.add_css_class("xx-mu-key")
         row.append(self.next)
+        self.cast = cast_ui.cast_button(self.ui, 20)
+        self.cast.set_valign(Gtk.Align.CENTER)
+        row.append(self.cast)
         self.widget.append(row)
         self.bar = common.line(0.0, "Song progress")
         self.widget.append(self.bar)
@@ -177,6 +183,7 @@ class MiniPlayer:
         self._progress()
         word = "pause" if player.playing else "play"
         self.play.get_child().set_text(minimal.bracket(word))
+        cast_ui.set_casting(self.cast, player.casting)
         common.name(self.play, word.capitalize())
         common.name(self.opener,
                     f"Now playing: {track.title}. Open the player.")

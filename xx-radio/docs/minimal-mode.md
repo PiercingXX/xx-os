@@ -41,7 +41,7 @@ amoled's white both follow the same ramp. Nothing is fixed white.
 | 8 | Album, Playlist, Artist: no hero art; the title in the display face; names as plain words (no underline); `[ play ] [ shuffle ] [ download ]`, `[ play ] [ radio ]`; song lists without art, `▸ title` on the playing one; Albums, Singles and Fans also like as `Title — Artist` shelves | done |
 | 9 | Mood, Moods & genres, Charts: shelves of rows, moods as words, chart songs numbered rows | done |
 | 10 | Sub-page headers: `back`, the caption, the trailing action as a word (`more`, `copy`) | done |
-| 11 | Now Playing: no cover; top row `close` … `sleep` `lyrics` `queue` as words, Strong while on (`sleep 29:59` / `sleep end` while armed) | done |
+| 11 | Now Playing: no cover; top row `close` … `cast` `sleep` `lyrics` `queue` as words, Strong while on (`sleep 29:59` / `sleep end` while armed) | done |
 | 12 | Now Playing: the title is the stage, Space Mono at 26 px, bold, wrapping; artists as plain words under it (no underline), the album Quiet | done |
 | 13 | Now Playing: swipe the title left/right to skip, up for the queue; long-press for the song's menu | done |
 | 14 | Now Playing: the hairline seek (tap or drag to scrub, arrow keys step) with Quiet times | done |
@@ -55,11 +55,14 @@ amoled's white both follow the same ramp. Nothing is fixed white.
 | 22 | Banners: a plain line, no fill or glyph (loud ones Strong), the action in brackets; toasts a plain line over a hairline | done |
 | 23 | First-run and sign-in screens: their buttons become brackets | done |
 | 24 | Kill artist: the menu entries are words (`kill Lumen Drive`), the confirm sheet answers `[ cancel ] [ kill Lumen Drive ]`, the Undo toast is a plain line with `[ undo ]`, long-press an artist's name in Now Playing to kill it, and Settings › Killed artists lists names with `[ unblock ]` | done |
+| 25 | Cast: the button is the word `cast` (Strong while casting) in Now Playing's top row and after `[ pause ]` in the mini player; the playing-on line is plain text with `[ bring back ]`; the speaker volume is `[ - ] vol 40% [ + ]`; the device sheet lists speakers as words with `[ search again ]` | done |
 
 ## Not changed
 
 - The Open-source licenses page comes from the shared `xx_ui` library
   and keeps its own look.
+- At text size 2 the Now Playing top row wraps onto a second line
+  rather than shrinking its words.
 - Space Mono is the brand's display face; where it is not installed the
   title falls back to the house mono, at the same size and weight.
 

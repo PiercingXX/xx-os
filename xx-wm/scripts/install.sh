@@ -169,10 +169,16 @@ install_media_deps() {
         # Alpine's nodejs ships without npm (checked on pmOS v26.06); the
         # token-helper setup needs it.
         pkg_install py3-ytmusicapi yt-dlp nodejs npm
+        # xx-radio cast discovery: the avahi daemon first (D-Bus
+        # org.freedesktop.Avahi), zeroconf as the fallback.
+        pkg_install avahi py3-zeroconf
     elif [ "$PKG" = pacman ]; then
         pkg_install gstreamer gst-plugins-base gst-plugins-good \
             gst-plugins-bad gst-libav gst-python libsecret
         pkg_install python-ytmusicapi yt-dlp nodejs npm
+        # xx-radio cast discovery (avahi verified: avahi-daemon and
+        # avahi-browse ship in this package on Arch).
+        pkg_install avahi python-zeroconf
     else
         # FuriOS is Debian forky: no curl/pip/python3-venv by default, so
         # the engine venv is a first-run concern, not installed here.
@@ -186,6 +192,9 @@ install_media_deps() {
         # missing name must not fail yt-dlp/nodejs/npm with it.
         pkg_install yt-dlp nodejs npm
         pkg_install python3-ytmusicapi
+        # xx-radio cast discovery: the avahi daemon first (D-Bus
+        # org.freedesktop.Avahi), zeroconf as the fallback.
+        pkg_install avahi-daemon python3-zeroconf
     fi
     # libadwaita and gtk4-layer-shell come from the base deps above; neither
     # media app uses Gtk4LayerShell or the GstAudio/GstPbutils typelibs
