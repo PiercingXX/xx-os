@@ -885,9 +885,10 @@ def about_content(app_name: str, version: str, entries: list,
     root.append(setting_row(app_name, 'Version %s' % version))
     spdx = entries[0].spdx if entries else ''
     root.append(setting_row('License', spdx))
+    # No trailing chevron: the row reads as tappable on its own, and the
+    # suite carries no decorative glyphs.
     root.append(list_row('Open-source licenses',
                          '%d components' % len(entries),
-                         trailing=icon_image('go-next-symbolic'),
                          on_activate=on_licenses, last=True))
     return root
 

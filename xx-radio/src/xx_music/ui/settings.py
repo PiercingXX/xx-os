@@ -75,7 +75,16 @@ def _wrap_titles(row: Gtk.Widget) -> None:
 
 
 def nav_row(title: str, subtitle: str, callback, last: bool = False,
-            trailing: Gtk.Widget | None = None) -> Gtk.Button:
+            trailing: Gtk.Widget | None = None,
+            arrow: bool = True) -> Gtk.Button:
+    """A settings row that opens something. ``arrow=False`` drops the
+    trailing chevron (and its Minimal Mode mark): the About block's
+    licenses row carries no decorative glyph."""
+    if not arrow:
+        row = widgets.list_row(title, subtitle, trailing=trailing,
+                               on_activate=callback, last=last)
+        _wrap_secondary(row)
+        return row
     if minimal.active() and (trailing is None or isinstance(trailing, str)):
         trailing = minimal.text(trailing or minimal.OPENS,
                                 minimal.Tone.QUIET, 15, chars=6)
@@ -84,6 +93,11 @@ def nav_row(title: str, subtitle: str, callback, last: bool = False,
     row = widgets.list_row(title, subtitle,
                            trailing=trailing or widgets.chevron(),
                            on_activate=callback, last=last)
+    _wrap_secondary(row)
+    return row
+
+
+def _wrap_secondary(row: Gtk.Button) -> None:
     middle = row.get_child().get_first_child()
     child = middle.get_first_child() if middle else None
     while child is not None:
@@ -93,7 +107,6 @@ def nav_row(title: str, subtitle: str, callback, last: bool = False,
             child.set_lines(2)
             child.set_max_width_chars(26)
         child = child.get_next_sibling()
-    return row
 
 
 def section(text: str) -> Gtk.Widget:
@@ -392,7 +405,8 @@ class SettingsPage:
             widgets.standard_license_entries(ui.spec.name)
         box.append(nav_row("Open-source licenses",
                            f"{len(entries)} components, GPL-3.0 app",
-                           lambda: self.open_licenses(entries), last=True))
+                           lambda: self.open_licenses(entries), last=True,
+                           arrow=False))
         return box
 
     def open_licenses(self, entries: list) -> None:

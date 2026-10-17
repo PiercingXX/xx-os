@@ -44,6 +44,15 @@ def _walk_buttons(widget):
         child = child.get_next_sibling()
 
 
+def _walk_images(widget):
+    if isinstance(widget, Gtk.Image):
+        yield widget
+    child = widget.get_first_child()
+    while child is not None:
+        yield from _walk_images(child)
+        child = child.get_next_sibling()
+
+
 def main() -> None:
     seen = []
     xx_ui.on_change(seen.append)
@@ -138,6 +147,17 @@ def main() -> None:
                              ('', 'People', False, None),
                              ('', 'Rules', False, None)]),
         widgets.fab()))
+
+    # The About block's licenses row carries no decorative chevron.
+    about = widgets.about_content(
+        'TxxT', '1.0', widgets.standard_license_entries('TxxT'),
+        lambda: None)
+    rows.append(about)
+    licenses_rows = [b for b in _walk_buttons(about)
+                     if b.has_css_class('xx-row')]
+    assert len(licenses_rows) == 1, 'About lost its licenses row'
+    assert not list(_walk_images(licenses_rows[0])), \
+        'About licenses row shows an arrow'
 
     scrolled = Gtk.ScrolledWindow()
     scrolled.set_child(rows)
