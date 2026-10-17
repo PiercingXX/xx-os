@@ -10,14 +10,112 @@ import base64
 import json
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
+from xx_auth import scrypt_kdf
 from xx_auth.aegis import StoredAccount
 
 
 def data_dir() -> Path:
     base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(base) / "xx-auth"
+
+
+VAULT_FORMAT = 1
+KEY_SOURCE_PASSWORD = "password"
+KEY_SOURCE_KEYRING = "keyring"
+
+
+@dataclass
+class VaultHeader:
+    """Everything needed to derive the vault key, stored in the vault file
+    itself so a key change commits in ONE file write. The settings copy of
+    this material is only a cache: when it disagrees with the header, the
+    header wins. Carries no key, no password and no 2FA secret — only the
+    KDF salt/params, the key-source tag and an encrypted check value."""
+
+    key_source: str = KEY_SOURCE_KEYRING
+    kdf_n: int = scrypt_kdf.AEGIS_N
+    kdf_r: int = scrypt_kdf.AEGIS_R
+    kdf_p: int = scrypt_kdf.AEGIS_P
+    kdf_salt_hex: str = ""
+    check_hex: str = ""
+
+
+def header_to_dict(header: VaultHeader) -> dict:
+    kdf = None
+    if header.key_source == KEY_SOURCE_PASSWORD:
+        kdf = {"n": header.kdf_n, "r": header.kdf_r, "p": header.kdf_p,
+               "salt": header.kdf_salt_hex}
+    return {"key_source": header.key_source, "kdf": kdf, "check": header.check_hex}
+
+
+def header_from_dict(raw: object) -> VaultHeader | None:
+    if not isinstance(raw, dict):
+        return None
+    source = raw.get("key_source")
+    check = raw.get("check")
+    if source not in (KEY_SOURCE_PASSWORD, KEY_SOURCE_KEYRING):
+        return None
+    if not isinstance(check, str) or not check:
+        return None
+    try:
+        bytes.fromhex(check)
+    except ValueError:
+        return None
+    header = VaultHeader(key_source=source, check_hex=check)
+    kdf = raw.get("kdf")
+    if source == KEY_SOURCE_PASSWORD:
+        if not isinstance(kdf, dict):
+            return None
+        try:
+            header.kdf_n, header.kdf_r, header.kdf_p = (
+                int(kdf["n"]), int(kdf["r"]), int(kdf["p"]))
+            header.kdf_salt_hex = str(kdf["salt"])
+            bytes.fromhex(header.kdf_salt_hex)
+        except (KeyError, TypeError, ValueError):
+            return None
+    return header
+
+
+def _write_tmp(tmp: Path, data: bytes) -> None:
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    os.chmod(tmp, 0o600)
+
+
+def _fsync_dir(directory: Path) -> None:
+    fd = os.open(str(directory), os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def atomic_write(path: Path, data: bytes) -> None:
+    """Durable single-commit file write: tmp file + fsync + atomic rename
+    + fsync of the directory. A crash lands on either the old or the new
+    file, never a mix. Small enough to share with the settings cache."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
+    tmp = path.with_suffix(".tmp")
+    _write_tmp(tmp, data)
+    os.replace(tmp, path)
+    _fsync_dir(path.parent)
 
 
 def _row(account: StoredAccount) -> dict:
@@ -48,6 +146,11 @@ class VaultStore:
         self._path = path or data_dir() / "vault.json"
         self._rows: dict[str, StoredAccount] = {}
         self._loaded = False
+        self.header: VaultHeader | None = None
+
+    @property
+    def path(self) -> Path:
+        return self._path
 
     def _ensure_dirs(self) -> None:
         self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -59,12 +162,17 @@ class VaultStore:
     def load(self) -> VaultStore:
         self._ensure_dirs()
         self._rows = {}
+        self.header = None
         if self._path.is_file():
             try:
                 raw = json.loads(self._path.read_text(encoding="utf-8"))
             except ValueError:
                 raw = []
-            for row in raw if isinstance(raw, list) else []:
+            rows: object = raw
+            if isinstance(raw, dict):
+                self.header = header_from_dict(raw.get("header"))
+                rows = raw.get("rows", [])
+            for row in rows if isinstance(rows, list) else []:
                 try:
                     account = _account(row)
                 except (KeyError, ValueError, TypeError):
@@ -74,11 +182,14 @@ class VaultStore:
         return self
 
     def save(self) -> None:
-        self._ensure_dirs()
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps([_row(a) for a in self.get_all()]), encoding="utf-8")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self._path)
+        rows = [_row(a) for a in self.get_all()]
+        if self.header is None:
+            payload = json.dumps(rows)
+        else:
+            payload = json.dumps({"xx_auth_vault": VAULT_FORMAT,
+                                  "header": header_to_dict(self.header),
+                                  "rows": rows})
+        atomic_write(self._path, payload.encode("utf-8"))
 
     def _require_loaded(self) -> None:
         if not self._loaded:

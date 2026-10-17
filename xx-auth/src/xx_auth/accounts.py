@@ -12,14 +12,23 @@ import uuid
 from dataclasses import dataclass, field
 
 from xx_auth import base32, migration_uri
+from xx_auth import keystore as keystore_mod
+from xx_auth import prefs as prefs_mod
 from xx_auth.aegis import StoredAccount, export_vault, parse_file, parse_vault
 from xx_auth.keystore import SecretCipher
 from xx_auth.otp import hotp_generate, remaining_millis, totp_generate
 from xx_auth.otp_uri import MAX_PERIOD, OtpAccount
 from xx_auth.otp_uri import parse as parse_otp
 from xx_auth.otp_uri import serialize as serialize_otp
+from xx_auth.prefs import Prefs
 from xx_auth.qr import account_payload, otpauth_payload
-from xx_auth.store import VaultStore, now_millis
+from xx_auth.store import (
+    KEY_SOURCE_KEYRING,
+    KEY_SOURCE_PASSWORD,
+    VaultHeader,
+    VaultStore,
+    now_millis,
+)
 
 WARN_MILLIS = 5_000
 
@@ -227,6 +236,316 @@ def rekey_vault(store: VaultStore, old: SecretCipher, new: SecretCipher) -> int:
     for row, secret in plain:
         store.update(replace(row, secret=new.encrypt(secret)))
     return len(plain)
+
+
+class VaultUnreadable(ValueError):
+    """The vault matches none of the available keys. The file is always
+    kept as is; only the message reaches the UI."""
+
+
+UNREADABLE_MESSAGE = "The vault couldn't be opened. Nothing was changed."
+WRONG_PASSWORD_MESSAGE = "Wrong password."
+WRONG_CURRENT_MESSAGE = "Wrong current password."
+REKEY_FAILED_MESSAGE = "Couldn't re-encrypt the vault. Nothing changed."
+SHORT_PASSWORD_MESSAGE = "Use at least 8 characters."
+NO_KEYRING_MESSAGE = "The keyring isn't available."
+
+
+@dataclass
+class StartupResult:
+    cipher: SecretCipher | None
+    password_mode: bool
+
+
+def _keyring_key(keyring) -> bytes | None:  # type: ignore[no-untyped-def]
+    try:
+        key = keyring.load_key()
+    except Exception:
+        return None
+    return key if isinstance(key, bytes) and len(key) == 32 else None
+
+
+def _password_key(password: str, salt_hex: str, header: VaultHeader | None = None) -> bytes | None:
+    try:
+        salt = bytes.fromhex(salt_hex)
+    except ValueError:
+        return None
+    if not salt:
+        return None
+    if header is None:
+        return keystore_mod.derive_key(password, salt)
+    return keystore_mod.derive_key(password, salt, header.kdf_n, header.kdf_r, header.kdf_p)
+
+
+def _rows_decrypt_all(rows: list[StoredAccount], cipher: SecretCipher) -> bool:
+    try:
+        for row in rows:
+            cipher.decrypt(row.secret)
+    except Exception:
+        return False
+    return True
+
+
+def _password_header(password: str) -> tuple[VaultHeader, bytes]:
+    salt = keystore_mod.new_salt()
+    key = keystore_mod.derive_key(password, salt)
+    return VaultHeader(key_source=KEY_SOURCE_PASSWORD, kdf_salt_hex=salt.hex(),
+                       check_hex=keystore_mod.make_check(key)), key
+
+
+def _keyring_header(key: bytes) -> VaultHeader:
+    return VaultHeader(key_source=KEY_SOURCE_KEYRING,
+                       check_hex=keystore_mod.make_check(key))
+
+
+def _verifier_matches(password: str, prefs: Prefs) -> bool:
+    import binascii
+
+    try:
+        salt = binascii.unhexlify(prefs.lock_salt)
+    except (binascii.Error, ValueError):
+        return False
+    return bool(prefs.lock_hash) and keystore_mod.password_verifier(password, salt) == prefs.lock_hash
+
+
+def _heal_prefs(prefs: Prefs, header: VaultHeader,
+                password: str | None = None, prefs_path=None) -> None:  # type: ignore[no-untyped-def]
+    """Refresh the settings cache from the authoritative vault header. The
+    UI-gate verifier is rebuilt from the just-typed password when the
+    cached copy went stale in a crash; its fast hash is never stored in
+    the vault itself. A failed cache write is harmless, so it never fails
+    the open."""
+    changed = False
+    want_disabled = header.key_source != KEY_SOURCE_KEYRING
+    if prefs.keyring_disabled != want_disabled:
+        prefs.keyring_disabled = want_disabled
+        changed = True
+    if header.key_source == KEY_SOURCE_PASSWORD:
+        if prefs.lock_kdf_salt != header.kdf_salt_hex:
+            prefs.lock_kdf_salt = header.kdf_salt_hex
+            changed = True
+        if password is not None and not _verifier_matches(password, prefs):
+            fresh = keystore_mod.new_salt()
+            prefs.lock_salt = fresh.hex()
+            prefs.lock_hash = keystore_mod.password_verifier(password, fresh)
+            changed = True
+    if changed:
+        try:
+            prefs_mod.save(prefs, prefs_path)
+        except OSError:
+            pass
+
+
+def open_at_startup(store: VaultStore, prefs: Prefs, keyring,  # type: ignore[no-untyped-def]
+                    prefs_path=None) -> StartupResult:  # type: ignore[no-untyped-def]
+    """Resolve the vault key without a password. Migrates a header-less
+    vault the moment a known key proves it, and lets the header overrule a
+    crash-stale settings copy. Raises VaultUnreadable (file kept) only
+    when a non-empty vault matches nothing available."""
+    store.load()
+    header = store.header
+    if header is not None:
+        _heal_prefs(prefs, header, None, prefs_path)
+        if header.key_source == KEY_SOURCE_KEYRING:
+            key = _keyring_key(keyring)
+            if key is None:
+                return StartupResult(None, True)
+            if not keystore_mod.verify_check(key, header.check_hex):
+                raise VaultUnreadable(UNREADABLE_MESSAGE)
+            return StartupResult(SecretCipher(key), False)
+        return StartupResult(None, True)
+    rows = store.get_all()
+    if not rows:
+        if prefs.keyring_disabled:
+            return StartupResult(None, True)
+        try:
+            key = keystore_mod.load_or_create_key(keyring)
+        except Exception:
+            return StartupResult(None, True)
+        if not isinstance(key, bytes) or len(key) != 32:
+            return StartupResult(None, True)
+        store.header = _keyring_header(key)
+        store.save()
+        _heal_prefs(prefs, store.header, None, prefs_path)
+        return StartupResult(SecretCipher(key), False)
+    if not prefs.keyring_disabled:
+        key = _keyring_key(keyring)
+        if key is not None and _rows_decrypt_all(rows, SecretCipher(key)):
+            store.header = _keyring_header(key)
+            store.save()
+            _heal_prefs(prefs, store.header, None, prefs_path)
+            return StartupResult(SecretCipher(key), False)
+    return StartupResult(None, True)
+
+
+def unlock_with_password(store: VaultStore, prefs: Prefs, keyring,  # type: ignore[no-untyped-def]
+                         password: str, prefs_path=None) -> SecretCipher:  # type: ignore[no-untyped-def]
+    """Open the vault with a typed password. Header salts and params win
+    over the settings copy; a header-less vault left mismatched by the old
+    code falls back to the other source before it is declared unreadable.
+    A proven key migrates the header atomically. Never writes on failure."""
+    store.load()
+    header = store.header
+    if header is not None:
+        if header.key_source == KEY_SOURCE_PASSWORD:
+            key = _password_key(password, header.kdf_salt_hex, header)
+            if key is None or not keystore_mod.verify_check(key, header.check_hex):
+                raise VaultUnreadable(WRONG_PASSWORD_MESSAGE)
+            _heal_prefs(prefs, header, password, prefs_path)
+            return SecretCipher(key)
+        if prefs.lock_hash and not _verifier_matches(password, prefs):
+            raise VaultUnreadable(WRONG_PASSWORD_MESSAGE)
+        key = _keyring_key(keyring)
+        if key is None or not keystore_mod.verify_check(key, header.check_hex):
+            raise VaultUnreadable(UNREADABLE_MESSAGE)
+        return SecretCipher(key)
+    rows = store.get_all()
+    if rows:
+        key = _password_key(password, prefs.lock_kdf_salt) if prefs.lock_kdf_salt else None
+        if key is not None and _rows_decrypt_all(rows, SecretCipher(key)):
+            store.header = VaultHeader(
+                key_source=KEY_SOURCE_PASSWORD, kdf_salt_hex=prefs.lock_kdf_salt,
+                check_hex=keystore_mod.make_check(key))
+            store.save()
+            _heal_prefs(prefs, store.header, password, prefs_path)
+            return SecretCipher(key)
+        other = _keyring_key(keyring)
+        if other is not None and _rows_decrypt_all(rows, SecretCipher(other)):
+            store.header = _keyring_header(other)
+            store.save()
+            _heal_prefs(prefs, store.header, None, prefs_path)
+            return SecretCipher(other)
+        raise VaultUnreadable(WRONG_PASSWORD_MESSAGE)
+    salt_hex = prefs.lock_kdf_salt
+    try:
+        salt = bytes.fromhex(salt_hex) if salt_hex else b""
+    except ValueError:
+        salt = b""
+    if not salt:
+        salt = keystore_mod.new_salt()
+        salt_hex = salt.hex()
+    key = keystore_mod.derive_key(password, salt)
+    store.header = VaultHeader(key_source=KEY_SOURCE_PASSWORD, kdf_salt_hex=salt_hex,
+                               check_hex=keystore_mod.make_check(key))
+    store.save()
+    _heal_prefs(prefs, store.header, password, prefs_path)
+    return SecretCipher(key)
+
+
+def setup_password(store: VaultStore, prefs: Prefs,
+                   password: str, prefs_path=None) -> SecretCipher:  # type: ignore[no-untyped-def]
+    """First-run password setup: one vault commit carrying the fresh header,
+    then the settings cache. Refuses a non-empty vault instead of orphaning
+    rows whose key is unknown."""
+    if len(password) < 8:
+        raise ValueError(SHORT_PASSWORD_MESSAGE)
+    store.load()
+    if store.get_all():
+        raise VaultUnreadable(UNREADABLE_MESSAGE)
+    header, key = _password_header(password)
+    store.header = header
+    store.save()
+    auth_salt = keystore_mod.new_salt()
+    prefs.lock_salt = auth_salt.hex()
+    prefs.lock_hash = keystore_mod.password_verifier(password, auth_salt)
+    prefs.lock_kdf_salt = header.kdf_salt_hex
+    prefs_mod.save(prefs, prefs_path)
+    return SecretCipher(key)
+
+
+def change_password(store: VaultStore, prefs: Prefs, keyring,  # type: ignore[no-untyped-def]
+                    current_password: str, new_password: str,
+                    prefs_path=None) -> SecretCipher | None:  # type: ignore[no-untyped-def]
+    """Change the app password. In password mode every secret is
+    re-encrypted in memory and committed with the new header in ONE vault
+    write; the settings save after it is only a cache. A crash lands on
+    the old or the new vault, and the header tells which. In keyring mode
+    the vault key is untouched and only the UI-gate verifier is saved."""
+    if len(new_password) < 8:
+        raise ValueError(SHORT_PASSWORD_MESSAGE)
+    store.load()
+    header = store.header
+    source = header.key_source if header is not None else (
+        KEY_SOURCE_KEYRING if not prefs.keyring_disabled else KEY_SOURCE_PASSWORD)
+    if source == KEY_SOURCE_PASSWORD:
+        if header is not None:
+            old_key = _password_key(current_password, header.kdf_salt_hex, header)
+            if old_key is None or not keystore_mod.verify_check(old_key, header.check_hex):
+                raise ValueError(WRONG_CURRENT_MESSAGE)
+        else:
+            old_key = _password_key(current_password, prefs.lock_kdf_salt)
+            if old_key is None or not _rows_decrypt_all(store.get_all(), SecretCipher(old_key)):
+                raise ValueError(WRONG_CURRENT_MESSAGE)
+        new_header, new_key = _password_header(new_password)
+        rekey_vault(store, SecretCipher(old_key), SecretCipher(new_key))
+        store.header = new_header
+        store.save()
+        auth_salt = keystore_mod.new_salt()
+        prefs.lock_salt = auth_salt.hex()
+        prefs.lock_hash = keystore_mod.password_verifier(new_password, auth_salt)
+        prefs.lock_kdf_salt = new_header.kdf_salt_hex
+        prefs_mod.save(prefs, prefs_path)
+        return SecretCipher(new_key)
+    if prefs.lock_hash and not _verifier_matches(current_password, prefs):
+        raise ValueError(WRONG_CURRENT_MESSAGE)
+    auth_salt = keystore_mod.new_salt()
+    prefs.lock_salt = auth_salt.hex()
+    prefs.lock_hash = keystore_mod.password_verifier(new_password, auth_salt)
+    prefs_mod.save(prefs, prefs_path)
+    key = _keyring_key(keyring)
+    return SecretCipher(key) if key is not None else None
+
+
+def switch_key_source(store: VaultStore, prefs: Prefs, keyring,  # type: ignore[no-untyped-def]
+                      current_cipher: SecretCipher | None, password: str | None,
+                      to_keyring: bool, prefs_path=None) -> SecretCipher:  # type: ignore[no-untyped-def]
+    """Move the vault between the keyring key and a password-derived key.
+    Same single-commit shape as a password change, so a crash keeps the
+    old or the new vault and the header says which. Retrying after a crash
+    heals the cache when the commit already landed."""
+    store.load()
+    rows = store.get_all()
+    if to_keyring:
+        try:
+            new_key = keystore_mod.load_or_create_key(keyring)
+        except Exception as exc:
+            raise ValueError(NO_KEYRING_MESSAGE) from exc
+        if not isinstance(new_key, bytes) or len(new_key) != 32:
+            raise ValueError(NO_KEYRING_MESSAGE)
+        header = store.header
+        if (header is not None and header.key_source == KEY_SOURCE_KEYRING
+                and keystore_mod.verify_check(new_key, header.check_hex)):
+            _heal_prefs(prefs, header, None, prefs_path)
+            return SecretCipher(new_key)
+        if current_cipher is None or not _rows_decrypt_all(rows, current_cipher):
+            raise VaultUnreadable(REKEY_FAILED_MESSAGE)
+        rekey_vault(store, current_cipher, SecretCipher(new_key))
+        store.header = _keyring_header(new_key)
+        store.save()
+        prefs.keyring_disabled = False
+        prefs_mod.save(prefs, prefs_path)
+        return SecretCipher(new_key)
+    if password is None or len(password) < 8:
+        raise ValueError(SHORT_PASSWORD_MESSAGE)
+    header = store.header
+    if header is not None and header.key_source == KEY_SOURCE_PASSWORD:
+        trial = _password_key(password, header.kdf_salt_hex, header)
+        if trial is not None and keystore_mod.verify_check(trial, header.check_hex):
+            _heal_prefs(prefs, header, password, prefs_path)
+            return SecretCipher(trial)
+    if current_cipher is None or not _rows_decrypt_all(rows, current_cipher):
+        raise VaultUnreadable(REKEY_FAILED_MESSAGE)
+    new_header, new_key = _password_header(password)
+    rekey_vault(store, current_cipher, SecretCipher(new_key))
+    store.header = new_header
+    store.save()
+    auth_salt = keystore_mod.new_salt()
+    prefs.lock_salt = auth_salt.hex()
+    prefs.lock_hash = keystore_mod.password_verifier(password, auth_salt)
+    prefs.lock_kdf_salt = new_header.kdf_salt_hex
+    prefs.keyring_disabled = True
+    prefs_mod.save(prefs, prefs_path)
+    return SecretCipher(new_key)
 
 
 def transfer_uri(store: VaultStore, account_id: str, cipher: SecretCipher) -> str | None:

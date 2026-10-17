@@ -157,29 +157,19 @@ class AuthWindow:
 
     def _resolve_work(self) -> None:
         try:
-            store = VaultStore().load()
+            from xx_auth import accounts as accounts_mod
+
+            store = VaultStore()
             prefs = self.prefs
             keyring = MemoryKeyring() if os.environ.get("XX_AUTH_NO_KEYRING") else keystore_mod.SecretServiceKeyring()
-            use_keyring = not prefs.keyring_disabled
-            key = None
-            if use_keyring:
-                try:
-                    key = keyring.load_key()
-                except Exception:
-                    key = None
-            if key is not None:
-                backend = Backend(store, SecretCipher(key), prefs, False, not prefs.lock_enabled or not prefs.lock_hash)
-            elif prefs.lock_hash and prefs.lock_kdf_salt:
-                backend = Backend(store, None, prefs, True, False)  # type: ignore[arg-type]
-            elif use_keyring:
-                try:
-                    fresh = keystore_mod.load_or_create_key(keyring)
-                except Exception:
-                    fresh = None
-                if fresh is not None:
-                    backend = Backend(store, SecretCipher(fresh), prefs, False, True)
-                else:
-                    backend = Backend(store, None, prefs, True, False)  # type: ignore[arg-type]
+            try:
+                resolved = accounts_mod.open_at_startup(store, prefs, keyring)
+            except accounts_mod.VaultUnreadable as exc:
+                self._GLib.idle_add(self._on_backend_error, str(exc))
+                return
+            if resolved.cipher is not None:
+                backend = Backend(store, resolved.cipher, prefs, False,
+                                  not prefs.lock_enabled or not prefs.lock_hash)
             else:
                 backend = Backend(store, None, prefs, True, False)  # type: ignore[arg-type]
             self._GLib.idle_add(self._on_backend, backend)
@@ -216,36 +206,30 @@ class AuthWindow:
         backend = self.backend
         if backend is None:
             return False
-        import binascii
+        from xx_auth import accounts as accounts_mod
 
+        keyring = MemoryKeyring() if os.environ.get("XX_AUTH_NO_KEYRING") else keystore_mod.SecretServiceKeyring()
         try:
-            salt = binascii.unhexlify(backend.prefs.lock_salt)
-            kdf_salt = binascii.unhexlify(backend.prefs.lock_kdf_salt)
-        except (binascii.Error, ValueError):
+            backend.cipher = accounts_mod.unlock_with_password(
+                backend.store, backend.prefs, keyring, password)
+        except accounts_mod.VaultUnreadable:
             return False
-        if keystore_mod.password_verifier(password, salt) != backend.prefs.lock_hash:
-            return False
-        backend.cipher = SecretCipher(keystore_mod.derive_key(password, kdf_salt))
         backend.unlocked = True
+        backend.password_mode = backend.store.header is None or (
+            backend.store.header.key_source == "password")
         self._touch()
         self._show_list()
         self.show("list")
         return True
 
     def set_password(self, password: str) -> None:
-        import binascii
-
         backend = self.backend
         assert backend is not None
-        salt = keystore_mod.new_salt()
-        kdf_salt = keystore_mod.new_salt()
-        backend.prefs.lock_salt = binascii.hexlify(salt).decode("ascii")
-        backend.prefs.lock_kdf_salt = binascii.hexlify(kdf_salt).decode("ascii")
-        backend.prefs.lock_hash = keystore_mod.password_verifier(password, salt)
-        prefs_mod.save(backend.prefs)
-        backend.cipher = SecretCipher(keystore_mod.derive_key(password, kdf_salt))
+        from xx_auth import accounts as accounts_mod
+
+        backend.cipher = accounts_mod.setup_password(backend.store, backend.prefs, password)
         backend.unlocked = True
-        backend.password_mode = backend.cipher is not None and backend.password_mode
+        backend.password_mode = True
         self._setup_done = True
         self._touch()
         self._show_list()

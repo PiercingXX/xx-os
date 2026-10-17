@@ -139,11 +139,32 @@ class MemoryKeyring:
         return True
 
 
-def derive_key(password: str, salt: bytes) -> bytes:
-    return scrypt_kdf.derive(
-        password.encode("utf-8"), salt,
-        scrypt_kdf.AEGIS_N, scrypt_kdf.AEGIS_R, scrypt_kdf.AEGIS_P, 32,
-    )
+def derive_key(password: str, salt: bytes,
+                n: int = scrypt_kdf.AEGIS_N,
+                r: int = scrypt_kdf.AEGIS_R,
+                p: int = scrypt_kdf.AEGIS_P) -> bytes:
+    return scrypt_kdf.derive(password.encode("utf-8"), salt, n, r, p, 32)
+
+
+CHECK_PLAINTEXT = b"xx-auth vault check v1"
+
+
+def make_check(key: bytes) -> str:
+    """A key check value: the fixed check sentence encrypted under ``key``.
+
+    Stored in the vault header so a crash-stale settings copy can be told
+    apart from the key the vault is really under. It reveals nothing about
+    the key, the password or any 2FA secret (AES-GCM of public plaintext)."""
+    return SecretCipher(key).encrypt(CHECK_PLAINTEXT).hex()
+
+
+def verify_check(key: bytes, check_hex: str) -> bool:
+    """True when ``key`` decrypts the header check value back to the check
+    sentence. Any failure (wrong key, damaged header) is just False."""
+    try:
+        return SecretCipher(key).decrypt(bytes.fromhex(check_hex)) == CHECK_PLAINTEXT
+    except Exception:
+        return False
 
 
 def new_salt() -> bytes:

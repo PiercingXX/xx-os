@@ -50,13 +50,10 @@ def load(path: Path | None = None) -> Prefs:
 
 
 def save(prefs: Prefs, path: Path | None = None) -> None:
+    """Persist the settings copy. It is only a cache of the key material
+    the vault header carries: readers trust the header when the two
+    disagree, so losing this write to a crash is harmless."""
+    from xx_auth.store import atomic_write
+
     prefs_path = path or config_dir() / "settings.json"
-    prefs_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        os.chmod(prefs_path.parent, 0o700)
-    except OSError:
-        pass
-    tmp = prefs_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(asdict(prefs)), encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, prefs_path)
+    atomic_write(prefs_path, json.dumps(asdict(prefs)).encode("utf-8"))

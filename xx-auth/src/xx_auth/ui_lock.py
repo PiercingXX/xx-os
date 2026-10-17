@@ -98,7 +98,10 @@ def build_lock(window):  # type: ignore[no-untyped-def]
                 return
             password.get_buffer().set_text("", 0)
             confirm.get_buffer().set_text("", 0)
-            window.set_password(first)
+            try:
+                window.set_password(first)
+            except ValueError as exc:
+                say(str(exc) or "The vault couldn't be opened. Nothing was changed.")
             return
         if window.unlock(password.get_text()):
             password.get_buffer().set_text("", 0)
@@ -227,54 +230,62 @@ def build_settings(window):  # type: ignore[no-untyped-def]
         backend = window.backend
         if backend is None or syncing["on"]:
             return
-        backend.prefs.keyring_disabled = not on
-        prefs_mod.save(backend.prefs)
+        import os as _os
+
+        from xx_auth import accounts as _accounts_mod
+        from xx_auth import keystore as _keystore_mod
+        from xx_auth.keystore import MemoryKeyring as _MemoryKeyring
+
+        if backend.cipher is None:
+            say("Unlock the vault first.")
+            return
+        keyring = _MemoryKeyring() if _os.environ.get("XX_AUTH_NO_KEYRING") else _keystore_mod.SecretServiceKeyring()
+        if on == (not backend.prefs.keyring_disabled):
+            return
+        if not on and (len(fresh.get_text()) < 8 or fresh.get_text() != repeat.get_text()):
+            say("Enter the new password below first (8+ characters, twice).")
+            return
+        try:
+            if on:
+                backend.cipher = _accounts_mod.switch_key_source(
+                    backend.store, backend.prefs, keyring, backend.cipher, None, True)
+            else:
+                backend.cipher = _accounts_mod.switch_key_source(
+                    backend.store, backend.prefs, keyring, backend.cipher,
+                    fresh.get_text(), False)
+        except ValueError as exc:
+            say(str(exc) or "Couldn't move the vault. Nothing changed.")
+            return
+        for entry in (current, fresh, repeat):
+            entry.get_buffer().set_text("", 0)
+        render()
 
     def change_password() -> None:
         backend = window.backend
         if backend is None:
             return
-        import binascii
+        import os as _os
 
         from xx_auth import accounts as accounts_mod
         from xx_auth import keystore as keystore_mod
+        from xx_auth.keystore import MemoryKeyring as _MemoryKeyring
 
         fresh_text, repeat_text = fresh.get_text(), repeat.get_text()
         if len(fresh_text) < 8 or fresh_text != repeat_text:
             say("The new passwords don't match or are too short.")
             return
-        if backend.prefs.lock_hash:
-            try:
-                salt = binascii.unhexlify(backend.prefs.lock_salt)
-            except (binascii.Error, ValueError):
-                say("The stored lock is damaged. Reinstall to reset it.")
-                return
-            if keystore_mod.password_verifier(current.get_text(), salt) != backend.prefs.lock_hash:
-                say("Wrong current password.")
-                return
-        salt = keystore_mod.new_salt()
-        new_cipher = None
-        kdf_hex = backend.prefs.lock_kdf_salt
-        if backend.password_mode:
-            # The password derives the vault key: re-encrypt every secret
-            # under the new key before the new verifier is saved.
-            kdf_salt = keystore_mod.new_salt()
-            kdf_hex = binascii.hexlify(kdf_salt).decode("ascii")
-            new_cipher = keystore_mod.SecretCipher(keystore_mod.derive_key(fresh_text, kdf_salt))
-            if backend.cipher is not None:
-                try:
-                    accounts_mod.rekey_vault(backend.store, backend.cipher, new_cipher)
-                except Exception:  # noqa: BLE001
-                    backend.store.load()
-                    say("Couldn't re-encrypt the vault. Nothing changed.")
-                    return
-                backend.store.save()
-        backend.prefs.lock_salt = binascii.hexlify(salt).decode("ascii")
-        backend.prefs.lock_hash = keystore_mod.password_verifier(fresh_text, salt)
-        backend.prefs.lock_kdf_salt = kdf_hex
+        keyring = _MemoryKeyring() if _os.environ.get("XX_AUTH_NO_KEYRING") else keystore_mod.SecretServiceKeyring()
+        try:
+            new_cipher = accounts_mod.change_password(
+                backend.store, backend.prefs, keyring, current.get_text(), fresh_text)
+        except ValueError as exc:
+            backend.store.load()
+            say(str(exc) or "Couldn't re-encrypt the vault. Nothing changed.")
+            return
         if new_cipher is not None:
             backend.cipher = new_cipher
-        prefs_mod.save(backend.prefs)
+            source = backend.store.header.key_source if backend.store.header else ""
+            backend.password_mode = source != "keyring"
         for entry in (current, fresh, repeat):
             entry.get_buffer().set_text("", 0)
         render()
