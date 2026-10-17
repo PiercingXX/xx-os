@@ -987,12 +987,10 @@ class TestBrightnessRow:
         assert 'shade-slider' in panel._vol_slider.classes
 
     def test_has_backlight_probes_sysfs(self, monkeypatch):
-        monkeypatch.setattr(quick_actions, 'Path',
-                            lambda p: SimpleNamespace(glob=lambda pat: []))
+        import backlight
+        monkeypatch.setattr(backlight, 'find', lambda root=None: None)
         assert quick_actions._has_backlight() is False
-        monkeypatch.setattr(quick_actions, 'Path',
-                            lambda p: SimpleNamespace(
-                                glob=lambda pat: iter([object()])))
+        monkeypatch.setattr(backlight, 'find', lambda root=None: object())
         assert quick_actions._has_backlight() is True
 
 

@@ -351,10 +351,12 @@ _TILE_NEUTRAL_TEXT = '…'
 
 
 def _has_backlight() -> bool:
-    """True when a kernel backlight node exists; without one the brightness
-    row would be a dead slider, so the panel hides it entirely."""
+    """True when the screen has a backlight node; without one the
+    brightness row would be a dead slider, so the panel hides it. Halium
+    panels (FLX1) are LED-class (leds/lcd-backlight), not backlight-class:
+    checking only /sys/class/backlight hid the slider there."""
     try:
-        return any(Path('/sys/class/backlight').glob('*/brightness'))
+        return backlight.find() is not None
     except OSError:
         return False
 
