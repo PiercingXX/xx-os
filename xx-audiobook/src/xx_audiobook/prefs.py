@@ -106,3 +106,24 @@ class PrefsStore:
         prefs = load()
         prefs.owner_user_id = user_id
         save(prefs)
+
+
+def ui_prefs_path():
+    return paths_module.config_dir() / "ui.json"
+
+
+def load_ui() -> dict:
+    """Local-only view prefs (UiPrefs.kt): {'library_grid': bool}."""
+    try:
+        raw = json.loads(ui_prefs_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    return {"library_grid": bool(raw.get("library_grid", False))}
+
+
+def save_ui(values: dict) -> None:
+    path = paths_module.ensure_parent_for(ui_prefs_path())
+    path.write_text(json.dumps(load_ui() | dict(values), indent=2),
+                    encoding="utf-8")

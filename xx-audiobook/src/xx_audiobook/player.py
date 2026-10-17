@@ -494,6 +494,10 @@ def _reply_type(signature: str):
     return GLib.VariantType.new(signature)
 
 
+OPEN_TIMEOUT_MS = 90000
+CALL_TIMEOUT_MS = 5000
+
+
 class PlayerClient:
     """GUI-side client for the player service; every call blocks, so run
     them on a worker thread and post results with GLib.idle_add."""
@@ -502,13 +506,14 @@ class PlayerClient:
         self._connection = connection
 
     def _conn(self):
-        if self._connection is not None:
-            return self._connection
-        from gi.repository import Gio
+        if self._connection is None:
+            from gi.repository import Gio
 
-        return Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            self._connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        return self._connection
 
-    def _call(self, method: str, args=None, reply_sig: str | None = None):
+    def _call(self, method: str, args=None, reply_sig: str | None = None,
+              timeout_ms: int = CALL_TIMEOUT_MS, auto_start: bool = True):
         from gi.repository import Gio
 
         from xx_audiobook import __player_bus_name__ as bus_name
@@ -518,15 +523,20 @@ class PlayerClient:
         reply = self._conn().call_sync(
             bus_name, OBJECT_PATH, PLAYER_INTERFACE, method, args,
             _reply_type(reply_sig) if reply_sig else None,
-            Gio.DBusCallFlags.NONE, 5000, None)
+            Gio.DBusCallFlags.NONE if auto_start
+            else Gio.DBusCallFlags.NO_AUTO_START, timeout_ms, None)
         if reply is None:
             return None
         return reply.unpack()
 
-    def open(self, item_id: str) -> None:
+    def _arg(self, signature: str, *values):
         from gi.repository import GLib
 
-        self._call("Open", GLib.Variant("(s)", (item_id,)))
+        return GLib.Variant(signature, values)
+
+    def open(self, item_id: str) -> None:
+        self._call("Open", self._arg("(s)", item_id),
+                   timeout_ms=OPEN_TIMEOUT_MS)
 
     def play(self) -> None:
         self._call("Play")
@@ -541,19 +551,77 @@ class PlayerClient:
         self._call("Stop")
 
     def seek_to_us(self, position_us: int) -> None:
-        from gi.repository import GLib
+        self._call("SeekTo", self._arg("(x)", int(position_us)))
 
-        self._call("SeekTo", GLib.Variant("(x)", (int(position_us),)))
+    def seek_relative_us(self, offset_us: int) -> None:
+        self._call("SeekRelative", self._arg("(x)", int(offset_us)))
+
+    def skip_back(self) -> None:
+        self._call("SkipBack")
+
+    def skip_forward(self) -> None:
+        self._call("SkipForward")
+
+    def next_chapter(self) -> None:
+        self._call("NextChapter")
+
+    def previous_chapter(self) -> None:
+        self._call("PreviousChapter")
 
     def set_rate(self, rate: float) -> None:
-        from gi.repository import GLib
+        self._call("SetRate", self._arg("(d)", float(rate)))
 
-        self._call("SetRate", GLib.Variant("(d)", (float(rate),)))
+    def sleep(self, duration_ms: int) -> None:
+        self._call("Sleep", self._arg("(x)", int(duration_ms)))
 
-    def get_state(self) -> dict:
+    def sleep_end_of_chapter(self) -> None:
+        self._call("SleepEndOfChapter")
+
+    def cancel_sleep(self) -> None:
+        self._call("CancelSleep")
+
+    def set_session(self, api_base: str, bearer: str) -> None:
+        self._call("SetSession", self._arg("(ss)", api_base, bearer))
+
+    def clear_session(self) -> None:
+        self._call("ClearSession")
+
+    def get_state(self, auto_start: bool = True) -> dict:
+        """The service state; ``auto_start=False`` only asks a running
+        service (the GUI's poll never starts the daemon)."""
         (boxed,) = self._call(
-            "GetState", None, "(a{sv})") or ({},)
+            "GetState", None, "(a{sv})", auto_start=auto_start) or ({},)
         return {key: _unbox(value) for key, value in boxed.items()}
+
+    def check_conflict(self, item_id: str) -> dict:
+        (boxed,) = self._call(
+            "CheckConflict", self._arg("(s)", item_id), "(a{sv})",
+            timeout_ms=OPEN_TIMEOUT_MS) or ({},)
+        return {key: _unbox(value) for key, value in boxed.items()}
+
+    def resolve_conflict(self, item_id: str, use_server: bool) -> None:
+        self._call("ResolveConflict",
+                   self._arg("(sb)", item_id, bool(use_server)),
+                   timeout_ms=OPEN_TIMEOUT_MS)
+
+    def subscribe(self, on_state) -> int:
+        """Deliver StateChanged dicts to ``on_state`` in the calling
+        thread's main context (subscribe from the GTK thread)."""
+        from xx_audiobook import __player_bus_name__ as bus_name
+        from xx_audiobook.service.player_service import (
+            OBJECT_PATH, PLAYER_INTERFACE)
+        from gi.repository import Gio
+
+        def _signal(_conn, _sender, _path, _iface, _name, params) -> None:
+            try:
+                (boxed,) = params.unpack()
+            except Exception:
+                return
+            on_state({key: _unbox(value) for key, value in boxed.items()})
+
+        return self._conn().signal_subscribe(
+            bus_name, PLAYER_INTERFACE, "StateChanged", OBJECT_PATH,
+            None, Gio.DBusSignalFlags.NONE, _signal)
 
 
 def _unbox(value):

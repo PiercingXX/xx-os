@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 CONNECT_TIMEOUT_S = 10.0
 READ_TIMEOUT_S = 30.0
 MANIFEST_READ_TIMEOUT_S = 120.0
+COVER_MAX_BYTES = 8 * 1024 * 1024
 
 TIMEOUT_MESSAGE = ("The server is taking too long to answer."
                    " Try again in a moment.")
@@ -1535,6 +1536,30 @@ class AudiobookApi:
             return None
         return (base + "api/items/" + seg(item_id) + "/files/"
                 + seg(file_id))
+
+    def cover_bytes(self, item_id: str, size: str = "thumb") -> bytes:
+        """Cover image bytes (GET, origin-keyed bearer, no redirects)."""
+        url = self.cover_url(item_id, size)
+        if url is None:
+            raise NotSignedIn()
+        headers = {"Accept": "image/*"}
+        bearer = self._bearer_for(url)
+        if bearer:
+            headers["Authorization"] = "Bearer " + bearer
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(request,
+                                        timeout=READ_TIMEOUT_S) as response:
+                if response.url != url:
+                    raise Http(302, None, "Redirects are not followed.")
+                return response.read(COVER_MAX_BYTES)
+        except urllib.error.HTTPError as exc:
+            raise Http(exc.code, None, f"cover: HTTP {exc.code}") from exc
+        except ApiError:
+            raise
+        except (urllib.error.URLError, OSError, TimeoutError,
+                socket.timeout) as exc:
+            raise error_for(exc)
 
     def _send(self, method: str, path: str, body=None,
               query: dict | None = None,

@@ -5,7 +5,9 @@ Linux phone port of the PiercingXX Android app `xx-audiobook` (source:
 server — now coming to postmarketOS / Mobian / FuriOS / PureOS phones running
 phoc (XX-WM or Phosh).
 
-Status: spec + scaffold. See [PORT_SPEC.md](PORT_SPEC.md) for the full port plan.
+Status: M1 (data/API/auth), M2 (player service) and M3 (Library, Book,
+Now Playing, mini-player, Series/Author/Narrator/Collections) built;
+Downloads, Zones and Setup follow (M4/M5). See [PORT_SPEC.md](PORT_SPEC.md).
 
 The FastAPI server (`ref/xx-audiobook/xx-audiobook-server`) is NOT ported: it
 already runs on Linux and stays the backend. The client speaks its contract
@@ -36,7 +38,9 @@ XX_AUDIOBOOK_API_BASE=http://127.0.0.1:8750/ PYTHONPATH=src:../common python3 -m
 |------|------------------|
 | `PORT_SPEC.md` | Feature inventory, Linux mappings, XX-WM integration, milestone plan |
 | `meson.build` / `data/` | Install: package to datadir, launcher to bindir, `.desktop`, metainfo, icon, D-Bus activation |
-| `src/xx_audiobook/` | `main.py` (Adw.Application + five-tab shell), `paths.py`, `prefs.py`, `auth.py`, `api_routes.py`, `applog.py`, `timeline.py` (book timeline), `sleep.py` (sleep timer), `stream_auth.py` (estate-only bearer), `sync.py` (session sync timing), `restore.py` (mini-player restore), `player.py` (playbin engine + client), `service/player_service.py` (background daemon) |
+| `src/xx_audiobook/ui/` | M3 pages: `shell.py` (tabs, per-tab navigation, mini-player), `library.py`, `book.py`, `playing.py` (Now Playing + sheets + mini-player), `browse.py` (series/author/narrator/collections), `common.py` (covers, rows, skip glyph, scrubber, sheets), `context.py` (workers, player model, cover loader), `style.py` |
+| `tools/` | `demo_seed.py` (seeded HOME + in-process DemoApi), `snap_app.py` + `snap_nav.py` + `snap_all.sh` (screenshot matrix) |
+| `src/xx_audiobook/` | `main.py` (Adw.Application + five-tab shell), `fmt.py` (display text), `browse.py` (home shelves, browse, collections, bookmarks), `paths.py`, `prefs.py`, `auth.py`, `api_routes.py`, `applog.py`, `timeline.py` (book timeline), `sleep.py` (sleep timer), `stream_auth.py` (estate-only bearer), `sync.py` (session sync timing), `restore.py` (mini-player restore), `player.py` (playbin engine + client), `service/player_service.py` (background daemon) |
 | `tests/` | pytest smoke tests, headless (no display, no network beyond the loopback fixture) |
 
 ## Background player service (M2)
@@ -54,7 +58,8 @@ PYTHONPATH=src XX_AUDIOBOOK_AUDIOSINK=fakesink python3 -m xx_audiobook.service.p
 
 The UI contract (`Player1` methods, `GetState`, `StateChanged`,
 `BookmarkRequested`) is documented in [PORT_SPEC.md](PORT_SPEC.md)
-(§2.8, "M2 UI contract"). No UI ships in this lane.
+(§2.8, "M2 UI contract"). The GUI drives it only through
+`player.PlayerClient` on worker threads.
 
 ## Install
 
@@ -66,11 +71,13 @@ meson setup build && meson install -C build   # in common/
 meson setup build && meson install -C build   # here
 ```
 
-Seeded screenshots for every theme (from M3, once real pages land):
+Seeded + empty screenshots in four themes, plus 320 px and text-scale-2
+fit checks (no network, keyring or player service involved; exits
+non-zero on any `snap: WARNING`):
 
 ```sh
-python3 tools/demo_seed.py /tmp/vhome
-sh tools/snap_all.sh lane_shots
+sh tools/snap_all.sh lane_shots            # every target
+sh tools/snap_all.sh lane_shots book playing
 ```
 
 Background playback and sync are opt-in systemd user units (M2/M4):

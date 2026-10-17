@@ -47,8 +47,27 @@ install_data(
     'src/xx_audiobook/restore.py',
     'src/xx_audiobook/player.py',
     'src/xx_audiobook/download.py',
+    'src/xx_audiobook/fmt.py',
+    'src/xx_audiobook/browse.py',
+    'src/xx_audiobook/bookmarks.py',
   ],
   install_dir: join_paths(app_datadir, 'xx_audiobook'),
+)
+
+# GTK pages (M3): Library, Book, Now Playing, pushed views, shell.
+install_data(
+  [
+    'src/xx_audiobook/ui/__init__.py',
+    'src/xx_audiobook/ui/book.py',
+    'src/xx_audiobook/ui/browse.py',
+    'src/xx_audiobook/ui/common.py',
+    'src/xx_audiobook/ui/context.py',
+    'src/xx_audiobook/ui/library.py',
+    'src/xx_audiobook/ui/playing.py',
+    'src/xx_audiobook/ui/shell.py',
+    'src/xx_audiobook/ui/style.py',
+  ],
+  install_dir: join_paths(app_datadir, 'xx_audiobook', 'ui'),
 )
 
 # Player service subpackage (background daemon: own bus name + MPRIS).
