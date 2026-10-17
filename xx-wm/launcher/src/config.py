@@ -54,6 +54,8 @@ DEFAULT_CONFIG = {
     'auto_lock_timeout': 0,
     'display_blank_timeout': 60,
     'text_size_scale': 1.0,
+    # Home screen only, on top of text_size_scale (owner: home 20% smaller).
+    'home_scale': 0.8,
     'home_alignment': 'center',
     'update_script': '~/.scripts/PiercingXX-Settings-Menu/update-system.sh',
     'update_last_check': 0.0,
@@ -437,6 +439,17 @@ class ShellConfig:
             return max(0.5, min(2.0, float(self.data.get('text_size_scale', 1.0))))
         except (TypeError, ValueError):
             return 1.0
+
+    @property
+    def home_scale(self) -> float:
+        try:
+            return max(0.5, min(1.5, float(self.data.get('home_scale', 0.8))))
+        except (TypeError, ValueError):
+            return 0.8
+
+    def set_home_scale(self, scale: float) -> None:
+        self.data['home_scale'] = max(0.5, min(1.5, round(float(scale), 2)))
+        self.save()
 
     def set_text_size_scale(self, scale: float) -> None:
         self.data['text_size_scale'] = max(0.5, min(2.0, round(scale, 2)))

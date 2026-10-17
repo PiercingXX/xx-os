@@ -421,7 +421,7 @@ def _scaled_pt(base: float, scale: float) -> str:
     return '%gpt' % round(base * scale, 1)
 
 
-def launcher_text_css(scale: float) -> str:
+def launcher_text_css(scale: float, home_scale: float | None = None) -> str:
     """Launcher type sizes the static style.css leaves fixed (clock, date,
     drawer rows): scaled overrides loaded through the window provider, so
     text_size_scale hot-reloads them like the shared sheet's tokens."""
@@ -448,8 +448,8 @@ entry.drawer-search, searchentry.drawer-search {{
     font-size: {_alpha};
 }}
 """.format(
-        _clock=_scaled_pt(54, scale),
-        _date=_scaled_pt(12, scale),
+        _clock=_scaled_pt(54, scale if home_scale is None else home_scale),
+        _date=_scaled_pt(12, scale if home_scale is None else home_scale),
         _dim=_scaled_pt(11.5, scale),
         _app=_scaled_pt(14, scale),
         _sub=_scaled_pt(10.5, scale),
@@ -1150,6 +1150,9 @@ class ShellWindow(Adw.ApplicationWindow):
             shade.hide_shade()
         self.stack.set_visible_child_name('home')
         self.present_over_apps()
+        _sync = getattr(self, '_sync_status_bar', None)
+        if callable(_sync):
+            _sync()
 
     def present_over_apps(self) -> None:
         """Raise the shell above regular app windows (the go-home gesture).
@@ -1175,6 +1178,9 @@ class ShellWindow(Adw.ApplicationWindow):
             LayerShell.set_layer(self, LayerShell.Layer.BOTTOM)
             LayerShell.set_keyboard_mode(self, LayerShell.KeyboardMode.NONE)
         GLib.timeout_add(400, self._capture_thumb_once)
+        _sync = getattr(self, '_sync_status_bar', None)
+        if callable(_sync):
+            _sync()
 
     def _wire_foreign_toplevels(self, manager=None) -> None:
         """Yield to apps mapped outside the shell (D-Bus activation,
@@ -1456,6 +1462,25 @@ class ShellWindow(Adw.ApplicationWindow):
         app = self.get_application()
         bar.sync_visibility(
             self.is_locked(), bool(getattr(app, '_tour_visible', False)))
+        setter = getattr(bar, 'set_home_showing', None)
+        if callable(setter):
+            setter(self._home_showing())
+
+    def _home_showing(self) -> bool:
+        """Home is on screen: the home page is up and the shell is raised
+        over apps, or no app is focused (nothing covers the BOTTOM shell)."""
+        try:
+            if self.stack.get_visible_child_name() != 'home':
+                return False
+        except Exception:
+            return False
+        if getattr(self, '_over_apps', False):
+            return True
+        mgr = getattr(self, '_toplevel_manager', None)
+        try:
+            return not (mgr is not None and mgr.activated_app_id())
+        except Exception:
+            return True
 
     def _dismiss_lock_screen(self) -> None:
         lock = getattr(self, '_lock_screen', None)
@@ -1761,6 +1786,9 @@ class ShellWindow(Adw.ApplicationWindow):
 
     def _on_stack_page_changed(self, stack: Gtk.Stack, _param: object) -> None:
         name = stack.get_visible_child_name()
+        _sync = getattr(self, '_sync_status_bar', None)
+        if callable(_sync):
+            _sync()
         # Leaving the drawer disarms both pick modes so a later tap launches
         if name != 'apps':
             self._pick_slot_mode = False
@@ -2112,10 +2140,12 @@ class ShellWindow(Adw.ApplicationWindow):
             accent=theme.accent,
         )
         scale = self.config.text_size_scale
+        # Home has its own factor on top of the text size (config home_scale).
+        home = scale * getattr(self.config, 'home_scale', 1.0)
         import settings_ui
         css = (base + '\n' + shell + '\n'
-               + home_theme_css(theme, scale) + '\n'
-               + launcher_text_css(scale) + '\n'
+               + home_theme_css(theme, home) + '\n'
+               + launcher_text_css(scale, home) + '\n'
                + settings_ui.css(theme, scale))
         self.theme_provider.load_from_data(css.encode('utf-8'))
 

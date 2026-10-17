@@ -30,6 +30,7 @@ migration steps are ever required.
 | `font` | string | `"jetbrains-mono-nerd"` | `system-light`, `monospace` (generic), `space-mono`, `jetbrains-mono`, `jetbrains-mono-nerd`, or `custom`. |
 | `custom_font_family` | string | — | Family used when `font` is `custom`. Settings → Launcher → Import font… installs a `.ttf`/`.otf`, or drop a font in `~/.local/share/fonts` and set both keys. Font files are not part of backups. |
 | `text_size_scale` | float | `1.0` | Launcher-wide type scale, clamped 0.5–2.0. Scales home slots, the clock and date, drawer and folder rows. |
+| `home_scale` | float | `0.8` | Home screen only (app labels, folders, item spacing, clock, date), multiplied with `text_size_scale`. Clamped 0.5–1.5. |
 | `home_alignment` | string | `"center"` | `left` / `center` / `right` for home rows, widget lines, drawer rows, folder and member rows. |
 
 ### Home screen

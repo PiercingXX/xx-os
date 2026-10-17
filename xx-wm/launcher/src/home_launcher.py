@@ -34,7 +34,7 @@ def theme_css(preset: ThemePreset, scale: float = 1.0) -> str:
     border: none;
     border-radius: 0;
     outline: none;
-    padding: 20px 0;
+    padding: {round(20 * scale)}px 0;
 }}
 /* Slots never hold a highlight: hover, press and keyboard focus all stay
    on the plain background, so no grey band sticks to the focused slot. */

@@ -219,6 +219,15 @@ def apply_zone(window, height: int, layer_shell) -> None:
 
 # ---- visibility -------------------------------------------------------
 
+def decide_content(home_showing: bool) -> bool:
+    """The strip's text/glyphs show over apps, not over home (owner: hide
+    the top bar on home). The surface itself stays, keeping its reserved
+    zone: dropping it would resize every app behind home on each visit.
+    On home the empty strip matches the home background, and a pull on it
+    still opens the shade."""
+    return not home_showing
+
+
 def decide_visible(locked: bool, wizard_visible: bool) -> bool:
     """Shown over home and apps; hidden under the lock screen and the
     first-boot / welcome wizard (both draw their own full-screen layout).
@@ -542,6 +551,9 @@ if _HAS_GTK:
             if height != self.height:
                 self.height = height
                 apply_zone(self, height, LayerShell)
+
+        def set_home_showing(self, home_showing: bool) -> None:
+            self.view.set_opacity(1.0 if decide_content(home_showing) else 0.0)
 
         def sync_visibility(self, locked: bool, wizard_visible: bool) -> None:
             visible = decide_visible(locked, wizard_visible)
