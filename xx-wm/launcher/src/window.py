@@ -1990,8 +1990,8 @@ class ShellWindow(Adw.ApplicationWindow):
     def _on_source_selected(self, source) -> None:
         return _settings(self)._on_source_selected(source)
 
-    def _refresh_wifi(self) -> None:
-        return _settings(self)._refresh_wifi()
+    def _refresh_wifi(self, scan: bool = False) -> None:
+        return _settings(self)._refresh_wifi(scan)
 
     def _show_wifi(self, networks) -> None:
         return _settings(self)._show_wifi(networks)

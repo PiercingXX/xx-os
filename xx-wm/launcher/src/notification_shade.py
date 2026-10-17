@@ -783,8 +783,10 @@ class NotificationShade(Gtk.Window):
             'Show fewer tiles' if expanded else 'Show all tiles')
 
     def _refresh_datetime(self) -> bool:
+        from clock_format import format_clock, resolve_24h
         now = datetime.now()
-        time_part = now.strftime('%H:%M')
+        # Same 12/24 h rule as home and the lock screen (was always 24 h)
+        time_part = format_clock(now, resolve_24h(getattr(self, '_config', None)))
         try:
             from system_status import battery_pct
             battery = battery_pct()

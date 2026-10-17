@@ -183,3 +183,14 @@ def test_show_path_reads_sliders_off_the_main_loop():
     qa = (Path(__file__).resolve().parent.parent / 'launcher' / 'src'
           / 'quick_actions.py').read_text()
     assert 'def sync_sliders_async(self)' in qa
+
+
+def test_shade_clock_follows_the_12_24_setting():
+    # The shade header read 13:43 while home read 1:43 (seen on the FLX1)
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / 'launcher' / 'src'
+           / 'notification_shade.py').read_text()
+    body = src[src.index('def _refresh_datetime'):]
+    body = body[:body.index('\n    def ', 10)]
+    assert "strftime('%H:%M')" not in body
+    assert 'format_clock(' in body and 'resolve_24h(' in body

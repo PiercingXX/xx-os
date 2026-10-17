@@ -23,6 +23,8 @@ the C side only needs the callback fired with a valid task).
 """
 from __future__ import annotations
 
+import re
+
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -41,6 +43,16 @@ try:
 except Exception:
     _HAVE_AGENT = False
 
+
+
+def meaningful_prompt(text: object) -> str:
+    """PAM's request text, unless it only says "Password:" again (the
+    field already reads Device password). Other prompts (OTP, finger)
+    are kept."""
+    value = str(text or '').strip()
+    if re.fullmatch(r'(?i)(\[[^\]]*\]\s*)?password(\s+for\s+\S+)?\s*:?', value):
+        return ''
+    return value
 
 def _log():
     try:
@@ -369,8 +381,9 @@ if _HAVE_AGENT:
             if dialog is None:
                 return
             try:
-                if request_text:
-                    dialog.set_note(str(request_text))
+                note = meaningful_prompt(request_text)
+                if note:
+                    dialog.set_note(note)
                 dialog.present()
             except Exception:
                 pass

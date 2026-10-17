@@ -313,7 +313,7 @@ class WifiSection(_Section):
         win._wifi_service_box = top[1]
         win._wifi_scan_rows = [
             ui.nav_row('Scan for networks', '',
-                       lambda _r: win._refresh_wifi()),
+                       lambda _r: win._refresh_wifi(scan=True)),
             ui.nav_row('Add hidden network…', '',
                        lambda _r: win._on_add_hidden()),
         ]
@@ -1463,10 +1463,10 @@ class SettingsPage:
                              win._show_sources)),
         )
 
-    def _refresh_wifi(self) -> None:
+    def _refresh_wifi(self, scan: bool = False) -> None:
         win = self._win
-        self._fill_wifi_list([ui.note_row('Scanning…')])
-        win._run_bg(self._wifi_snapshot, self._show_wifi_full)
+        self._fill_wifi_list([ui.note_row('Scanning…' if scan else 'Loading…')])
+        win._run_bg(lambda: self._wifi_snapshot(scan), self._show_wifi_full)
 
     def _fill_wifi_list(self, rows: list) -> None:
         """Networks card: the scan results, then Scan and Add hidden."""
@@ -1476,7 +1476,7 @@ class SettingsPage:
             ui.fill(box, rows + list(getattr(win, '_wifi_scan_rows', [])))
 
     @staticmethod
-    def _wifi_snapshot():
+    def _wifi_snapshot(scan: bool = False):
         """Worker thread: radio, daemon and network state. Never raises."""
         import system_settings
 
@@ -1489,7 +1489,7 @@ class SettingsPage:
         except Exception:
             running = False
         try:
-            networks = system_settings.list_wifi()
+            networks = system_settings.list_wifi(rescan=scan)
         except Exception:
             networks = None
         try:

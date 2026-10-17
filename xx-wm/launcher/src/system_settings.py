@@ -61,11 +61,17 @@ def parse_nmcli_wifi(output: str) -> list[WifiNetwork]:
     return sorted(networks.values(), key=lambda n: (not n.in_use, -n.signal))
 
 
-def list_wifi(run: _RunFn = _run) -> list[WifiNetwork] | None:
-    """None → WiFi stack unavailable; [] → no networks found."""
+def list_wifi(run: _RunFn = _run, rescan: bool = False
+              ) -> list[WifiNetwork] | None:
+    """None → WiFi stack unavailable; [] → no networks found.
+
+    NetworkManager's cached results unless ``rescan``: a bare
+    ``dev wifi list`` rescans whenever the cache is 30 s old, which can
+    pop a polkit password prompt just for opening Settings."""
     try:
         result = run(['nmcli', '-t', '-f', 'IN-USE,SSID,SIGNAL,SECURITY',
-                      'dev', 'wifi', 'list'], timeout=20)
+                      'dev', 'wifi', 'list', '--rescan',
+                      'yes' if rescan else 'no'], timeout=20)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
