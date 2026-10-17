@@ -204,14 +204,20 @@ class ReviewsState:
 
     def __init__(self, item_id: str, repo: ReviewRepository,
                  me_id: str = "", is_admin: bool = False,
-                 mark_finished=None, now_s=None) -> None:
+                 mark_finished=None, now_s=None, listener=None,
+                 load: bool = True) -> None:
         self._item_id = item_id
         self._repo = repo
         self._mark_finished = mark_finished
         self._now_s = now_s if now_s is not None else time.time
         self._lock = threading.Lock()
-        self._ui = ReviewsUi(me_id=me_id, admin=is_admin)
-        self.refresh()
+        # Called (any thread) after every state change, so a screen can
+        # paint the optimistic state before the write answers.
+        self.listener = listener
+        self._ui = ReviewsUi(page=repo.cached(item_id), me_id=me_id,
+                             admin=is_admin)
+        if load:
+            self.refresh()
 
     @property
     def item_id(self) -> str:
@@ -245,6 +251,12 @@ class ReviewsState:
     def _set(self, ui: ReviewsUi) -> None:
         with self._lock:
             self._ui = ui
+        listener = self.listener
+        if listener is not None:
+            try:
+                listener()
+            except Exception:
+                pass
 
     def _current(self) -> ReviewsUi:
         with self._lock:

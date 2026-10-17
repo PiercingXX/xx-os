@@ -3,8 +3,10 @@
 Mirrors ui/player/NowPlayingScreen.kt: cover and title (both open the
 Book), the chapter, a book-level scrubber with chapter ticks, time left
 in the book and the chapter at the current speed, transport with
-skip-seconds glyphs, and the Chapters / Speed / Sleep / Bookmark sheets
-(Play on… is Zones, M5). The mini-player sits above the bottom bar on
+skip-seconds glyphs, and the Chapters / Speed / Sleep / Bookmark /
+Play on… sheets (Play on… casts to a zone, ui/zones.py; it asks first).
+The skip glyphs follow Setup's intervals live. The mini-player sits above
+the bottom bar on
 every other tab. Everything reads ctx.player; commands go back through
 it (worker thread -> player service).
 """
@@ -80,7 +82,23 @@ class NowPlayingPage:
         self.stack.add_named(self._build(), "full")
         self.widget = self.stack
         ctx.player.connect(self.update)
+        ctx.connect("settings-changed", self._settings_changed)
+        ctx.connect("zones-changed", self._cells)
         self.update()
+
+    def _settings_changed(self) -> None:
+        """Setup changed the skip intervals: redraw both glyphs."""
+        def _done(skips, error) -> None:
+            if error is not None or skips == self._skips:
+                return
+            self._skips = skips
+            back_s, forward_s = skips
+            self.back_key.set_child(common.skip_glyph(back_s, False, 34))
+            common.name(self.back_key, f"Back {back_s} seconds")
+            self.forward_key.set_child(common.skip_glyph(forward_s, True, 34))
+            common.name(self.forward_key, f"Forward {forward_s} seconds")
+
+        self.ctx.run(_skip_seconds, _done)
 
     def _build(self) -> Gtk.Widget:
         body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
@@ -144,6 +162,12 @@ class NowPlayingPage:
 
         player = self.ctx.player
         back_s, forward_s = self._skips
+        self.back_key = _key(common.skip_glyph(back_s, False, 34),
+                             f"Back {back_s} seconds",
+                             lambda: player.skip(-self._skips[0]))
+        self.forward_key = _key(common.skip_glyph(forward_s, True, 34),
+                                f"Forward {forward_s} seconds",
+                                lambda: player.skip(self._skips[1]))
         transport = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
         transport.set_margin_top(18)
         self.play_icon = widgets.icon_image("media-playback-start-symbolic",
@@ -154,20 +178,16 @@ class NowPlayingPage:
                 _key(widgets.icon_image("media-skip-backward-symbolic", 22),
                      "Previous chapter",
                      lambda: player.chapter_step(False)),
-                _key(common.skip_glyph(back_s, False, 34),
-                     f"Back {back_s} seconds",
-                     lambda: player.skip(-back_s)),
+                self.back_key,
                 self.play,
-                _key(common.skip_glyph(forward_s, True, 34),
-                     f"Forward {forward_s} seconds",
-                     lambda: player.skip(forward_s)),
+                self.forward_key,
                 _key(widgets.icon_image("media-skip-forward-symbolic", 22),
                      "Next chapter", lambda: player.chapter_step(True))):
             widget.set_hexpand(widget is not self.play)
             transport.append(widget)
         body.append(transport)
 
-        self.cells = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
+        self.cells = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 6)
         self.cells.set_homogeneous(True)
         self.cells.set_margin_top(20)
         body.append(self.cells)
@@ -244,8 +264,24 @@ class NowPlayingPage:
                       "Sleep timer, " + ("on" if sleeping else "off"),
                       self.open_sleep, sleeping),
                 _cell(widgets.icon_image("bookmark-new-symbolic", 20),
-                      "Bookmark", "Add a bookmark", self.open_bookmark)):
+                      "Bookmark", "Add a bookmark", self.open_bookmark),
+                self._play_on_cell()):
             self.cells.append(cell)
+
+    def _play_on_cell(self) -> Gtk.Button:
+        from xx_audiobook import zones as zones_module
+
+        output = self.ctx.zones.snapshot().output
+        zone = output if isinstance(output, zones_module.ZoneOutput) else None
+        return _cell(widgets.icon_image("audio-speakers-symbolic", 20),
+                     "Play on", f"Play on a zone, now on {zone.name}"
+                     if zone else "Play on a zone", self.open_play_on,
+                     zone is not None)
+
+    def open_play_on(self) -> Gtk.Widget:
+        from xx_audiobook.ui import zones as zones_ui
+
+        return zones_ui.play_on_sheet(self.ctx, self._window())
 
     # -- sheets --------------------------------------------------------------------
 
@@ -504,9 +540,12 @@ class MiniPlayer:
         opener.connect("clicked", lambda _b: open_playing())
         self.opener = opener
         row.append(opener)
-        row.append(_key(common.skip_glyph(back_s, False, 28),
-                        f"Back {back_s} seconds",
-                        lambda: player.skip(-back_s)))
+        self._back_s = back_s
+        self.back_key = _key(common.skip_glyph(back_s, False, 28),
+                             f"Back {back_s} seconds",
+                             lambda: player.skip(-self._back_s))
+        row.append(self.back_key)
+        ctx.connect("settings-changed", self._settings_changed)
         self.play_icon = widgets.icon_image("media-playback-start-symbolic",
                                             24)
         self.play = _key(self.play_icon, "Play", player.play_pause)
@@ -514,6 +553,16 @@ class MiniPlayer:
         self.widget.append(row)
         player.connect(self.update)
         self.update()
+
+    def _settings_changed(self) -> None:
+        def _done(skips, error) -> None:
+            if error is None and skips[0] != self._back_s:
+                self._back_s = skips[0]
+                self.back_key.set_child(
+                    common.skip_glyph(self._back_s, False, 28))
+                common.name(self.back_key, f"Back {self._back_s} seconds")
+
+        self.ctx.run(_skip_seconds, _done)
 
     def update(self) -> None:
         player = self.ctx.player

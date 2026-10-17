@@ -80,7 +80,8 @@ def main(argv: list[str]) -> int:
     shell.nav.open_book("ph")
     pump()
     expect("Project Hail Mary", "Resume at ", "CHAPTERS · 30", "BOOKMARKS",
-           "Rocky's first words", "Download", "Mark finished")
+           "Rocky's first words", "Downloaded", "Mark finished",
+           "RATINGS & REVIEWS")
     _check_targets(window, failed)
 
     shell.nav.open_book("hy")
@@ -103,7 +104,33 @@ def main(argv: list[str]) -> int:
 
     shell.show("playing")
     pump()
-    expect("Paused where you left off.", "Project Hail Mary")
+    expect("Paused where you left off.", "Project Hail Mary", "PLAY ON")
+    _check_targets(window, failed)
+
+    shell.show("downloads")
+    pump()
+    expect("Downloads", "ACTIVE · 2", "ON THIS PHONE · 2",
+           "FAILED OR CANCELLED · 1", "Dune", "Checksum mismatch",
+           "Storage used: ")
+    _check_targets(window, failed)
+
+    shell.show("zones")
+    pump()
+    expect("Zones", "Not signed in. Sign in from Setup.")
+    _check_targets(window, failed)
+
+    shell.show("setup")
+    pump()
+    expect("Sign in", "ESTATE ADDRESS", "USERNAME", "PASSWORD",
+           "Try xx-apps again")
+    _check_targets(window, failed)
+    focus = window.get_focus()
+    if focus is not None and "Entry" in type(focus).__name__:
+        failed.append("a sign-in entry took focus by itself")
+
+    shell.nav.stats()
+    pump()
+    expect("YEAR", "RECENT SESSIONS")
     _check_targets(window, failed)
 
     width = window.get_width()

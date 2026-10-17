@@ -59,7 +59,17 @@ CATALOG = (
      ("The Murderbot Diaries", 6, "2"), 3.7, None, "#355c7d", 4.6),
 )
 DOWNLOADED = ("ph", "pi")
+# The Downloads queue beside the finished ones: (id, state, fraction,
+# error). Sizes follow the book length at ~64 kbit/s.
+QUEUE = (("du", "Running", 0.42, None),
+         ("ct", "Queued", 0.0, None),
+         ("nm", "Failed", 0.61, "Checksum mismatch on file 2."))
+BYTES_PER_HOUR = 28_800_000
 DAMAGED = ("hy",)
+# Signed-in demo account (no password anywhere; the token is a dummy).
+ME = {"user_id": "u-demo", "username": "sam", "display_name": "Sam Reader",
+      "is_admin": True}
+ORIGIN = "https://estate.example"
 LAST = ("ph", 0.42)
 AUTHORS = {name: 100 + i for i, name in enumerate(sorted(
     {row[2] for row in CATALOG}))}
@@ -317,6 +327,272 @@ class DemoApi:
             self._covers[item_id] = _cover_png(row)
         return self._covers[item_id]
 
+    # -- M4/M5: account, settings, downloads, stats, reviews, zones ----------
+
+    def me(self):
+        return api_module.Me.from_dict(ME)
+
+    def status(self):
+        return api_module.Status.from_dict({
+            "version": "1.6.0", "service": "xx-audiobook-server",
+            "items": 1204, "items_missing": 3, "pending_matches": 0,
+            "media_roots": [{"path": "/srv/audiobooks", "present": True,
+                             "item_count": 1204}],
+            "subsystems": {
+                "db": {"state": "ok", "detail": "", "hint": ""},
+                "ha": {"state": "ok", "detail": "2 locations", "hint": ""},
+                "stream": {"state": "not_configured",
+                           "detail": "No signing key for speakers.",
+                           "hint": "Set it in the studio."}}})
+
+    def settings(self):
+        return api_module.UserSettings(skip_back_s=30, skip_forward_s=30,
+                                       default_speed=1.0, auto_rewind_s=2,
+                                       updated_at=NOW, applied=True)
+
+    def put_settings(self, body):
+        return api_module.UserSettings(
+            skip_back_s=body.skip_back_s, skip_forward_s=body.skip_forward_s,
+            default_speed=body.default_speed,
+            auto_rewind_s=body.auto_rewind_s, updated_at=body.updated_at,
+            applied=True)
+
+    def manifest(self, item_id: str):
+        size = int(BY_ID[item_id]["hours"] * BYTES_PER_HOUR / 2)
+        return api_module.Manifest.from_dict({
+            "item_id": item_id, "total_size": size * 2,
+            "files": [{"file_id": f"{item_id}-f{i}", "index": i,
+                       "size": size, "sha256": "", "mime": "audio/mp4"}
+                      for i in range(2)]})
+
+    # Stats: a steady listener since 2024, numbers from a fixed seed.
+
+    def stats(self, year=None):
+        import datetime as dt
+
+        today = dt.date.today()
+        year = year or today.year
+        first = 2024
+        if year < first:
+            return api_module.Stats.from_dict({"year": year,
+                                               "first_year": first})
+        scale = {today.year: 1.0, today.year - 1: 0.8}.get(year, 0.45)
+        rng = _Rng(year)
+        by_day = []
+        last = today if year == today.year else dt.date(year, 12, 31)
+        for back in range(0, 60):
+            day = last.fromordinal(last.toordinal() - back)
+            if day.year != year:
+                break
+            off = back > 5 and rng.next() < 0.28
+            minutes = 0 if off else int(15 + rng.next() * 140 * scale)
+            if minutes:
+                by_day.append({"date": day.isoformat(),
+                               "listened_s": minutes * 60.0})
+        months = last.month
+        by_month = [{"month": m, "listened_s": (18 + rng.next() * 46)
+                     * 3600 * scale, "sessions": int(20 + rng.next() * 30)}
+                    for m in range(1, months + 1)]
+        total = sum(m["listened_s"] for m in by_month)
+        tops = (("ph", 0.24), ("cc", 0.17), ("lw", 0.14), ("mb", 0.09),
+                ("tm", 0.07))
+        return api_module.Stats.from_dict({
+            "year": year, "total_listened_s": total,
+            "sessions": sum(m["sessions"] for m in by_month),
+            "items_played": 11, "items_finished": int(7 * scale) or 1,
+            "days_listened": int(48 * months / 3 * scale),
+            "by_month": by_month, "first_year": first, "by_day": by_day,
+            "streak": {"current_days": 6 if year == today.year else 0,
+                       "longest_days": int(23 * scale) or 3},
+            "top_items": [{"item_id": i, "title": BY_ID[i]["title"],
+                           "listened_s": total * share,
+                           "thumb_url": f"api/items/{i}/cover?size=thumb"}
+                          for i, share in tops],
+            "top_authors": [
+                {"id": AUTHORS[n], "name": n, "listened_s": total * share}
+                for n, share in (("Becky Chambers", 0.33),
+                                 ("Andy Weir", 0.31),
+                                 ("Martha Wells", 0.12))]})
+
+    def _sessions(self) -> list:
+        import time as _time
+
+        if getattr(self, "_session_rows", None) is None:
+            rng = _Rng(7)
+            now = _time.time()
+            order = ("ph", "ph", "cc", "ph", "mb", "lw", "cc", "ph", "tm")
+            rows = []
+            start = now - 1800
+            for index in range(46):
+                item_id = order[index % len(order)]
+                listened = (12 + rng.next() * 70) * 60
+                position = BY_ID[item_id]["hours"] * H * (
+                    0.1 + 0.8 * rng.next())
+                rows.append({
+                    "session_id": f"s-{index}", "item_id": item_id,
+                    "title": BY_ID[item_id]["title"],
+                    "device": "Phone" if index % 3 else "Web player",
+                    "start_position_s": max(position - listened, 0.0),
+                    "position_s": position, "listened_s": listened,
+                    "speed": 1.25, "started_at": start,
+                    "updated_at": start + listened,
+                    "closed_at": start + listened})
+                start -= (8 + rng.next() * 30) * 3600
+            self._session_rows = rows
+        return self._session_rows
+
+    def sessions(self, page: int = 1, limit: int = 50):
+        rows = self._sessions()
+        chunk = rows[(page - 1) * limit:page * limit]
+        return api_module.ListeningSessionPage.from_dict(
+            {"total": len(rows), "page": page, "limit": limit,
+             "results": chunk})
+
+    def delete_session(self, session_id: str) -> None:
+        self._session_rows = [r for r in self._sessions()
+                              if r["session_id"] != session_id]
+
+    # Reviews: placeholder people and placeholder text only.
+
+    def _reviews(self, item_id: str) -> list:
+        store = self.__dict__.setdefault("_review_rows", {})
+        if item_id not in store:
+            rng = _Rng(sum(map(ord, item_id)))
+            rows = []
+            count = 7 if item_id == "ph" else (3 if item_id in BY_ID else 0)
+            for index in range(count):
+                stars = 5 if rng.next() > 0.35 else 4
+                if index == 4:
+                    stars = 3
+                body = ("[Review text] A placeholder review, written for "
+                        "the demo. It runs two lines on a phone."
+                        if index % 2 == 0 else "")
+                when = NOW - 86400 * (2 + index * 9)
+                rows.append({"id": f"rv-{item_id}-{index}",
+                             "item_id": item_id,
+                             "user": {"id": f"u-{index}",
+                                      "display_name": f"Listener {chr(65 + index)}"},
+                             "stars": stars, "body": body,
+                             "created_at": when, "updated_at": when})
+            if item_id == "lw":
+                rows.insert(0, {"id": "rv-mine", "item_id": "lw",
+                                "user": {"id": ME["user_id"],
+                                         "display_name": ME["display_name"]},
+                                "stars": 5,
+                                "body": "[Your review] Placeholder text for "
+                                        "the demo.",
+                                "created_at": NOW - 86400 * 20,
+                                "updated_at": NOW - 86400 * 20})
+            store[item_id] = rows
+        return store[item_id]
+
+    def reviews(self, item_id: str, page: int = 1):
+        rows = self._reviews(item_id)
+        limit = 20
+        chunk = rows[(page - 1) * limit:page * limit]
+        average = (sum(r["stars"] for r in rows) / len(rows)
+                   if rows else None)
+        return api_module.ReviewsPage.from_dict(
+            {"average": average, "count": len(rows), "page": page,
+             "limit": limit, "results": chunk})
+
+    def put_review(self, item_id: str, body):
+        row = BY_ID.get(item_id)
+        if row is not None and row["frac"] is None:
+            raise api_module.Http(403, "not_started", "Start it first.")
+        rows = [r for r in self._reviews(item_id)
+                if r["user"]["id"] != ME["user_id"]]
+        mine = {"id": f"rv-mine-{item_id}", "item_id": item_id,
+                "user": {"id": ME["user_id"],
+                         "display_name": ME["display_name"]},
+                "stars": body.stars, "body": body.body,
+                "created_at": NOW, "updated_at": NOW}
+        self._review_rows[item_id] = [mine] + rows
+        return api_module.Review.from_dict(mine)
+
+    def delete_my_review(self, item_id: str) -> None:
+        self._review_rows[item_id] = [
+            r for r in self._reviews(item_id)
+            if r["user"]["id"] != ME["user_id"]]
+
+    def admin_delete_review(self, review_id: str) -> None:
+        for item_id, rows in self.__dict__.get("_review_rows", {}).items():
+            self._review_rows[item_id] = [r for r in rows
+                                          if r["id"] != review_id]
+
+    # Zones: two locations of Home Assistant players.
+
+    def _zone_rows(self) -> dict:
+        if getattr(self, "_targets", None) is None:
+            self._targets = {
+                "loc-home": [
+                    {"entity_id": "media_player.kitchen",
+                     "name": "Kitchen", "state": "idle",
+                     "volume_level": 0.35},
+                    {"entity_id": "media_player.living_room",
+                     "name": "Living room", "state": "playing",
+                     "volume_level": 0.55,
+                     "media_title": "[Other audio]",
+                     "media_position_s": 734.0},
+                    {"entity_id": "media_player.bedroom",
+                     "name": "Bedroom", "state": "off"}],
+                "loc-cabin": [
+                    {"entity_id": "media_player.porch", "name": "Porch",
+                     "state": "idle", "volume_level": 0.5}]}
+        return self._targets
+
+    def locations(self) -> list:
+        return [api_module.Location("loc-home", "Home"),
+                api_module.Location("loc-cabin", "Cabin")]
+
+    def cast_targets(self, location_id: str) -> list:
+        return [api_module.CastTarget.from_dict(t)
+                for t in self._zone_rows().get(location_id, [])]
+
+    def _target(self, entity_id: str) -> dict | None:
+        for rows in self._zone_rows().values():
+            for target in rows:
+                if target["entity_id"] == entity_id:
+                    return target
+        return None
+
+    def cast_play(self, body):
+        target = self._target(body.entity_id)
+        if target is not None:
+            target.update(state="playing",
+                          media_title=BY_ID[body.item_id]["title"],
+                          media_position_s=1840.0)
+        return api_module.CastPlayResult(
+            location_id=body.location_id or "", entity_id=body.entity_id,
+            item_id=body.item_id, position_s=body.position_s or 0.0)
+
+    def cast_transport(self, body):
+        target = self._target(body.entity_id)
+        if target is not None:
+            if body.action in ("play", "pause"):
+                target["state"] = "playing" if body.action == "play" \
+                    else "paused"
+            elif body.action == "stop":
+                target.update(state="idle", media_title=None,
+                              media_position_s=None)
+            elif body.action == "volume":
+                target["volume_level"] = body.value
+            elif body.action == "seek" and body.value is not None:
+                target["media_position_s"] = body.value
+        return api_module.CastTransportResult(ok=True, action=body.action,
+                                              entity_id=body.entity_id)
+
+
+class _Rng:
+    """A tiny fixed-seed generator: the demo looks the same every run."""
+
+    def __init__(self, seed: int) -> None:
+        self._state = (seed * 2654435761) % (2 ** 32) or 1
+
+    def next(self) -> float:
+        self._state = (1103515245 * self._state + 12345) % (2 ** 31)
+        return self._state / float(2 ** 31)
+
 
 def _cover_png(row: dict) -> bytes:
     """A stand-in cover: a flat colour field, one geometric form and the
@@ -391,11 +667,27 @@ def seed(home: str) -> None:
     library.refresh(store_module.LibraryQuery(limit=50))
     for item_id in BY_ID:
         library.refresh_detail(item_id)
-    for item_id in DOWNLOADED:
+    from xx_audiobook.download import BookFiles
+
+    files = BookFiles()
+    for index, item_id in enumerate(DOWNLOADED):
+        size = int(BY_ID[item_id]["hours"] * BYTES_PER_HOUR)
         db.downloads().upsert(store_module.Download(
             item_id, BY_ID[item_id]["title"],
-            store_module.DownloadState.DONE.value, 1000, 1000, None,
-            int(NOW * 1000), int(NOW * 1000)))
+            store_module.DownloadState.DONE.value, size, size, None,
+            int(NOW * 1000) - index * 86_400_000,
+            int(NOW * 1000) - index * 86_400_000))
+        # Sparse stand-ins: the storage figure reads real sizes, the
+        # disk holds nothing.
+        files.ensure_dirs(item_id)
+        with open(files.track_file(item_id, 0, f"{item_id}-f0"), "wb") as out:
+            out.truncate(size)
+    for index, (item_id, state, fraction, error) in enumerate(QUEUE):
+        size = int(BY_ID[item_id]["hours"] * BYTES_PER_HOUR)
+        stamp = int(NOW * 1000) + (len(QUEUE) - index) * 60_000
+        db.downloads().upsert(store_module.Download(
+            item_id, BY_ID[item_id]["title"], state, int(size * fraction),
+            size, error, stamp, stamp))
     BookmarkRepository(api, db).refresh("ph")
     prefs = prefs_module.load()
     prefs.last_item_id = LAST[0]

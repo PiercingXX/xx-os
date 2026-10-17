@@ -1,8 +1,8 @@
 """XX-Audiobook entry point: Adw.Application with the five-tab shell.
 
-The window (ui/shell.py) builds Library, Now Playing and the pushed
-views on the shared xx_ui design system with live theme switching;
-Downloads, Zones and Setup show one muted line until M4/M5.
+The window (ui/shell.py) builds the five tabs (Library, Playing,
+Downloads, Zones, Setup) and the pushed views on the shared xx_ui design
+system with live theme switching.
 """
 
 from __future__ import annotations
@@ -22,9 +22,7 @@ from xx_audiobook import prefs as prefs_module  # noqa: E402
 from xx_audiobook.paths import ensure_app_dirs  # noqa: E402
 from xx_audiobook.ui import shell as shell_module  # noqa: E402
 
-TABS: tuple = tuple(
-    (tab, label, shell_module.PLACEHOLDERS.get(tab, ""))
-    for tab, label, _spoken in shell_module.TABS)
+TABS: tuple = shell_module.TABS
 
 
 def build_window(app: Adw.Application, ctx=None):

@@ -1,10 +1,10 @@
 """The window: five bottom tabs, one navigation stack per tab, the
 mini-player above the bar (ui/navigation/AppNavHost.kt).
 
-Pushed views (Book, Series, Author, Narrator, Collections, Collection)
-open inside the tab you are on, which stays lit; reselecting a tab pops
-to its root. Downloads, Zones and Setup are later milestones and show
-one muted line.
+Pushed views (Book, Series, Author, Narrator, Collections, Collection,
+Stats, licenses) open inside the tab you are on, which stays lit;
+reselecting a tab pops to its root. A 403 not_granted covers the whole
+window with No access (Retry / Sign out) until access comes back.
 """
 
 from __future__ import annotations
@@ -19,8 +19,12 @@ from xx_audiobook.ui import common, style  # noqa: E402
 from xx_audiobook.ui.book import BookPage  # noqa: E402
 from xx_audiobook.ui.browse import (  # noqa: E402
     BrowsePage, CollectionPage, CollectionsPage)
+from xx_audiobook.ui.downloads import DownloadsPage  # noqa: E402
 from xx_audiobook.ui.library import LibraryPage  # noqa: E402
 from xx_audiobook.ui.playing import MiniPlayer, NowPlayingPage  # noqa: E402
+from xx_audiobook.ui.setup import NoAccessView, SetupPage  # noqa: E402
+from xx_audiobook.ui.stats import StatsPage  # noqa: E402
+from xx_audiobook.ui.zones import ZonesPage  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 
 TABS: tuple = (
@@ -30,11 +34,6 @@ TABS: tuple = (
     ("zones", "Zones", "Zones"),
     ("setup", "Setup", "Setup"),
 )
-PLACEHOLDERS = {
-    "downloads": "No downloaded books yet.",
-    "zones": "No speaker zones yet.",
-    "setup": "Sign in to set up audiobooks.",
-}
 
 
 class Nav:
@@ -68,6 +67,20 @@ class Nav:
     def now_playing(self) -> None:
         self._shell.show("playing")
 
+    def downloads(self) -> None:
+        self._shell.show("downloads")
+
+    def stats(self) -> None:
+        shell = self._shell
+        shell.push(StatsPage(shell.ctx, self, lambda: shell.window),
+                   "Listening stats")
+
+    def licenses(self) -> None:
+        from xx_audiobook.ui.setup import APP_NAME, license_entries
+
+        nav = self._shell.current_nav()
+        nav.push(widgets.licenses_page(nav, APP_NAME, license_entries()))
+
 
 class Shell:
     def __init__(self, window: Gtk.Window, ctx) -> None:
@@ -83,12 +96,17 @@ class Shell:
                                    self.nav.collections)
         self.playing = NowPlayingPage(ctx, self.nav.open_book,
                                       lambda: self.window)
+        self.downloads = DownloadsPage(ctx, self.nav.open_book,
+                                       lambda: self.window)
+        self.zones = ZonesPage(ctx, lambda: self.window)
+        self.setup = SetupPage(ctx, self.nav, lambda: self.window)
         roots = {"library": self.library.widget,
-                 "playing": self.playing.widget}
+                 "playing": self.playing.widget,
+                 "downloads": self.downloads.widget,
+                 "zones": self.zones.widget,
+                 "setup": self.setup.widget}
         for tab, label, _spoken in TABS:
-            root = roots.get(tab) or widgets.page(
-                widgets.page_header(label),
-                common.muted(PLACEHOLDERS[tab]))
+            root = roots[tab]
             nav = Adw.NavigationView()
             nav.add(Adw.NavigationPage.new_with_tag(root, label, tab))
             self.navs[tab] = nav
@@ -111,9 +129,22 @@ class Shell:
         root.append(self.stack)
         root.append(self.mini.widget)
         root.append(self.tabs)
-        self.root = root
+        self.no_access = NoAccessView(ctx, lambda: self.window)
+        self.root = Gtk.Stack()
+        self.root.add_named(root, "app")
+        self.root.add_named(self.no_access.widget, "no-access")
         ctx.player.connect(self._sync_mini)
+        ctx.connect("access-changed", self._sync_access)
+        ctx.connect("session-changed", self.library.refresh)
         self.show("library")
+
+    def _sync_access(self) -> None:
+        """403 not_granted: the whole window is No access until Retry
+        (or a sign-in) brings access back."""
+        denied = self.ctx.access_denied and self.ctx.signed_in
+        if denied:
+            self.no_access.render()
+        self.root.set_visible_child_name("no-access" if denied else "app")
 
     def current_nav(self) -> Adw.NavigationView:
         return self.navs[self.current]

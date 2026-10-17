@@ -637,6 +637,27 @@ only — "tests never use the network" means never beyond the fixture).
   zero-fill chart tests; review `not_started` gate test; full gate green.
   Shots: Zones, Stats, Setup (final matrix), contact sheets per theme.
 
+M4/M5 UI (built): `ui/downloads.py` (Active / On this phone / Failed or
+cancelled rows with covers, Cancel / Retry / Delete-asks-first, a
+playing book reopens streaming after delete, the "Waiting for Wi-Fi."
+banner, storage used; the Book page's Download goes through
+`AppContext.request_download`), `ui/setup.py` (account + origin, ADMIN
+badge, admin server status rows, skip / speed / rewind chips saved
+locally then `SettingsSync.local_edited()`, Wi-Fi only, storage, the
+theme line, Share logs = `applog.share_tail()` last 100 KB redacted to
+the clipboard + a 0600 cache file, Sign out asks first, About +
+licenses; Sign in only when hub + stored token both failed, password
+cleared from the entry once the request is built; full-screen No
+access on 403 `not_granted` with Retry / Sign out), `ui/zones.py`
+(Phone vs Zone indicator, the zone card with play/pause from the
+zone state, stop, ±30 s, volume, Bring back to phone after the
+confirmed stop; casting asks first; Now Playing's "Play on…" sheet),
+`ui/stats.py` (year switcher, figures, 30-day bars, monthly hairline
+bars, top books/authors, paged sessions with delete-asks-first) and
+`ui/reviews.py` (summary, Your review with the not-started gate,
+optimistic post with rollback via `ReviewsState.listener`, admin
+delete asks first). Shots: `SHEET=m45 tools/snap_all.sh`.
+
 ## 7. Orchestrator wiring (NOT done in this lane — do not edit those files here)
 
 After the parallel xx-auto lane lands: add `xx-audiobook` to `PROJECTS` in

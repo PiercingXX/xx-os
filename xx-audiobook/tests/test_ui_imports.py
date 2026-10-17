@@ -13,16 +13,13 @@ def test_main_imports_without_display():
         "library", "playing", "downloads", "zones", "setup"]
 
 
-def test_unbuilt_tabs_show_one_user_facing_line():
-    from xx_audiobook import main as main_module
+def test_every_tab_has_a_built_root_page():
+    from xx_audiobook.ui import shell
 
-    lines = {tab: text for tab, _label, text in main_module.TABS}
-    for tab in ("downloads", "zones", "setup"):
-        assert lines[tab].strip().endswith(".")
-    for _tab, label, text in main_module.TABS:
-        lowered = (label + text).lower()
-        for banned in ("lane", "milestone", "todo", "coming"):
-            assert banned not in lowered
+    for name in ("DownloadsPage", "ZonesPage", "SetupPage", "NoAccessView",
+                 "StatsPage"):
+        assert hasattr(shell, name)
+    assert not hasattr(shell, "PLACEHOLDERS")
 
 
 def test_every_tab_names_itself_for_screen_readers():

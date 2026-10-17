@@ -81,7 +81,7 @@ button.xx-ab-cell.on { background-color: @theme_fg_color;
   color: @theme_bg_color; border-color: @theme_fg_color; }
 button.xx-ab-cell.on label, button.xx-ab-cell.on image {
   color: @theme_bg_color; }
-.xx-ab-cell-label { font-size: ${tag}px; letter-spacing: 0.12em; }
+.xx-ab-cell-label { font-size: ${tag}px; letter-spacing: 0.06em; }
 
 .xx-ab-mini { background-color: @theme_bg_color;
   border-top: 1px solid @borders; }
@@ -98,10 +98,59 @@ button.xx-ab-mini-open { padding: 0; border-radius: 0; }
   color: @theme_fg_color; }
 dialog.xx-ab-dialog sheet, dialog.xx-ab-dialog floating-sheet {
   background-color: @card_bg_color; border-radius: 3px; }
+
+/* M4/M5: Downloads, Setup, Zones, Stats, reviews. */
+.xx-ab .xx-entry, .xx-ab-sheet .xx-entry { border-radius: 3px;
+  border-color: @borders; }
+.xx-ab .xx-entry:focus, .xx-ab-sheet .xx-entry:focus {
+  border-color: @theme_fg_color; }
+.xx-ab-figure { font-size: ${figure}px; font-weight: 300;
+  color: @theme_fg_color; }
+.xx-ab-hero { font-size: ${hero}px; font-weight: 300;
+  color: @theme_fg_color; }
+.xx-ab-cell-box { border-top: 1px solid @borders; padding: 12px 0; }
+.xx-ab-card { border: 1px solid @borders; border-radius: 3px;
+  padding: 14px 16px 16px 16px; }
+.xx-ab-card.live { border-color: @theme_fg_color; }
+.xx-ab-banner { border-top: 1px solid @borders;
+  border-bottom: 1px solid @borders; padding: 10px 0; }
+.xx-ab-banner image, .xx-ab-glyph { color: @insensitive_fg_color; }
+.xx-ab-glyph.on { color: @theme_fg_color; }
+.xx-ab-dot { font-size: ${meta}px; color: @insensitive_fg_color; }
+.xx-ab-dot.on { color: @theme_fg_color; }
+.xx-ab-badge { border: 1px solid @theme_fg_color; border-radius: 2px;
+  padding: 0 5px; font-size: ${tag}px; letter-spacing: 0.12em;
+  color: @theme_fg_color; }
+button.xx-ab-star { min-width: 48px; min-height: 48px; padding: 0;
+  border-radius: 3px; }
+button.xx-ab-star image { color: @insensitive_fg_color; }
+button.xx-ab-star.on image { color: @theme_fg_color; }
+.xx-ab-stars image { color: @insensitive_fg_color; }
+.xx-ab-stars image.on { color: @theme_fg_color; }
+scrolledwindow.xx-ab-text { border: 1px solid @borders;
+  border-radius: 3px; background-color: @card_bg_color; }
+scrolledwindow.xx-ab-text:focus-within { border-color: @theme_fg_color; }
+scrolledwindow.xx-ab-text textview, scrolledwindow.xx-ab-text text {
+  background-color: @card_bg_color; color: @theme_fg_color;
+  font-size: ${body}px; }
+.xx-ab-review { padding: 14px 0; border-bottom: 1px solid @borders; }
+.xx-ab-review.last { border-bottom: none; }
+.xx-ab-review.mine { border-left: 2px solid @theme_fg_color;
+  padding-left: 12px; }
+.xx-ab-session { padding: 10px 0; border-bottom: 1px solid @borders; }
+.xx-ab-session.last { border-bottom: none; }
+.xx-ab-chart { color: @theme_fg_color; }
+.xx-ab-step { min-width: 48px; min-height: 48px; padding: 0;
+  border-radius: 3px; border: 1px solid @borders; }
+.xx-ab-noaccess { padding: 48px 20px 24px 20px; }
+.xx-section-label.xx-ab-first { margin-top: 4px; }
+.xx-ab-head { margin-top: 18px; }
+.xx-ab-choice .xx-chip { padding: 0 2px; letter-spacing: 0.06em; }
 """)
 
 _BASE = {"tab": 10, "heading": 22, "np_title": 22, "label": 11, "meta": 12,
-         "ph_s": 15, "ph_m": 26, "ph_l": 44, "tag": 10, "readout": 40}
+         "ph_s": 15, "ph_m": 26, "ph_l": 44, "tag": 10, "readout": 40,
+         "figure": 26, "hero": 34, "body": 15}
 
 _provider = None
 scale = 1.0

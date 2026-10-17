@@ -179,6 +179,38 @@ def share_text() -> str:
     return text
 
 
+SETUP_SHARE_CAP_BYTES = 100 * 1024
+
+
+def share_tail(cap_bytes: int = SETUP_SHARE_CAP_BYTES) -> str:
+    """Setup's Share logs: the last crash, then the log file's newest
+    lines (the in-memory ring when there is no file), capped at
+    ``cap_bytes`` from the end and redacted line by line once more."""
+    parts = []
+    crashed = last_crash()
+    if crashed:
+        parts += ["--- last crash ---", crashed, ""]
+    parts.append("--- log ---")
+    body = ""
+    directory = _log_dir
+    if directory is not None:
+        chunks = []
+        for name in (PREV_NAME, LOG_NAME):
+            try:
+                chunks.append((directory / name).read_text(
+                    encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+        body = "".join(chunks)
+    parts.append(body.rstrip("\n") if body else dump())
+    text = "\n".join(redact(line) for line in "\n".join(parts).split("\n"))
+    encoded = text.encode("utf-8", "replace")
+    if len(encoded) > cap_bytes:
+        text = encoded[-cap_bytes:].decode("utf-8", "replace")
+        text = text.split("\n", 1)[-1]
+    return text
+
+
 def reset() -> None:
     global _logger, _log_dir
     with _lock:

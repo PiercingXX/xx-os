@@ -5,9 +5,12 @@ Linux phone port of the PiercingXX Android app `xx-audiobook` (source:
 server — now coming to postmarketOS / Mobian / FuriOS / PureOS phones running
 phoc (XX-WM or Phosh).
 
-Status: M1 (data/API/auth), M2 (player service) and M3 (Library, Book,
-Now Playing, mini-player, Series/Author/Narrator/Collections) built;
-Downloads, Zones and Setup follow (M4/M5). See [PORT_SPEC.md](PORT_SPEC.md).
+Status: M1 (data/API/auth), M2 (player service), M3 (Library, Book,
+Now Playing, mini-player, Series/Author/Narrator/Collections) and the
+M4/M5 screens (Downloads; Setup with Sign in, No access, playback and
+download prefs, server status, Share logs, About; Zones and Play on…;
+Listening stats; the Book page's Ratings & reviews) built. See
+[PORT_SPEC.md](PORT_SPEC.md).
 
 The FastAPI server (`ref/xx-audiobook/xx-audiobook-server`) is NOT ported: it
 already runs on Linux and stays the backend. The client speaks its contract
@@ -78,6 +81,8 @@ non-zero on any `snap: WARNING`):
 ```sh
 sh tools/snap_all.sh lane_shots            # every target
 sh tools/snap_all.sh lane_shots book playing
+SHEET=m45 EMPTY_TARGETS="downloads zones signin" \
+    sh tools/snap_all.sh lane_shots downloads setup zones stats
 ```
 
 Background playback and sync are opt-in systemd user units (M2/M4):

@@ -23,14 +23,17 @@ from xx_audiobook import paths as paths_module
 from xx_audiobook import prefs as prefs_module
 from xx_audiobook import repos as repos_module
 from xx_audiobook import restore as restore_module
+from xx_audiobook import reviews as reviews_module
 from xx_audiobook import store as store_module
 from xx_audiobook import timeline as timeline_module
+from xx_audiobook import zones as zones_module
 from xx_audiobook.applog import get_logger
 
 NOT_SIGNED_IN_LINE = "Not signed in. Sign in from Setup."
 OFFLINE_LINE = "Offline. Showing books on this phone."
 NO_PLAYER_LINE = "The player isn't running."
-DOWNLOAD_STUB_LINE = "Downloads aren't set up on this phone yet."
+NO_SIGN_IN_LINE = "Sign-in isn't available in this build."
+QUEUED_LINE = "Downloading. Follow it in Downloads."
 
 
 def error_line(error) -> str | None:
@@ -51,7 +54,8 @@ class AppContext:
     the player model and covers. ``start`` opens the DB off the main loop."""
 
     def __init__(self, api, session=None, client=None, db_path=None,
-                 now_ms=None) -> None:
+                 now_ms=None, scheduler=None,
+                 probe_network: bool = False) -> None:
         self.api = api
         self.session = session
         self.client = client
@@ -60,11 +64,20 @@ class AppContext:
         self.db = None
         self.library = self.progress = self.home = None
         self.browse = self.collections = self.bookmarks = None
+        self.downloads = None
         self.signed_in = False
+        self.started = False
+        self.access_denied = False
+        self.me = None
         self.downloaded: set = set()
         self.ui_prefs = {"library_grid": False}
+        self._scheduler = scheduler
+        self._probe_network = probe_network
         self._pool = ThreadPoolExecutor(4, thread_name_prefix="xx-ab-ui")
         self._listeners: dict = {}
+        self.zones = zones_module.ZonesState(api=api)
+        self.reviews = reviews_module.ReviewRepository(
+            api, on_changed=self._review_changed)
         self.player = PlayerModel(self)
         self.covers = CoverLoader(self)
 
@@ -77,13 +90,38 @@ class AppContext:
             except Exception as exc:  # noqa: BLE001 - handed to done
                 result, error = None, exc
                 get_logger().warning("worker: %s", type(exc).__name__)
-            if done is not None:
-                GLib.idle_add(lambda: (done(result, error), False)[1])
+            GLib.idle_add(lambda: (self._finish(done, result, error),
+                                   False)[1])
 
         self._pool.submit(_work)
 
+    def _finish(self, done, result, error) -> None:
+        if done is not None:
+            done(result, error)
+        self.check_session()
+
+    def check_session(self) -> None:
+        """After every worker: follow a 403 not_granted (full-screen no
+        access) and a 401 that signed the session out underneath us."""
+        session = self.session
+        if session is None:
+            return
+        denied = bool(session.access_denied)
+        if denied != self.access_denied:
+            self.access_denied = denied
+            self.emit("access-changed")
+        if self.signed_in and session.session is None:
+            self.signed_in = False
+            self.me = None
+            self.emit("session-changed")
+
     def connect(self, event: str, callback) -> None:
         self._listeners.setdefault(event, []).append(callback)
+
+    def disconnect(self, event: str, callback) -> None:
+        listeners = self._listeners.get(event, [])
+        if callback in listeners:
+            listeners.remove(callback)
 
     def emit(self, event: str, *args) -> None:
         for callback in list(self._listeners.get(event, [])):
@@ -105,6 +143,10 @@ class AppContext:
         self.collections = browse_module.CollectionsRepository(
             self.api, self.library)
         self.bookmarks = bookmarks_module.BookmarkRepository(self.api, db)
+        self.downloads = download_module.DownloadsState(
+            self.api, db, scheduler=(self._scheduler if self._scheduler
+                                     is not None
+                                     else download_module.RecordingScheduler()))
         self.ui_prefs = prefs_module.load_ui()
         self.downloaded = self.read_downloaded()
         if self.session is not None:
@@ -126,11 +168,233 @@ class AppContext:
             get_logger().warning("startup failed: %s", type(error).__name__)
             return
         self.player.start(restored)
+        self.started = True
         self.emit("ready")
+        if self.signed_in:
+            self._after_sign_in()
+        if self._probe_network:
+            self.downloads.submit_probe_network(
+                lambda _state, _err: self.emit("downloads-changed"))
 
     def read_downloaded(self) -> set:
         return {row.item_id for row in self.db.downloads().all()
                 if row.state == store_module.DownloadState.DONE.value}
+
+    # -- account ---------------------------------------------------------------
+
+    def account(self):
+        """The signed-in Session (origin, username, role, source) or None."""
+        return self.session.session if self.session is not None else None
+
+    @property
+    def is_admin(self) -> bool:
+        if self.me is not None and self.me.is_admin:
+            return True
+        account = self.account()
+        return bool(account is not None and account.is_admin)
+
+    @property
+    def me_id(self) -> str:
+        if self.me is not None and self.me.user_id:
+            return self.me.user_id
+        account = self.account()
+        return account.user_id if account is not None else ""
+
+    def _after_sign_in(self) -> None:
+        """Who am I (admin badge, own reviews; a 403 here shows No
+        access), settings catch-up, parked downloads resume."""
+        downloads = self.downloads
+
+        def _work():
+            me = self.api.me()
+            try:
+                repos_module.SettingsSync(
+                    self.api, prefs_module.PrefsStore()).sync()
+            except Exception:
+                pass
+            if downloads is not None:
+                downloads.repo.resume_signed_out(downloads.wifi_only())
+            return me
+
+        def _done(me, error) -> None:
+            if error is None and me is not None:
+                self.me = me
+                self.emit("account-changed")
+            self.emit("settings-changed")
+
+        self.run(_work, _done)
+
+    def recheck_access(self, done=None) -> None:
+        """No access → Retry: ask GET /api/me again."""
+        def _done(me, error) -> None:
+            if error is None and me is not None:
+                self.me = me
+                self.emit("account-changed")
+            if done is not None:
+                done(error)
+
+        self.run(self.api.me, _done)
+
+    def sign_in(self, origin: str, username: str, password: str,
+                done) -> None:
+        """POST {origin}/auth/login on a worker. The password goes only
+        into that request body: never stored, never logged."""
+        session = self.session
+        if session is None:
+            done(NO_SIGN_IN_LINE)
+            return
+
+        def _done(result, error) -> None:
+            if isinstance(result, auth_module.LoginSuccess):
+                self._signed_in()
+                done(None)
+                return
+            message = getattr(result, "message", None)
+            done(message or "Could not sign in. Try again.")
+
+        self.run(lambda: session.login(origin, username, password), _done)
+
+    def retry_hub(self, done) -> None:
+        """'I signed in to xx-apps — try again': hub probe, stored token."""
+        session = self.session
+        if session is None:
+            done(NO_SIGN_IN_LINE)
+            return
+
+        def _done(result, error) -> None:
+            if error is None and result is not None:
+                self._signed_in()
+                done(None)
+            else:
+                done("No xx-apps session on this phone yet. Sign in to "
+                     "xx-apps, or sign in here.")
+
+        self.run(session.start, _done)
+
+    def _signed_in(self) -> None:
+        self.signed_in = True
+        self.access_denied = False
+        self.emit("session-changed")
+        self.emit("access-changed")
+        self._after_sign_in()
+
+    def sign_out(self, done=None) -> None:
+        """Halt playback with a final write, forget the token (no wipe:
+        downloads and progress stay)."""
+        session, client = self.session, self.client
+
+        def _work():
+            if client is not None:
+                try:
+                    client.stop()
+                    client.clear_session()
+                except Exception:
+                    pass
+            if session is not None:
+                session.sign_out(wipe=False)
+
+        def _done(_result, _error) -> None:
+            self.signed_in = False
+            self.access_denied = False
+            self.me = None
+            self.player.signed_out()
+            self.emit("session-changed")
+            self.emit("access-changed")
+            if done is not None:
+                done()
+
+        self.run(_work, _done)
+
+    # -- settings ----------------------------------------------------------------
+
+    def save_settings(self, done=None, **changes) -> None:
+        """Skip / speed / rewind: saved here first, then PUT
+        /api/me/settings (LWW); returns whether the server took it."""
+        def _work():
+            prefs = prefs_module.load()
+            for key, value in changes.items():
+                setattr(prefs, key, value)
+            prefs_module.save(prefs)
+            return repos_module.SettingsSync(
+                self.api, prefs_module.PrefsStore()).local_edited()
+
+        def _done(synced, _error) -> None:
+            self.emit("settings-changed")
+            if done is not None:
+                done(bool(synced))
+
+        self.run(_work, _done)
+
+    # -- downloads ---------------------------------------------------------------
+
+    def request_download(self, item_id: str, title: str = "",
+                         done=None) -> None:
+        """The Book screen's Download: queue it (manifest + storage
+        check + the per-book unit); ``done(line)`` gets the one line."""
+        downloads = self.downloads
+        if downloads is None:
+            if done is not None:
+                done("Still opening. Try again in a moment.")
+            return
+
+        def _work():
+            ok, message = downloads.enqueue(item_id, title)
+            return ok, message, downloads.block_reason()
+
+        def _done(result, error) -> None:
+            if error is not None or result is None:
+                line = error_line(error)
+            else:
+                ok, message, blocked = result
+                if not ok:
+                    line = message or "Download failed."
+                elif blocked:
+                    line = "Queued. " + blocked
+                else:
+                    line = QUEUED_LINE
+            self.emit("downloads-changed")
+            if done is not None:
+                done(line)
+
+        self.run(_work, _done)
+
+    def download_action(self, action: str, item_id: str, done=None) -> None:
+        """cancel / retry / delete on a worker, then downloads-changed. A
+        deleted book that is playing carries on by streaming."""
+        downloads = self.downloads
+        if downloads is None:
+            return
+        playing = (action == "delete" and self.player.item_id == item_id
+                   and not self.player.restored)
+
+        def _work():
+            getattr(downloads, action)(item_id)
+            return self.read_downloaded()
+
+        def _done(downloaded, error) -> None:
+            if error is None and downloaded is not None:
+                self.downloaded = downloaded
+            if playing:
+                self.player.reopen_streaming()
+            self.emit("downloads-changed")
+            self.emit("library-changed")
+            if done is not None:
+                done(error)
+
+        self.run(_work, _done)
+
+    # -- reviews -----------------------------------------------------------------
+
+    def _review_changed(self, item_id: str) -> None:
+        """A review write landed (worker thread): refresh the cached
+        detail's star line, then tell the Book page."""
+        try:
+            if self.library is not None:
+                self.library.refresh_detail(item_id)
+        except Exception:
+            pass
+        GLib.idle_add(lambda: (self.emit("rating-changed", item_id),
+                               False)[1])
 
     def bearer(self) -> tuple | None:
         """(api_base, bearer) for the player service, or None."""
@@ -142,18 +406,14 @@ class AppContext:
         token, base = current
         return (base, token)
 
-    def request_download(self, item_id: str) -> str | None:
-        """The Book screen's Download (M4 wires the queue here); returns
-        the one line to show."""
-        return DOWNLOAD_STUB_LINE
-
     def save_ui_prefs(self, **values) -> None:
         self.ui_prefs.update(values)
         self.run(lambda: prefs_module.save_ui(values))
 
 
 def default_context() -> AppContext:
-    """Production wiring: libsecret + hub probe, urllib API, D-Bus player."""
+    """Production wiring: libsecret + hub probe, urllib API, D-Bus player,
+    systemd download units, NetworkManager for Wi-Fi only."""
     from xx_audiobook.player import PlayerClient
 
     store = prefs_module.PrefsStore()
@@ -163,7 +423,9 @@ def default_context() -> AppContext:
         owner_set=store.set_owner_user_id)
     return AppContext(api_module.AudiobookApi(
         base_url=session.live_api_base, tokens=session),
-                      session=session, client=PlayerClient())
+                      session=session, client=PlayerClient(),
+                      scheduler=download_module.SystemdScheduler(),
+                      probe_network=True)
 
 
 # -- player model ---------------------------------------------------------------
@@ -441,6 +703,43 @@ class PlayerModel:
             self.sleep_remaining_ms = 0
             self.sleep_end_of_chapter = False
         self._command("cancel_sleep", local=_local)
+
+    def pause(self) -> None:
+        """Pause only (casting to a zone hands the book over)."""
+        if not self.playing:
+            return
+        self._command("pause", local=lambda: setattr(
+            self, "status", "Paused"))
+
+    def reopen_streaming(self) -> None:
+        """The downloaded copy of the open book was deleted: reopen it
+        from the server at the same position, playing if it was."""
+        if not self.has_book or self.restored:
+            return
+        client = self._ctx.client
+        if client is None:
+            self.changed()
+            return
+        item_id, at_ms, was_playing = (self.item_id, self.position_ms,
+                                       self.playing)
+        session = self._ctx.bearer()
+
+        def _work():
+            if session is not None:
+                client.set_session(*session)
+            client.open(item_id)
+            client.seek_to_us(at_ms * 1000)
+            if was_playing:
+                client.play()
+            return client.get_state()
+
+        self._ctx.run(_work, self._after)
+
+    def signed_out(self) -> None:
+        """Sign-out halted the service; the mini-player shows it paused."""
+        if self.has_book and self.status == "Playing":
+            self.status = "Paused"
+            self.changed()
 
     def set_dragging(self, dragging: bool) -> None:
         self._dragging = dragging

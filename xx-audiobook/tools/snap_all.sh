@@ -1,7 +1,10 @@
 #!/bin/sh
-# Seeded + empty screenshots of every M3 screen in four themes, plus
-# 320 px and text-scale-2 fit checks:
+# Seeded + empty screenshots of every screen in four themes, plus 320 px
+# and text-scale-2 fit checks:
 #   xx-audiobook/tools/snap_all.sh OUTDIR [TARGET ...]
+# Env: THEMES, EMPTY_TARGETS, FIT320, SCALE2 (target lists) and SHEET
+# (sheet file prefix) narrow a run, e.g. the M4/M5 screens only:
+#   SHEET=m45 sh xx-audiobook/tools/snap_all.sh OUT $M45_TARGETS
 # Seeds a temp HOME per theme (tools/demo_seed.py), renders each target
 # with scripts/snap.py through tools/snap_app.py (no network, no
 # keyring, no player service), and montages one sheet per theme.
@@ -14,9 +17,21 @@ shift
 mkdir -p "$OUTDIR"
 PY=${PYTHON:-python3}
 THEMES=${THEMES:-"amoled paper graphite aura"}
-TARGETS=${*:-"library library-grid library-search book book-chapters
+M3_TARGETS="library library-grid library-search book book-chapters
 book-damaged conflict playing playing-restored sheet-chapters sheet-speed
-sheet-sleep sheet-bookmark series author narrator collections collection"}
+sheet-sleep sheet-bookmark series author narrator collections collection"
+M45_TARGETS="downloads downloads-wifi download-delete setup setup-playback
+setup-bottom signout licenses noaccess stats stats-lower stats-sessions
+stats-delete zones zones-cast zones-active playon-sheet book-reviews
+review-mine review-gate review-editor review-delete"
+TARGETS=${*:-"$M3_TARGETS $M45_TARGETS"}
+EMPTY_TARGETS=${EMPTY_TARGETS:-"library playing-restored downloads zones
+signin"}
+FIT320=${FIT320:-"library book playing sheet-speed series downloads
+zones-active setup-playback stats signin review-editor"}
+SCALE2=${SCALE2:-"library book playing downloads zones-active setup
+setup-playback stats book-reviews signin"}
+SHEET=${SHEET:-sheet}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -73,7 +88,7 @@ for theme in $THEMES; do
             360x720
         labels="$labels -label $target $out"
     done
-    for target in library playing-restored; do
+    for target in $EMPTY_TARGETS; do
         out="$WORK/$theme-empty-$target.png"
         snap_one "$(home_for "$theme" empty 1)" "$out" "$target" empty \
             360x720
@@ -81,26 +96,26 @@ for theme in $THEMES; do
     done
     # shellcheck disable=SC2086
     montage $labels -tile 6x -geometry 360x720+6+6 -background '#202020' \
-        -fill white -pointsize 22 "$OUTDIR/sheet-$theme.png" \
+        -fill white -pointsize 22 "$OUTDIR/$SHEET-$theme.png" \
         || fail "montage failed for $theme"
     cp "$WORK/$theme-"*.png "$OUTDIR/"
 done
 
 # Fit checks: 320 px wide, and text-size-scale 2 at 360 px.
 labels=""
-for target in library book playing sheet-speed series; do
+for target in $FIT320; do
     out="$WORK/fit320-$target.png"
     snap_one "$(home_for amoled seeded 1)" "$out" "$target" seeded 320x720
     labels="$labels -label 320-$target $out"
 done
-for target in library book playing; do
+for target in $SCALE2; do
     out="$WORK/scale2-$target.png"
     snap_one "$(home_for amoled seeded 2)" "$out" "$target" seeded 360x720
     labels="$labels -label scale2-$target $out"
 done
 # shellcheck disable=SC2086
 montage $labels -tile 8x -geometry +6+6 -background '#202020' \
-    -fill white -pointsize 22 "$OUTDIR/sheet-fit.png" \
+    -fill white -pointsize 22 "$OUTDIR/$SHEET-fit.png" \
     || fail "montage failed for fit"
 cp "$WORK/fit320-"*.png "$WORK/scale2-"*.png "$OUTDIR/"
-echo "wrote $OUTDIR/sheet-{$(echo "$THEMES" | tr ' ' ,)}.png and sheet-fit.png"
+echo "wrote $OUTDIR/$SHEET-{$(echo "$THEMES" | tr ' ' ,)}.png and $SHEET-fit.png"

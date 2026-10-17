@@ -78,6 +78,148 @@ def scroll_later(page_widget, value: float) -> None:
     GLib.timeout_add(150, _step)  # noqa: F821
 
 
+def lower(cls, keep) -> None:
+    """Show a long page from a marker down: a late scroll never lands
+    headless, so every render hides the body children before the first
+    one ``keep(page, child)`` accepts."""
+    render = cls._render
+
+    def _lower(self) -> None:
+        render(self)
+        child = self.body.get_first_child()
+        while child is not None and not keep(self, child):
+            child.set_visible(False)
+            child = child.get_next_sibling()
+
+    cls._render = _lower
+
+
+def caption_is(*texts):
+    def _keep(_page, child) -> bool:
+        return isinstance(child, Gtk.Label) and any(  # noqa: F821
+            child.get_text().startswith(t) for t in texts)
+    return _keep
+
+
+def when(ready, action, every: int = 120, tries: int = 40) -> None:
+    """Run ``action`` once ``ready()`` holds (data lands on workers)."""
+    left = [tries]
+
+    def _poll() -> bool:
+        left[0] -= 1
+        if ready():
+            action()
+            return False
+        return left[0] > 0
+
+    GLib.timeout_add(every, _poll)  # noqa: F821
+
+
+def _m45(target: str) -> None:
+    from xx_audiobook import download as download_module
+
+    if target == "downloads-wifi":
+        def _metered() -> None:
+            ctx.downloads.network.on_facts(download_module.Facts(
+                internet=True, validated=True, not_metered=False))
+            ctx.emit("downloads-changed")
+
+        when(lambda: ctx.downloads is not None, _metered)
+        shell.show("downloads")
+    elif target == "download-delete":
+        play()
+        shell.show("downloads")
+        page = shell.downloads
+        when(lambda: page.view.done,
+             lambda: page.ask_delete(page.view.done[0]))
+    elif target in ("setup-playback", "setup-bottom"):
+        from xx_audiobook.ui.setup import SetupPage
+
+        lower(SetupPage, caption_is(
+            "PLAYBACK" if target == "setup-playback" else "DOWNLOADS"))
+        shell.show("setup")
+    elif target == "signout":
+        shell.show("setup")
+        when(lambda: shell.setup.loaded, shell.setup.ask_sign_out)
+    elif target == "licenses":
+        shell.show("setup")
+        when(lambda: ctx.started, nav.licenses)
+    elif target == "noaccess":
+        def _deny() -> None:
+            ctx.session.on_access(False)
+            ctx.check_session()
+
+        when(lambda: ctx.started and ctx.signed_in, _deny)
+    elif target in ("stats", "stats-lower", "stats-sessions",
+                    "stats-delete"):
+        from xx_audiobook.ui.stats import StatsPage
+
+        if target == "stats-lower":
+            lower(StatsPage, caption_is("BY MONTH"))
+        elif target in ("stats-sessions", "stats-delete"):
+            lower(StatsPage, caption_is("RECENT SESSIONS"))
+        shell.show("setup")
+        when(lambda: ctx.started, nav.stats)
+        if target == "stats-delete":
+            when(lambda: getattr(shell, "top_page", None) is not None
+                 and shell.top_page.state.history().sessions,
+                 lambda: shell.top_page.ask_delete(
+                     shell.top_page.state.history().sessions[0]))
+    elif target in ("zones-cast", "zones-active", "playon-sheet"):
+        play()
+        shell.show("playing" if target == "playon-sheet" else "zones")
+
+        def _ready() -> bool:
+            snap = ctx.zones.snapshot()
+            return bool(snap.selected and snap.targets.get(snap.selected))
+
+        def _go() -> None:
+            snap = ctx.zones.snapshot()
+            kitchen = snap.targets[snap.selected][0]
+            if target == "zones-cast":
+                from xx_audiobook.ui.zones import ask_cast
+
+                ask_cast(ctx, win, kitchen)  # noqa: F821
+            elif target == "zones-active":
+                ctx.zones.play_on(kitchen, ctx.player.item_id,
+                                  ctx.player.position_ms / 1000)
+                ctx.zones.load_targets(snap.selected)
+                ctx.player.status = "Paused"
+                ctx.player.changed()
+                ctx.emit("zones-changed")
+            else:
+                shell.playing.open_play_on()
+
+        when(_ready, _go)
+    elif target in ("book-reviews", "review-mine", "review-gate",
+                    "review-editor", "review-delete"):
+        from xx_audiobook.ui.book import BookPage
+
+        def _reviews_first(page, child) -> bool:
+            return child is page.reviews.widget
+
+        lower(BookPage, _reviews_first)
+        item = {"review-mine": "lw", "review-gate": "du"}.get(target, "ph")
+        book(item)
+
+        def _block_ready() -> bool:
+            page = getattr(shell, "top_page", None)
+            return (page is not None and page.reviews.state is not None
+                    and page.reviews.state.ui().page is not None)
+
+        def _act() -> None:
+            block = shell.top_page.reviews
+            if target == "review-editor":
+                block._start_with_stars(4)
+                block.text.get_buffer().set_text(
+                    "[Draft] A placeholder comment.")
+            elif target == "review-delete":
+                block.ask_delete(block.state.ui().others[0])
+
+        if target in ("review-editor", "review-delete"):
+            when(_block_ready, _act)
+
+
 if TARGET == "library-grid":
     shell.library.toggle_grid()
     shell.library.folded |= {"continue", "continue_series"}
@@ -144,5 +286,13 @@ elif TARGET == "collection":
 
     nav.collection(ListRow("col-hugo", "Hugo winners", "collection",
                            "Best Novel, read aloud.", 5))
-elif TARGET in ("downloads", "zones", "setup"):
-    shell.show(TARGET)
+elif TARGET in ("downloads", "zones", "setup", "signin"):
+    shell.show("setup" if TARGET == "signin" else TARGET)
+    seeded = os.environ.get("SNAP_SCENARIO", "seeded") != "empty"
+    if TARGET == "zones" and seeded:
+        play()
+    if TARGET == "signin" and seeded:
+        # Fit checks run on the seeded HOME: sign out (keeps the books).
+        when(lambda: ctx.started and ctx.signed_in, ctx.sign_out)
+else:
+    _m45(TARGET)

@@ -326,10 +326,31 @@ def book_tile(ctx, item, on_open, px: int = 0) -> Gtk.Button:
     return tile
 
 
-def section(text: str) -> Gtk.Label:
+def section(text: str, first: bool = False) -> Gtk.Label:
+    """A caps section label; ``first`` sits right under a tab's title."""
     head = widgets.section_label(text)
-    head.set_margin_top(20)
+    if first:
+        head.add_css_class("xx-ab-first")
+    else:
+        head.set_margin_top(20)
     return head
+
+
+def section_with(text: str, icon: str, spoken: str, callback,
+                 first: bool = False) -> Gtk.Box:
+    """A section caption with one labelled 48 px action at its end."""
+    row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
+    row.add_css_class("xx-ab-head")
+    if first:
+        row.set_margin_top(0)
+    head = caps(text)
+    head.set_hexpand(True)
+    head.set_valign(Gtk.Align.CENTER)
+    row.append(head)
+    action = icon_button(icon, spoken, callback)
+    action.set_valign(Gtk.Align.CENTER)
+    row.append(action)
+    return row
 
 
 # -- skip glyph ----------------------------------------------------------------
@@ -569,3 +590,104 @@ def confirm(parent: Gtk.Widget, heading: str, body: str, responses: list,
 
 def later(ms: int, callback) -> None:
     GLib.timeout_add(ms, lambda: (callback(), False)[1])
+
+
+# -- M4/M5 building blocks -----------------------------------------------------
+
+
+def page_top(title: str, actions: list = ()) -> Gtk.Box:
+    """A tab root's header: the display title at the gutter and labelled
+    48 px icon actions, (icon, spoken, callback), like the Library."""
+    top = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
+    top.add_css_class("xx-page-body")
+    top.add_css_class("xx-page-top")
+    heading = widgets.label(title, "xx-display")
+    heading.add_css_class("xx-display-face")
+    heading.set_hexpand(True)
+    heading.set_ellipsize(Pango.EllipsizeMode.END)
+    heading.set_max_width_chars(12)
+    top.append(heading)
+    for icon, spoken, callback in actions:
+        top.append(icon_button(icon, spoken, callback))
+    return top
+
+
+def glyph(icon: str, px: int = 20, on: bool = False) -> Gtk.Image:
+    image = widgets.icon_image(icon, px)
+    image.add_css_class("xx-ab-glyph")
+    if on:
+        image.add_css_class("on")
+    return image
+
+
+def bar(fraction: float, spoken: str) -> Gtk.ProgressBar:
+    """The 2 px hairline as a chart bar (its own spoken value)."""
+    widget = line(fraction)
+    widget.update_property([Gtk.AccessibleProperty.LABEL], [spoken])
+    return widget
+
+
+def stars(value: float, px: int = 14) -> Gtk.Box:
+    """Five read-only stars, filled up to the rounded value."""
+    box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 2)
+    box.add_css_class("xx-ab-stars")
+    whole = int(round(min(max(value or 0.0, 0.0), 5.0)))
+    for index in range(5):
+        star = widgets.icon_image(
+            "starred-symbolic" if index < whole else "non-starred-symbolic",
+            px)
+        if index < whole:
+            star.add_css_class("on")
+        box.append(star)
+    box.set_valign(Gtk.Align.CENTER)
+    box.update_property([Gtk.AccessibleProperty.LABEL],
+                        [fmt.stars_text(value)])
+    return box
+
+
+def dot(on: bool, spoken: str) -> Gtk.Label:
+    """● working / ○ not: a status mark in text, never color alone."""
+    mark = Gtk.Label(label="●" if on else "○")
+    mark.add_css_class("xx-ab-dot")
+    if on:
+        mark.add_css_class("on")
+    mark.set_valign(Gtk.Align.CENTER)
+    mark.update_property([Gtk.AccessibleProperty.LABEL], [spoken])
+    return mark
+
+
+def badge(text: str) -> Gtk.Label:
+    tag = Gtk.Label(label=text.upper())
+    tag.add_css_class("xx-ab-badge")
+    tag.set_valign(Gtk.Align.CENTER)
+    tag.set_halign(Gtk.Align.START)
+    return tag
+
+
+def tap_row(child: Gtk.Widget, spoken: str, callback,
+            last: bool = False) -> Gtk.Button:
+    """A full-width hairline row button around ``child``."""
+    row = Gtk.Button()
+    row.add_css_class("xx-ab-row")
+    if last:
+        row.add_css_class("last")
+    row.set_child(child)
+    row.update_property([Gtk.AccessibleProperty.LABEL], [spoken])
+    row.connect("clicked", lambda _b: callback())
+    return row
+
+
+def figure(value: str, caption: str) -> Gtk.Box:
+    """A big light number over a caps caption (stats tiles)."""
+    box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
+    box.append(label(value, "xx-ab-figure xx-ab-num", chars=8))
+    box.append(caps(caption))
+    box.update_property([Gtk.AccessibleProperty.LABEL],
+                        [f"{caption}: {value}"])
+    return box
+
+
+def spacer(px: int) -> Gtk.Box:
+    box = Gtk.Box()
+    box.set_size_request(-1, px)
+    return box

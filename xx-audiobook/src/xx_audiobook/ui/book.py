@@ -1,7 +1,9 @@
 """Book (M3): cover and metadata (authors, narrators, series open their
 views), the damaged state, Play / Resume, Download, Mark finished,
-description, chapters (first 5, then all), bookmarks and the "Where were
-you?" prompt (ui/detail/BookScreen.kt; reviews arrive with M5).
+Ratings & reviews (ui/reviews.py), description, chapters (first 5, then
+all), bookmarks and the "Where were you?" prompt (ui/detail/BookScreen.kt).
+Download queues the book (M4) and then tracks it: "Downloading 42%",
+"Downloaded" (both open Downloads), "Retry download".
 
 Offline-first: the cached detail renders at once, the server's answer
 replaces it when it arrives; with neither, the library row's title and
@@ -20,6 +22,7 @@ from xx_audiobook import browse as browse_module  # noqa: E402
 from xx_audiobook import fmt  # noqa: E402
 from xx_audiobook.ui import common, style  # noqa: E402
 from xx_audiobook.ui.context import error_line  # noqa: E402
+from xx_audiobook.ui.reviews import ReviewsBlock  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 
 CHAPTERS_COLLAPSED = 5
@@ -37,27 +40,42 @@ class BookPage:
         self.status: str | None = None
         self.loading = True
         self.all_chapters = False
+        self.download_state: dict | None = None
         self.body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
         self.body.set_margin_bottom(24)
         header = common.header(nav.back, "Book")
         self.widget = widgets.page(header, self.body)
+        self.reviews = ReviewsBlock(ctx, item_id, self.play,
+                                    self._finished_marked,
+                                    lambda: self.widget)
         self._render()
         self._load()
         self._playing_chapter = -1
         self._seen = None
         self._unlisten = None
+        self._events = (("downloads-changed", self._reread),
+                        ("rating-changed", self._rating_changed),
+                        ("account-changed", self.reviews.resolve_me))
         self.widget.connect("map", self._mapped)
         self.widget.connect("unmap", self._unmapped)
 
     def _mapped(self, _widget) -> None:
         if self._unlisten is None:
             self._unlisten = self.ctx.player.connect(self._player_changed)
+            for event, callback in self._events:
+                self.ctx.connect(event, callback)
         self._player_changed()
 
     def _unmapped(self, _widget) -> None:
         if self._unlisten is not None:
             self._unlisten()
             self._unlisten = None
+            for event, callback in self._events:
+                self.ctx.disconnect(event, callback)
+
+    def _download_status(self) -> dict | None:
+        downloads = self.ctx.downloads
+        return downloads.status(self.item_id) if downloads else None
 
     # -- data ---------------------------------------------------------------------
 
@@ -67,7 +85,8 @@ class BookPage:
         def _cached():
             return (ctx.library.cached_detail(item_id),
                     ctx.progress.get(item_id),
-                    ctx.bookmarks.observe(item_id))
+                    ctx.bookmarks.observe(item_id),
+                    self._download_status())
 
         def _fresh():
             detail, error = ctx.library.refresh_detail(item_id)
@@ -78,7 +97,8 @@ class BookPage:
 
         def _got_cache(result, error) -> None:
             if error is None:
-                cached, self.progress, self.marks = result
+                (cached, self.progress, self.marks,
+                 self.download_state) = result
                 self.detail = self.detail or cached
                 self._render()
             ctx.run(_fresh, _got_fresh)
@@ -98,14 +118,32 @@ class BookPage:
         ctx, item_id = self.ctx, self.item_id
 
         def _read():
-            return ctx.progress.get(item_id), ctx.bookmarks.observe(item_id)
+            return (ctx.progress.get(item_id), ctx.bookmarks.observe(item_id),
+                    self._download_status())
 
         def _done(result, error) -> None:
             if error is None:
-                self.progress, self.marks = result
+                self.progress, self.marks, self.download_state = result
                 self._render()
 
         ctx.run(_read, _done)
+
+    def _rating_changed(self, item_id: str) -> None:
+        """A review landed: the cached detail carries the new star line."""
+        if item_id != self.item_id:
+            return
+
+        def _done(detail, error) -> None:
+            if error is None and detail is not None:
+                self.detail = detail
+                self._render()
+
+        self.ctx.run(lambda: self.ctx.library.cached_detail(self.item_id),
+                     _done)
+
+    def _finished_marked(self) -> None:
+        self.ctx.emit("library-changed")
+        self._reread()
 
     def _player_changed(self) -> None:
         player = self.ctx.player
@@ -152,6 +190,9 @@ class BookPage:
         if not detail.playable:
             body.append(common.muted(fmt.DAMAGED_LINE))
         body.append(self._actions(detail))
+        self.reviews.set_eligibility(self._position_s() > 0
+                                     or self._finished())
+        body.append(self.reviews.widget)
         paragraphs = fmt.description_paragraphs(detail.description)
         if paragraphs:
             body.append(common.section("About"))
@@ -275,7 +316,8 @@ class BookPage:
         box.append(play)
         row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 10)
         row.set_homogeneous(True)
-        download = widgets.outline_button("Download", self.download)
+        download = widgets.outline_button(self._download_text(),
+                                          self.download)
         download.set_sensitive(detail.playable and not detail.missing)
         common.fit(download, 14)
         mark = widgets.outline_button(
@@ -403,9 +445,39 @@ class BookPage:
             [("phone", "This phone", "outline"),
              ("server", "Other device", "primary")], _answer)
 
+    def _download_text(self) -> str:
+        status = self.download_state or {}
+        state = status.get("state")
+        if state == "Running":
+            total = status.get("bytes_total") or 0
+            done = status.get("bytes_done") or 0
+            return (f"Downloading {fmt.percent(done / total)}%"
+                    if total else "Downloading")
+        if state == "Queued":
+            return "Queued"
+        if state == "Done":
+            return "Downloaded"
+        if state in ("Failed", "Cancelled"):
+            return "Retry download"
+        return "Download"
+
     def download(self) -> None:
-        self.status = self.ctx.request_download(self.item_id)
+        state = (self.download_state or {}).get("state")
+        if state in ("Running", "Queued", "Done"):
+            self.nav.downloads()
+            return
+        if state in ("Failed", "Cancelled"):
+            self.ctx.download_action("retry", self.item_id)
+            return
+
+        def _done(line) -> None:
+            self.status = line
+            self._reread()
+
+        title = self.detail.title if self.detail else ""
+        self.status = "Queueing…"
         self._render()
+        self.ctx.request_download(self.item_id, title, _done)
 
     def set_finished(self, finished: bool) -> None:
         ctx, item_id = self.ctx, self.item_id

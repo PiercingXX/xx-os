@@ -100,3 +100,66 @@ def description_paragraphs(text: str) -> list[str]:
     """'\\n'-separated paragraphs, blank ones dropped (descriptionParagraphs)."""
     return [p.strip() for p in (text or "").replace("\r", "").split("\n")
             if p.strip()]
+
+
+def size_text(count: int | None) -> str:
+    """Byte counts the way storage reads: '0 B', '940 KB', '812 MB',
+    '1.2 GB' (decimal units, one decimal place from GB up)."""
+    value = max(int(count or 0), 0)
+    if value < 1000:
+        return f"{value} B"
+    for unit, scale in (("KB", 1e3), ("MB", 1e6)):
+        if value < scale * 1000:
+            return f"{int(value / scale)} {unit}"
+    if value < 1e12:
+        return f"{value / 1e9:.1f} GB"
+    return f"{value / 1e12:.1f} TB"
+
+
+def stars_text(stars) -> str:
+    """'4 of 5 stars' for screen readers (whole stars)."""
+    whole = int(round(min(max(float(stars or 0), 0.0), 5.0)))
+    return f"{whole} of 5 stars"
+
+
+def ratings_count(count: int) -> str:
+    return f"{count} rating" if count == 1 else f"{count} ratings"
+
+
+def day_text(epoch_s: float | None, today=None) -> str:
+    """'Today' / 'Yesterday' / 'Mar 3' / 'Mar 3, 2024' (local time)."""
+    import datetime as _dt
+
+    if not epoch_s:
+        return ""
+    day = _dt.datetime.fromtimestamp(epoch_s).date()
+    today = today or _dt.date.today()
+    delta = (today - day).days
+    if delta == 0:
+        return "Today"
+    if delta == 1:
+        return "Yesterday"
+    text = f"{day.strftime('%b')} {day.day}"
+    return text if day.year == today.year else f"{text}, {day.year}"
+
+
+def clock_text(epoch_s: float | None) -> str:
+    """'14:05' in local time."""
+    import datetime as _dt
+
+    if not epoch_s:
+        return ""
+    return _dt.datetime.fromtimestamp(epoch_s).strftime("%H:%M")
+
+
+def short_hours(seconds: float) -> str:
+    """Chart labels: '12 h', '1.5 h', '40 m', '0'."""
+    total = max(int(seconds), 0)
+    if total >= 3600:
+        hours = total / 3600
+        if hours >= 10 or abs(hours - round(hours)) < 0.05:
+            return f"{round(hours)} h"
+        return f"{hours:.1f} h"
+    if total >= 60:
+        return f"{total // 60} m"
+    return "0"
