@@ -333,22 +333,19 @@ class LibraryPage:
             text.append(sub)
         line.append(text)
         if row.state == FAILED:
-            retry = common.icon_button(
+            trailing = common.icon_button(
                 "view-refresh-symbolic", f"Retry {track.title}",
                 lambda: (ui.player.download([menus.download_payload(
                     "track", track.id, track.title, track)]),
                     common.toast(ui, "Trying again")))
-            line.append(retry)
         elif row.state in (ACTIVE, QUEUED):
-            cancel = common.icon_button(
+            trailing = common.icon_button(
                 "window-close-symbolic", f"Cancel {track.title}",
                 lambda: ui.player.remove_download(track.id))
-            line.append(cancel)
         else:
-            more = common.icon_button(
+            trailing = common.icon_button(
                 "view-more-symbolic", f"More options for {track.title}",
                 lambda: menus.track_menu(ui, track))
-            line.append(more)
         button.set_child(line)
         common.name(button, track.title)
         if row.state == DONE:
@@ -357,7 +354,7 @@ class LibraryPage:
                 track, tracks, {"type": "offline",
                                 "title": "On this phone"}))
             common.on_long_press(button, lambda: menus.track_menu(ui, track))
-        return button
+        return common.beside(button, line, trailing)
 
     def _retry(self, track: Track) -> None:
         self.ui.player.download([menus.download_payload(

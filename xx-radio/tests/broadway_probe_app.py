@@ -75,6 +75,10 @@ def main(argv: list[str]) -> int:
                 break
             pump(250)
 
+        for spoken in _buttons_in_buttons(window):
+            print(f"FAIL: a button inside a button never gets a tap: "
+                  f"{spoken!r}")
+            failed = True
         texts = _label_texts(window)
         for text in texts:
             print(f"LABEL:{text}")
@@ -119,6 +123,23 @@ def _label_texts(widget) -> list[str]:
         texts.extend(_label_texts(child))
         child = child.get_next_sibling()
     return texts
+
+
+def _buttons_in_buttons(widget, inside: bool = False) -> list[str]:
+    """Buttons nested in a button. GTK 4 buttons click in the capture
+    phase, so the outer one takes every tap that ends on the inner one
+    (a row's More button played the song instead of opening its menu)."""
+    from gi.repository import Gtk
+
+    found: list[str] = []
+    is_button = isinstance(widget, Gtk.Button)
+    if is_button and inside:
+        found.append(widget.get_tooltip_text() or type(widget).__name__)
+    child = widget.get_first_child()
+    while child is not None:
+        found.extend(_buttons_in_buttons(child, inside or is_button))
+        child = child.get_next_sibling()
+    return found
 
 
 if __name__ == "__main__":

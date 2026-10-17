@@ -529,11 +529,32 @@ def on_long_press(widget: Gtk.Widget, callback) -> None:
 
 # -- rows and tiles ---------------------------------------------------------------
 
+def beside(row: Gtk.Button, line: Gtk.Box, trailing: Gtk.Widget
+           ) -> Gtk.Overlay:
+    """``row`` with its trailing target (More, Retry, Cancel) laid over
+    its end, never inside it. A GTK 4 button takes its click in the
+    capture phase, so a button nested in a row button never fires: the
+    row claims every tap that ends on it (touch and mouse alike) and
+    plays the song instead. ``line`` (the row's content) keeps room the
+    width of the target, so the row looks the same."""
+    room = Gtk.Box()
+    widths = Gtk.SizeGroup.new(Gtk.SizeGroupMode.HORIZONTAL)
+    widths.add_widget(room)
+    widths.add_widget(trailing)
+    line.append(room)
+    trailing.set_halign(Gtk.Align.END)
+    trailing.set_valign(Gtk.Align.CENTER)
+    holder = Gtk.Overlay()
+    holder.set_child(row)
+    holder.add_overlay(trailing)
+    return holder
+
+
 def track_row(ui, track: Track, on_play, on_menu=None, *,
               number: int | None = None, now: bool = False,
               extra: str = "", offline: bool = False, last: bool = False,
               show_art: bool = True, meta: str | None = None,
-              lead: str = "") -> Gtk.Button:
+              lead: str = "") -> Gtk.Widget:
     """A song row: art (or its number), title, artists, duration, a
     labelled More button; long-press opens the same menu. Minimal Mode:
     title and artists in words, ``▸`` on the playing one, no art or
@@ -598,19 +619,18 @@ def track_row(ui, track: Track, on_play, on_menu=None, *,
         when.set_ellipsize(Pango.EllipsizeMode.NONE)
         when.set_valign(Gtk.Align.CENTER)
         box.append(when)
-    if on_menu is not None:
-        more = icon_button("view-more-symbolic",
-                           f"More options for {track.title}", on_menu)
-        box.append(more)
     row.set_child(box)
     name(row, f"{track.title}, {track.artist_line}".strip(", "))
     row.connect("clicked", lambda _b: on_play())
     on_long_press(row, on_menu)
-    return row
+    if on_menu is None:
+        return row
+    return beside(row, box, icon_button(
+        "view-more-symbolic", f"More options for {track.title}", on_menu))
 
 
 def item_row(ui, item: Item, on_open, on_menu=None, *, last: bool = False,
-             line_text: str | None = None) -> Gtk.Button:
+             line_text: str | None = None) -> Gtk.Widget:
     """An album, artist or playlist row (artists get a round avatar)."""
     if minimal.active():
         sub = line_text if line_text is not None else fmt.item_line(item)
@@ -631,17 +651,16 @@ def item_row(ui, item: Item, on_open, on_menu=None, *, last: bool = False,
     if sub:
         text.append(label(sub, "xx-secondary", chars=24))
     box.append(text)
-    if on_menu is not None:
-        more = icon_button("view-more-symbolic",
-                           f"More options for {item.title}", on_menu)
-        box.append(more)
-    else:
+    if on_menu is None:
         box.append(widgets.chevron())
     row.set_child(box)
     name(row, f"{item.title}, {sub}".strip(", "))
     row.connect("clicked", lambda _b: on_open())
     on_long_press(row, on_menu)
-    return row
+    if on_menu is None:
+        return row
+    return beside(row, box, icon_button(
+        "view-more-symbolic", f"More options for {item.title}", on_menu))
 
 
 def tile(ui, item: Item, on_open, on_menu=None, px: int = TILE_PX,
