@@ -21,8 +21,8 @@ def main(argv: list[str]) -> int:
     gi.require_version("Adw", "1")
     from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-    from xx_music.ui import shell as shell_module
     from xx_radio.main import SPEC
+    from xx_radio.ui.window import build_window
 
     if Gtk.init_check() is not True or Gdk.Display.get_default() is None:
         print("FAIL: no Broadway display")
@@ -51,7 +51,7 @@ def main(argv: list[str]) -> int:
         if app.register(None) is not True:
             print("FAIL: app registration failed")
             return 1
-        window = shell_module.build_window(app, SPEC)
+        window = build_window(app, SPEC)
         window.present()
         shell = window.xx_shell
 
@@ -62,12 +62,18 @@ def main(argv: list[str]) -> int:
 
         pump(500)
         focus = window.get_focus()
+        shell.open_now_playing()
+        pump(200)
+        shell.close_now_playing()
         focus_name = type(focus).__name__ if focus is not None else "None"
         print(f"FOCUS:{focus_name}")
         for key in SPEC.tab_keys():
             shell.show(key)
             pump(300)
-        pump(700)
+        for _ in range(40):
+            if "Checking…" not in _label_texts(window):
+                break
+            pump(250)
 
         texts = _label_texts(window)
         for text in texts:
@@ -78,12 +84,14 @@ def main(argv: list[str]) -> int:
         if "Entry" in focus_name:
             print("FAIL: a text entry holds focus at startup")
             failed = True
-        expected = [*shell_module.FIRST_RUN_TEXT.values(), "Catalog"]
+        expected = ["QUICK PICKS", "Playback engine",
+                    "Find songs, albums, artists and playlists.",
+                    "Open-source licenses"]
         for line in expected:
             if line not in texts:
                 print(f"FAIL: missing line {line!r}")
                 failed = True
-        if shell_module.CHECKING_TEXT in texts:
+        if "Checking…" in texts:
             print("FAIL: engine status never arrived")
             failed = True
         window.destroy()

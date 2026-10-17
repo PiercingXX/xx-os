@@ -66,7 +66,7 @@ class RadioApplication(Adw.Application):
         if window is not None:
             window.present()
             return
-        from xx_music.ui.shell import build_window
+        from xx_radio.ui.window import build_window
 
         SPEC.paths().ensure_app_dirs()
         window = build_window(self, SPEC)

@@ -90,5 +90,5 @@ def test_shell_window_pumps_without_exceptions(tmp_path):
     assert "SIZE:360x720" in output
     assert "ENGINE:fake" in output
     for label in ("Home", "Search", "Library", "Settings", "HOME",
-                  "SETTINGS", "Catalog"):
+                  "SETTINGS", "QUICK PICKS", "Playback engine"):
         assert f"LABEL:{label}" in output
