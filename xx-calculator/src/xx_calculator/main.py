@@ -16,49 +16,159 @@ from .history import HistoryStore
 
 __all__ = ["CalcApp", "CalcWindow", "format_number", "main"]
 
-APP_CSS = """
-.xx-calc-expr { font-size: 52px; font-weight: 400; }
-.xx-calc-expr-s1 { font-size: 44px; }
-.xx-calc-expr-s2 { font-size: 38px; }
-.xx-calc-expr-s3 { font-size: 32px; }
-.xx-calc-expr-s4 { font-size: 27px; }
-.xx-calc-expr-s5 { font-size: 22px; }
-.xx-calc-result { font-size: 22px; font-weight: 400; }
-.xx-calc-preview { opacity: 0.55; }
-.xx-calc-error { color: @error_color; }
-.xx-calc-error-light { color: @theme_fg_color; }
-.xx-calc-hist-expr { font-size: 14px; }
-.xx-calc-hist-result { font-size: 24px; font-weight: 400; }
-button.xx-calc-key {
-  min-height: 64px; min-width: 56px; padding: 0;
-  border-radius: 9999px; font-size: 22px; font-weight: 400;
+# Font sizes in px at text-size-scale 1.0; app_css() scales them with the
+# suite's text size so large text grows the display and keys too.
+_APP_CSS_TEMPLATE = """
+.xx-calc-expr {{ font-size: {expr}px; font-weight: 400; }}
+.xx-calc-expr-s1 {{ font-size: {s1}px; }}
+.xx-calc-expr-s2 {{ font-size: {s2}px; }}
+.xx-calc-expr-s3 {{ font-size: {s3}px; }}
+.xx-calc-expr-s4 {{ font-size: {s4}px; }}
+.xx-calc-expr-s5 {{ font-size: {s5}px; }}
+.xx-calc-result {{ font-size: {result}px; font-weight: 400; }}
+.xx-calc-preview {{ opacity: 0.55; }}
+.xx-calc-error {{ color: @error_color; }}
+.xx-calc-error-light {{ color: @theme_fg_color; }}
+.xx-calc-hist-title {{ font-size: {hist_title}px; font-weight: 400; }}
+.xx-calc-hist-expr {{ font-size: {hist_expr}px; }}
+.xx-calc-hist-result {{ font-size: {hist_result}px; font-weight: 400; }}
+list.xx-calc-hist, list.xx-calc-hist row {{
+  background: none; padding: 0; border-radius: 0;
+}}
+list.xx-calc-hist row {{ border-bottom: 1px solid @borders; }}
+list.xx-calc-hist row:last-child {{ border-bottom: none; }}
+button.xx-calc-key {{
+  min-height: 0; min-width: 0; padding: 0;
+  border-radius: 9999px; font-size: {key}px; font-weight: 400;
   background-color: @card_bg_color; color: @theme_fg_color;
-  border: 1px solid @borders;
-}
-button.xx-calc-key:active { background-color: @theme_selected_bg_color; }
-button.xx-calc-key.xx-calc-equals {
-  background-color: @theme_fg_color; color: @theme_bg_color;
-  border-color: @theme_fg_color;
-}
-button.xx-calc-chip {
-  min-height: 48px; min-width: 56px; padding: 4px 12px;
-  border-radius: 9999px; font-size: 15px;
+  border: none; box-shadow: none;
+}}
+button.xx-calc-key:active {{ background-color: @theme_selected_bg_color;
+  color: @theme_selected_fg_color; }}
+button.xx-calc-key.xx-calc-equals {{ font-size: {equals}px; }}
+button.xx-calc-chip {{
+  min-height: 40px; min-width: 0; padding: 0 18px;
+  border-radius: 9999px; font-size: {chip}px; font-weight: 400;
   background-color: @card_bg_color; color: @theme_fg_color;
-  border: 1px solid @borders;
-}
-button.xx-calc-chip.xx-calc-inv-on {
+  border: none; box-shadow: none;
+}}
+button.xx-calc-chip.xx-calc-inv-on {{
   background-color: @theme_fg_color; color: @theme_bg_color;
-}
-button.xx-calc-bar {
+}}
+button.xx-calc-bar {{
   min-width: 48px; min-height: 48px; padding: 0;
   border-radius: 9999px; color: @theme_fg_color;
-}
-.xx-calc-caption { font-size: 11px; }
-.xx-calc-landscape button.xx-calc-key { min-height: 44px; font-size: 18px; }
-.xx-calc-landscape .xx-calc-expr { font-size: 34px; }
-.xx-calc-landscape .xx-calc-result { font-size: 18px; }
-.xx-calc-landscape button.xx-calc-chip { min-height: 40px; }
+  background: none; border: none; box-shadow: none;
+}}
+.xx-calc-landscape .xx-calc-expr {{ font-size: {land_expr}px; }}
+.xx-calc-landscape .xx-calc-result {{ font-size: {land_result}px; }}
+.xx-calc-landscape button.xx-calc-key {{ font-size: {land_key}px; }}
 """
+
+_APP_CSS_PX = {
+    "expr": 52, "s1": 44, "s2": 38, "s3": 32, "s4": 27, "s5": 22,
+    "result": 24, "hist_title": 20, "hist_expr": 14, "hist_result": 22,
+    "key": 28, "equals": 30, "chip": 16,
+    "land_expr": 34, "land_result": 18, "land_key": 20,
+}
+
+
+def app_css(scale: float = 1.0) -> str:
+    """The app stylesheet with every font size scaled (pure)."""
+    return _APP_CSS_TEMPLATE.format(
+        **{key: round(px * scale) for key, px in _APP_CSS_PX.items()})
+
+
+APP_CSS = app_css()
+
+# Keypad geometry (logical px). A key is a circle KEY_RATIO of its column,
+# as on Android (72dp keys in ~99dp columns); a short window turns the
+# keys into pills so all five rows still fit.
+KEY_RATIO = 0.8
+KEY_MAX = 104
+KEY_MIN = 36
+KEY_ROW_GAP = 10
+
+
+def key_geometry(width: float, height: float | None,
+                 cols: int = 4, rows: int = 5) -> tuple[int, int]:
+    """(key width, key height) for a keypad allocation (pure).
+
+    ``height`` None asks for the natural size: round keys from width.
+    """
+    cell = max(width, 0) / cols
+    diameter = max(int(min(cell * KEY_RATIO, KEY_MAX)), KEY_MIN)
+    if height is None:
+        return diameter, diameter
+    fit = height / rows - KEY_ROW_GAP
+    if fit >= diameter - 1:
+        return diameter, diameter
+    key_h = max(int(fit), KEY_MIN // 2)
+    key_w = int(min(cell - 8, max(diameter, key_h * 1.8)))
+    return max(key_w, key_h), key_h
+
+
+_KEYPAD_CLASS = None
+
+
+def _keypad_class():
+    """Gtk.Widget subclass laying out the keypad (built after gi loads)."""
+    global _KEYPAD_CLASS
+    if _KEYPAD_CLASS is not None:
+        return _KEYPAD_CLASS
+    from gi.repository import Gdk, Gtk
+
+    class KeyPad(Gtk.Widget):
+        """4x5 grid of round keys sized from the width (height for width)."""
+
+        def __init__(self, cols: int = 4, rows: int = 5) -> None:
+            super().__init__()
+            self.cols, self.rows = cols, rows
+            self._cells: list = []
+
+        def attach(self, child, col: int, row: int, _w: int = 1,
+                   _h: int = 1) -> None:
+            child.set_parent(self)
+            self._cells.append((child, col, row))
+
+        def get_child_at(self, col: int, row: int):
+            for child, c, r in self._cells:
+                if (c, r) == (col, row):
+                    return child
+            return None
+
+        def do_get_request_mode(self):
+            return Gtk.SizeRequestMode.HEIGHT_FOR_WIDTH
+
+        def do_measure(self, orientation, for_size):
+            if orientation == Gtk.Orientation.HORIZONTAL:
+                return (self.cols * (KEY_MIN + 8),
+                        self.cols * (KEY_MIN + 8), -1, -1)
+            minimum = self.rows * (KEY_MIN // 2 + KEY_ROW_GAP)
+            width = for_size if for_size > 0 else 344
+            _w, key_h = key_geometry(width, None, self.cols, self.rows)
+            natural = self.rows * (key_h + KEY_ROW_GAP)
+            return minimum, max(minimum, natural), -1, -1
+
+        def do_size_allocate(self, width, height, _baseline):
+            key_w, key_h = key_geometry(width, height, self.cols, self.rows)
+            cell_w = width / self.cols
+            row_h = key_h + KEY_ROW_GAP
+            top = max(0.0, height - self.rows * row_h)
+            for child, col, row in self._cells:
+                rect = Gdk.Rectangle()
+                rect.x = int(col * cell_w + (cell_w - key_w) / 2)
+                rect.y = int(top + row * row_h + KEY_ROW_GAP / 2)
+                rect.width, rect.height = key_w, key_h
+                child.size_allocate(rect, -1)
+
+        def do_dispose(self):
+            for child, _c, _r in self._cells:
+                child.unparent()
+            self._cells = []
+
+    _KEYPAD_CLASS = KeyPad
+    return KeyPad
 
 LICENSES_TEXT = """xx-calculator uses:
 
@@ -189,16 +299,24 @@ class CalcWindow:
         self._refresh_preview()
 
     # -- theme ------------------------------------------------------
-    def _load_app_css(self) -> None:
+    def _load_app_css(self, active=None) -> None:
+        try:
+            from xx_ui import theme as theme_mod
+
+            theme = active if active is not None else theme_mod.load()
+            scale = float(getattr(theme, "scale", 1.0) or 1.0)
+        except Exception:
+            scale = 1.0
         try:
             Gtk, Gdk = self._Gtk, self._Gdk
-            provider = Gtk.CssProvider()
-            provider.load_from_data(APP_CSS.encode("utf-8"))
-            display = Gdk.Display.get_default()
-            if display is not None:
-                Gtk.StyleContext.add_provider_for_display(
-                    display, provider,
-                    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            if getattr(self, "_app_provider", None) is None:
+                self._app_provider = Gtk.CssProvider()
+                display = Gdk.Display.get_default()
+                if display is not None:
+                    Gtk.StyleContext.add_provider_for_display(
+                        display, self._app_provider,
+                        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            self._app_provider.load_from_data(app_css(scale).encode("utf-8"))
         except Exception:
             pass
 
@@ -212,9 +330,12 @@ class CalcWindow:
             css = ("button.xx-calc-key{background-color:%s;}"
                    "button.xx-calc-digit{background-color:%s;}"
                    "button.xx-calc-key.xx-calc-equals{background-color:%s;"
-                   "color:%s;border-color:%s;}"
+                   "color:%s;}"
+                   "button.xx-calc-chip{background-color:%s;}"
+                   "button.xx-calc-chip.xx-calc-inv-on{background-color:%s;"
+                   "color:%s;}"
                    % (misc, digit, theme.foreground, theme.background,
-                      theme.foreground))
+                      misc, theme.foreground, theme.background))
             Gtk, Gdk = self._Gtk, self._Gdk
             if self._key_provider is None:
                 self._key_provider = Gtk.CssProvider()
@@ -228,6 +349,7 @@ class CalcWindow:
             pass
 
     def _on_suite_theme(self, _theme) -> None:
+        self._load_app_css(_theme)
         self._install_key_colors(_theme)
         try:
             from xx_ui import theme as theme_mod
@@ -247,32 +369,15 @@ class CalcWindow:
     # -- layout -----------------------------------------------------
     def _build(self) -> None:
         Gtk, Pango = self._Gtk, self._Pango
+        # Android order, top to bottom: the display takes the free space
+        # (text sits at its bottom edge), then one bar (history, science
+        # expander, overflow), the science chips, and the keypad, which
+        # fills the width with round keys.
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        root.set_margin_start(20)
-        root.set_margin_end(20)
-        root.set_margin_top(8)
-        root.set_margin_bottom(12)
         self._root = root
         self.land_left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.land_left.set_vexpand(True)
-
-        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        self.hist_btn = Gtk.Button()
-        self.hist_btn.add_css_class("xx-calc-bar")
-        self.hist_btn.set_tooltip_text("History")
-        self.hist_btn.set_child(self._icon("document-open-recent-symbolic", 22))
-        self.hist_btn.connect("clicked", lambda *_: self.show("history"))
-        top.append(self.hist_btn)
-        spacer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        spacer.set_hexpand(True)
-        top.append(spacer)
-        self.menu_btn = Gtk.Button()
-        self.menu_btn.add_css_class("xx-calc-bar")
-        self.menu_btn.set_tooltip_text("More options")
-        self.menu_btn.set_child(self._icon("open-menu-symbolic", 22))
-        self.menu_btn.connect("clicked", self._on_menu)
-        top.append(self.menu_btn)
-        root.append(top)
+        self.land_left.set_margin_end(8)
 
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.NONE)
@@ -284,7 +389,15 @@ class CalcWindow:
         self.stack.add_named(self.content, "calc")
 
         self.display = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.display.set_margin_top(4)
+        self.display.set_vexpand(True)
+        self.display.set_valign(Gtk.Align.FILL)
+        self.display.set_margin_start(24)
+        self.display.set_margin_end(24)
+        self.display.set_margin_top(24)
+        self.display.set_margin_bottom(8)
+        filler = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        filler.set_vexpand(True)
+        self.display.append(filler)
         self.expr_scroll = Gtk.ScrolledWindow()
         self.expr_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
                                    Gtk.PolicyType.NEVER)
@@ -313,42 +426,53 @@ class CalcWindow:
             pass
         self.content.append(self.display)
 
-        sci_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        self._sci_row = sci_row
-        sci_row.set_margin_top(4)
-        self.sci_toggle = Gtk.Button()
-        self.sci_toggle.add_css_class("xx-calc-bar")
-        self.sci_toggle.set_tooltip_text("Show or hide scientific keys")
-        self._sci_icon = self._icon("pan-down-symbolic", 22)
-        self.sci_toggle.set_child(self._sci_icon)
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self._sci_row = bar
+        bar.set_margin_start(8)
+        bar.set_margin_end(8)
+        self.hist_btn = self._bar_button(
+            self._icon("document-open-recent-symbolic", 24), "History")
+        self.hist_btn.connect("clicked", lambda *_: self.show("history"))
+        bar.append(self.hist_btn)
+        self._sci_icon = self._expander_icon()
+        self.sci_toggle = self._bar_button(
+            self._sci_icon, "Show or hide scientific keys")
         self.sci_toggle.connect("clicked", self._on_science_toggle)
-        sci_row.append(self.sci_toggle)
-        sci_cap = Gtk.Label(label="SCIENTIFIC")
-        sci_cap.add_css_class("xx-calc-caption")
-        sci_cap.add_css_class("xx-caption")
-        sci_cap.set_margin_start(8)
-        sci_cap.set_valign(Gtk.Align.CENTER)
-        sci_row.append(sci_cap)
-        self.content.append(sci_row)
+        bar.append(self.sci_toggle)
+        spacer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        spacer.set_hexpand(True)
+        bar.append(spacer)
+        self.menu_btn = self._bar_button(
+            self._icon("view-more-symbolic", 24), "More options")
+        self.menu_btn.connect("clicked", self._on_menu)
+        bar.append(self.menu_btn)
+        self.content.append(bar)
 
         self.sci_reveal = Gtk.Revealer()
         self.sci_reveal.set_transition_type(
             Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.sci_reveal.set_reveal_child(False)
+        # Full-bleed scroller: chips run off the screen edge like Android,
+        # not into a clipped margin.
         sci_scroll = Gtk.ScrolledWindow()
-        sci_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
-        sci_scroll.set_margin_top(8)
+        sci_scroll.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
         self.sci_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
                                spacing=8)
+        self.sci_box.set_margin_start(16)
+        self.sci_box.set_margin_end(16)
+        self.sci_box.set_margin_top(6)
+        self.sci_box.set_margin_bottom(6)
         sci_scroll.set_child(self.sci_box)
         self.sci_reveal.set_child(sci_scroll)
         self.content.append(self.sci_reveal)
         self._build_science_chips()
 
-        self.pad = Gtk.Grid(column_spacing=8, row_spacing=8,
-                            column_homogeneous=True, row_homogeneous=True)
-        self.pad.set_margin_top(8)
-        self.pad.set_vexpand(True)
+        self.pad = _keypad_class()()
+        self.pad.set_margin_start(8)
+        self.pad.set_margin_end(8)
+        self.pad.set_margin_top(4)
+        self.pad.set_margin_bottom(16)
+        self.pad.set_valign(Gtk.Align.END)
         self._build_pad()
         self.content.append(self.pad)
 
@@ -367,6 +491,51 @@ class CalcWindow:
         img.set_pixel_size(px)
         return img
 
+    def _bar_button(self, child, tooltip: str):
+        Gtk = self._Gtk
+        btn = Gtk.Button()
+        btn.add_css_class("xx-calc-bar")
+        btn.set_tooltip_text(tooltip)
+        btn.set_child(child)
+        btn.set_valign(Gtk.Align.CENTER)
+        return btn
+
+    def _expander_icon(self):
+        """Android's science expander: two outward chevrons, inward when
+        open. Drawn in the button's own color so every theme follows."""
+        Gtk = self._Gtk
+        area = Gtk.DrawingArea()
+        area.set_content_width(24)
+        area.set_content_height(24)
+        area.set_halign(Gtk.Align.CENTER)
+        area.set_valign(Gtk.Align.CENTER)
+
+        def draw(widget, cr, width, height):
+            try:
+                color = widget.get_color()
+                cr.set_source_rgba(color.red, color.green, color.blue,
+                                   color.alpha)
+            except Exception:
+                cr.set_source_rgba(0.5, 0.5, 0.5, 1.0)
+            cr.translate((width - 24) / 2, (height - 24) / 2)
+            cr.set_line_width(2)
+            cr.set_line_cap(1)   # ROUND
+            cr.set_line_join(1)  # ROUND
+            if self._science_expanded:
+                strokes = ((5, 7.5, 9.5, 12, 5, 16.5),
+                           (19, 7.5, 14.5, 12, 19, 16.5))
+            else:
+                strokes = ((9.5, 7.5, 5, 12, 9.5, 16.5),
+                           (14.5, 7.5, 19, 12, 14.5, 16.5))
+            for x0, y0, x1, y1, x2, y2 in strokes:
+                cr.move_to(x0, y0)
+                cr.line_to(x1, y1)
+                cr.line_to(x2, y2)
+                cr.stroke()
+
+        area.set_draw_func(draw)
+        return area
+
     def _key_button(self, text: str, callback, digit=False):
         Gtk = self._Gtk
         btn = Gtk.Button(label=text)
@@ -376,26 +545,33 @@ class CalcWindow:
         btn.connect("clicked", callback)
         return btn
 
-    def _chip(self, label: str, callback):
+    def _chip(self, label: str, callback, group_end: bool = False):
         Gtk = self._Gtk
         btn = Gtk.Button(label=label)
         btn.add_css_class("xx-calc-chip")
+        btn.set_valign(Gtk.Align.CENTER)
+        if group_end:
+            # Android spaces the groups (mode / trig / logs / ops / consts)
+            # 16dp apart, chips inside a group 8dp.
+            btn.set_margin_end(8)
         btn.connect("clicked", callback)
         self.sci_box.append(btn)
         return btn
 
     def _build_science_chips(self) -> None:
         self.inv_btn = self._chip("INV", lambda *_: self._on_inv())
-        self.deg_btn = self._chip("DEG", lambda *_: self._on_deg())
+        self.deg_btn = self._chip("DEG", lambda *_: self._on_deg(), True)
         self.sin_btn = self._chip("sin", lambda *_: self._insert_fn("sin"))
         self.cos_btn = self._chip("cos", lambda *_: self._insert_fn("cos"))
-        self.tan_btn = self._chip("tan", lambda *_: self._insert_fn("tan"))
+        self.tan_btn = self._chip("tan", lambda *_: self._insert_fn("tan"),
+                                  True)
         self.ln_btn = self._chip("ln", lambda *_: self._insert_fn("ln"))
-        self.log_btn = self._chip("log", lambda *_: self._insert_fn("log"))
+        self.log_btn = self._chip("log", lambda *_: self._insert_fn("log"),
+                                  True)
         self._chip("√", lambda *_: self._fresh_fn("√("))
         self._chip("π", lambda *_: self._fresh_const("π"))
         self._chip("^", lambda *_: self._press_raw("^"))
-        self._chip("!", lambda *_: self._press_raw("!"))
+        self._chip("!", lambda *_: self._press_raw("!"), True)
         self._chip("e", lambda *_: self._fresh_const("e"))
         self._chip("(", lambda *_: self._fresh_paren("open"))
         self._chip(")", lambda *_: self._fresh_paren("close"))
@@ -439,38 +615,37 @@ class CalcWindow:
                 self.pad.attach(btn, col, row, 1, 1)
 
     def _build_history_page(self) -> None:
+        # Android's history sheet: a Space Mono "History" title over the
+        # entries, hairlines between them. Clearing lives in the overflow
+        # menu (one entry point); an empty history is just empty.
         Gtk = self._Gtk
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        back = Gtk.Button()
-        back.add_css_class("xx-calc-bar")
-        back.set_tooltip_text("Back")
-        back.set_child(self._icon("pan-start-symbolic", 22))
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        bar.set_margin_start(8)
+        bar.set_margin_end(24)
+        bar.set_margin_top(8)
+        back = self._bar_button(self._icon("go-previous-symbolic", 24),
+                                "Back")
         back.connect("clicked", lambda *_: self.show("calc"))
         bar.append(back)
         title = Gtk.Label(label="History")
-        title.add_css_class("xx-title")
+        title.add_css_class("xx-calc-hist-title")
+        title.add_css_class("xx-display-face")
         title.set_hexpand(True)
         title.set_xalign(0.0)
+        title.set_valign(Gtk.Align.CENTER)
         bar.append(title)
-        self.clear_btn = Gtk.Button(label="CLEAR")
-        self.clear_btn.add_css_class("xx-calc-chip")
-        self.clear_btn.connect("clicked", lambda *_: self._on_clear_history())
-        bar.append(self.clear_btn)
-        bar.set_margin_top(4)
-        bar.set_margin_bottom(8)
         self.side.append(bar)
-        self.empty_label = Gtk.Label(label="No history")
-        self.empty_label.add_css_class("xx-secondary")
-        self.empty_label.set_vexpand(True)
-        self.empty_label.set_valign(Gtk.Align.CENTER)
-        self.empty_label.set_halign(Gtk.Align.CENTER)
-        self.side.append(self.empty_label)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_vexpand(True)
         scroll.set_hexpand(True)
+        scroll.set_margin_start(24)
+        scroll.set_margin_end(24)
+        scroll.set_margin_top(8)
         self.hist_list = Gtk.ListBox()
+        self.hist_list.add_css_class("xx-calc-hist")
         self.hist_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.hist_list.set_valign(Gtk.Align.START)
         self.hist_list.connect("row-activated", self._on_history_row)
         scroll.set_child(self.hist_list)
         self.side.append(scroll)
@@ -714,8 +889,7 @@ class CalcWindow:
         self._science_known = True
         try:
             self.sci_reveal.set_reveal_child(expanded)
-            self._sci_icon.set_from_icon_name(
-                "pan-up-symbolic" if expanded else "pan-down-symbolic")
+            self._sci_icon.queue_draw()
         except Exception:
             pass
 
@@ -741,9 +915,11 @@ class CalcWindow:
                     self.land_left.append(child)
                 self.content.remove(self.pad)
                 self.content.set_orientation(Gtk.Orientation.HORIZONTAL)
-                self.content.set_spacing(16)
+                self.content.set_spacing(0)
                 self.land_left.set_hexpand(True)
                 self.pad.set_hexpand(True)
+                self.pad.set_valign(Gtk.Align.FILL)
+                self.pad.set_margin_top(16)
                 self.content.append(self.land_left)
                 self.content.append(self.pad)
                 self._root.add_css_class("xx-calc-landscape")
@@ -759,6 +935,9 @@ class CalcWindow:
                 self.content.append(self._sci_row)
                 self.content.append(self.sci_reveal)
                 self.content.append(self.pad)
+                self.pad.set_hexpand(False)
+                self.pad.set_valign(Gtk.Align.END)
+                self.pad.set_margin_top(4)
                 self._root.remove_css_class("xx-calc-landscape")
         except Exception:
             pass
@@ -774,14 +953,10 @@ class CalcWindow:
                 if row is None:
                     break
                 self.hist_list.remove(row)
-            entries = self.store.list()
-            self.empty_label.set_visible(not entries)
-            for entry in entries:
+            for entry in self.store.list():
                 box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
                 box.set_margin_top(10)
                 box.set_margin_bottom(10)
-                box.set_margin_start(4)
-                box.set_margin_end(4)
                 expr = Gtk.Label(label=entry.expression)
                 expr.add_css_class("xx-secondary")
                 expr.add_css_class("xx-calc-hist-expr")
@@ -815,27 +990,9 @@ class CalcWindow:
         self._on_edited()
 
     def _on_clear_history(self, *_args) -> None:
-        Adw = self._Adw
-        try:
-            dialog = Adw.AlertDialog(
-                heading="Clear history?",
-                body="All saved calculations will be deleted.")
-            dialog.add_response("cancel", "Cancel")
-            dialog.add_response("clear", "Clear")
-            dialog.set_response_appearance(
-                "clear", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response("cancel")
-            dialog.set_close_response("cancel")
-            dialog.connect("response", self._on_clear_response)
-            dialog.present(self.win)
-        except Exception:
-            self.store.clear()
-            self._render_history()
-
-    def _on_clear_response(self, _dialog, response: str) -> None:
-        if response == "clear":
-            self.store.clear()
-            self._render_history()
+        # A direct menu action: no confirmation popup.
+        self.store.clear()
+        self._render_history()
 
     # -- menu / licenses ----------------------------------------------
     def _on_menu(self, button) -> None:

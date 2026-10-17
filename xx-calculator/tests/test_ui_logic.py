@@ -56,6 +56,34 @@ def test_key_mix_darkens_tiles_on_paper():
     assert _mix("#151515", "#F3EEE2", 0.16) == "#cfcbc1"
 
 
+def test_keys_are_round_and_fill_the_width():
+    from xx_calculator.main import KEY_RATIO, key_geometry
+
+    # FLX1 portrait (450 px minus the 8 px pad margins): round keys at
+    # 80% of a column, as on Android.
+    w, h = key_geometry(434, None)
+    assert w == h == int(434 / 4 * KEY_RATIO)
+    # Enough height keeps them round.
+    assert key_geometry(434, 5 * (w + 10)) == (w, h)
+
+
+def test_short_windows_turn_keys_into_pills():
+    from xx_calculator.main import key_geometry
+
+    w, h = key_geometry(344, 260)
+    assert h == 260 // 5 - 10
+    assert w > h
+    assert w <= 344 / 4 - 8
+
+
+def test_app_css_follows_text_size():
+    from xx_calculator.main import app_css
+
+    assert "font-size: 52px" in app_css(1.0)
+    assert "font-size: 68px" in app_css(1.3)
+    assert "border: 1px solid @borders" not in app_css(1.0)
+
+
 def test_key_mix_falls_back_on_garbage():
     assert _mix("nope", "#000000", 0.16) == "#000000"
     assert _mix("#f4f4f4", "", 0.16) == ""
