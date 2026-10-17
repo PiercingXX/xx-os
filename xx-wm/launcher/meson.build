@@ -39,6 +39,7 @@ shell_datadir = join_paths(get_option('datadir'), shell_subdir)
 install_data(
   [
     'src/als_brightness.py',
+    'src/backlight.py',
     'src/app_index.py',
     'src/app_item_actions.py',
     'src/app_names.py',

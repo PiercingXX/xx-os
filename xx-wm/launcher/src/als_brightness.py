@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import backlight
+
 from gi.repository import GLib
 
 from shell_log import get_logger
@@ -27,10 +29,9 @@ def _note_failure(message: str, *args) -> None:
 # Ambient light sensor via Linux IIO subsystem.
 # Kernel path: /sys/bus/iio/devices/iio:deviceN/in_illuminance_input (lux)
 # Verify the FP5's sensor node with: ls /sys/bus/iio/devices/
-# Backlight: /sys/class/backlight/*/brightness + max_brightness
+# Backlight: backlight.find() (backlight class, else a *backlight LED)
 
 _IIO_GLOB = '/sys/bus/iio/devices/iio:device*/in_illuminance_input'
-_BACKLIGHT_GLOB = '/sys/class/backlight/*/brightness'
 _POLL_INTERVAL_MS = 5000
 _CHANGE_THRESHOLD = 0.12  # only apply if brightness changes by ≥12%
 
@@ -57,6 +58,17 @@ def _lux_to_ratio(lux: float) -> float:
     return _LUX_CURVE[-1][1]
 
 
+def _backlight_path() -> Path | None:
+    found = backlight.find()
+    return found.path if found is not None else None
+
+
+def _backlight_subsystem(path: Path | None) -> str:
+    """login1 SetBrightness subsystem for a .../brightness node."""
+    return 'leds' if path is not None and path.parent.parent.name == 'leds' \
+        else 'backlight'
+
+
 def _find_path(glob: str) -> Path | None:
     matches = list(Path('/').glob(glob.lstrip('/')))
     return matches[0] if matches else None
@@ -64,7 +76,7 @@ def _find_path(glob: str) -> Path | None:
 
 def _backlight_name(sysfs_path: Path | None = None) -> str | None:
     """Kernel backlight device name (e.g. intel_backlight) for login1."""
-    path = sysfs_path if sysfs_path is not None else _find_path(_BACKLIGHT_GLOB)
+    path = sysfs_path if sysfs_path is not None else _backlight_path()
     return path.parent.name if path is not None else None
 
 
@@ -82,7 +94,8 @@ def _brightnessctl_set(value: int, device: str | None = None) -> bool:
         return False
 
 
-def login1_set_brightness(name: str, value: int, bus=None) -> bool:
+def login1_set_brightness(name: str, value: int, bus=None,
+                          subsystem: str = 'backlight') -> bool:
     """Set an absolute backlight value through logind's Session interface
     (works unprivileged via the session object, elogind included)."""
     try:
@@ -91,7 +104,7 @@ def login1_set_brightness(name: str, value: int, bus=None) -> bool:
             Gio.BusType.SYSTEM, None)
         conn.call_sync(
             _LOGIN1, _LOGIN1_SESSION, _LOGIN1_SESSION_IFACE, 'SetBrightness',
-            GLib.Variant('(ssu)', ('backlight', name, max(0, int(value)))),
+            GLib.Variant('(ssu)', (subsystem, name, max(0, int(value)))),
             None, Gio.DBusCallFlags.NONE, 5000, None,
         )
         return True
@@ -102,7 +115,7 @@ def login1_set_brightness(name: str, value: int, bus=None) -> bool:
 def _sysfs_set_brightness(value: int, sysfs_path: Path | None = None) -> bool:
     """Last resort: direct sysfs write, which fails with EACCES for the
     unprivileged shell user unless udev rules grant access."""
-    path = sysfs_path if sysfs_path is not None else _find_path(_BACKLIGHT_GLOB)
+    path = sysfs_path if sysfs_path is not None else _backlight_path()
     if path is None:
         return False
     try:
@@ -122,7 +135,9 @@ def apply_backlight(value: int, device: str | None = None,
         device = _backlight_name(sysfs_path)
     if _brightnessctl_set(value, device):
         return True
-    if device is not None and login1_set_brightness(device, value):
+    if device is not None and login1_set_brightness(
+            device, value,
+            subsystem=_backlight_subsystem(sysfs_path or _backlight_path())):
         return True
     if _sysfs_set_brightness(value, sysfs_path):
         return True
@@ -135,7 +150,7 @@ def apply_backlight_pct(pct: int) -> bool:
     """Percent-based wrapper for the shade slider: resolves the absolute
     scale from sysfs max_brightness (reads are unprivileged)."""
     pct = max(0, min(100, int(pct)))
-    path = _find_path(_BACKLIGHT_GLOB)
+    path = _backlight_path()
     maximum: int | None = None
     if path is not None:
         try:
@@ -147,9 +162,10 @@ def apply_backlight_pct(pct: int) -> bool:
                                device=path.parent.name if path else None,
                                sysfs_path=path)
     name = _backlight_name(path)
-    if _brightnessctl_set(pct):
+    if _brightnessctl_set(pct, name):
         return True
-    if name is not None and login1_set_brightness(name, pct):
+    if name is not None and login1_set_brightness(
+            name, pct, subsystem=_backlight_subsystem(path)):
         return True
     _note_failure('backlight write failed (brightnessctl, logind); '
                   'no readable max_brightness for %d%%', pct)
@@ -165,7 +181,7 @@ class ALSBrightness:
 
     def __init__(self) -> None:
         self._sensor_path: Path | None = _find_path(_IIO_GLOB)
-        self._backlight_path: Path | None = _find_path(_BACKLIGHT_GLOB)
+        self._backlight_path: Path | None = _backlight_path()
         self._max_brightness: int = self._read_max()
         self._last_ratio: float = -1.0
         self._timer_id: int | None = None

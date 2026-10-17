@@ -11,6 +11,7 @@ gi.require_version('Gtk', '4.0')
 
 from gi.repository import Gdk, GLib, Gio, Gtk
 from als_brightness import ALSBrightness, apply_backlight_pct
+import backlight
 from config import ShellConfig, ThemePreset
 
 
@@ -812,12 +813,15 @@ def _read_sysfs_brightness_pct(
 
 def _get_brightness_pct() -> int:
     pct = _read_sysfs_brightness_pct()
+    if pct is None:
+        pct = backlight.read_pct()  # LED-class panels (Halium)
     return _SLIDER_DEFAULT_PCT if pct is None else pct
 
 
 def _set_brightness_pct(pct: int) -> None:
     try:
-        subprocess.Popen(['brightnessctl', 'set', f'{max(1, pct)}%'], close_fds=True)
+        subprocess.Popen(backlight.brightnessctl_args() + ['set', f'{max(1, pct)}%'],
+                         close_fds=True)
         return
     except FileNotFoundError:
         pass

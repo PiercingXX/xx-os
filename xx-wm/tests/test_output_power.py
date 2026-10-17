@@ -638,7 +638,9 @@ class TestBlankWakeChain:
         mgr._blank()
         assert mgr._blanked is True
         assert calls == [('power', False)]
-        assert shared == [('bl', ('get',))]
+        # Backlight off too: hwcomposer phoc only stops rendering, so the
+        # FLX1 panel stayed lit (black, not off). wlopm stays unused.
+        assert shared == [('bl', ('get',)), ('bl', ('set', '0'))]
         assert states == [True]
 
     def test_wake_restores_power_before_backlight(self, blank_env) -> None:
