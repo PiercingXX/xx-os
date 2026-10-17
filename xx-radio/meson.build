@@ -76,14 +76,23 @@ install_data(
 
 # D-Bus session activation: the .desktop is DBusActivatable, so the bus
 # must know how to start the app. Name= must equal the owned name.
-# (The player-service stage adds io.piercingxx.XXRadio.Player.service for
-# the player, which owns its own name, never this one.)
+# The player service owns its own name (never the app id, or the GUI
+# would exit as a secondary instance) and idle-exits, so it ships its
+# own activation file or the first idle exit breaks every client.
 dbus_conf = configuration_data()
 dbus_conf.set('bindir', bindir)
 
 configure_file(
   input: 'data/io.piercingxx.XXRadio.service.in',
   output: 'io.piercingxx.XXRadio.service',
+  configuration: dbus_conf,
+  install: true,
+  install_dir: join_paths(datadir, 'dbus-1', 'services'),
+)
+
+configure_file(
+  input: 'data/io.piercingxx.XXRadio.Player.service.in',
+  output: 'io.piercingxx.XXRadio.Player.service',
   configuration: dbus_conf,
   install: true,
   install_dir: join_paths(datadir, 'dbus-1', 'services'),

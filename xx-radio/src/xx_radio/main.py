@@ -72,8 +72,13 @@ class RadioApplication(Adw.Application):
 
 
 def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if "--player-service" in args:
+        from xx_music.player import service as service_mod
+
+        return service_mod.main(SPEC)
     app = RadioApplication()
-    return app.run(sys.argv if argv is None else [sys.argv[0], *argv])
+    return app.run([sys.argv[0], *args])
 
 
 if __name__ == "__main__":
