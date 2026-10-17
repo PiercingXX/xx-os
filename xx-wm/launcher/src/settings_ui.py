@@ -84,7 +84,8 @@ def css(theme, scale: float) -> str:
 .xx-settings .xx-set-big {{ font-size: {header}; color: {fg}; }}
 .xx-settings .xx-set-info {{ font-size: {info}; line-height: 1.25; }}
 .xx-settings .xx-menu-check {{ font-size: {body}; color: {fg}; }}
-.xx-settings .xx-widget-line {{ min-height: 56px; }}
+.xx-settings .xx-widget-line {{ min-height: 88px; }}
+.xx-settings .xx-widget-move {{ min-height: 40px; padding: 0 8px; }}
 .xx-settings list.reorder-list {{ background-color: transparent; }}
 .xx-settings list.reorder-list > row {{
     background-color: transparent;

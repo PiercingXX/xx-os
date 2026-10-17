@@ -808,13 +808,19 @@ class LauncherSection(settings_page._Section):
         text.connect('clicked',
                      lambda _b: self._pick_tap(win, anchor, key))
         line.append(text)
+        # ↑ over ↓ in one narrow column, so the name keeps the width at
+        # large text sizes on a 320 px screen.
+        arrows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        arrows.set_valign(Gtk.Align.CENTER)
         for glyph, delta in (('↑', -1), ('↓', 1)):
             move = Gtk.Button(label=glyph)
             move.add_css_class('home-edit-ctl')
+            move.add_css_class('xx-widget-move')
             move.set_sensitive(0 <= index + delta < total)
             move.connect('clicked', lambda _b, d=delta: self._move_widget(
                 win, key, d, rebuild))
-            line.append(move)
+            arrows.append(move)
+        line.append(arrows)
         return line
 
     def _flip_widget(self, win, key: str, on: bool, rebuild) -> None:

@@ -356,11 +356,19 @@ def window():
     saved_widgets = sys.modules.pop('xx_ui.widgets', None)
     saved_widgets_attr = xx_ui.__dict__.pop('widgets', None)
     sys.modules.update(installed)
+    import settings_page as _sp
+    # The menu's slow summaries probe the real system (nmcli, pactl,
+    # UPower) on worker threads that outlive the test; under this
+    # fixture's fake gi they crashed the run when a later test swapped
+    # the modules mid-call. No real probes from these page builds.
+    saved_slow = _sp.slow_summaries
+    _sp.slow_summaries = lambda: {}
     try:
         import window
         sys.modules.pop('window', None)
         yield window
     finally:
+        _sp.slow_summaries = saved_slow
         for name, module in saved.items():
             if module is None:
                 sys.modules.pop(name, None)
