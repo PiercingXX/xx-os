@@ -89,6 +89,7 @@ def test_shell_window_pumps_without_exceptions(tmp_path):
     assert "ERROR:" not in output
     assert "SIZE:360x720" in output
     assert "ENGINE:fake" in output
+    assert "SHEET:bottom-sheet:360" in output
     for label in ("Home", "Search", "Library", "Settings", "HOME",
                   "SETTINGS", "QUICK PICKS", "Playback engine"):
         assert f"LABEL:{label}" in output

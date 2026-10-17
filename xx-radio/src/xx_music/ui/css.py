@@ -156,8 +156,14 @@ button.xx-mu-lyric { padding: 6px 0; border-radius: 0; }
 
 /* sheets */
 .xx-mu-sheet { padding: 8px 20px 24px 20px; }
-dialog.xx-mu-dialog sheet, dialog.xx-mu-dialog floating-sheet {
-  background-color: ${surface}; border-radius: 16px 16px 0 0; }
+/* The sheet card only: floating-sheet / bottom-sheet span the whole
+   window (dimming included), so painting them blacked the app out. */
+dialog.xx-mu-dialog sheet { background-color: ${surface}; }
+dialog.xx-mu-dialog bottom-sheet > sheet { border-radius: 16px 16px 0 0; }
+dialog.xx-mu-dialog floating-sheet > sheet { border-radius: 16px; }
+dialog.xx-mu-dialog bottom-sheet > dimming,
+dialog.xx-mu-dialog floating-sheet > dimming {
+  background-color: rgba(0, 0, 0, 0.55); }
 button.xx-mu-menu { min-height: 48px; padding: 0 4px; border-radius: 0; }
 button.xx-mu-menu:active { background-color: alpha(${fg}, 0.08); }
 button.xx-mu-menu image { color: ${muted}; }

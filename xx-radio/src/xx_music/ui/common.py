@@ -867,8 +867,40 @@ def _close(dialog) -> Gtk.Widget:
     return icon_button("window-close-symbolic", "Close", dialog.close)
 
 
+#: Widest window (logical px) that still presents sheets as a phone does.
+PHONE_MAX_WIDTH = 600
+
+
+def sheet_width(parent: Gtk.Widget | None) -> int:
+    """The bottom-sheet width for ``parent``'s window: the whole window
+    width at phone widths (Android's ModalBottomSheet spans the screen),
+    0 where the window is wider and the sheet may float."""
+    root = parent.get_root() if parent is not None else None
+    width = root.get_width() if root is not None else 0
+    if width <= 0 and isinstance(root, Gtk.Window):
+        width = root.get_default_size()[0]
+    return width if 0 < width <= PHONE_MAX_WIDTH else 0
+
+
+def dock(dialog, parent: Gtk.Widget) -> None:
+    """At phone widths, present ``dialog`` as a full-width bottom sheet
+    over a dimmed app; libadwaita's AUTO mode floats a 360 px dialog as
+    a card on the 450 px FLX1."""
+    width = sheet_width(parent)
+    if not width:
+        return
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw
+
+    mode = getattr(Adw, "DialogPresentationMode", None)
+    if mode is not None and hasattr(dialog, "set_presentation_mode"):
+        dialog.set_presentation_mode(mode.BOTTOM_SHEET)
+    dialog.set_content_width(width)
+
+
 def present(dialog, parent: Gtk.Widget):
     """Every sheet opens through here (one seam the renders replace)."""
+    dock(dialog, parent)
     dialog.present(parent)
     return dialog
 

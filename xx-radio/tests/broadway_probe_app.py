@@ -98,6 +98,27 @@ def main(argv: list[str]) -> int:
         if "Checking…" in texts:
             print("FAIL: engine status never arrived")
             failed = True
+        licenses = _row_titled(window, "Open-source licenses")
+        if licenses is None or _images_in(licenses):
+            print("FAIL: the About licenses row shows an arrow")
+            failed = True
+        # A sheet on a phone-width window docks as a full-width bottom
+        # sheet (Adw's AUTO floats a 360 px card on the 450 px FLX1).
+        from xx_music.ui import common
+
+        dialog, _box = common.sheet("Probe")
+        common.present(dialog, window)
+        pump(100)
+        width = window.get_width() or size.width
+        mode = dialog.get_presentation_mode()
+        print(f"SHEET:{mode.value_nick}:{dialog.get_content_width()}")
+        if mode != Adw.DialogPresentationMode.BOTTOM_SHEET:
+            print("FAIL: a phone sheet floats instead of docking")
+            failed = True
+        if dialog.get_content_width() != width:
+            print("FAIL: the bottom sheet is narrower than the phone")
+            failed = True
+        dialog.close()
         window.destroy()
     finally:
         for domain, handler_id in zip(domains, handler_ids):
@@ -140,6 +161,32 @@ def _buttons_in_buttons(widget, inside: bool = False) -> list[str]:
         found.extend(_buttons_in_buttons(child, inside or is_button))
         child = child.get_next_sibling()
     return found
+
+
+def _row_titled(widget, title: str):
+    """The first button holding a label that reads ``title``."""
+    from gi.repository import Gtk
+
+    if isinstance(widget, Gtk.Button) and title in _label_texts(widget):
+        return widget
+    child = widget.get_first_child()
+    while child is not None:
+        found = _row_titled(child, title)
+        if found is not None:
+            return found
+        child = child.get_next_sibling()
+    return None
+
+
+def _images_in(widget) -> int:
+    from gi.repository import Gtk
+
+    count = 0
+    child = widget.get_first_child()
+    while child is not None:
+        count += isinstance(child, Gtk.Image) + _images_in(child)
+        child = child.get_next_sibling()
+    return count
 
 
 if __name__ == "__main__":
