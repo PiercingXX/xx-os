@@ -571,3 +571,12 @@ def test_script_syntax_parses():
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def test_apt_installs_the_layer_shell_typelib():
+    # libgtk4-layer-shell0 alone left the shell without Gtk4LayerShell on
+    # FuriOS (panels fell back to plain windows)
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / 'scripts'
+           / 'install.sh').read_text()
+    assert 'gir1.2-gtk4layershell-1.0' in src

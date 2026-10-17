@@ -131,3 +131,11 @@ def test_keyboard_step_squeekboard_fallback(monkeypatch, tmp_path):
     layouts = tmp_path / '.local' / 'share' / 'squeekboard' / 'keyboards'
     layouts.mkdir(parents=True)
     assert first_boot.keyboard_step_available() is True
+
+
+def test_every_distro_gets_msgfmt_for_the_keyboard(install_script):
+    # FuriOS ships without gettext: meson stopped at "Program 'msgfmt' not
+    # found" and the keyboard never installed (seen on the FLX1)
+    body = _function_body(install_script, 'install_xx_keyboard_deps')
+    for arm in body.split('elif')[:3]:
+        assert 'gettext' in arm

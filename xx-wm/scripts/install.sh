@@ -138,7 +138,7 @@ install_deps() {
         fi
     else
         pkg_install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 \
-            libgtk4-layer-shell0 meson ninja-build rsync git \
+            libgtk4-layer-shell0 gir1.2-gtk4layershell-1.0 meson ninja-build rsync git \
             phoc lisgd wl-clipboard
         pkg_install python3-pywayland
         pkg_install python3-phonenumbers openssl python3-gi-cairo
@@ -219,17 +219,19 @@ install_xx_keyboard_deps() {
         pkg_install gtk+3.0-dev libhandy1-dev gmobile-dev feedbackd-dev \
             gnome-desktop-dev json-glib-dev libxkbcommon-dev dconf-dev \
             hunspell-dev hunspell-en gsettings-desktop-schemas-dev \
-            wayland-dev wayland-protocols systemd-dev g++
+            wayland-dev wayland-protocols systemd-dev g++ gettext
     elif [ "$PKG" = pacman ]; then
         pkg_install gtk3 libhandy gmobile feedbackd gnome-desktop json-glib \
             libxkbcommon dconf hunspell hunspell-en_us \
-            gsettings-desktop-schemas wayland-protocols gcc
+            gsettings-desktop-schemas wayland-protocols gcc gettext
     else
         pkg_install libgtk-3-dev libhandy-1-dev libgmobile-dev \
             libfeedback-dev libgnome-desktop-3-dev libjson-glib-dev \
             libxkbcommon-dev libdconf-dev libhunspell-dev hunspell-en-us \
-            gsettings-desktop-schemas-dev libsystemd-dev wayland-protocols g++
+            gsettings-desktop-schemas-dev libsystemd-dev wayland-protocols g++ \
+            gettext
     fi
+    # gettext provides msgfmt for the translations (FuriOS ships without it);
     # g++ builds the glide (swipe) decoder; hunspell-en* is the word list
     # the completion bar and its fallback language need.
     # hunspell above is not optional: meson errors with
