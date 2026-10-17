@@ -78,12 +78,11 @@ CHAPTER_NAMES = {
     "lw": ["Wayfarer", "Port Coriol", "The Tunnel", "Hedra Ka", "Lucky"],
 }
 DESCRIPTIONS = {
-    "ph": ("Ryland Grace is the sole survivor on a desperate, last-chance "
-           "mission. If he fails, humanity and the earth itself will "
-           "perish.\nExcept that right now, he doesn't know that. He "
-           "can't even remember his own name."),
-    "hy": ("On the world called Hyperion, beyond the reach of galactic "
-           "law, waits a creature called the Shrike."),
+    # Demo copy only: placeholder text, not publisher blurbs.
+    "ph": ("[Book description] A long first paragraph so the About block "
+           "wraps and clamps on a 360 px screen.\nA second paragraph, "
+           "shown when the block is expanded."),
+    "hy": ("[Book description] One short paragraph."),
 }
 
 
