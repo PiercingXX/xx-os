@@ -17,7 +17,7 @@ mkdir -p "$OUTDIR"
 OUTDIR=$(cd "$OUTDIR" && pwd)
 PY=${PYTHON:-python3}
 THEMES=${THEMES:-"amoled paper graphite aura"}
-JOBS=${JOBS:-4}
+JOBS=${JOBS:-3}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -146,7 +146,7 @@ cat > "$WORK/one.sh" <<EOF
 out=\$1 home=\$2 size=\$3 target=\$4 scenario=\$5
 shift 5
 attempt=0
-while [ "\$attempt" -lt 3 ]; do
+while [ "\$attempt" -lt 5 ]; do
     attempt=\$((attempt + 1))
     rm -f "\$out"
     env HOME="\$home" XDG_CONFIG_HOME="\$home/.config" \\
@@ -155,7 +155,7 @@ while [ "\$attempt" -lt 3 ]; do
         DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent-snap-bus \\
         SNAP_TARGET="\$target" SNAP_SCENARIO="\$scenario" "\$@" \\
         "$PY" "$LANE/scripts/snap.py" --out "\$out" --size "\$size" \\
-        --delay 1.2 --path "$ROOT/src" --path "$LANE/common" \\
+        --delay 1.5 --path "$ROOT/src" --path "$LANE/common" \\
         --path "$ROOT/tools" --script "$ROOT/tools/snap_nav.py" \\
         -- "$ROOT/tools/snap_app.py" > "\$out.err" 2>&1
     if grep -q 'snap: WARNING' "\$out.err"; then
