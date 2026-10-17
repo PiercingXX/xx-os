@@ -180,8 +180,16 @@ def set_active(on: bool) -> bool:
     _state["on"] = on
     for ref in list(_listeners):
         callback = ref()
-        if callback is not None:
+        if callback is None:
+            continue
+        try:
             callback()
+        except Exception:
+            # One screen failing to rebuild must not leave the others
+            # (tabs, mini-player...) in the old mode.
+            import logging
+            logging.getLogger(__name__).exception(
+                "Minimal Mode rebuild failed in %r", callback)
     _listeners[:] = [r for r in _listeners if r() is not None]
     return True
 

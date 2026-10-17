@@ -784,7 +784,8 @@ class NowPlaying:
         self.dislike.set_visible(True)
         rating = player.rating(track.id)
         if self.words:
-            self.thumbs.set_visible(can_rate)
+            # Local thumbs always work (signed out, any engine).
+            self.thumbs.set_visible(True)
         for button, value, word in ((self.like, Rating.LIKE, "Like"),
                                     (self.dislike, Rating.DISLIKE,
                                      "Dislike")):
