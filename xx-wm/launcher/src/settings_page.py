@@ -262,15 +262,6 @@ class SystemSection(_Section):
             ui.nav_row('Open in terminal', 'Run the update script',
                        lambda r: win._on_update_clicked(r)),
         ]
-        try:
-            import settings_updates
-
-            if settings_updates.dots_bootstrap_available():
-                self._rows.append(ui.nav_row(
-                    'Update PiercingXX scripts', 'Opens a terminal',
-                    lambda r: win._on_dots_update(r)))
-        except Exception:
-            pass
         built = ui.group(self.title)
         self._card = built[1]
         self.refresh(win)
@@ -395,18 +386,30 @@ class BatterySection(_Section):
 
         def _work():
             import settings_device
+            try:
+                import settings_display
+                power = settings_display.probe_power_state()
+            except Exception:
+                power = None
             return (system_settings.battery_status(),
                     settings_device.format_battery_health(
-                        settings_device.battery_health_sync()))
+                        settings_device.battery_health_sync()),
+                    power)
 
         _run_bg(_work, lambda res: self._render(win, res))
 
     def _render(self, win, res) -> None:
         try:
-            status, health = res
+            status, health, power = res
         except (TypeError, ValueError):
-            return
-        ui.set_subtitle(self._row, status or 'No battery detected.')
+            try:
+                status, health = res
+            except (TypeError, ValueError):
+                return
+            power = None
+        ui.set_subtitle(
+            self._row, self._with_profile(win, status, power)
+            or 'No battery detected.')
         if self._health_box is None:
             return
         rows = [self._row]
@@ -415,6 +418,23 @@ class BatterySection(_Section):
                            ('Voltage', 'voltage')):
             rows.append(ui.row(title, str(health.get(key, 'Unknown'))))
         ui.fill(self._health_box, rows)
+
+    @staticmethod
+    def _with_profile(win, status: str | None, power) -> str | None:
+        """Battery status plus the live power profile, so the row
+        reflects the real state on either backend."""
+        try:
+            import power_profiles
+            import settings_standby
+            active = (power or {}).get('active')
+            saver = settings_standby.saver_is_on(win)
+            label = power_profiles.current_label(
+                active, win.config, saver)
+        except Exception:
+            return status
+        if not status or label in ('Unknown', ''):
+            return status
+        return '%s · %s' % (status, label)
 
 
 _MIRROR_LABELS = ((False, 'Add / update'), (True, 'Mirror · deletes extras'))
@@ -2160,11 +2180,22 @@ class SettingsPage:
             f'{count} update{plural} available — see notifications.')
 
     def _on_update_now(self, anchor=None) -> None:
-        """'Update now': confirm first, then the native path on apk
-        (in-shell upgrade + Flatpak), the terminal script on pacman."""
-        import system_settings
+        """'Update now': the owner's update-system.sh when installed (it
+        is THE update path); otherwise the native path on apk (in-shell
+        upgrade + Flatpak), the terminal script on pacman."""
+        import settings_updates
 
         win = self._win
+        try:
+            present = settings_updates.owner_script_path(
+                win.config.update_script)
+        except Exception:
+            present = None
+        if present is not None:
+            self._confirm_owner_update(anchor, present)
+            return
+        import system_settings
+
         backend = system_settings.detect_backend()
         if backend == 'apk':
             self._confirm_native_update(anchor)
@@ -2172,6 +2203,93 @@ class SettingsPage:
             self._confirm_terminal_update(anchor)
         else:
             win._on_update_clicked(anchor)
+
+    def _confirm_owner_update(self, anchor, script: str) -> None:
+        win = self._win
+        if anchor is None:
+            self._execute_owner_update(script)
+            return
+        try:
+            actions = win.item_actions
+        except Exception:
+            self._execute_owner_update(script)
+            return
+        actions._show_action_menu(
+            anchor, 'Run the system update now? Requires power.',
+            [('Run update', lambda: self._execute_owner_update(script)),
+             ('Cancel', lambda: None)])
+
+    def _execute_owner_update(self, script: str) -> None:
+        """Run the owner script in a terminal when one is installed,
+        else headless with output streaming to the update log."""
+        import update_checker
+
+        win = self._win
+        kind, detail, argv = update_checker.plan_update(script)
+        if kind == 'terminal':
+            import subprocess
+
+            try:
+                subprocess.Popen(argv or [], close_fds=True)
+            except OSError:
+                self._update_status_text('Could not open a terminal.')
+                return
+            self._update_status_text('Update running in terminal.')
+            return
+        if kind == 'missing':
+            win._on_update_clicked(None)
+            return
+        import settings_updates
+
+        log_path = settings_updates.new_log_path()
+        self._owner_log_path = log_path
+        self._update_status_text(
+            'Updating system… (%s)' % detail)
+        update_checker.run_owner_headless(
+            script, self._on_owner_line,
+            lambda rc: self._on_owner_done(rc, log_path))
+
+    def _on_owner_line(self, line: str) -> None:
+        import settings_updates
+
+        settings_updates.append_log(
+            getattr(self, '_owner_log_path', ''), line)
+        if line.strip():
+            self._update_status_text(line.strip()[-120:])
+
+    def _on_owner_done(self, returncode: int, log_path: str) -> None:
+        import settings_updates
+
+        win = self._win
+        try:
+            with open(log_path, encoding='utf-8', errors='replace') as handle:
+                text = handle.read()
+        except OSError:
+            text = ''
+        summary = settings_updates.parse_owner_summary(text)
+        reason = settings_updates.reboot_required()
+        if returncode == 0 and summary['finished']:
+            body = 'System and Flatpak updates finished.'
+            if summary['reboot_reasons']:
+                body += ' %s' % '; '.join(summary['reboot_reasons'])
+            elif reason:
+                body += ' %s' % reason
+            body += ' Log: %s' % (summary['log_path'] or log_path)
+            try:
+                win._ensure_shade().add_notification(
+                    _UPDATE_RESULT_ID, 'System', 'System update finished',
+                    body)
+            except Exception:
+                pass
+            self._update_status_text('System update finished.')
+        elif returncode == -1:
+            self._update_status_text(
+                'System update failed to start.')
+        else:
+            detail = '%d step(s) failed.' % summary['failures'] \
+                if summary['failures'] else 'see the update log.'
+            self._update_status_text('System update failed: %s' % detail)
+        self._refresh_updates_section()
 
     def _confirm_native_update(self, anchor) -> None:
         win = self._win
@@ -2278,23 +2396,6 @@ class SettingsPage:
                 section.refresh(self._win)
         except Exception:
             pass
-
-    def _on_dots_update(self, _btn=None) -> None:
-        """Run scripts/bootstrap-dots.sh in a terminal (the row only
-        shows when the phone profile exists, so this path is live)."""
-        import settings_updates
-        from update_checker import run_update_script
-
-        win = self._win
-        script = settings_updates.bootstrap_script()
-        if script is None:
-            win._show_status('Bootstrap script not found on this device.')
-            return
-        ok, detail = run_update_script(script)
-        if ok:
-            win._show_status('PiercingXX update running in terminal.')
-        else:
-            win._show_status(detail)
 
     def _snooze_updates(self) -> None:
         win = self._win

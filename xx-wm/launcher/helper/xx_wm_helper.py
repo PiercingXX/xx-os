@@ -42,6 +42,7 @@ ACTION_SERVICE_REMOTE = BUS_NAME + '.service-remote'
 ACTION_RFKILL = BUS_NAME + '.rfkill'
 ACTION_FW_OPEN = BUS_NAME + '.firewall-open'
 ACTION_FW_RESTRICT = BUS_NAME + '.firewall-restrict'
+ACTION_POWER = BUS_NAME + '.power-profile'
 
 # Destructive actions pass AllowUserInteraction (flag 1) so the in-shell
 # polkit agent can prompt; harmless probes stay non-interactive (flag 0).
@@ -111,8 +112,10 @@ NFT_FAMILY = 'inet'
 NFT_TABLE = 'xxwm'
 NFT_CHAIN = 'output'
 
-NFT_IN_TABLE = 'xxwm-inbound'
+NFT_IN_TABLE = 'xx_wm'
 NFT_IN_CHAIN = 'input'
+
+NFT_IN_TABLE_LEGACY = 'xxwm-inbound'
 
 INBOUND_FILE_NAME = 'inbound.json'
 NFT_DROPIN_DIR = '/etc/nftables.d'
@@ -121,9 +124,11 @@ NFT_DROPIN_NAME = '10-xxwm.nft'
 # Curated services ManageService may touch — nothing else, in
 # particular never xx-wm itself, dbus or logind. Mirrors the
 # ServicesSection catalog (launcher/src/settings_services.py); the
-# ssh entry covers both spellings (Arch sshd.service, apt ssh.service).
+# ssh entry covers both spellings (Arch sshd.service, apt ssh.service)
+# and adbd is the wireless-debugging daemon (apt only; hidden
+# elsewhere).
 SERVICE_ALLOW = ('modem', 'eg25', 'network', 'bluetooth', 'ssh',
-                 'tailscale', 'waydroid')
+                 'tailscale', 'waydroid', 'adbd')
 SERVICE_ACTIONS = ('start', 'stop', 'restart', 'enable', 'disable')
 SERVICE_UNITS = {
     'modem': {'systemd': ('ModemManager.service',),
@@ -140,9 +145,26 @@ SERVICE_UNITS = {
                   'openrc': ('tailscale', 'tailscaled')},
     'waydroid': {'systemd': ('waydroid-container.service',),
                  'openrc': ('waydroid',)},
+    'adbd': {'systemd': ('adbd.service',),
+             'openrc': ('adbd',)},
 }
 
 RFKILL_ALLOW = ('wifi', 'bluetooth')
+
+# Power profiles the SetPowerProfile method accepts. The helper maps each
+# to a cpufreq governor per policy (phones like the FLX1 have no
+# power-profiles-daemon driver, only these sysfs knobs).
+POWER_PROFILES = ('power-saver', 'balanced', 'performance')
+
+# Preferred governors per profile, first offered win. Only governors a
+# policy lists in scaling_available_governors are ever written.
+GOVERNOR_PREFERENCE = {
+    'power-saver': ('powersave', 'conservative'),
+    'balanced': ('schedutil', 'ondemand'),
+    'performance': ('performance',),
+}
+
+CPUFREQ_REL = os.path.join('devices', 'system', 'cpu', 'cpufreq')
 
 # Inbound presets SetInboundPreset may toggle. Mirrors the
 # FirewallSection catalog (launcher/src/settings_firewall.py): ports are
@@ -207,6 +229,9 @@ INTROSPECT_XML = """\
     <method name="SetRfkill">
       <arg name="type" type="s" direction="in"/>
       <arg name="blocked" type="b" direction="in"/>
+    </method>
+    <method name="SetPowerProfile">
+      <arg name="profile" type="s" direction="in"/>
     </method>
     <method name="SetInboundPreset">
       <arg name="name" type="s" direction="in"/>
@@ -757,6 +782,67 @@ class HelperCore:
         self._run_cmd(['rfkill', 'block' if blocked else 'unblock', rtype])
         return bool(blocked)
 
+    # ------------------------------------------------------- power profile
+
+    def cpufreq_root(self) -> str:
+        return os.path.join(self.sysfs, CPUFREQ_REL)
+
+    def cpufreq_policies(self) -> list[str]:
+        """Every cpufreq policy dir, sorted. Empty without the driver."""
+        root = self.cpufreq_root()
+        try:
+            names = sorted(os.listdir(root))
+        except OSError:
+            return []
+        return [os.path.join(root, name) for name in names
+                if name.startswith('policy')
+                and os.path.isdir(os.path.join(root, name))]
+
+    def policy_available_governors(self, policy: str) -> list[str]:
+        try:
+            with open(os.path.join(policy, 'scaling_available_governors'),
+                      'r', encoding='utf-8') as handle:
+                return handle.read().split()
+        except OSError:
+            return []
+
+    @staticmethod
+    def governor_for_profile(profile: str, available) -> str | None:
+        """First preferred governor the policy offers, else None (the
+        policy is then left alone, never forced to an unoffered value)."""
+        for governor in GOVERNOR_PREFERENCE.get(profile, ()):
+            if governor in (available or ()):
+                return governor
+        return None
+
+    def set_power_profile(self, profile: str) -> str:
+        """Apply a power profile through the cpufreq governors.
+
+        ``profile`` must name POWER_PROFILES — anything else is
+        InvalidArgs, so callers can never smuggle in a free-form governor
+        or path. Only governors the policy offers are written; policies
+        offering none of the preferred governors are skipped. The choice
+        persists for the boot re-apply. Writing governors is
+        non-destructive, so the polkit action stays allow_active=yes.
+        """
+        if profile not in POWER_PROFILES:
+            raise HelperError(ERROR_INVALID_ARGS,
+                              'unknown power profile: %r' % (profile,))
+        policies = self.cpufreq_policies()
+        if not policies:
+            raise _failed('no cpufreq policies found')
+        for policy in policies:
+            governor = self.governor_for_profile(
+                profile, self.policy_available_governors(policy))
+            if governor is not None:
+                self._write_file(
+                    os.path.join(policy, 'scaling_governor'),
+                    '%s\n' % governor)
+        state = self.load_state()
+        state['power_profile'] = profile
+        self.save_state(state)
+        return profile
+
     # ------------------------------------------------------- inbound firewall
 
     def inbound_file(self) -> str:
@@ -798,12 +884,12 @@ class HelperCore:
                           % (err.strerror or err)) from None
 
     def firewall_backend(self) -> str:
-        """'ufw' when installed, else 'nftables' when nft exists (the pmOS
-        path: a drop-in under /etc/nftables.d), else 'none'."""
-        if shutil.which('ufw') is not None:
-            return 'ufw'
+        """'nftables' when nft exists (present everywhere: a drop-in
+        under /etc/nftables.d), else 'ufw' when installed, else 'none'."""
         if self.nft_available():
             return 'nftables'
+        if shutil.which('ufw') is not None:
+            return 'ufw'
         return 'none'
 
     @staticmethod
@@ -859,9 +945,19 @@ class HelperCore:
             raise _failed('cannot write nftables drop-in: %s'
                           % (err.strerror or err)) from None
 
+    def _drop_legacy_inbound(self) -> None:
+        """Best-effort removal of the pre-rename owned table; anything
+        else on the system is never touched."""
+        try:
+            self._nft(['delete', 'table', NFT_FAMILY,
+                       NFT_IN_TABLE_LEGACY])
+        except HelperError:
+            pass
+
     def apply_inbound(self, allowed) -> None:
-        """Reconcile the live `inet xxwm-inbound` table with `allowed`:
+        """Reconcile the live `inet xx_wm` table with `allowed`:
         our own table and chain only — other tables are never touched."""
+        self._drop_legacy_inbound()
         self._nft(['add', 'table', NFT_FAMILY, NFT_IN_TABLE],
                   allow_exists=True)
         self._nft([
@@ -995,6 +1091,7 @@ class HelperCore:
                 self._nft(['flush', 'chain', NFT_FAMILY, NFT_IN_TABLE,
                            NFT_IN_CHAIN])
                 self._nft(['delete', 'table', NFT_FAMILY, NFT_IN_TABLE])
+                self._drop_legacy_inbound()
                 state = self.load_inbound()
                 state['enabled'] = False
                 self.save_inbound(state)
@@ -1005,21 +1102,26 @@ class HelperCore:
     # ----------------------------------------------------------------- state
 
     def load_state(self) -> dict:
-        """Saved ``{'charge_limit': int|None, 'blocked': [str]}``; missing
-        or corrupt state degrades to defaults rather than failing boot."""
+        """Saved ``{'charge_limit': int|None, 'blocked': [str],
+        'power_profile': str|None}``; missing or corrupt state degrades
+        to defaults rather than failing boot."""
         try:
             with open(self.state_file, 'r', encoding='utf-8') as handle:
                 raw = json.load(handle)
         except (OSError, ValueError):
-            return {'charge_limit': None, 'blocked': []}
+            return {'charge_limit': None, 'blocked': [],
+                    'power_profile': None}
         if not isinstance(raw, dict):
-            return {'charge_limit': None, 'blocked': []}
+            return {'charge_limit': None, 'blocked': [],
+                    'power_profile': None}
         limit = raw.get('charge_limit')
         blocked = raw.get('blocked')
+        profile = raw.get('power_profile')
         return {
             'charge_limit': limit if isinstance(limit, int) else None,
             'blocked': [p for p in blocked if isinstance(p, str)]
             if isinstance(blocked, list) else [],
+            'power_profile': profile if profile in POWER_PROFILES else None,
         }
 
     def save_state(self, state: dict) -> None:
@@ -1039,15 +1141,22 @@ class HelperCore:
                           % (err.strerror or err)) from None
 
     def apply_saved(self) -> dict:
-        """Boot re-apply: charge limit, then the nft blocked set, then the
-        inbound preset set. One leg failing must not skip the others, so
-        errors are collected and reported together."""
+        """Boot re-apply: charge limit, power profile, then the nft blocked
+        set, then the inbound preset set. One leg failing must not skip
+        the others, so errors are collected and reported together."""
         state = self.load_state()
-        applied: dict = {'charge_limit': None, 'blocked': [], 'errors': []}
+        applied: dict = {'charge_limit': None, 'power_profile': None,
+                         'blocked': [], 'errors': []}
         limit = state.get('charge_limit')
         if isinstance(limit, int):
             try:
                 applied['charge_limit'] = self.set_charge_limit(limit)
+            except HelperError as err:
+                applied['errors'].append(str(err))
+        profile = state.get('power_profile')
+        if profile in POWER_PROFILES:
+            try:
+                applied['power_profile'] = self.set_power_profile(profile)
             except HelperError as err:
                 applied['errors'].append(str(err))
         blocked = [p for p in state.get('blocked', []) if isinstance(p, str)]
@@ -1110,7 +1219,7 @@ def check_polkit_authorization(connection, sender, action, callback,
     the sender's Unix uid for slice scoping, ``error`` a detail string.
     ``interactive`` passes AllowUserInteraction so the session's agent
     prompts for the device password; it is True only for actions whose
-    policy is ``auth_admin_keep`` (upgrade, removal, sshd start/enable,
+    policy is ``auth_admin_keep`` (upgrade, removal, sshd/adbd start/enable,
     opening an inbound port, disabling the firewall).
     """
     Gio, GLib = _require_gio()
@@ -1157,8 +1266,10 @@ def check_polkit_authorization(connection, sender, action, callback,
 # AllowUserInteraction and is reserved for auth_admin_keep actions.
 # Argument-dependent methods (ManageService, SetInboundPreset,
 # SetFirewallEnabled) are NOT listed here: policy_for() below decides
-# them from the already-validated arguments. GetCapabilities and
-# GetFirewallState need no auth and are dispatched before any lookup.
+# them from the already-validated arguments. SetPowerProfile is listed
+# but policy_for() still allowlists its profile first. GetCapabilities
+# and GetFirewallState need no auth and are dispatched before any
+# lookup.
 _METHOD_ACTIONS = {
     'SetChargeLimit': (ACTION_CHARGE, False),
     'SetAppNetwork': (ACTION_NETWORK, False),
@@ -1169,6 +1280,7 @@ _METHOD_ACTIONS = {
     'CleanSystem': (ACTION_CLEAN, False),
     'ReadLog': (ACTION_READLOG, False),
     'SetRfkill': (ACTION_RFKILL, False),
+    'SetPowerProfile': (ACTION_POWER, False),
 }
 
 
@@ -1177,7 +1289,7 @@ def policy_for(method: str, args) -> tuple | None:
 
     Every call goes through here. Plain methods map statically.
     Argument-dependent ones decide from the already-validated
-    arguments: opening remote access (sshd start/enable), opening an
+    arguments: opening remote access (ssh/adbd start/enable), opening an
     inbound port or disabling the firewall needs auth_admin_keep with
     user interaction (True); closing a port, enabling the firewall and
     every other allowlisted service change stay allow_active (False).
@@ -1185,6 +1297,14 @@ def policy_for(method: str, args) -> tuple | None:
     unauthenticated probes (GetCapabilities, GetFirewallState) and
     anything outside the allowlists.
     """
+    if method == 'SetPowerProfile':
+        try:
+            (profile,) = args
+        except (TypeError, ValueError):
+            return None
+        if profile not in POWER_PROFILES:
+            return None
+        return _METHOD_ACTIONS[method]
     if method == 'ManageService':
         try:
             name, action = args
@@ -1192,7 +1312,7 @@ def policy_for(method: str, args) -> tuple | None:
             return None
         if name not in SERVICE_ALLOW or action not in SERVICE_ACTIONS:
             return None
-        if name == 'ssh' and action in ('start', 'enable'):
+        if name in ('ssh', 'adbd') and action in ('start', 'enable'):
             return (ACTION_SERVICE_REMOTE, True)
         return (ACTION_SERVICE, False)
     if method == 'SetInboundPreset':
@@ -1351,6 +1471,9 @@ class HelperService:
             elif method == 'SetRfkill':
                 rtype, blocked = args
                 self.core.set_rfkill(str(rtype), bool(blocked))
+            elif method == 'SetPowerProfile':
+                (profile,) = args
+                self.core.set_power_profile(str(profile))
             elif method == 'SetInboundPreset':
                 name, allowed = args
                 self.core.set_inbound_preset(str(name), bool(allowed))

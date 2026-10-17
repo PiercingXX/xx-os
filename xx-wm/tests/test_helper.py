@@ -248,7 +248,7 @@ def test_freeze_without_cgroup2_fails(layout, tmp_path):
 def test_state_corrupt_degrades_to_defaults(layout):
     Path(layout.state).write_text('{not json')
     assert make_core(layout).load_state() == {
-        'charge_limit': None, 'blocked': []}
+        'charge_limit': None, 'blocked': [], 'power_profile': None}
 
 
 def test_apply_saved_reapplies_charge_and_blocks(layout):
@@ -257,7 +257,8 @@ def test_apply_saved_reapplies_charge_and_blocks(layout):
     first.set_charge_limit(75)
     first.set_app_network(app_path(layout), False, UID)
     saved = json.loads(Path(layout.state).read_text())
-    assert saved == {'blocked': [app_path(layout)], 'charge_limit': 75}
+    assert saved == {'blocked': [app_path(layout)], 'charge_limit': 75,
+                     'power_profile': None}
 
     (Path(layout.sysfs, 'class/power_supply/BAT0',
           'charge_control_end_threshold').write_text('100\n'))
@@ -726,6 +727,7 @@ def test_shipped_policy_actions_and_defaults():
                    'io.piercingxx.XXWM.Helper1.refresh-packages',
                    'io.piercingxx.XXWM.Helper1.service-manage',
                    'io.piercingxx.XXWM.Helper1.rfkill',
+                   'io.piercingxx.XXWM.Helper1.power-profile',
                    'io.piercingxx.XXWM.Helper1.firewall-restrict'):
         assert ('action id="%s"' % action) in text
     for action in ('io.piercingxx.XXWM.Helper1.upgrade-system',
@@ -733,10 +735,10 @@ def test_shipped_policy_actions_and_defaults():
                    'io.piercingxx.XXWM.Helper1.service-remote',
                    'io.piercingxx.XXWM.Helper1.firewall-open'):
         assert ('action id="%s"' % action) in text
-    assert text.count('<allow_active>yes</allow_active>') == 9
+    assert text.count('<allow_active>yes</allow_active>') == 10
     assert text.count('<allow_active>auth_admin_keep</allow_active>') == 4
-    assert text.count('<allow_inactive>no</allow_inactive>') == 13
-    assert text.count('<allow_any>no</allow_any>') == 13
+    assert text.count('<allow_inactive>no</allow_inactive>') == 14
+    assert text.count('<allow_any>no</allow_any>') == 14
 
 
 def test_shipped_bus_policy_allows_default_callers_without_at_console():

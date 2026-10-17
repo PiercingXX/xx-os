@@ -192,6 +192,8 @@ ALLOW = {
         'status_line_async worker.',
     ('update_checker.py', 'count_updates'):
         'update-check worker thread.',
+    ('update_checker.py', '_headless_worker'):
+        'headless owner-script worker thread; lines stream via GLib.idle_add.',
     ('weather.py', '_geoclue_fix_sync'):
         'weather auto-fix worker thread (weather-locate); bounded GeoClue calls.',
     ('wayland_bindings.py', 'generate_protocol_bindings'):

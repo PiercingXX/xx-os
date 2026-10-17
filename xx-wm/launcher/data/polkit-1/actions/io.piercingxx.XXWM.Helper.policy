@@ -96,8 +96,8 @@
   </action>
 
   <action id="io.piercingxx.XXWM.Helper1.service-remote">
-    <description>Start or enable the SSH server</description>
-    <message>Authentication is required to open remote SSH access.</message>
+    <description>Start or enable remote access (SSH, ADB)</description>
+    <message>Authentication is required to open remote access.</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
@@ -108,6 +108,16 @@
   <action id="io.piercingxx.XXWM.Helper1.rfkill">
     <description>Block or unblock a WiFi or Bluetooth radio</description>
     <message>Authentication is required to change a radio block.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <action id="io.piercingxx.XXWM.Helper1.power-profile">
+    <description>Set the CPU power profile</description>
+    <message>Authentication is required to set the power profile.</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

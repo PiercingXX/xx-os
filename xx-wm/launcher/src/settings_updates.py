@@ -8,8 +8,18 @@ tests never touch the real machine.
 from __future__ import annotations
 
 import os
+import re
 
 LOG_TAIL_LINES = 15
+
+OWNER_SCRIPT_REL = os.path.join(
+    '.scripts', 'PiercingXX-Settings-Menu', 'update-system.sh')
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
+_STEP_RE = re.compile(r'^  (\S(?:.*\S)?)\s+(ok|skipped|FAILED)\s*$')
+_REBOOT_HEAD_RE = re.compile(r'^Reboot recommended:\s*$')
+_REBOOT_ITEM_RE = re.compile(r'^  - (.*\S)\s*$')
+_LOG_RE = re.compile(r'^Full log:\s*(\S.*\S|\S)\s*$')
 
 
 def log_dir(home: str | None = None) -> str:
@@ -87,35 +97,64 @@ def reboot_required(uname_release: str | None = None,
     return None
 
 
-def dots_bootstrap_available(home: str | None = None) -> bool:
-    """True only when scripts/bootstrap-dots.sh can actually run: a
-    piercing-dots clone whose install.sh is executable and takes a
-    --profile flag (the phone profile). Otherwise the row stays hidden."""
-    base = home if home is not None else os.path.expanduser('~')
-    for dest in (os.path.join(base, 'piercing-dots'),
-                 os.path.join(base, '.cache', 'piercing-dots')):
-        installer = os.path.join(dest, 'install.sh')
-        if not (os.path.isfile(installer) and os.access(installer, os.X_OK)):
-            continue
-        try:
-            with open(installer, encoding='utf-8', errors='replace') as handle:
-                head = handle.read(65536)
-        except OSError:
-            continue
-        if '--profile' in head:
-            return True
-    return False
+def owner_script_path(script: str | None = None,
+                      home: str | None = None) -> str | None:
+    """Resolved owner update-script path when it exists, else None.
+
+    ``script`` overrides (the configured update_script value); otherwise
+    the piercing-dots layout (``~/.scripts/PiercingXX-Settings-Menu/``,
+    where the installer and the script's own self-update put it)."""
+    if script:
+        candidate = os.path.expanduser(script)
+    else:
+        base = home if home is not None else os.path.expanduser('~')
+        candidate = os.path.join(base, OWNER_SCRIPT_REL)
+    return candidate if os.path.isfile(candidate) else None
 
 
-def bootstrap_script() -> str | None:
-    """Filesystem path of scripts/bootstrap-dots.sh in a repo checkout,
-    else None (installed trees do not ship it)."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    candidate = os.path.join(here, '..', '..', 'scripts', 'bootstrap-dots.sh')
-    candidate = os.path.normpath(candidate)
-    if os.path.isfile(candidate):
-        return candidate
-    return None
+def parse_owner_summary(text: str) -> dict:
+    """Result of an owner update-system.sh run from its own output.
+
+    Reads the end-of-run table (``Update summary`` with ok/skipped/FAILED
+    rows), the ``Reboot recommended:`` reasons, and the ``Full log:``
+    path. Returns steps, failure count, reboot reasons, the log path,
+    and whether the run finished (vs the package upgrade dying early).
+    ANSI colors are stripped first: live output has them, log files do
+    not. Unknown stays unknown: no table means no verdict either way."""
+    steps: list[tuple[str, str]] = []
+    reboot_reasons: list[str] = []
+    log_path: str | None = None
+    in_reboot = False
+    for raw in (text or '').splitlines():
+        line = _ANSI_RE.sub('', raw)
+        step = _STEP_RE.match(line)
+        if step is not None:
+            steps.append((step.group(1), step.group(2)))
+            in_reboot = False
+            continue
+        if _REBOOT_HEAD_RE.match(line):
+            in_reboot = True
+            continue
+        if in_reboot:
+            item = _REBOOT_ITEM_RE.match(line)
+            if item is not None:
+                reason = item.group(1)
+                if reason not in reboot_reasons:
+                    reboot_reasons.append(reason)
+                continue
+            if line.strip():
+                in_reboot = False
+        logged = _LOG_RE.match(line)
+        if logged is not None:
+            log_path = logged.group(1)
+    failures = sum(1 for _label, status in steps if status == 'FAILED')
+    plain = _ANSI_RE.sub('', text or '')
+    finished = 'System update finished.' in plain
+    core_failed = ('did not complete' in plain
+                   or 'System update failed' in plain)
+    return {'steps': steps, 'failures': failures,
+            'reboot_reasons': reboot_reasons, 'log_path': log_path,
+            'finished': finished, 'core_failed': core_failed}
 
 
 def format_count(repo: int | None, flatpak: int | None) -> str:

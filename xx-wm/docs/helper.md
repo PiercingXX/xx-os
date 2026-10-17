@@ -17,7 +17,7 @@ service, `io.piercingxx.XXWM.Helper1`, and the shell talks to it via
 | `launcher/helper/xx_wm_helper.py` | `$libexecdir/xx-wm-helper` (mode 755) | daemon (Gio + stdlib only) |
 | `launcher/data/dbus-1/system-services/io.piercingxx.XXWM.Helper1.service` | `$datadir/dbus-1/system-services/` | D-Bus activation, `User=root` |
 | `launcher/data/dbus-1/system.d/io.piercingxx.XXWM.Helper1.conf` | `$datadir/dbus-1/system.d/` | bus policy: root owns, any caller may message the helper interfaces |
-| `launcher/data/polkit-1/actions/io.piercingxx.XXWM.Helper.policy` | `$datadir/polkit-1/actions/` | thirteen actions, `allow_active=yes` except `…upgrade-system`, `…remove-package`, `…service-remote` and `…firewall-open` (`auth_admin_keep`), others `no` |
+| `launcher/data/polkit-1/actions/io.piercingxx.XXWM.Helper.policy` | `$datadir/polkit-1/actions/` | fourteen actions, `allow_active=yes` except `…upgrade-system`, `…remove-package`, `…service-remote` and `…firewall-open` (`auth_admin_keep`), others `no` |
 | `launcher/data/systemd/xx-wm-helper-boot.service` | `$datadir/systemd/system/` | oneshot `--apply-saved` at boot |
 | `launcher/data/openrc/xx-wm-helper-boot` | `$sysconfdir/init.d/` | OpenRC equivalent |
 | `launcher/src/helper_client.py` | shell datadir | async shell-side client |
@@ -27,8 +27,8 @@ Interface `io.piercingxx.XXWM.Helper1` at
 `SetChargeLimit(u)`, `SetAppNetwork(s, b)`, `FreezeCgroup(s, b)`,
 `CleanSystem(as) → as`, `ReadLog(s) → s`, `RefreshPackageIndex()`,
 `UpgradeSystem() → s`, `RemovePackage(s)`, `ManageService(s, s)`,
-`SetRfkill(s, b)`, `SetInboundPreset(s, b)`, `SetFirewallEnabled(b)`,
-`GetFirewallState() → a{sv}`.
+`SetRfkill(s, b)`, `SetPowerProfile(s)`, `SetInboundPreset(s, b)`,
+`SetFirewallEnabled(b)`, `GetFirewallState() → a{sv}`.
 The daemon exits after 60 s without a method call; the bus re-activates
 it on demand.
 
@@ -49,7 +49,7 @@ unauthenticated — they only report state so the shell can render it.
 
 `CheckAuthorization` is called with flags 0 (non-interactive) for the
 `allow_active` actions. The `auth_admin_keep` actions —
-`…upgrade-system`, `…remove-package`, `…service-remote` (sshd
+`…upgrade-system`, `…remove-package`, `…service-remote` (ssh/adbd
 start/enable, which opens remote access), `…firewall-open` (opening an
 inbound port, disabling the firewall) — pass flags 1
 (AllowUserInteraction) so the in-shell polkit agent prompts for the
@@ -70,9 +70,10 @@ the service refuses those with InvalidArgs without contacting polkit.
 | `RefreshPackageIndex` | `…refresh-packages` | `allow_active=yes` |
 | `UpgradeSystem` | `…upgrade-system` | `allow_active=auth_admin_keep` |
 | `RemovePackage` | `…remove-package` | `allow_active=auth_admin_keep` |
-| `ManageService` ssh start/enable | `…service-remote` | `allow_active=auth_admin_keep` |
+| `ManageService` ssh/adbd start/enable | `…service-remote` | `allow_active=auth_admin_keep` |
 | `ManageService` other allowlisted service/action | `…service-manage` | `allow_active=yes` |
 | `SetRfkill` | `…rfkill` | `allow_active=yes` |
+| `SetPowerProfile` | `…power-profile` | `allow_active=yes` |
 | `SetInboundPreset` open (`allowed` true) | `…firewall-open` | `allow_active=auth_admin_keep` |
 | `SetInboundPreset` close (`allowed` false) | `…firewall-restrict` | `allow_active=yes` |
 | `SetFirewallEnabled` disable (`enabled` false) | `…firewall-open` | `allow_active=auth_admin_keep` |
@@ -97,9 +98,10 @@ the service refuses those with InvalidArgs without contacting polkit.
 - The match level is the cgroup's depth below the cgroup2 mount, and
   the match path is mount-relative, double-quoted inside its argv
   element so systemd escapes survive nft's parsing.
-- Freeze state is transient and never persisted; charge limit and the
-  blocked set are re-applied at boot by `--apply-saved` (each leg
-  reports errors independently so one failure cannot skip the other).
+- Freeze state is transient and never persisted; charge limit, power
+  profile and the blocked set are re-applied at boot by `--apply-saved`
+  (each leg reports errors independently so one failure cannot skip
+  the other).
 - `CleanSystem` accepts only its fixed allowlist (`apk-cache`,
   `paccache-keep`, `paccache-uninstalled`, `apt-clean`,
   `journal-vacuum`) as argv lists — never a package removal, never a
@@ -119,23 +121,34 @@ the service refuses those with InvalidArgs without contacting polkit.
   list (kernels, privilege escalation, the shell and its stack);
   interactive `auth_admin_keep`.
 - `ManageService` accepts only the curated keys (`modem`, `eg25`,
-  `network`, `bluetooth`, `ssh`, `tailscale`, `waydroid`) and the five
-  actions (start/stop/restart/enable/disable); anything else is
-  InvalidArgs, so xx-wm, dbus and logind units are unreachable. Units
-  resolve per init (systemd unit names with the `sshd`/`ssh` spelling
-  probe, OpenRC `/etc/init.d` names) via argv lists, never a shell.
+  `network`, `bluetooth`, `ssh`, `adbd`, `tailscale`, `waydroid`) and
+  the five actions (start/stop/restart/enable/disable); anything else
+  is InvalidArgs, so xx-wm, dbus and logind units are unreachable.
+  Units resolve per init (systemd unit names with the `sshd`/`ssh`
+  spelling probe, OpenRC `/etc/init.d` names) via argv lists, never a
+  shell. `ssh`/`adbd` start/enable (remote access) use the interactive
+  `service-remote` action; the helper never writes `sshd_config`, so
+  enabling SSH never flips password auth on silently.
 - `SetRfkill` accepts only `wifi`/`bluetooth` (`rfkill block|unblock`).
+- `SetPowerProfile` accepts only `power-saver`/`balanced`/`performance`
+  and maps each to the preferred cpufreq governor the policy offers
+  (`powersave`/`conservative`, `schedutil`/`ondemand`, `performance`);
+  policies offering none of the preferred governors are skipped, and
+  the choice persists for `--apply-saved`. Governor writes are
+  non-destructive, so the action stays `allow_active=yes`.
 - `SetInboundPreset` accepts only the five presets (nearby, xxdb, ssh,
-  kdeconnect, syncthing): `ufw allow|delete` when ufw is installed,
-  otherwise the live `inet xxwm-inbound` table (accept-only input chain,
-  reconciled by flush + re-add — other tables untouched) plus the
-  `/etc/nftables.d/10-xxwm.nft` drop-in and a persisted allowed-set that
-  `--apply-saved` re-applies at boot. An accept there cannot override a
-  drop in another base chain; `GetFirewallState` reports such a
-  `foreign_drop` so the shell says so.
-- `SetFirewallEnabled` enables (`ufw default deny incoming` /
-  `allow outgoing`, keeping port 22 when `SSH_CONNECTION` is set, then
-  `--force enable`; nftables installs the preset chain) or disables.
+  kdeconnect, syncthing): the live `inet xx_wm` table (accept-only
+  input chain, reconciled by flush + re-add — other tables untouched)
+  when nftables is present, `ufw allow|delete` only where nft is
+  missing, plus the `/etc/nftables.d/10-xxwm.nft` drop-in and a
+  persisted allowed-set that `--apply-saved` re-applies at boot. An
+  accept there cannot override a drop in another base chain;
+  `GetFirewallState` reports such a `foreign_drop` so the shell says
+  so.
+- `SetFirewallEnabled` enables (nftables installs the preset chain;
+  ufw fallback: `default deny incoming` / `allow outgoing`, keeping
+  port 22 when `SSH_CONNECTION` is set, then `--force enable`) or
+  disables.
 
 ## Shell client
 

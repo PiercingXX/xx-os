@@ -2805,9 +2805,6 @@ class ShellWindow(Adw.ApplicationWindow):
     def _on_update_now(self, _btn: Gtk.Button | None = None) -> None:
         return _settings(self)._on_update_now(_btn)
 
-    def _on_dots_update(self, _btn: Gtk.Button | None = None) -> None:
-        return _settings(self)._on_dots_update(_btn)
-
     def _refresh_apps_section(self) -> None:
         return _settings(self)._refresh_apps_section()
 

@@ -239,17 +239,31 @@ else
 fi
 echo "Waydroid init + microG image + Android apps are device work — see devices/ notes."
 
+# --- 17.7 Sharing backends (wm_services) --------------------------------------
+# Verified names: kdeconnect/syncthing on apk+apt+pacman; adbd on apt
+# only (`adbd`, older name `android-tools-adbd`); apk/pacman
+# android-tools ships no adbd daemon, so the ADB row hides there.
+# openssh + nftables are the SSH/firewall transports (nftables is the
+# firewall backend everywhere; ufw is only a fallback). All guarded.
+echo "Installing sharing backends..."
+case "$PKG" in
+    apk) pkg_install openssh nftables kdeconnect syncthing ;;
+    pacman) pkg_install openssh nftables kdeconnect syncthing ;;
+    *) pkg_install openssh-server nftables kdeconnect syncthing ;;
+esac
+if [ "$PKG" = apt ]; then
+    pkg_install adbd || pkg_install android-tools-adbd || \
+        echo "warn: no adbd package — wireless debugging (ADB) hides" >&2
+else
+    echo "SKIP: no adbd daemon package on $PKG — wireless debugging (ADB) hides"
+fi
+
 # --- 17.8 Utilities baseline ------------------------------------------------
 pkg_install neovim ripgrep wl-clipboard
 if [ "$PKG" = apk ]; then
     pkg_install yazi || echo "warn: yazi not in repos — install via cargo later" >&2
 else
     pkg_install yazi || echo "warn: yazi not in repos — install via cargo later" >&2
-fi
-pkg_install ufw
-if command -v ufw >/dev/null 2>&1; then
-    $SUDO ufw allow SSH 2>/dev/null || true
-    $SUDO ufw --force enable 2>/dev/null || true
 fi
 
 echo "Phone app set done."

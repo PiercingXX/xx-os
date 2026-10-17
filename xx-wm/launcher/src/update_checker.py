@@ -51,6 +51,81 @@ def terminal_argv(cmd: str) -> tuple[str, list[str]] | None:
     return None
 
 
+# The owner's update-system.sh prompts (Arch news, conflict retries,
+# pacdiff) and asks sudo for a password, so it wants a real terminal.
+# Only these four are probed, in this order: kgx is what FuriOS/PureOS
+# phones ship, then the usual phone-friendly fallbacks. Without any of
+# them the script still runs headless: with no TTY its ask_yes takes the
+# defaults, but sudo has no polkit/pkexec path (the script calls
+# sudo/doas directly), so headless needs cached sudo or passwordless
+# doas and skips every N-default prompt (mirror refresh, pacdiff).
+_UPDATE_TERMINALS: list[tuple[str, Callable[[str, str], list[str]]]] = [
+    ('kgx', lambda sh, cmd: ['kgx', '-e', sh, '-c', cmd]),
+    ('foot', lambda sh, cmd: ['foot', sh, '-c', cmd]),
+    ('gnome-terminal', lambda sh, cmd: ['gnome-terminal', '--', sh, '-c', cmd]),
+    ('xterm', lambda sh, cmd: ['xterm', '-e', sh, '-c', cmd]),
+]
+
+
+def update_terminal_argv(cmd: str, which=None) -> tuple[str, list[str]] | None:
+    """(binary, argv) running `cmd` in the first available update terminal
+    (kgx, foot, gnome-terminal, xterm), or None when none is installed."""
+    probe = which or shutil.which
+    if probe('bash'):
+        shell = 'bash'
+        full = (f'{cmd}; echo; echo "Done — swipe from the screen edge '
+                'to close."; read -rsn1 _')
+    else:
+        shell = 'sh'
+        full = f'{cmd}; echo; echo "Done — press Enter to close."; read _'
+    for binary, build in _UPDATE_TERMINALS:
+        if probe(binary):
+            return binary, build(shell, full)
+    return None
+
+
+def plan_update(script_path: str, which=None) -> tuple[str, str, list[str] | None]:
+    """How Settings runs the owner script: 'terminal' with the argv to
+    open, 'headless' with the argv to run detached (stdin closed, so the
+    script's prompts take their defaults), or 'missing' when the script
+    is not installed and the built-in flow stays in charge."""
+    path = Path(script_path).expanduser()
+    if not path.exists():
+        return 'missing', f'Update script not found: {path}', None
+    found = update_terminal_argv(shlex.quote(str(path)), which=which)
+    if found is not None:
+        binary, argv = found
+        return 'terminal', binary, argv
+    return ('headless',
+            'No terminal emulator found — running without prompts.', [str(path)])
+
+
+def run_owner_headless(script_path: str, on_line, on_done):
+    """Run the owner script with stdin detached on a worker thread.
+
+    Each stdout line streams back through on_line(line) on the main
+    loop; on_done(returncode) closes the run (-1 when the script could
+    not even start). Returns the worker thread so tests can join it."""
+    def _headless_worker() -> None:
+        try:
+            proc = subprocess.Popen(
+                [str(script_path)], stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                text=True, close_fds=True)
+        except OSError as error:
+            _log.warning('headless update failed to start: %s', error)
+            GLib.idle_add(on_done, -1)
+            return
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            GLib.idle_add(on_line, line.rstrip('\n'))
+        GLib.idle_add(on_done, proc.wait())
+
+    thread = threading.Thread(target=_headless_worker, daemon=True)
+    thread.start()
+    return thread
+
+
 def run_terminal_command(cmd: str) -> tuple[bool, str]:
     """Open `cmd` in the first available terminal emulator (fire-and-
     forget, never waited on)."""

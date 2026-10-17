@@ -119,11 +119,13 @@ class XXWMApplication(Adw.Application):
             config=self._shell.config,
             network_denied=lambda: list(
                 self._shell.config.network_denied_apps or ()),
+            on_saver_changed=self._on_saver_power_changed,
         )
         self._shell.standby = self._standby
         self._standby.attach_daemon(self._notif_daemon)
         self._standby.start()
         install_saver_check_gates(self._shell, self._standby)
+        self._reapply_power_and_night()
 
         # Privacy indicators (mic/camera/location): one monitor feeds the
         # home status strip and the shade header. Location users come from
@@ -626,6 +628,12 @@ class XXWMApplication(Adw.Application):
             _log.warning('capture blank hook failed: %s', exc)
         if self._shell is not None:
             self._shell.on_blank_changed(blanked)
+        if not blanked:
+            try:
+                from settings_display import refresh_night_scheduler
+                refresh_night_scheduler('wake')
+            except Exception as exc:
+                _log.warning('night schedule wake failed: %s', exc)
         standby = getattr(self, '_standby', None)
         if standby is not None:
             try:
@@ -702,6 +710,39 @@ class XXWMApplication(Adw.Application):
         if sleeping and self._shell:
             _log.info('system suspending — locking screen')
             GLib.idle_add(self._shell._show_lock_screen)
+        elif not sleeping:
+            try:
+                from settings_display import refresh_night_scheduler
+                refresh_night_scheduler('resume')
+            except Exception as exc:
+                _log.warning('night schedule resume failed: %s', exc)
+
+    def _on_saver_power_changed(self, saver_on: bool) -> None:
+        """Battery saver selects the power-saver profile (and back)."""
+        shell = self._shell
+        config = getattr(shell, 'config', None)
+        if config is None:
+            return
+        try:
+            from settings_display import reapply_power_profile
+            reapply_power_profile(config, bool(saver_on))
+        except Exception as exc:
+            _log.warning('saver power re-apply failed: %s', exc)
+
+    def _reapply_power_and_night(self) -> None:
+        """Session start: enforce the remembered power profile and the
+        night-light schedule (both degrade silently without backends)."""
+        shell = self._shell
+        if shell is None:
+            return
+        try:
+            from settings_display import (ensure_night_scheduler,
+                                          reapply_power_profile)
+            saver = bool(getattr(self._standby, 'saver_effective', False))
+            reapply_power_profile(shell.config, saver)
+            ensure_night_scheduler(shell)
+        except Exception as exc:
+            _log.warning('session power re-apply failed: %s', exc)
 
     def do_shutdown(self) -> None:
         standby = getattr(self, '_standby', None)

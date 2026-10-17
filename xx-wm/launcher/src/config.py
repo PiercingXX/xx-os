@@ -131,6 +131,10 @@ DEFAULT_CONFIG = {
     'night_light': False,
     'night_light_temp': 2200,
     'night_light_schedule': False,
+    'night_light_mode': 'off',
+    'night_light_from': '22:00',
+    'night_light_to': '06:00',
+    'power_profile': 'balanced',
     # Top status bar height in logical px; None = the device default
     # (status_bar.resolve_height). Device-local: not in backups.
     'status_bar_height': None,

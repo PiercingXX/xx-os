@@ -365,7 +365,7 @@ class TestHelperReadLog:
                 / 'polkit-1' / 'actions'
                 / 'io.piercingxx.XXWM.Helper.policy').read_text()
         assert 'action id="io.piercingxx.XXWM.Helper1.read-log"' in text
-        assert text.count('<allow_active>yes</allow_active>') == 9
+        assert text.count('<allow_active>yes</allow_active>') == 10
 
     def test_introspection_lists_read_log(self):
         assert '<method name="ReadLog">' in helper.INTROSPECT_XML

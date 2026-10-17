@@ -428,9 +428,10 @@ build_install() {
     link_squeekboard_layouts
     check_layer_shell || true
 
-    # piercing-dots phone profile (parallel task — tolerate its loud failure)
+    # Owner's update-system.sh (opt out: XX_WM_NO_UPDATE_SCRIPT=1).
+    # Succeeds silently on repeat runs; only a real failure warns.
     sh "$REPO_DIR/scripts/bootstrap-dots.sh" || \
-        echo "warn: piercing-dots phone profile not applied yet" >&2
+        echo "warn: owner update script not installed (Settings falls back to the built-in flow)" >&2
 
     install_fonts
     install_logind_dropin

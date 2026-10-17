@@ -282,7 +282,10 @@ surface, not the store.
 | `setup_complete` | bool | absent | Written by first boot: `false` from the Keyboard step (or the Status bar step, if it writes first), `true` at Finish. `false` reruns the wizard at next start (a reboot mid-setup must not skip the PIN). Absent counts as done, for configs made before the key existed. |
 | `night_light` | bool | `false` | Night-light master switch state (Settings → Display, "Night" tile). |
 | `night_light_temp` | int | `2200` | Night-light temperature in Kelvin, clamped 2200–6500. Included in backups. |
-| `night_light_schedule` | bool | `false` | When true the light follows sunset-to-sunrise from the weather coordinates instead of staying on. |
+| `night_light_schedule` | bool | `false` | Legacy: `true` reads as `night_light_mode` `sunset`. Written alongside the mode for older readers. |
+| `night_light_mode` | string | `"off"` | Night-light schedule: `"off"` (manual — the tile holds), `"custom"` (on between `night_light_from`/`night_light_to`, overnight ranges wrap), or `"sunset"` (sunset to sunrise from the weather coordinates, falling back to the custom times without a location). Included in backups. |
+| `night_light_from` / `night_light_to` | string | `"22:00"` / `"06:00"` | Custom night-light window as `HH:MM`. Included in backups. |
+| `power_profile` | string | `"balanced"` | Power profile: `"power-saver"`, `"balanced"` or `"performance"`. Applied through power-profiles-daemon while it runs with a real driver, else through the root helper's cpufreq governor map; re-applied at session start. Battery saver forces `power-saver`. Included in backups. |
 | `status_bar_height` | int\|null | `null` | Height of the top status bar in logical px, clamped 20–96. It is first set by the first-boot Status bar step, between Theme and Timezone: a live strip at the top of the screen follows a slider that starts at the device default, Next saves the height and Use default writes `null`. Settings → Display, "Status bar height", changes it later. The bar reserves this much at the top edge so apps start below the camera hole. `null` uses the device default: 64 on the FuriPhone FLX1 (its punch-hole sits inside the bar), 28 elsewhere. Device-local: never exported in backups. |
 
 ### Wireless debugging (xxdb)

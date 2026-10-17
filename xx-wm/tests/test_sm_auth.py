@@ -1,10 +1,9 @@
-"""Lane sm_auth: polkit agent, updates, uninstall, dots row.
+"""Lane sm_auth: polkit agent, updates, uninstall, owner update script.
 
 Helper methods run against recording fakes — never the real package
 manager, services or firewall. UI sections build against recorder fakes
 where GTK is needed; pre-existing suites keep their own idioms.
 """
-import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -276,7 +275,7 @@ def test_policy_new_actions():
     assert 'action id="io.piercingxx.XXWM.Helper1.refresh-packages"' in text
     assert 'action id="io.piercingxx.XXWM.Helper1.upgrade-system"' in text
     assert 'action id="io.piercingxx.XXWM.Helper1.remove-package"' in text
-    assert text.count('<allow_active>yes</allow_active>') == 9
+    assert text.count('<allow_active>yes</allow_active>') == 10
     assert text.count('<allow_active>auth_admin_keep</allow_active>') == 4
     for action in ('set-charge-limit', 'app-network', 'freeze'):
         assert 'action id="io.piercingxx.XXWM.Helper1.%s"' % action in text
@@ -610,34 +609,16 @@ class TestRebootLogDots:
         assert settings_updates.latest_update_log(
             home=str(tmp_path)) is None
 
-    def test_dots_hidden_without_phone_profile(self, tmp_path):
+    def test_owner_script_present_in_dots_layout(self, tmp_path):
         import settings_updates
-        assert settings_updates.dots_bootstrap_available(
-            home=str(tmp_path)) is False
-        clone = tmp_path / 'piercing-dots'
-        clone.mkdir()
-        script = clone / 'install.sh'
-        script.write_text('#!/bin/sh\necho hi\n')
-        script.chmod(0o755)
-        assert settings_updates.dots_bootstrap_available(
-            home=str(tmp_path)) is False
-
-    def test_dots_shown_with_phone_profile(self, tmp_path):
-        import settings_updates
-        clone = tmp_path / '.cache' / 'piercing-dots'
-        clone.mkdir(parents=True)
-        script = clone / 'install.sh'
-        script.write_text('#!/bin/sh\n# --profile phone\n')
-        script.chmod(0o755)
-        assert settings_updates.dots_bootstrap_available(
-            home=str(tmp_path)) is True
-
-    def test_bootstrap_script_resolves_in_checkout(self):
-        import settings_updates
-        found = settings_updates.bootstrap_script()
-        assert found is not None
-        assert os.path.isfile(found)
-        assert found.endswith('bootstrap-dots.sh')
+        assert settings_updates.owner_script_path(
+            home=str(tmp_path)) is None
+        target = (tmp_path / '.scripts' / 'PiercingXX-Settings-Menu'
+                  / 'update-system.sh')
+        target.parent.mkdir(parents=True)
+        target.write_text('#!/bin/sh\n')
+        assert settings_updates.owner_script_path(
+            home=str(tmp_path)) == str(target)
 
     def test_format_count_never_lies(self):
         import settings_updates

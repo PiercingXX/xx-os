@@ -80,6 +80,21 @@ def backup_export_dir() -> Path:
     docs = Path.home() / 'Documents'
     return docs if docs.is_dir() else Path.home()
 
+def _parse_backup_hhmm(value) -> int | None:
+    """Minutes since midnight for ``HH:MM``, else None (local so this
+    module stays free of UI imports)."""
+    import re
+    if not isinstance(value, str):
+        return None
+    match = re.match(r'^(\d{1,2}):(\d{2})$', value.strip())
+    if not match:
+        return None
+    hours, minutes = int(match.group(1)), int(match.group(2))
+    if hours > 23 or minutes > 59:
+        return None
+    return hours * 60 + minutes
+
+
 _BOOL_KEYS = (
     'prefer_dark',
     'home_to_recents',
@@ -142,6 +157,10 @@ def export_backup(config) -> dict:
         'swipe_down_action': config.data.get('swipe_down_action'),
         'keyboard_layout': config.data.get('keyboard_layout', 'us'),
         'night_light_temp': config.data.get('night_light_temp', 2200),
+        'night_light_mode': config.data.get('night_light_mode', 'off'),
+        'night_light_from': config.data.get('night_light_from', '22:00'),
+        'night_light_to': config.data.get('night_light_to', '06:00'),
+        'power_profile': config.data.get('power_profile', 'balanced'),
     }
     for key in _BOOL_KEYS:
         backup[key] = bool(config.data.get(
@@ -271,6 +290,18 @@ def validate_backup(payload: dict) -> tuple[bool, str | None]:
         if not 2200 <= temp <= 6500:
             return False, 'night_light_temp must be between 2200 and 6500'
 
+    if 'night_light_mode' in payload and payload['night_light_mode'] not in (
+            'off', 'custom', 'sunset'):
+        return False, 'night_light_mode must be off/custom/sunset'
+
+    for key in ('night_light_from', 'night_light_to'):
+        if key in payload and _parse_backup_hhmm(payload[key]) is None:
+            return False, f'{key} must be HH:MM'
+
+    if 'power_profile' in payload and payload['power_profile'] not in (
+            'power-saver', 'balanced', 'performance'):
+        return False, 'power_profile must be power-saver/balanced/performance'
+
     for key in ('app_time_limits', 'app_limit_ignored'):
         if key in payload and not isinstance(payload[key], dict):
             return False, f'{key} must be a dict'
@@ -369,6 +400,14 @@ def restore_backup(config, payload: dict) -> bool:
                 2200, min(6500, int(payload['night_light_temp'])))
         except (TypeError, ValueError):
             pass
+    if payload.get('night_light_mode') in ('off', 'custom', 'sunset'):
+        data['night_light_mode'] = payload['night_light_mode']
+    for key in ('night_light_from', 'night_light_to'):
+        if _parse_backup_hhmm(payload.get(key)) is not None:
+            data[key] = payload[key]
+    if payload.get('power_profile') in (
+            'power-saver', 'balanced', 'performance'):
+        data['power_profile'] = payload['power_profile']
     if isinstance(payload.get('app_time_limits'), dict):
         data['app_time_limits'] = {
             k: v for k, v in payload['app_time_limits'].items()

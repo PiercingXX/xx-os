@@ -2,15 +2,15 @@
 
 Presets only, never free-form ports. The privileged work lives in the
 root helper (`SetInboundPreset`, `SetFirewallEnabled`, `GetFirewallState`
-in launcher/helper/xx_wm_helper.py): ufw when it is installed, otherwise
-a pmOS-style nftables drop-in plus reload. An accept in our own
-`inet xxwm-inbound` table cannot override a drop in another base chain,
-so when one is detected the section says so instead of pretending the
-switches filter anything.
+in launcher/helper/xx_wm_helper.py): nftables directly (present
+everywhere) with a ufw fallback only where nft is missing. An accept
+in our own `inet xx_wm` table cannot override a drop in another base
+chain, so when one is detected the section says so instead of
+pretending the switches filter anything.
 
 postmarketOS ships no enabled inbound firewall, so there the status
-honestly reads off while the switches still program the ufw/nftables
-mechanisms for systems that have one.
+honestly reads off while the switches still program the nftables
+mechanism for systems that have one.
 """
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def _nft_port(port) -> str:
 
 
 def render_nft_rules(allowed: set[str]) -> str:
-    """The managed `inet xxwm-inbound` table for the allowed presets.
+    """The managed `inet xx_wm` table for the allowed presets.
 
     Accept policy: on a system with no other firewall this changes
     nothing observable (everything is already allowed) while documenting
@@ -73,7 +73,7 @@ def render_nft_rules(allowed: set[str]) -> str:
         raise KeyError('unknown inbound preset: %s' % sorted(unknown)[0])
     lines = ['# xx-wm inbound presets (managed; do not edit).',
              '# An accept here cannot override a drop in another base chain.',
-             'table inet xxwm-inbound {',
+             'table inet xx_wm {',
              '    chain input {',
              '        type filter hook input priority filter; policy accept;']
     for name in sorted(allowed):

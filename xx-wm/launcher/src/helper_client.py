@@ -256,6 +256,22 @@ def manage_service(name: str, action: str, on_done: ResultCallback) -> None:
                  lambda ok, _result: on_done(ok, None if ok else _result))
 
 
+def set_power_profile(profile: str, on_done: ResultCallback) -> None:
+    """Apply a CPU power profile (``power-saver``, ``balanced``,
+    ``performance``) through the helper's allowlisted governor map.
+
+    ``on_done(True, None)`` on success, ``(False, error)`` otherwise.
+    """
+    try:
+        Gio, GLib = _gio()
+        params = GLib.Variant('(s)', (str(profile),))
+    except ImportError as err:
+        on_done(False, 'D-Bus unavailable: %s' % err)
+        return
+    _call_helper('SetPowerProfile', params,
+                 lambda ok, _result: on_done(ok, None if ok else _result))
+
+
 def set_rfkill(rtype: str, blocked: bool, on_done: ResultCallback) -> None:
     """Block (``blocked`` True) or unblock the wifi/bluetooth radio.
 

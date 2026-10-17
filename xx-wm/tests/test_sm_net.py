@@ -602,7 +602,7 @@ class TestInboundPresets:
 class TestServiceCatalog:
     def test_curated_keys(self):
         assert [s.key for s in services.SERVICES] == [
-            'modem', 'eg25', 'network', 'bluetooth', 'ssh',
+            'modem', 'eg25', 'network', 'bluetooth', 'ssh', 'adbd',
             'tailscale', 'waydroid']
 
     def test_protected_units_absent(self):
@@ -770,7 +770,8 @@ class TestHelperInboundPresets:
         monkeypatch.setattr(core, 'firewall_backend', lambda: 'nftables')
         core.set_inbound_preset('ssh', True)
         for cmd in run.cmds:
-            assert 'filter' not in cmd or 'xxwm' in cmd or 'xxwm-inbound' in cmd
+            assert 'filter' not in cmd or 'xxwm' in cmd \
+                or 'xx_wm' in cmd or 'xxwm-inbound' in cmd
 
 
 class TestFirewallState:
@@ -1765,7 +1766,7 @@ class TestUnifiedPolicy:
             helper.ACTION_UPGRADE, helper.ACTION_REMOVE,
             helper.ACTION_SERVICE, helper.ACTION_SERVICE_REMOTE,
             helper.ACTION_RFKILL, helper.ACTION_FW_OPEN,
-            helper.ACTION_FW_RESTRICT,
+            helper.ACTION_FW_RESTRICT, helper.ACTION_POWER,
         ])
 
     def test_docs_list_every_method_and_action(self):

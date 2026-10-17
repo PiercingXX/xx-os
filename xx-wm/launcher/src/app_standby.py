@@ -561,7 +561,8 @@ class StandbyController:
                  network_denied=None, network_blocker=None,
                  proc_root: str = '/proc',
                  cgroup_root: str = '/sys/fs/cgroup',
-                 stopped_file: str | None = None) -> None:
+                 stopped_file: str | None = None,
+                 on_saver_changed=None) -> None:
         self._config = config
         self._session_bus_factory = session_bus_factory or _default_session_bus
         self._system_bus_factory = system_bus_factory or _default_system_bus
@@ -586,6 +587,8 @@ class StandbyController:
         self._manual_saver = False
         self._auto_saver = False
         self._was_low: bool | None = None
+        self._on_saver_changed = on_saver_changed
+        self._last_saver_notified: bool | None = None
         self._notif_apps: dict[int, str] = {}
         self._sweep_src: int | None = None
         self._refresh_src: int | None = None
@@ -637,6 +640,25 @@ class StandbyController:
             self._manual_saver = enabled
         if not enabled:
             self._auto_saver = False
+        self._maybe_notify_saver()
+
+    def _maybe_notify_saver(self) -> None:
+        """Fire on_saver_changed on effective-saver edges (manual and
+        automatic): battery saver selects the power-saver profile."""
+        try:
+            effective = bool(self.saver_effective)
+        except Exception:
+            return
+        if effective == self._last_saver_notified:
+            return
+        self._last_saver_notified = effective
+        hook = self._on_saver_changed
+        if hook is None:
+            return
+        try:
+            hook(effective)
+        except Exception as error:
+            _log.info('saver power hook failed: %s', error)
 
     # -- tracking ------------------------------------------------------------
 
@@ -1173,6 +1195,7 @@ class StandbyController:
         now = self._now(now)
         self._observe_activations()
         self._update_saver_auto()
+        self._maybe_notify_saver()
         if not self._observable:
             return []
         saver = self.saver_effective
