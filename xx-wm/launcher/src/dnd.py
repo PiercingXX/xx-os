@@ -7,7 +7,9 @@ collect in the shade. Always-through exceptions: alarms, repeat callers
 (days + start/end, overnight ranges supported). Config-backed so the
 notification daemon and call UI can consult it.
 
-The schedule matcher is shared with Focus Mode (Workstream 14).
+The schedule matcher is the shared xx_phone rule (common/xx_phone),
+also used by Focus Mode and xx-email. Malformed entries are skipped
+with a warning, never raise.
 """
 from __future__ import annotations
 
@@ -16,6 +18,22 @@ import time as _time
 from datetime import datetime
 
 from config import ShellConfig
+from shell_log import get_logger
+
+try:
+    from xx_phone.schedules import parse_hhmm
+    from xx_phone.schedules import schedule_matches as _shared_schedule_matches
+except ImportError:
+    import sys
+    from pathlib import Path
+
+    _common_dir = Path(__file__).resolve().parents[3] / 'common'
+    if _common_dir.is_dir() and str(_common_dir) not in sys.path:
+        sys.path.insert(0, str(_common_dir))
+    from xx_phone.schedules import parse_hhmm
+    from xx_phone.schedules import schedule_matches as _shared_schedule_matches
+
+_log = get_logger('dnd')
 
 REPEAT_CALLER_WINDOW = 15 * 60
 
@@ -33,40 +51,36 @@ def numbers_match(a: str, b: str) -> bool:
     return na[-tail:] == nb[-tail:]
 
 
-def schedule_matches(schedules: list[dict], now: datetime) -> bool:
-    """True if any schedule covers `now`. Overnight ranges (22:00–06:30) wrap:
-    the day-of-week check applies to the day the range started."""
-    for sched in schedules:
-        days = sched.get('days')
-        start = _parse_hhmm(sched.get('start'))
-        end = _parse_hhmm(sched.get('end'))
-        if not isinstance(days, list) or start is None or end is None:
+def schedule_matches(schedules, now: datetime) -> bool:
+    """True if any schedule covers `now` (shared xx_phone rule).
+
+    Malformed entries are skipped with a warning, never raise, so a
+    hand-edited config cannot crash the shell.
+    """
+    if schedules is None:
+        return False
+    if isinstance(schedules, (str, bytes, dict)):
+        _log.warning('skipping malformed dnd schedules: %r', schedules)
+        return False
+    try:
+        entries = list(schedules or [])
+    except TypeError:
+        _log.warning('skipping malformed dnd schedules: %r', schedules)
+        return False
+    for sched in entries:
+        if not isinstance(sched, dict):
+            _log.warning('skipping malformed dnd schedule: %r', sched)
             continue
-        minutes = now.hour * 60 + now.minute
-        weekday = now.weekday()
-        if start <= end:
-            if weekday in days and start <= minutes < end:
-                return True
-        else:
-            # Overnight: evening part belongs to the schedule's day,
-            # morning part to the following day.
-            if weekday in days and minutes >= start:
-                return True
-            if (weekday - 1) % 7 in days and minutes < end:
-                return True
-    return False
-
-
-def _parse_hhmm(value: object) -> int | None:
-    if not isinstance(value, str):
-        return None
-    match = re.match(r'^(\d{1,2}):(\d{2})$', value)
-    if not match:
-        return None
-    hours, minutes = int(match.group(1)), int(match.group(2))
-    if hours > 23 or minutes > 59:
-        return None
-    return hours * 60 + minutes
+        days = sched.get('days')
+        start = parse_hhmm(sched.get('start'))
+        end = parse_hhmm(sched.get('end'))
+        if not isinstance(days, list) or start is None or end is None:
+            _log.warning('skipping malformed dnd schedule: %r', sched)
+    try:
+        return bool(_shared_schedule_matches(schedules, now))
+    except Exception:
+        _log.warning('skipping malformed dnd schedules: %r', schedules)
+        return False
 
 
 class DndState:
