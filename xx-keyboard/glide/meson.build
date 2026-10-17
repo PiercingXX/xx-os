@@ -44,12 +44,14 @@ if get_option('tests')
     '-DXXGLIDE_TEST_CORPUS="' + meson.current_source_dir() / 'test/corpus.jsonl"',
     '-DXXGLIDE_TEST_WORDS="' + meson.current_source_dir() / 'test/words.txt"',
   ]
-  # Reference replay rate on the vendored corpus is top-1 16/19, top-4 16/19
-  # (real tester glides; the 3 misses are genuine decoder misses, also missed
-  # on device). The floor pins regressions, not the exact rate.
+  # Corpus is 19 real tester glides plus 150 words x QWERTY/Colemak
+  # synthetic swipes from gen_corpus.py (widget-real key boxes, humanlike
+  # speed/noise). Reference rate is top-1 229/319, top-4 299/319; the
+  # misses are near-misses at rank 2-4, also missed by the reference
+  # decoder. The floor pins regressions, not the exact rate.
   glide_corpus_defs = glide_test_defs + [
-    '-DXXGLIDE_CORPUS_TOP1_FLOOR=15',
-    '-DXXGLIDE_CORPUS_TOP4_FLOOR=16',
+    '-DXXGLIDE_CORPUS_TOP1_FLOOR=225',
+    '-DXXGLIDE_CORPUS_TOP4_FLOOR=295',
   ]
   glide_decode_test = executable(
     'test-glide-decode',
@@ -71,4 +73,12 @@ if get_option('tests')
     override_options : 'cpp_std=c++17',
   )
   test('test-glide-corpus', glide_corpus_test, timeout : 300)
+  # The corpus files are generated output: fail if a hand edit drifts
+  # from what gen_corpus.py (seeded, no network) would produce.
+  test(
+    'test-glide-corpus-sync',
+    find_program('python3'),
+    args : [meson.current_source_dir() / 'test' / 'gen_corpus.py', '--check'],
+    timeout : 120,
+  )
 endif

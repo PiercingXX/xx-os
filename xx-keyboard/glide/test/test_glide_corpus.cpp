@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fstream>
 #include <map>
 #include <string>
@@ -29,7 +30,8 @@ struct Key {
 };
 
 struct Gesture {
-    int kw = 0, kh = 0;
+    int kw = 0, kh = 0, pitch = 0;
+    std::string layout, word;
     std::vector<Key> keys;
     std::vector<float> xs, ys;
     std::vector<int> times;
@@ -92,9 +94,39 @@ int readIntField(const std::string &line, const char *key) {
     return static_cast<int>(strtol(p, nullptr, 10));
 }
 
+std::string readStringField(const std::string &line, const char *key) {
+    const size_t at = line.find(key);
+    if (at == std::string::npos) {
+        return std::string();
+    }
+    const char *p = line.c_str() + at + strlen(key);
+    p = skipTo(p, ':');
+    if (*p) {
+        ++p;
+    }
+    while (*p == ' ') {
+        ++p;
+    }
+    if (*p != '"') {
+        return std::string();
+    }
+    ++p;
+    const char *end = strchr(p, '"');
+    if (!end) {
+        return std::string();
+    }
+    return std::string(p, end);
+}
+
 bool parseGesture(const std::string &line, Gesture *g) {
     g->kw = readIntField(line, "\"kw\"");
     g->kh = readIntField(line, "\"kh\"");
+    g->pitch = readIntField(line, "\"pitch\"");
+    g->layout = readStringField(line, "\"layout\"");
+    if (g->layout.empty()) {
+        g->layout = "tester";
+    }
+    g->word = readStringField(line, "\"word\"");
     const size_t keysAt = line.find("\"keys\"");
     if (keysAt == std::string::npos) {
         return false;
@@ -186,9 +218,13 @@ int main() {
 
     const int kTopN = 4;
     int top1 = 0, topN = 0, scored = 0;
+    std::map<std::string, int> layoutTop1, layoutTopN, layoutScored;
+    long long decodeUs = 0;
+    int nDecoded = 0;
     for (size_t i = 0; i < gestures.size(); ++i) {
         const Gesture &g = gestures[i];
-        const std::string target = i < targets.size() ? targets[i] : std::string();
+        const std::string target =
+                !g.word.empty() ? g.word : (i < targets.size() ? targets[i] : std::string());
 
         /* Letters only, per the C API contract; corpus codepoints are
          * uppercase, the API takes lowercase. */
@@ -225,14 +261,20 @@ int main() {
         }
         const int modalW = modalOf(widths), modalH = modalOf(heights);
         const int stepW = xSteps.empty() ? modalW : modalOf(xSteps);
-        const int pitch = (stepW >= modalW && stepW < modalW * 3 / 2) ? stepW : modalW;
+        /* Synthetic lines carry the exact widget pitch; tester lines
+         * fall back to the pitch-vs-key-width heuristic. */
+        const int pitch = g.pitch > 0 ? g.pitch
+                : (stepW >= modalW && stepW < modalW * 3 / 2) ? stepW : modalW;
         (void)modalH;
 
         char **out = nullptr;
         int n = 0;
         if (xxglide_set_layout(glide, keys.data(), (int)keys.size(), g.kw, g.kh, pitch)) {
+            const clock_t t0 = clock();
             n = xxglide_decode(glide, g.xs.data(), g.ys.data(), g.times.data(),
                     (int)g.xs.size(), nullptr, &out, 8);
+            decodeUs += (clock() - t0) * 1000000LL / CLOCKS_PER_SEC;
+            ++nDecoded;
         }
         std::vector<std::string> words;
         for (int k = 0; k < n && out; ++k) {
@@ -241,18 +283,22 @@ int main() {
 
         if (!target.empty()) {
             ++scored;
+            ++layoutScored[g.layout];
             const std::string want = lower(target);
             if (!words.empty() && lower(words[0]) == want) {
                 ++top1;
+                ++layoutTop1[g.layout];
             }
             for (int k = 0; k < kTopN && k < (int)words.size(); ++k) {
                 if (lower(words[k]) == want) {
                     ++topN;
+                    ++layoutTopN[g.layout];
                     break;
                 }
             }
         }
-        printf("%2zu %-11s pts=%3d ->", i + 1, target.c_str(), (int)g.xs.size());
+        printf("%2zu %-8s %-11s pts=%3d ->", i + 1, g.layout.c_str(), target.c_str(),
+                (int)g.xs.size());
         for (int k = 0; k < kTopN && k < (int)words.size(); ++k) {
             printf(" %s", words[k].c_str());
         }
@@ -261,7 +307,15 @@ int main() {
     }
     xxglide_free(glide);
 
+    for (const auto &kv : layoutScored) {
+        printf("layout %-8s top1 %d/%d  top%d %d/%d\n", kv.first.c_str(),
+                layoutTop1[kv.first], kv.second, kTopN, layoutTopN[kv.first], kv.second);
+    }
     printf("top1 %d/%d  top%d %d/%d\n", top1, scored, kTopN, topN, scored);
+    if (nDecoded > 0) {
+        printf("decode %.1f ms/gesture avg (%d gestures)\n",
+                decodeUs / 1000.0 / nDecoded, nDecoded);
+    }
     if (top1 < XXGLIDE_CORPUS_TOP1_FLOOR || topN < XXGLIDE_CORPUS_TOP4_FLOOR) {
         printf("below floor top1>=%d top4>=%d\n",
                 XXGLIDE_CORPUS_TOP1_FLOOR, XXGLIDE_CORPUS_TOP4_FLOOR);
