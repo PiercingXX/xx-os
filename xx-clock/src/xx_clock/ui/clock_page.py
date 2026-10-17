@@ -1,13 +1,19 @@
-"""Clock tab: hero time, date, next-alarm card, digital/analog toggle."""
+"""Clock tab: hero time, date, digital/analog toggle, next-alarm card.
+
+Mirrors ClockFragment: no page title (the time is the page), the hero
+in the display face near the top, the full weekday date in muted text,
+an outline style toggle, and the next armed alarm in a card that is
+hidden when nothing is armed.
+"""
 
 from __future__ import annotations
 
 import time as _time
 
 APP_CSS_EXTRA = """
-.xx-clock-hero { font-size: 64px; font-weight: 300; font-feature-settings: "tnum"; }
-.xx-clock-analog { min-width: 240px; min-height: 240px; }
-.xx-clock-date { font-size: 16px; }
+.xx-clock-hero { font-size: 72px; font-weight: 400; font-feature-settings: "tnum"; }
+.xx-clock-analog { min-width: 220px; min-height: 220px; }
+.xx-clock-date { font-size: 18px; }
 """
 
 
@@ -17,8 +23,6 @@ class ClockPage:
         self._widgets = widgets
         self._settings = settings
         self._on_style_changed = on_style_changed
-        root = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        root.append(widgets.page_header("Clock", "Local time"))
         self._hero = Gtk.Label(label="--:--")
         self._hero.add_css_class("xx-display-face")
         self._hero.add_css_class("xx-clock-hero")
@@ -27,30 +31,34 @@ class ClockPage:
         self._analog.add_css_class("xx-clock-analog")
         self._analog.set_draw_func(self._draw_analog)
         self._analog.set_halign(Gtk.Align.CENTER)
-        self._date = widgets.label("", "xx-clock-date", xalign=0.5)
+        self._date = widgets.label("", "xx-secondary", xalign=0.5)
+        self._date.add_css_class("xx-clock-date")
         self._date.set_halign(Gtk.Align.CENTER)
-        self._card = widgets.card()
-        self._card.set_margin_start(20)
-        self._card.set_margin_end(20)
-        self._card.set_margin_top(12)
-        self._next = widgets.label("", "xx-secondary")
-        self._card.append(self._next)
-        self._style_btn = widgets.text_button("Analog", on_style_changed)
+        self._style_btn = widgets.outline_button("Analog", on_style_changed)
         self._style_btn.set_halign(Gtk.Align.CENTER)
+        self._style_btn.set_margin_top(20)
+        self._card = widgets.card()
+        self._card.set_spacing(4)
+        self._card.set_margin_top(36)
+        self._card.append(widgets.caption("Next alarm"))
+        # Wraps rather than ellipsizing "in 8 h 0 m" at large text.
+        self._next = widgets.wrap_label("", "xx-title")
+        self._card.append(self._next)
+        self._card.set_visible(False)
         body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 8)
-        body.set_vexpand(True)
-        body.set_valign(Gtk.Align.CENTER)
+        body.add_css_class("xx-page-body")
+        body.set_margin_top(72)
+        body.set_margin_bottom(24)
         body.append(self._hero)
         body.append(self._analog)
         body.append(self._date)
-        body.append(self._card)
         body.append(self._style_btn)
+        body.append(self._card)
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_child(body)
         scrolled.set_vexpand(True)
-        root.append(scrolled)
-        self.widget = root
+        self.widget = scrolled
         self.apply_style()
 
     def apply_style(self) -> None:
@@ -62,7 +70,7 @@ class ClockPage:
     def tick(self) -> None:
         now = _time.localtime()
         self._hero.set_text(_time.strftime("%H:%M", now))
-        self._date.set_text(_time.strftime("%a, %b %-d", now))
+        self._date.set_text(_time.strftime("%A, %b %-d", now))
         self._analog.queue_draw()
 
     def refresh(self, state: dict) -> None:
@@ -71,16 +79,21 @@ class ClockPage:
             self._card.set_visible(False)
             return
         self._card.set_visible(True)
-        label = upcoming.get("label") or "Alarm"
-        self._next.set_text(f"{label} · {upcoming.get('fire_text', '')} ·"
-                            f" in {upcoming.get('until_text', '')}")
+        parts = [upcoming.get("fire_text", ""), upcoming.get("label") or "",
+                 f"in {upcoming.get('until_text', '')}"]
+        self._next.set_text(" · ".join(p for p in parts if p))
 
-    def _draw_analog(self, _area, cairo, width: int, height: int) -> None:
+    def _draw_analog(self, area, cairo, width: int, height: int) -> None:
         import math
         now = _time.localtime()
         cx, cy = width / 2, height / 2
         radius = min(width, height) / 2 - 8
         context = cairo
+        try:
+            color = area.get_color()
+            context.set_source_rgba(color.red, color.green, color.blue, color.alpha)
+        except Exception:
+            pass
         context.set_line_width(2)
         context.arc(cx, cy, radius, 0, 2 * math.pi)
         context.stroke()

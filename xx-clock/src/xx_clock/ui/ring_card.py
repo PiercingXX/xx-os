@@ -10,13 +10,16 @@ theme. Dismiss on alarms, Stop on timers, Snooze / +1 min beside them.
 from __future__ import annotations
 
 INK_CSS = """
-.xx-ring { background-color: #000000; color: #ffffff; }
-.xx-ring .xx-ring-title { color: #ffffff; font-size: 30px; }
-.xx-ring .xx-ring-time { color: #ffffff; font-size: 64px; font-weight: 300; }
-.xx-ring .xx-ring-sub { color: #b0b0b0; font-size: 15px; }
-.xx-ring button { border: 1px solid #ffffff; border-radius: 12px;
-  color: #ffffff; min-height: 56px; padding: 0 20px; font-size: 17px; }
-.xx-ring button:active { background-color: #222222; }
+.xx-ring { background-color: #000000; color: rgba(255, 255, 255, 0.9); }
+.xx-ring .xx-ring-time { color: #ffffff; font-size: 84px; font-weight: 400; }
+.xx-ring .xx-ring-label { color: rgba(255, 255, 255, 0.5); font-size: 22px; }
+.xx-ring button { border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 12px;
+  background: none; box-shadow: none; color: rgba(255, 255, 255, 0.9);
+  min-height: 56px; padding: 0 12px; font-size: 17px; font-weight: 400; }
+.xx-ring button:active { background-color: #18181b; }
+.xx-ring button.xx-ring-primary { background-color: #ffffff; color: #000000;
+  border-color: #ffffff; }
+.xx-ring button.xx-ring-primary:active { background-color: #cccccc; }
 """
 
 
@@ -39,6 +42,7 @@ class RingCard:
         if display is not None:
             Gtk.StyleContext.add_provider_for_display(
                 display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        layered = False
         if LayerShell is not None:
             try:
                 if LayerShell.is_supported():
@@ -49,38 +53,38 @@ class RingCard:
                         LayerShell.set_anchor(win, edge, True)
                     LayerShell.set_exclusive_zone(win, -1)
                     LayerShell.set_keyboard_mode(win, LayerShell.KeyboardMode.NONE)
-                    win.set_default_size(360, 720)
+                    layered = True
             except Exception:
-                win.set_default_size(360, 720)
-                win.fullscreen()
-        else:
-            win.set_default_size(360, 720)
+                layered = False
+        win.set_default_size(360, 720)
+        if not layered:
+            # No layer shell (another compositor): a borderless
+            # full-screen window, never one with a title bar.
+            win.set_decorated(False)
             win.fullscreen()
-        root = Gtk.Box.new(Gtk.Orientation.VERTICAL, 12)
+        # AlarmAlertActivity: the time huge in the display face, the label
+        # under it, then the secondary action (outline) and the primary
+        # one (filled Signal white) side by side at equal width.
+        root = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
         root.set_valign(Gtk.Align.CENTER)
-        root.set_margin_start(32)
-        root.set_margin_end(32)
-        self._kind = Gtk.Label(label="")
-        self._kind.add_css_class("xx-ring-sub")
-        self._kind.set_xalign(0.5)
-        root.append(self._kind)
-        self._title = Gtk.Label(label="")
-        self._title.add_css_class("xx-ring-title")
-        self._title.set_xalign(0.5)
-        self._title.set_wrap(True)
-        root.append(self._title)
+        root.set_margin_start(24)
+        root.set_margin_end(24)
         self._time = Gtk.Label(label="")
         self._time.add_css_class("xx-ring-time")
         self._time.add_css_class("xx-display-face")
         self._time.set_xalign(0.5)
         root.append(self._time)
-        self._buttons = Gtk.FlowBox()
-        self._buttons.set_selection_mode(Gtk.SelectionMode.NONE)
-        self._buttons.set_column_spacing(12)
-        self._buttons.set_row_spacing(12)
-        self._buttons.set_max_children_per_line(2)
-        self._buttons.set_min_children_per_line(1)
-        self._buttons.set_halign(Gtk.Align.CENTER)
+        self._title = Gtk.Label(label="")
+        self._title.add_css_class("xx-ring-label")
+        self._title.set_xalign(0.5)
+        self._title.set_margin_top(16)
+        self._title.set_wrap(True)
+        self._title.set_max_width_chars(20)
+        self._title.set_justify(Gtk.Justification.CENTER)
+        root.append(self._title)
+        self._buttons = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 24)
+        self._buttons.set_homogeneous(True)
+        self._buttons.set_margin_top(48)
         root.append(self._buttons)
         win.set_child(root)
         self.win = win
@@ -92,29 +96,32 @@ class RingCard:
             self._buttons.remove(child)
             child = nxt
 
-    def _button(self, text: str, callback) -> None:
+    def _button(self, text: str, callback, primary: bool = False) -> None:
         btn = self._Gtk.Button.new_with_label(text)
+        if primary:
+            btn.add_css_class("xx-ring-primary")
+        btn.set_hexpand(True)
         btn.connect("clicked", lambda _b: callback())
         self._buttons.append(btn)
 
     def show_alarm(self, entry_id: int, label: str, snooze_minutes: int) -> None:
-        self._kind.set_text("ALARM")
         self._title.set_text(label or "Alarm")
         import time as _time
         self._time.set_text(_time.strftime("%H:%M"))
         self._clear_buttons()
-        self._button(f"Snooze {snooze_minutes} min",
+        self._button("Snooze",
                      lambda: self._calls.snooze_ringing(entry_id, snooze_minutes))
-        self._button("Dismiss", lambda: self._calls.dismiss_ringing(entry_id))
+        self._button("Dismiss", lambda: self._calls.dismiss_ringing(entry_id),
+                     primary=True)
         self.win.present()
 
     def show_timer(self, entry_id: int, label: str) -> None:
-        self._kind.set_text("TIMER")
         self._title.set_text(label or "Timer")
         self._time.set_text("00:00")
         self._clear_buttons()
-        self._button("Stop", lambda: self._calls.stop_timer_ringing(entry_id))
         self._button("+1 min", lambda: self._calls.add_minute_timer(entry_id))
+        self._button("Stop", lambda: self._calls.stop_timer_ringing(entry_id),
+                     primary=True)
         self.win.present()
 
     def hide(self) -> None:

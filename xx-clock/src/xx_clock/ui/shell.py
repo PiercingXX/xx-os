@@ -10,8 +10,10 @@ from . import alarm_dialog, alarms_page, clock_page, ring_card, setup_page, time
 
 TABS = ("clock", "alarms", "timers", "setup")
 
-APP_CSS = clock_page.APP_CSS_EXTRA + """
-.xx-clock-fab-margin { margin-bottom: 16px; }
+APP_CSS = (clock_page.APP_CSS_EXTRA + timers_page.APP_CSS_EXTRA
+           + alarm_dialog.APP_CSS) + """
+.xx-clock-alarm-time { font-size: 30px; font-weight: 400; }
+.xx-clock-off { opacity: 0.45; }
 """
 
 
@@ -63,6 +65,9 @@ class Calls:
 
     def test_sound(self) -> None:
         self._shell.test_sound()
+
+    def show_licenses(self) -> None:
+        self._shell.show_licenses()
 
 
 class ClockWindow:
@@ -242,15 +247,21 @@ class ClockWindow:
 
     def test_sound(self) -> None:
         from .. import ringer as ringer_module
+        # Plays three seconds of the alarm sound; only a failure speaks.
         try:
             ring = ringer_module.Ringer()
-            if ring.start([], gradual=False):
-                self.toast("Sound plays")
-                ring.stop()
-            else:
-                self.toast("No sound output found")
+            started = ring.start([], gradual=False)
         except Exception:
+            started = False
+        if not started:
             self.toast("No sound output found")
+            return
+        self._GLib.timeout_add(3000, lambda: (ring.stop(), False)[1])
+
+    def show_licenses(self) -> None:
+        widgets = self._xx_ui.widgets
+        widgets.show_licenses_dialog(
+            self.win, "xx-clock", widgets.standard_license_entries("xx-clock"))
 
     def open_editor(self, draft: dict | None) -> None:
         import gi
@@ -271,19 +282,14 @@ class ClockWindow:
         service = self.service
 
         def _work():
-            alarm_id = service.save_alarm(draft)
-            return alarm_id, service.get_state()
+            service.save_alarm(draft)
+            return service.get_state()
 
         def _done(outcome) -> None:
-            if outcome[0] != "ok":
-                return
-            alarm_id, state = outcome[1]
-            self._apply_state(state)
-            upcoming = (state or {}).get("next")
-            if upcoming and upcoming.get("id") == alarm_id:
-                self.toast(f"Alarm set for {upcoming.get('until_text', '')}")
-            else:
-                self.toast("Alarm saved")
+            # Saving is a direct action: the updated list is the answer,
+            # no "Alarm set for" toast.
+            if outcome[0] == "ok":
+                self._apply_state(outcome[1])
 
         call_async(_work, _done)
 

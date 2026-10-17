@@ -16,11 +16,13 @@ class AlarmsPage:
         self._widgets = widgets
         self._service = service
         self._calls = calls
+        # No page title, like AlarmsFragment: the tab names the page.
         root = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        root.append(widgets.page_header("Alarms", None))
         self._list = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        self._list.set_margin_start(20)
-        self._list.set_margin_end(20)
+        self._list.add_css_class("xx-page-body")
+        self._list.set_margin_top(16)
+        # Room under the last row so the FAB never covers its switch.
+        self._list.set_margin_bottom(88)
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_child(self._list)
@@ -41,44 +43,38 @@ class AlarmsPage:
             child = nxt
 
     def refresh(self, state: dict) -> None:
+        # Empty list shows nothing: the FAB is the one way to add.
         self._clear()
         alarms = (state or {}).get("alarms", [])
-        if not alarms:
-            empty = self._widgets.empty_state("No alarms yet", "Add alarm",
-                                              lambda: self._calls.open_editor(None))
-            empty.set_margin_top(32)
-            self._list.append(empty)
-            return
         for index, item in enumerate(alarms):
             self._list.append(self._row(item, last=index == len(alarms) - 1))
 
     def _row(self, item: dict, last: bool):
+        """AlarmsAdapter row: big time over the label and repeat summary,
+        the enable switch at the end. Off alarms dim."""
         Gtk, Pango = self._Gtk, self._Pango
         row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
         row.add_css_class("xx-row")
         if last:
             row.add_css_class("last")
-        row.set_margin_top(4)
-        row.set_margin_bottom(4)
-        time_label = Gtk.Label(label=time_text(item["hour"], item["minute"]))
-        time_label.add_css_class("xx-display-face")
-        time_label.add_css_class("xx-title")
         texts = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
         texts.set_hexpand(True)
+        texts.set_valign(Gtk.Align.CENTER)
+        if not item.get("enabled", True):
+            texts.add_css_class("xx-clock-off")
+        time_label = Gtk.Label(label=time_text(item["hour"], item["minute"]))
+        time_label.add_css_class("xx-display-face")
+        time_label.add_css_class("xx-clock-alarm-time")
+        time_label.set_xalign(0.0)
+        texts.append(time_label)
         summary = alarm_logic.summary(item.get("days_mask", 0))
         label_text = item.get("label") or ""
-        sub = summary if not label_text else f"{label_text} · {summary}"
-        primary = Gtk.Label(label=sub or summary)
-        primary.set_xalign(0.0)
-        primary.set_ellipsize(Pango.EllipsizeMode.END)
-        primary.set_max_width_chars(22)
-        texts.append(primary)
-        if item.get("vibrate"):
-            muted = Gtk.Label(label="Vibrate")
-            muted.add_css_class("xx-secondary")
-            muted.set_xalign(0.0)
-            texts.append(muted)
-        row.append(time_label)
+        sub = Gtk.Label(label=f"{label_text} · {summary}" if label_text else summary)
+        sub.add_css_class("xx-secondary")
+        sub.set_xalign(0.0)
+        sub.set_ellipsize(Pango.EllipsizeMode.END)
+        sub.set_max_width_chars(22)
+        texts.append(sub)
         row.append(texts)
         switch = self._widgets.make_switch(
             item.get("enabled", True),
@@ -101,6 +97,4 @@ class AlarmsPage:
         longpress = Gtk.GestureLongPress.new()
         longpress.connect("pressed", lambda *_a: self._calls.delete_alarm(item["id"]))
         row.add_controller(longpress)
-        box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        box.append(row)
-        return box
+        return row
