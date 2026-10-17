@@ -9,7 +9,7 @@ gi.require_version('Gtk', '4.0')
 
 from gi.repository import Gdk, Gio, GLib, Gtk
 from config import ShellConfig, ThemePreset
-from contacts import Contact, ContactBook
+from contacts import Contact, shared_book
 
 
 def theme_css(preset: ThemePreset) -> str:
@@ -267,7 +267,7 @@ class Dialer(Gtk.Window):
 
         self._digits = ''
         self._suppress_zero_click = False
-        self._contact_book = ContactBook()
+        self._contact_book = shared_book()
         self._dnd = dnd_state
         # The shell window threads its LIVE config so hot reloads reach this
         # surface; the fallback keeps direct no-arg construction working.

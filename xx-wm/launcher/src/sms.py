@@ -10,7 +10,7 @@ gi.require_version('Gtk', '4.0')
 
 from gi.repository import Gdk, GLib, Gtk
 from config import ShellConfig, ThemePreset
-from contacts import ContactBook, display_number, load_sms_history
+from contacts import shared_book, display_number, load_sms_history
 
 
 def theme_css(preset: ThemePreset) -> str:
@@ -168,7 +168,7 @@ class SMSConversation(Gtk.Window):
 
         self._number = ''
         self._messages: list[Message] = []
-        self._contact_book = ContactBook()
+        self._contact_book = shared_book()
         # The shell window threads its LIVE config so hot reloads reach this
         # surface; the fallback keeps direct no-arg construction working.
         self._config = config if config is not None else ShellConfig()

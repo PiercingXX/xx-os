@@ -575,6 +575,13 @@ class ShellWindow(Adw.ApplicationWindow):
         from focus_mode import FocusState
         self.dnd_state = DndState(self.config)
         self.focus_state = FocusState(self.config)
+        try:
+            # One address book for the shell: warms the xx-contacts cache
+            # before the first call and feeds starred contacts to DnD.
+            from contacts import shared_book
+            shared_book(self.config)
+        except Exception:
+            pass
         self.app_index = AppIndex()
         self.app_index.refresh()
 

@@ -104,8 +104,8 @@ class TestSmsNumberDisplay:
         monkeypatch.setattr(modem_monitor, 'bus_name_has_owner',
                             _owners({}))
         monkeypatch.setattr(
-            contacts, 'ContactBook',
-            lambda: types.SimpleNamespace(lookup_number=lambda n: None))
+            contacts, 'shared_book',
+            lambda config=None: types.SimpleNamespace(lookup_number=lambda n: None))
         win = _win()
         number = '+16145550177'
         CallWiring(win)._on_sms_received(number, 'hello')
@@ -118,8 +118,8 @@ class TestSmsNumberDisplay:
         monkeypatch.setattr(modem_monitor, 'bus_name_has_owner',
                             _owners({}))
         monkeypatch.setattr(
-            contacts, 'ContactBook',
-            lambda: types.SimpleNamespace(lookup_number=lambda n: 'Mom'))
+            contacts, 'shared_book',
+            lambda config=None: types.SimpleNamespace(lookup_number=lambda n: 'Mom'))
         win = _win()
         CallWiring(win)._on_sms_received('+16145550177', 'hello')
         assert win._posted[0][2] == 'Mom'

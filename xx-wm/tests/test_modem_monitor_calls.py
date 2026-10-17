@@ -774,8 +774,8 @@ class TestDisplayName:
         import contacts
         import xx_phone
         monkeypatch.setattr(
-            contacts, 'ContactBook',
-            lambda: _types.SimpleNamespace(lookup_number=lambda n: None))
+            contacts, 'shared_book',
+            lambda config=None: _types.SimpleNamespace(lookup_number=lambda n: None))
         number = '+16145550177'
         assert modem_monitor._display_name(number) == xx_phone.display(
             number, xx_phone.user_country("", ""))
@@ -784,8 +784,8 @@ class TestDisplayName:
         import types as _types
         import contacts
         monkeypatch.setattr(
-            contacts, 'ContactBook',
-            lambda: _types.SimpleNamespace(lookup_number=lambda n: 'Mom'))
+            contacts, 'shared_book',
+            lambda config=None: _types.SimpleNamespace(lookup_number=lambda n: 'Mom'))
         assert modem_monitor._display_name('+16145550177') == 'Mom'
 
     def test_empty_number_stays_empty(self):

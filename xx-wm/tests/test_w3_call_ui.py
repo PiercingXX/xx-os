@@ -349,8 +349,8 @@ def _names(monkeypatch):
 def _unknown_contact(monkeypatch):
     import contacts
     monkeypatch.setattr(
-        contacts, 'ContactBook',
-        lambda: types.SimpleNamespace(lookup_number=lambda n: None))
+        contacts, 'shared_book',
+        lambda config=None: types.SimpleNamespace(lookup_number=lambda n: None))
 
 
 class TestDisplayName:
@@ -366,8 +366,8 @@ class TestDisplayName:
     def test_saved_name_wins_over_number(self, monkeypatch):
         import contacts
         monkeypatch.setattr(
-            contacts, 'ContactBook',
-            lambda: types.SimpleNamespace(lookup_number=lambda n: 'Mom'))
+            contacts, 'shared_book',
+            lambda config=None: types.SimpleNamespace(lookup_number=lambda n: 'Mom'))
         assert call_ui.display_name('+16145550177') == 'Mom'
 
     def test_empty_number_stays_empty(self):

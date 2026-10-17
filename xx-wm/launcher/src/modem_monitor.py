@@ -83,8 +83,8 @@ def _display_name(number: str) -> str:
     if not number:
         return ''
     try:
-        from contacts import ContactBook, display_number
-        return ContactBook().lookup_number(number) or display_number(number)
+        from contacts import shared_book, display_number
+        return shared_book().lookup_number(number) or display_number(number)
     except Exception:
         return number
 
