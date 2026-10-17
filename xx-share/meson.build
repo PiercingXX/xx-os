@@ -83,6 +83,15 @@ configure_file(
   install_dir: join_paths(get_option('datadir'), 'metainfo'),
 )
 
+# App icon -> hicolor theme (Icon=io.piercingxx.XXShare in the desktop).
+# The file is the XX logomark until the owner's xx-share mark lands;
+# swapping that one file picks up the real mark.
+install_data(
+  'data/icons/io.piercingxx.XXShare.svg',
+  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor',
+                          'scalable', 'apps'),
+)
+
 service_conf = configuration_data()
 service_conf.set('bindir', bindir)
 

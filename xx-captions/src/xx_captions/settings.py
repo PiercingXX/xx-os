@@ -151,6 +151,7 @@ if _HAS_GTK:
             self._model_progress: Gtk.ProgressBar | None = None
 
             ensure_ui(self)
+            self.set_title("xx-captions")
             self.set_decorated(False)
             self.set_default_size(360, 720)
 

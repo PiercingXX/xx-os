@@ -155,20 +155,10 @@ class VolumeBar(Gtk.DrawingArea):
 
     def _draw(self, widget, cr, width, height) -> None:
         color = widget.get_color()
-        rgb = (color.red, color.green, color.blue)
         shown = self._drag if self._drag is not None else self.value
-        mid = height / 2
-        cr.set_source_rgba(*rgb, 0.22)
-        cr.rectangle(0, mid - 1, width, 2)
-        cr.fill()
-        cr.set_source_rgba(*rgb, 1.0)
-        cr.rectangle(0, mid - 1, width * shown, 2)
-        cr.fill()
-        head = 3 if self._drag is not None else 2
-        tall = 20 if self._drag is not None else 14
-        x = min(max(width * shown - head / 2, 0), width - head)
-        cr.rectangle(x, mid - tall / 2, head, tall)
-        cr.fill()
+        common.draw_slider(cr, (color.red, color.green, color.blue),
+                           common.ground_rgb(widget), width, height, shown,
+                           self._drag is not None)
 
 
 class ZonesPage:
@@ -281,19 +271,20 @@ class ZonesPage:
         body.append(self._indicator(snap))
         if on_zone(snap):
             body.append(self._zone_card(snap))
-        if snap.message:
-            body.append(common.muted(snap.message))
         if not snap.locations:
+            if snap.message:
+                body.append(common.muted(snap.message))
             if self.loading or not self.loaded:
                 body.append(common.muted("Looking for zones…"))
             return
         body.append(common.section("Locations"))
-        chips = widgets.chip_bar(
+        chips = common.chip_strip(
             [(loc.name or loc.id, loc.id == snap.selected,
-              lambda i=loc.id: self.select(i)) for loc in snap.locations],
-            spacing=6)
+              lambda i=loc.id: self.select(i)) for loc in snap.locations])
         chips.add_css_class("xx-ab-chiprow")
         body.append(chips)
+        if snap.message:
+            body.append(common.muted(snap.message))
         body.append(common.section("Players"))
         targets = snap.targets.get(snap.selected or "", None)
         if targets is None:
@@ -312,85 +303,79 @@ class ZonesPage:
                 last=index == len(targets) - 1))
 
     def _indicator(self, snap) -> Gtk.Box:
-        """Phone vs zone: where the audio is going right now."""
+        """Phone vs Zone: where the audio is going right now."""
         player = self.ctx.player
         zone = snap.output if on_zone(snap) else None
-        row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 14)
-        row.add_css_class("xx-ab-banner")
-        row.set_margin_top(8)
-        live = zone is not None or player.playing
-        row.append(common.glyph("audio-speakers-symbolic" if zone
-                                else "phone-symbolic", 22, on=live))
-        text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
-        text.set_hexpand(True)
-        text.set_valign(Gtk.Align.CENTER)
+        row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
+        row.set_margin_top(4)
+        row.set_margin_bottom(4)
+        row.append(common.glyph("xx-ab-speaker-symbolic" if zone
+                                else "phone-symbolic", 24, on=True))
         if zone is not None:
             head = f"Playing on {zone.name}"
         elif player.playing:
             head = "Playing on this phone"
         else:
             head = "On this phone"
-        text.append(common.label(head, "xx-title", lines=2, chars=22))
+        text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+        text.set_hexpand(True)
+        text.set_valign(Gtk.Align.CENTER)
+        text.append(common.label(head, "xx-ab-t14", lines=2, chars=26))
         if zone is not None:
             sub = self._zone_title(zone, self.ctx.zones.zone_player())
         elif player.has_book:
             sub = player.title if player.playing else (
-                f"Paused  ·  {player.title}")
+                f"Paused · {player.title}")
         else:
             sub = "Nothing playing"
         if sub:
-            text.append(common.label(sub, "xx-secondary", lines=2,
-                                     chars=26))
+            text.append(common.label(sub, "xx-ab-b11 xx-ab-muted", chars=30))
         row.append(text)
-        tag = common.badge("Zone" if zone is not None else "Phone")
-        row.append(tag)
         row.update_property([Gtk.AccessibleProperty.LABEL],
                             [f"{head}. {sub}"])
         return row
 
     def _zone_card(self, snap) -> Gtk.Box:
+        """The active zone in a hairline square: its name, the position,
+        transport, volume and Bring back to phone."""
         zones = self.ctx.zones
         output = snap.output
         target = zones.zone_player()
-        card = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        card.add_css_class("xx-ab-card")
-        card.set_margin_top(12)
+        card = Gtk.Box.new(Gtk.Orientation.VERTICAL, 4)
+        card.add_css_class("xx-ab-panel")
+        card.set_margin_top(8)
+        card.set_margin_bottom(8)
         location = next((loc.name for loc in snap.locations
                          if loc.id == output.location_id), "")
         playing = snap.zone_playing
         state = ("Playing" if playing else "Paused" if playing is False
                  else state_word(target.state) if target else "Starting")
-        card.append(common.caps(" · ".join(p for p in (location, state)
-                                           if p)))
-        card.append(common.label(output.name, "xx-ab-heading", lines=2,
-                                 chars=18))
+        card.append(common.label(output.name, "xx-ab-t16", lines=2,
+                                 chars=22))
+        card.append(common.label(" · ".join(p for p in (location, state)
+                                            if p),
+                                 "xx-ab-l12 xx-ab-muted", chars=30))
         position = target.media_position_s if target is not None else None
         if position is not None:
             card.append(common.label(
                 f"At {fmt.format_ms(int(position * 1000))} in this file",
-                "xx-ab-meta xx-ab-num", chars=30))
+                "xx-ab-l12 xx-ab-muted xx-ab-num", chars=30))
         transport = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-        transport.set_margin_top(16)
-        play = Gtk.Button()
-        play.add_css_class("xx-ab-play")
-        play.set_child(widgets.icon_image(
+        play = _key(widgets.icon_image(
             "media-playback-pause-symbolic" if playing
-            else "media-playback-start-symbolic", 28))
-        common.name(play, f"Pause {output.name}" if playing
-                    else f"Play on {output.name}")
-        play.connect("clicked", lambda _b: self.transport(
-            "pause" if playing else "play"))
-        play.set_halign(Gtk.Align.CENTER)
+            else "media-playback-start-symbolic", 24),
+            f"Pause {output.name}" if playing else f"Play on {output.name}",
+            lambda: self.transport("pause" if playing else "play"))
         keys = []
         if position is not None:
-            keys.append(_key(common.skip_glyph(30, False, 30),
+            keys.append(_key(common.skip_glyph(30, False, 32),
                              "Back 30 seconds", lambda: self.seek(False)))
         keys.append(play)
         keys.append(_key(
-            widgets.icon_image("media-playback-stop-symbolic", 20),
+            widgets.icon_image("media-playback-stop-symbolic", 24),
             f"Stop {output.name}", lambda: self.transport("stop")))
         if position is not None:
-            keys.append(_key(common.skip_glyph(30, True, 30),
+            keys.append(_key(common.skip_glyph(30, True, 32),
                              "Forward 30 seconds", lambda: self.seek(True)))
         for widget in keys:
             widget.set_hexpand(True)
@@ -399,39 +384,28 @@ class ZonesPage:
         volume = snap.volume if snap.volume is not None else (
             target.volume_level if target is not None else None)
         if volume is not None:
-            level = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-            level.set_margin_top(14)
-            caption = common.caps("Volume")
-            caption.set_hexpand(True)
-            level.append(caption)
-            percent = common.label(f"{fmt.percent(volume)}%",
-                                   "xx-ab-label xx-ab-num", xalign=1.0,
-                                   chars=6)
-            percent.set_ellipsize(0)  # short; never misfire an ellipsis
-            level.append(percent)
-            card.append(level)
-            slider = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 4)
-            slider.append(common.icon_button(
-                "audio-volume-low-symbolic", "Quieter",
-                lambda: self.step_volume(False)))
+            card.append(common.label(f"Volume {fmt.percent(volume)}%",
+                                     "xx-ab-l12 xx-ab-num", chars=14))
             bar = VolumeBar(volume)
             bar.connect("changed", lambda _b, v: self.set_volume(v))
-            slider.append(bar)
-            slider.append(common.icon_button(
-                "audio-volume-high-symbolic", "Louder",
-                lambda: self.step_volume(True)))
-            card.append(slider)
+            card.append(bar)
+            steps = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
+            quieter = widgets.text_button("Quieter",
+                                          lambda: self.step_volume(False))
+            louder = widgets.text_button("Louder",
+                                         lambda: self.step_volume(True))
+            steps.append(common.fit(quieter, 8))
+            steps.append(common.fit(louder, 8))
+            card.append(steps)
         back = widgets.primary_button(
             "Stopping the zone…" if self.busy_line else
             "Bring back to phone", self.bring_back)
         common.fit(back, 22)
-        back.set_margin_top(12)
         back.set_sensitive(not self.busy_line)
         card.append(back)
-        note = common.para("The phone picks up after the zone has stopped.",
-                           "xx-ab-meta")
-        note.set_margin_top(8)
-        card.append(note)
+        card.append(common.para(
+            "The phone picks up after the zone has stopped.",
+            "xx-ab-b11 xx-ab-muted"))
         return card
 
     def _zone_title(self, output, target) -> str:
@@ -454,26 +428,26 @@ def _key(child: Gtk.Widget, spoken: str, callback) -> Gtk.Button:
 
 
 def player_row(target, active: bool, on_tap, last: bool = False):
-    """A cast target: speaker glyph, name, state · volume, 'Play here'."""
-    box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 14)
-    box.append(common.glyph("audio-speakers-symbolic", 22,
+    """A cast target: the cast glyph, the name, 'state · volume'."""
+    box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
+    box.append(common.glyph("xx-ab-cast-symbolic", 24,
                             on=active or target.state == "playing"))
-    text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
+    text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     text.set_hexpand(True)
     text.set_valign(Gtk.Align.CENTER)
     head = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
-    head.append(common.label(target.name or target.entity_id, "xx-title",
-                             chars=16))
+    head.append(common.label(target.name or target.entity_id, "xx-ab-b15",
+                             chars=18))
     if active:
         head.append(common.badge("Now"))
     text.append(head)
-    text.append(common.label(target_line(target), "xx-secondary", lines=2,
-                             chars=24))
+    text.append(common.label(target_line(target), "xx-ab-l10 xx-ab-muted",
+                             lines=2, chars=30))
     box.append(text)
-    box.append(widgets.chevron())
     name = target.name or target.entity_id
     return common.tap_row(
-        box, f"Play on {name}. {target_line(target)}", on_tap, last)
+        box, f"Play the current book on {name}. {target_line(target)}",
+        on_tap, last)
 
 
 def play_on_sheet(ctx, parent):
@@ -489,29 +463,27 @@ def play_on_sheet(ctx, parent):
             content.append(common.muted(NOT_SIGNED_IN_LINE))
             return
         snap = ctx.zones.snapshot()
-        here = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 14)
-        here.append(common.glyph("phone-symbolic", 22,
+        here = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
+        here.add_css_class("xx-ab-hair")
+        here.set_size_request(-1, 48)
+        here.append(common.glyph("phone-symbolic", 24,
                                  on=not on_zone(snap)))
-        label = common.label("This phone", "xx-title", chars=20)
+        label = common.label("This phone", "xx-ab-b15", chars=20)
         label.set_hexpand(True)
         here.append(label)
         if not on_zone(snap):
             here.append(common.badge("Now"))
-        row = Gtk.Box()
-        row.add_css_class("xx-setting")
-        row.append(here)
-        here.set_hexpand(True)
-        content.append(row)
+        content.append(here)
         if snap.message:
             content.append(common.muted(snap.message))
         if not snap.locations:
-            content.append(common.muted("Looking for zones…"))
+            content.append(common.muted("Looking for Home Assistant "
+                                        "players…"))
             return
         if len(snap.locations) > 1:
-            chips = widgets.chip_bar(
+            chips = common.chip_strip(
                 [(loc.name or loc.id, loc.id == snap.selected,
-                  lambda i=loc.id: _select(i)) for loc in snap.locations],
-                spacing=6)
+                  lambda i=loc.id: _select(i)) for loc in snap.locations])
             chips.add_css_class("xx-ab-chiprow")
             chips.set_margin_top(8)
             content.append(chips)
@@ -520,7 +492,7 @@ def play_on_sheet(ctx, parent):
             content.append(common.muted("Looking for players…"))
             return
         if not targets:
-            content.append(common.muted("No media players found here."))
+            content.append(common.muted("No players found."))
         output = snap.output
         for index, target in enumerate(targets):
             active = on_zone(snap) and output.entity_id == target.entity_id

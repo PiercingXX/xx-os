@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=XX-Vitals
+Name=xx-vitals
+GenericName=Health
 Comment=Self-hosted health tracking (cleanroom Google Fit)
 Exec=@bindir@/xx-vitals
+Icon=io.piercingxx.XXVitals
 Terminal=false
 Categories=Utility;
 StartupNotify=true

@@ -279,6 +279,16 @@ class TestHomeWidgets:
         assert [w.name for w in win._widget_block.children] == shown
 
 
+class TestShowStatusBar:
+    def test_content_follows_the_android_switch(self):
+        import status_bar
+        assert status_bar.content_visible(
+            types.SimpleNamespace(status_bar_visible=True)) is True
+        assert status_bar.content_visible(
+            types.SimpleNamespace(status_bar_visible=False)) is False
+        assert status_bar.content_visible(None) is False
+
+
 class TestHomeSlotCount:
     def _win(self, home):
         from config import ShellConfig

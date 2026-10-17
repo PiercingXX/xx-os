@@ -1,4 +1,4 @@
-# XX-Radio
+# xx-radio
 
 An unofficial YouTube Music player for Linux phones (postmarketOS, Mobian,
 FuriOS and other phoc-based systems running XX-WM or Phosh). It talks to
@@ -9,7 +9,7 @@ the engine decisions, the architecture and the build plan.
 
 ## Disclaimer
 
-XX-Radio is not affiliated with, endorsed by or supported by YouTube or
+xx-radio is not affiliated with, endorsed by or supported by YouTube or
 Google. It reads YouTube Music through the private interfaces of its own
 web and app clients (via ytmusicapi and yt-dlp) and plays the audio
 without ads. YouTube's Terms of Service do not allow that, so using it
@@ -17,7 +17,7 @@ breaks those terms. YouTube changes these interfaces without notice, and
 any change can stop search or playback until the engine is updated. If
 you sign in, the account you use could be limited or suspended; a
 throwaway account is the careful choice. Downloads are for your own
-offline listening on your own phone. You use XX-Radio at your own risk.
+offline listening on your own phone. You use xx-radio at your own risk.
 
 ## Run from the checkout
 

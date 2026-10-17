@@ -40,7 +40,7 @@ migration steps are ever required.
 | `home_to_recents` | bool | `false` | Pressing Home while already on home with nothing on top opens the app switcher instead of staying. |
 | `home_slot_count` | int\|null | `null` | Android "Home Slot Count" (0–8): home shows the first N slots; empty ones render as `· · ·` and a tap picks an app; slots past N stay stored. `null` (never set) shows every slot. |
 | `date_time_mode` | string | `"date_time"` | Android "Date/Time Mode": `"off"` hides the clock and date widgets, `"date_only"` hides the clock, `"date_time"` shows both. |
-| `status_bar_visible` | bool | `false` | Android "Show Status Bar": a slim time · network · battery bar across the top of the launcher pages. |
+| `status_bar_visible` | bool | `false` | Android "Show Status Bar": the top status bar (status_bar.py) shows its clock and status glyphs. Off, the strip stays empty but still keeps apps below the camera hole. |
 | `swipe_left_enabled` / `swipe_right_enabled` | bool | `true` | Android "Enable Swipe Left/Right". Off: that side swipe on home does nothing. |
 | `swipe_down_action` | string\|null | `null` → `"notifications"` | Android "Swipe Down Action" on home: `"notifications"` (the shade), `"web_search"` (drawer search with the `!` web prefix), `"disabled"`. Seeded once from `gestures.json` `swipe_down_top` (`none` → `disabled`). |
 | `default_layout_applied` | bool | `false` | Set once seeding has run; never re-seeds. |
@@ -260,10 +260,12 @@ surface, not the store.
 | `apn` / `apn_user` / `apn_pass` | string | — | Mobile-data APN pushed to NetworkManager (Settings page owns these). |
 | `update_script` | string | PiercingXX menu path | Script run by "Update system". |
 | `update_last_check` / `update_snooze_until` | float | `0.0` | Daily update-check bookkeeping. |
-| `keyboard_layout` | string | `"us+colemak"` | XKB `layout[+variant]` applied at session start and by Settings → Keyboard (presets: US Colemak, Colemak-DH, QWERTY, Dvorak, UK, DE, or custom). xx-keyboard shows this layout plus Piercing. Included in backups. |
+| `keyboard_layout` | string | `"us"` | Primary layout (`us` QWERTY default, `us+colemak` Colemak, `piercing-num` Piercing Num OSK-only). Session start maps `piercing-num` to `us` for the hardware xkb keymap; Settings → Keyboard applies live. xx-keyboard offers primary first, then QWERTY and Piercing Num. Included in backups. |
+| `setup_complete` | bool | absent | Written by first boot: `false` from the Keyboard step, `true` at Finish. `false` reruns the wizard at next start (a reboot mid-setup must not skip the PIN). Absent counts as done, for configs made before the key existed. |
 | `night_light` | bool | `false` | Night-light master switch state (Settings → Display, "Night" tile). |
 | `night_light_temp` | int | `2200` | Night-light temperature in Kelvin, clamped 2200–6500. Included in backups. |
 | `night_light_schedule` | bool | `false` | When true the light follows sunset-to-sunrise from the weather coordinates instead of staying on. |
+| `status_bar_height` | int\|null | `null` | Height of the top status bar in logical px, clamped 20–96 (Settings → Display, "Status bar height"). The bar reserves this much at the top edge so apps start below the camera hole. `null` uses the device default: 64 on the FuriPhone FLX1 (its punch-hole sits inside the bar), 28 elsewhere. Device-local: never exported in backups. |
 
 ### Wireless debugging (xxdb)
 

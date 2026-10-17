@@ -40,6 +40,28 @@ def test_app_css_renders_for_every_text_scale():
     assert "font-size: 44px" in style.render(2.0)
 
 
+def test_app_icons_ship_with_the_package():
+    # The tab bar and the cover glyph use the app's own symbolic SVGs.
+    from pathlib import Path
+
+    from xx_audiobook.ui import common, shell
+
+    icons = Path(shell.__file__).parent / "icons"
+    names = set(shell.TAB_ICONS.values()) | {common.BOOK_ICON,
+                                             "xx-ab-speed-symbolic",
+                                             "xx-ab-cast-symbolic"}
+    for name in names:
+        svg = icons / f"{name}.svg"
+        assert svg.is_file(), name
+        assert "<path" in svg.read_text()
+
+
+def test_window_is_named_lowercase():
+    from xx_audiobook.ui import setup
+
+    assert setup.APP_NAME == "xx-audiobook"
+
+
 def test_meson_installs_the_whole_package():
     # Same rule as xx-auto: no hand-kept module list to fall out of date.
     from pathlib import Path

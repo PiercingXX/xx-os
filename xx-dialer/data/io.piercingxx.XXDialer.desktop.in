@@ -1,9 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=XX Dialer
+Name=xx-dialer
+GenericName=Phone
 Comment=The phone app that knows who is allowed to ring
 Exec=@bindir@/xx-dialer
-Icon=call-start
+Icon=io.piercingxx.XXDialer
 DBusActivatable=true
 StartupNotify=true
 Categories=GTK;Phone;Dialer;

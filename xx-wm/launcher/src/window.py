@@ -73,6 +73,12 @@ _PAGE_ORDER = ['home', 'apps', 'settings']
 # which on phoc's layer-shell v3 means TOP + EXCLUSIVE (ON_DEMAND is v4+).
 _EDITABLE_STACK_PAGES = ('apps', 'settings')
 
+# Freshness interval for on-demand thumbnails: the switcher is their only
+# reader, so a capture happens right before it opens (plus once after a
+# fresh launch) instead of on a polling timer. A screencopy every 2.5 s
+# burned battery on the phone; a thumb younger than this is still fresh.
+THUMB_MIN_INTERVAL_S = 60.0
+
 # Names that moved to the split modules (home_page, drawer_page,
 # settings_page, call_wiring) but stay importable from here, so old
 # `window.X` paths keep working. Resolved lazily (PEP 562): importing this
@@ -547,11 +553,6 @@ popover.action-menu > contents {
     padding: 6px;
 }
 
-/* Android "Show Status Bar": time left, network and battery right. */
-.launcher-status-bar {
-    padding: 6px 20px 2px 20px;
-}
-
 /* The drawer list sits on the plain background — no inset panel. */
 .shell-root .drawer-sheet {
     background: transparent;
@@ -693,12 +694,16 @@ class ShellWindow(Adw.ApplicationWindow):
         self._dialer: object | None = None
         self._power_menu: object | None = None
         self._back_layer: object | None = None
+        # Top status bar (status_bar.py), built by main._show_shell on a
+        # layer-shell compositor; fed by the clock/status ticks below.
+        self._status_bar: object | None = None
         self._swipe_origin: tuple[float, float] | None = None
         self._theme_buttons: dict[str, Gtk.Button] = {}
         # Built on first switcher open: a second pywayland Display in
         # ShellWindow.__init__ raced the GTK connection on this compositor.
         self._toplevel_manager = None
         self._thumbs = None
+        self._thumb_captured_at: dict[str, float] = {}
         self._output_capture = None
         self._raised_for_settings = False
         self._layer_is_top = False
@@ -842,7 +847,6 @@ class ShellWindow(Adw.ApplicationWindow):
         # construction.
         self._wire_foreign_toplevels()
         GLib.idle_add(self._warm_toplevel_manager)
-        GLib.timeout_add(2500, self._tick_thumb_capture)
         # SIGUSR1 respawns Python only; pick up migrated lisgd verbs now.
         GLib.idle_add(self._sync_system_gestures)
         try:
@@ -892,15 +896,15 @@ class ShellWindow(Adw.ApplicationWindow):
             return True
         return False
 
-    def _tick_thumb_capture(self) -> bool:
-        self._maybe_capture_thumb()
-        return True
-
     def _capture_thumb_once(self) -> bool:
         self._maybe_capture_thumb()
         return False
 
     def _maybe_capture_thumb(self) -> None:
+        # On demand only: the switcher is the sole thumbnail reader, so one
+        # is captured right before it opens (the focused app, about to leave
+        # the foreground) plus once after a fresh launch. A thumb younger
+        # than THUMB_MIN_INTERVAL_S is still fresh and skipped.
         if self._overlays_block_capture():
             return
         mgr = self._toplevel_manager
@@ -909,16 +913,25 @@ class ShellWindow(Adw.ApplicationWindow):
         app_id = mgr.activated_app_id()
         if not app_id:
             return
+        now = GLib.get_monotonic_time() / 1_000_000.0
+        try:
+            last = self._thumb_captured_at.get(app_id, 0.0)
+        except AttributeError:
+            last = 0.0
+            self._thumb_captured_at = {}
+        if now - last < THUMB_MIN_INTERVAL_S:
+            return
         thumbs = self._ensure_thumbs()
         from shell_log import get_logger
         started = self._ensure_capture().capture(
             lambda thumb, aid=app_id: (
-                get_logger('window').info(
+                get_logger('window').debug(
                     'thumb stored %s %sx%s', aid, thumb.width, thumb.height),
                 thumbs.put(aid, thumb),
             ))
         if started:
-            get_logger('window').info('capturing thumb for %s', app_id)
+            self._thumb_captured_at[app_id] = now
+            get_logger('window').debug('capturing thumb for %s', app_id)
 
     def _load_css(self) -> None:
         style_path = Path(__file__).with_name('style.css')
@@ -968,7 +981,6 @@ class ShellWindow(Adw.ApplicationWindow):
         tap.connect('pressed', self._on_tap_outside)
         self.stack.add_controller(tap)
 
-        root.append(_home(self).build_status_bar())
         root.append(self.stack)
         return root
 
@@ -1535,6 +1547,9 @@ class ShellWindow(Adw.ApplicationWindow):
             media_watcher=mpris,
         )
         self._lock_screen.set_application(self.get_application())
+        # Every show/hide path flips `visible`: the status bar follows it.
+        self._lock_screen.connect(
+            'notify::visible', lambda *_: self._sync_status_bar())
         self._lock_screen.present()
         self._lock_screen.on_shown()
         self._reassert_call_ui_above_lock()
@@ -1543,6 +1558,16 @@ class ShellWindow(Adw.ApplicationWindow):
         """A live call stays reachable: re-present the call UI above the
         lock (both are OVERLAY; the last mapped wins)."""
         return _calls(self)._reassert_call_ui_above_lock()
+
+    def _sync_status_bar(self) -> None:
+        """Hide the top status bar under the lock screen and the welcome
+        wizard, show it over home and apps (status_bar.decide_visible)."""
+        bar = getattr(self, '_status_bar', None)
+        if bar is None:
+            return
+        app = self.get_application()
+        bar.sync_visibility(
+            self.is_locked(), bool(getattr(app, '_tour_visible', False)))
 
     def _dismiss_lock_screen(self) -> None:
         lock = getattr(self, '_lock_screen', None)
@@ -1789,6 +1814,9 @@ class ShellWindow(Adw.ApplicationWindow):
                 len(manager.list()), manager.available)
         except Exception:
             pass
+        # The switcher reads the thumbnails: capture the focused app while
+        # it is still visible, instead of polling for it on a timer.
+        self._maybe_capture_thumb()
         self._switcher.show_switcher()
         GLib.timeout_add(50, self._refresh_switcher_if_visible)
         GLib.timeout_add(200, self._refresh_switcher_if_visible)
@@ -2192,6 +2220,16 @@ class ShellWindow(Adw.ApplicationWindow):
         else:
             style_manager.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT)
 
+        # Third-party apps only see the desktop settings and gtk.css: mirror
+        # the resolved preset there. Best-effort and off the main loop, so a
+        # missing schema or daemon never breaks shell theming.
+        try:
+            from desktop_theme import schedule as _schedule_desktop_theme
+            _schedule_desktop_theme(theme)
+        except Exception as error:
+            from shell_log import get_logger
+            get_logger('window').debug('desktop theme bridge skipped: %s', error)
+
         base = _xx_render(self.config, theme)
         shell = _SHELL_SHEET_TEMPLATE.substitute(
             background=theme.background,
@@ -2466,12 +2504,14 @@ class ShellWindow(Adw.ApplicationWindow):
         """Re-apply everything a config edit can influence."""
         self._apply_theme()
         self._build_widget_block()
-        _home(self).apply_status_bar()
         self._home_launcher.refresh()
         self._populate_apps(self.apps_search.get_text())
         self._refresh_weather()
         self._resync_blank_lock()
         self._retheme_surfaces()
+        bar = getattr(self, '_status_bar', None)
+        if bar is not None:
+            bar.apply_config()
 
     def _retheme_surfaces(self) -> None:
         """Fan the freshly resolved preset out to every constructed overlay
@@ -2495,6 +2535,9 @@ class ShellWindow(Adw.ApplicationWindow):
         back = getattr(self, '_back_layer', None)
         if back is not None:
             back.apply_theme(preset)
+        bar = getattr(self, '_status_bar', None)
+        if bar is not None:
+            bar.apply_theme(preset)
         # The HUD lives on the application (main.py wires it into the shade
         # from there); getattr-guarded so bare test namespaces still fan out.
         get_app = getattr(self, 'get_application', None)

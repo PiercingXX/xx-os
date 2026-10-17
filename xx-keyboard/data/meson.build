@@ -48,6 +48,12 @@ configure_file(
   install_dir: systemd_user_unit_dir,
 )
 
+# App icon -> hicolor theme (Icon=io.piercingxx.XXKeyboard in the desktop).
+install_data(
+  'icons/io.piercingxx.XXKeyboard.svg',
+  install_dir: datadir / 'icons' / 'hicolor' / 'scalable' / 'apps',
+)
+
 #generate XML enum definitions for GSettings schema
 schema_enum_headers = files('../src/phosh-osk-enums.h')
 generate_enums_schema = gnome.mkenums(

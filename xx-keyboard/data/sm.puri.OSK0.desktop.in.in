@@ -1,11 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=On-screen keyboard
+Name=xx-keyboard
+GenericName=On-screen keyboard
 Comment=On-screen keyboard
 Exec=@bindir@/xx-keyboard --allow-replacement
 Categories=System;GNOME;Core;
 OnlyShowIn=Phosh;
-Icon=input-keyboard-symbolic
+Icon=io.piercingxx.XXKeyboard
 NoDisplay=true
 X-GNOME-Autostart-Phase=Panel
 X-GNOME-Provides=inputmethod

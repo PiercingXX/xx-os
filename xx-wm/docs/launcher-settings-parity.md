@@ -32,7 +32,7 @@ equivalent named in the notes.
 | Home Slot Count (`slot_count` · 4) — None, 1–8 | Home Slot Count (`home_slot_count` · unset = every stored slot, 4 on the seeded layout) — None, 1–8 | same. Empty slots show `· · ·` at 40% and a tap picks an app; slots past the count stay stored; removing a slot shrinks the count, adding one past it grows it, as on Android |
 | Text Alignment (`text_alignment` · center) — Left, Center, Right | Text Alignment (`home_alignment` · center) | same |
 | Date/Time Mode (`date_time_mode` · date_time) — Off, Date only, Date and time | Date/Time Mode (`date_time_mode` · date_time) | same: Off hides the clock and date widgets, Date only hides the clock |
-| Show Status Bar (`status_bar_visible` · off) | Show Status Bar (`status_bar_visible` · off) | same (Linux): a slim time · network · battery bar across the top of the launcher pages (Android shows its system status bar) |
+| Show Status Bar (`status_bar_visible` · off) | Show Status Bar (`status_bar_visible` · off) | same (Linux): turns the clock and status glyphs of the top status bar on or off. The strip itself stays so apps still start below the camera hole (Android also keeps the cutout clear while its bar is hidden) |
 | — | Clock Format (`clock_24h` · System) — System, 12 h, 24 h | Linux only: Android follows the system 12/24 h setting, which Linux phones do not have |
 
 ## Widgets

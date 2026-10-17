@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.piercingxx.CaptionsSettings</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>xx-captions</name>
+  <summary>On-device live captions and call transcription</summary>
+  <description>
+    <p>Live captions over any audio on the phone, plus call
+    transcription, all on-device. Pick the engine and model, review
+    transcript history, and toggle the overlay without an account.</p>
+  </description>
+  <launchable type="desktop-id">io.piercingxx.CaptionsSettings.desktop</launchable>
+</component>

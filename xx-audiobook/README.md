@@ -1,4 +1,4 @@
-# XX-Audiobook (Linux)
+# xx-audiobook (Linux)
 
 Linux phone port of the PiercingXX Android app `xx-audiobook` (source:
 `ref/xx-audiobook/xx-audiobook-app`). Self-hosted audiobooks on your own
@@ -7,9 +7,13 @@ phoc (XX-WM or Phosh).
 
 Status: M1 (data/API/auth), M2 (player service), M3 (Library, Book,
 Now Playing, mini-player, Series/Author/Narrator/Collections) and the
-M4/M5 screens (Downloads; Setup with Sign in, No access, playback and
-download prefs, server status, Share logs, About; Zones and Play on…;
-Listening stats; the Book page's Ratings & reviews) built. See
+M4/M5 screens (Downloads; Setup, No access, playback and download prefs,
+server status, Share logs, About; Zones and Play on…; Listening stats;
+the Book page's Ratings & reviews) built. Sign in comes first: the window
+resolves auth (hub, then the stored token) behind a neutral frame and
+shows the full-window Sign in when both fail, the tabs only after it. The
+look follows the Android client screen by screen; see
+[docs/android-parity.md](docs/android-parity.md) and
 [PORT_SPEC.md](PORT_SPEC.md).
 
 The FastAPI server (`ref/xx-audiobook/xx-audiobook-server`) is NOT ported: it

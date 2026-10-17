@@ -35,7 +35,7 @@ def _can_rate(engine: music.Engine, track: music.Track | None) -> bool:
 
 SPEC = AppSpec(
     app_id=__app_id__,
-    name="XX-Radio",
+    name="xx-radio",
     dir_name="xx-radio",
     mpris_suffix="xx_radio",
     engine_factory=youtube.create,
@@ -66,7 +66,7 @@ class RadioApplication(Adw.Application):
         if window is not None:
             window.present()
             return
-        from xx_music.ui.shell import build_window
+        from xx_radio.ui.window import build_window
 
         SPEC.paths().ensure_app_dirs()
         window = build_window(self, SPEC)

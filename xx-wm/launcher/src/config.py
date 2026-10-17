@@ -117,10 +117,13 @@ DEFAULT_CONFIG = {
     'clock_24h': None,
     'xxdb_enabled': False,
     'xxdb_persistent': False,
-    'keyboard_layout': 'us+colemak',
+    'keyboard_layout': 'us',
     'night_light': False,
     'night_light_temp': 2200,
     'night_light_schedule': False,
+    # Top status bar height in logical px; None = the device default
+    # (status_bar.resolve_height). Device-local: not in backups.
+    'status_bar_height': None,
 }
 
 _WEATHER_TEMP_UNITS = ('fahrenheit', 'celsius')

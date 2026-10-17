@@ -4,7 +4,7 @@ from xx_radio import licenses
 
 
 def test_engine_components_and_their_licenses():
-    by_name = {entry.name: entry for entry in licenses.entries("XX-Radio")}
+    by_name = {entry.name: entry for entry in licenses.entries("xx-radio")}
     assert by_name["ytmusicapi"].spdx == "MIT"
     assert by_name["yt-dlp"].spdx == "Unlicense"
     assert by_name["bgutil-ytdlp-pot-provider"].spdx == "GPL-3.0-only"
@@ -15,8 +15,8 @@ def test_engine_components_and_their_licenses():
 
 
 def test_app_itself_comes_first():
-    entries = licenses.entries("XX-Radio")
-    assert entries[0].name == "XX-Radio"
+    entries = licenses.entries("xx-radio")
+    assert entries[0].name == "xx-radio"
     assert entries[0].spdx.startswith("GPL-3.0")
     names = [entry.name for entry in entries]
     assert names.index("yt-dlp") > names.index("GTK 4")

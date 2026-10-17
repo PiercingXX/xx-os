@@ -43,8 +43,8 @@ class BookPage:
         self.download_state: dict | None = None
         self.body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
         self.body.set_margin_bottom(24)
-        header = common.header(nav.back, "Book")
-        self.widget = widgets.page(header, self.body)
+        self.bar = common.header(nav.back, "Book")
+        self.widget = widgets.page(self.bar, self.body)
         self.reviews = ReviewsBlock(ctx, item_id, self.play,
                                     self._finished_marked,
                                     lambda: self.widget)
@@ -178,12 +178,14 @@ class BookPage:
         detail = self.detail
         if detail is None:
             title = getattr(self.peek, "title", "") or "Book"
+            self.bar.title.set_text(title)
             body.append(self._head(title, getattr(self.peek, "authors", ""),
                                    bool(getattr(self.peek, "thumb_url", None))))
             body.append(common.muted(
                 self.status or ("Loading…" if self.loading
                                 else "This book is not on this phone.")))
             return
+        self.bar.title.set_text(detail.title or "Book")
         body.append(self._header(detail))
         if self.status:
             body.append(common.muted(self.status))
@@ -196,18 +198,19 @@ class BookPage:
         paragraphs = fmt.description_paragraphs(detail.description)
         if paragraphs:
             body.append(common.section("About"))
-            for index, text in enumerate(paragraphs[:6]):
-                para = common.para(text, "xx-secondary")
+            for text in paragraphs[:6]:
+                para = common.para(text, "xx-ab-b13")
                 para.set_margin_bottom(8)
                 body.append(para)
         self._chapters(body, detail)
         self._bookmarks(body)
 
     def _head(self, title: str, authors: str, has_cover: bool) -> Gtk.Box:
+        """Cover (120 px) beside the title block; stacked at large text."""
         row = Gtk.Box.new(Gtk.Orientation.VERTICAL if style.large_text()
                           else Gtk.Orientation.HORIZONTAL, 16)
-        row.set_margin_top(8)
-        art = common.cover(self.ctx, self.item_id, title, 128, has_cover,
+        row.set_margin_top(16)
+        art = common.cover(self.ctx, self.item_id, title, 120, has_cover,
                            "full")
         art.set_valign(Gtk.Align.START)
         art.set_halign(Gtk.Align.START)
@@ -215,14 +218,15 @@ class BookPage:
         self.text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
         self.text.set_hexpand(True)
         self.text.append(common.label(title, "xx-ab-heading", lines=4,
-                                      chars=14))
+                                      chars=12))
         if authors:
-            self.text.append(common.label(authors, "xx-secondary", chars=16))
+            self.text.append(common.label(authors, "xx-ab-t14", chars=16))
         row.append(self.text)
         return row
 
     def _link(self, text: str, spoken: str, callback,
-              cls: str = "xx-secondary", chars: int = 16) -> Gtk.Button:
+              cls: str = "xx-ab-b11", chars: int = 30) -> Gtk.Button:
+        """LinkLine: underlined, a 48 px row, read as a link."""
         button = Gtk.Button()
         button.add_css_class("xx-ab-shelf-head")
         line = common.label(text, cls + " xx-ab-link", chars=chars)
@@ -238,64 +242,47 @@ class BookPage:
                                                  or detail.thumb_url))
         text = self.text
         if detail.subtitle:
-            text.append(common.label(detail.subtitle, "xx-secondary",
+            text.append(common.label(detail.subtitle, "xx-ab-t14",
                                      lines=2, chars=16))
         refs = {r.name: r.id for r in detail.author_refs}
         for author in detail.authors:
             text.append(self._link(
                 author, f"Books by {author}",
                 lambda a=author: self.nav.browse(
-                    browse_module.AUTHOR, a, refs.get(a)), "xx-body"))
+                    browse_module.AUTHOR, a, refs.get(a)), "xx-ab-t14"))
         if detail.narrators:
-            read_by = common.caps("Read by")
-            read_by.set_margin_top(6)
-            text.append(read_by)
+            text.append(common.label("Read by", "xx-ab-l10 xx-ab-muted",
+                                     chars=12))
             nrefs = {r.name: r.id for r in detail.narrator_refs}
             for narrator in detail.narrators:
                 text.append(self._link(
                     narrator, f"Books read by {narrator}",
                     lambda n=narrator: self.nav.browse(
                         browse_module.NARRATOR, n, nrefs.get(n))))
-        root.append(row)
-        meta = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        meta.set_margin_top(8)
         for series in detail.series:
             shown = (f"{series.name} #{series.sequence}"
                      if series.sequence.strip() else series.name)
-            meta.append(self._link(
+            text.append(self._link(
                 shown, f"Series {shown}",
                 lambda s=series: self.nav.browse(
-                    browse_module.SERIES, s.name, s.id), chars=34))
-        facts = [fmt.format_duration(detail.duration_s)
-                 if detail.duration_s > 0 else "",
-                 fmt.rating_text(detail.rating.average, detail.rating.count),
-                 detail.published_year]
-        line = "  ·  ".join(f for f in facts if f)
-        if line:
-            meta.append(common.label(line, "xx-ab-meta xx-ab-num", chars=36))
+                    browse_module.SERIES, s.name, s.id)))
+        if detail.duration_s > 0:
+            text.append(common.label(fmt.format_duration(detail.duration_s),
+                                     "xx-ab-b11 xx-ab-muted", chars=16))
         if detail.missing:
-            meta.append(common.label("Missing on the server",
-                                     "xx-ab-meta xx-danger-text", chars=24))
+            text.append(common.label("Missing on the server",
+                                     "xx-ab-l12 xx-ab-error", chars=22))
+        root.append(row)
         position = self._position_s()
         if detail.duration_s > 0 and position > 0 and not self._finished():
             bar = common.line(position / detail.duration_s)
             bar.set_margin_top(12)
-            meta.append(bar)
-            left = fmt.time_left_line(int(position * 1000),
-                                      int(detail.duration_s * 1000), 1.0)
-            note = common.label(
-                f"{fmt.percent(position / detail.duration_s)}%  ·  {left}",
-                "xx-ab-meta xx-ab-num", chars=36)
-            note.set_margin_top(6)
-            meta.append(note)
-        elif self._finished():
-            meta.append(common.label("Finished", "xx-ab-meta", chars=12))
-        root.append(meta)
+            root.append(bar)
         return root
 
     def _actions(self, detail) -> Gtk.Box:
-        box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 10)
-        box.set_margin_top(20)
+        box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 8)
+        box.set_margin_top(12)
         position = self._position_s()
         finished = self._finished()
         player = self.ctx.player
@@ -314,16 +301,17 @@ class BookPage:
         common.fit(play, 24)
         play.set_sensitive(detail.playable and not detail.missing)
         box.append(play)
-        row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 10)
+        row = Gtk.Box.new(Gtk.Orientation.VERTICAL if style.large_text()
+                          else Gtk.Orientation.HORIZONTAL, 8)
         row.set_homogeneous(True)
         download = widgets.outline_button(self._download_text(),
                                           self.download)
         download.set_sensitive(detail.playable and not detail.missing)
-        common.fit(download, 14)
+        common.fit(download, 15)
         mark = widgets.outline_button(
-            "Unfinish" if finished else "Mark finished",
+            "Mark unfinished" if finished else "Mark finished",
             lambda: self.set_finished(not finished))
-        common.fit(mark, 14)
+        common.fit(mark, 15)
         row.append(download)
         row.append(mark)
         box.append(row)
@@ -333,7 +321,7 @@ class BookPage:
         chapters = sorted(detail.chapters, key=lambda c: c.start_s)
         if not chapters:
             return
-        body.append(common.section(f"Chapters · {len(chapters)}"))
+        body.append(common.section(f"Chapters ({len(chapters)})"))
         playing = (chapters[self._playing_chapter]
                    if 0 <= self._playing_chapter < len(chapters) else None)
         if self.all_chapters:
@@ -356,7 +344,6 @@ class BookPage:
                 else f"All {len(chapters)} chapters", self._toggle_chapters)
             common.fit(more, 20)
             more.set_halign(Gtk.Align.START)
-            more.set_margin_top(4)
             body.append(more)
 
     def _toggle_chapters(self) -> None:
@@ -533,26 +520,32 @@ class BookPage:
 def chapter_row(title: str, start_ms: int, length_ms: int, now: bool,
                 on_tap) -> Gtk.Button:
     """A chapter: title, start and length; the playing one carries a
-    2 px Signal bar on its left edge."""
+    2 px foreground bar on its left edge and the title weight."""
     row = Gtk.Button()
     row.add_css_class("xx-ab-chapter")
     if now:
         row.add_css_class("now")
-    box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
-    name = common.label(title, "xx-body", lines=2, chars=20)
+    box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
+    name = common.label(title, "xx-ab-t14" if now else "xx-ab-b13",
+                        lines=2, chars=20)
     name.set_hexpand(True)
     box.append(name)
     times = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     times.set_valign(Gtk.Align.CENTER)
     times.append(common.label(fmt.format_ms(start_ms),
-                              "xx-ab-meta xx-ab-num", xalign=1.0, chars=8))
+                              "xx-ab-l12 xx-ab-muted xx-ab-num", xalign=1.0,
+                              chars=8))
     if length_ms > 0:
-        times.append(common.label(fmt.format_ms(length_ms),
-                                  "xx-tiny xx-ab-num", xalign=1.0, chars=8))
+        times.append(common.label(fmt.format_duration(length_ms / 1000),
+                                  "xx-ab-l10 xx-ab-muted xx-ab-num",
+                                  xalign=1.0, chars=10))
     box.append(times)
     row.set_child(box)
+    spoken = f"Play chapter {title}"
+    if length_ms > 0:
+        spoken += ", " + fmt.format_duration(length_ms / 1000)
     row.update_property([Gtk.AccessibleProperty.LABEL], [
-        f"Play chapter {title}" + (", playing now" if now else "")])
+        spoken + (", playing now" if now else "")])
     row.connect("clicked", lambda _b: on_tap())
     return row
 
@@ -561,26 +554,25 @@ def bookmark_row(mark, on_play, on_edit, on_delete,
                  last: bool = False) -> Gtk.Box:
     """Time + note (+ 'Not synced yet'), with edit and delete targets."""
     row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-    row.add_css_class("xx-setting")
-    if last:
-        row.add_css_class("last")
     jump = Gtk.Button()
     jump.add_css_class("xx-ab-shelf-head")
     jump.set_hexpand(True)
-    text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
+    text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+    text.set_valign(Gtk.Align.CENTER)
     where = fmt.format_ms(int(mark.position_s * 1000))
-    text.append(common.label(where, "xx-title xx-ab-num", chars=10))
+    text.append(common.label(where, "xx-ab-l13 xx-ab-num", chars=10))
     if mark.note:
-        text.append(common.label(mark.note, "xx-secondary", lines=2,
-                                 chars=22))
+        text.append(common.label(mark.note, "xx-ab-b11 xx-ab-muted",
+                                 lines=2, chars=24))
     if mark.pending is not None:
-        text.append(common.label("Not synced yet", "xx-tiny", chars=16))
+        text.append(common.label("Not synced yet", "xx-ab-l10 xx-ab-muted",
+                                 chars=16))
     jump.set_child(text)
     common.name(jump, f"Play from bookmark at {where}")
     jump.connect("clicked", lambda _b: on_play())
     row.append(jump)
     row.append(common.icon_button("document-edit-symbolic",
                                   "Edit bookmark note", on_edit))
-    row.append(common.icon_button("edit-delete-symbolic", "Delete bookmark",
+    row.append(common.icon_button("user-trash-symbolic", "Delete bookmark",
                                   on_delete))
     return row

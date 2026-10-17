@@ -34,10 +34,17 @@ void          pos_xx_theme_load_from_path (PosXxTheme *theme, const char *path);
 void          pos_xx_theme_load (PosXxTheme *theme);
 void          pos_xx_theme_free (PosXxTheme *theme);
 char         *pos_xx_theme_render_css (const PosXxTheme *theme);
-/* Input-source id from the xx-wm keyboard_layout key, e.g. "us+colemak".
- * Always set; falls back to "us+colemak" on missing/garbage config. */
+/* Input-source id from the xx-wm keyboard_layout key, e.g. "us".
+ * Always set; falls back to "us" on missing/garbage config. */
 char         *pos_xx_theme_keyboard_layout_id (void);
 char         *pos_xx_theme_keyboard_layout_id_from_path (const char *path);
+#define XX_LAYOUT_QWERTY_ID "us"
+#define XX_LAYOUT_PIERCING_ID "piercing-num"
+/* Switcher order: primary first, then QWERTY and Piercing Num,
+ * deduplicated. Takes ownership of nothing; returns a %NULL-terminated
+ * array the caller frees with g_strfreev(). */
+char        **pos_xx_theme_layout_order (const char *primary);
+char        **pos_xx_theme_layout_order_from_path (const char *path);
 /* Watch the config file for live theme reloads. Falls back to watching
  * the config directory when the file does not exist yet. The callback
  * gets the GFileMonitor "changed" signature. May return NULL. */

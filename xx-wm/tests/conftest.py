@@ -59,3 +59,10 @@ def _no_host_tailscale(monkeypatch):
     puts the real probe back for its fake-CLI tests."""
     import tailscale
     monkeypatch.setattr(tailscale, 'available', lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _not_in_a_session(monkeypatch):
+    """Tests never run as a live XX-WM session: desktop_theme (gsettings,
+    ~/.config/gtk-*/gtk.css) stays off the developer's real desktop."""
+    monkeypatch.delenv('XX_WM_SESSION', raising=False)

@@ -189,40 +189,6 @@ class HomePage:
                 _launch_cmd(cmd)
                 win.drop_to_background()
 
-    def build_status_bar(self):
-        """Android "Show Status Bar": a slim top bar (time left, network
-        and battery right) over the launcher pages. Hidden by default,
-        like Android's launcher hiding the system status bar."""
-        from gi.repository import Gtk, Pango
-
-        win = self._win
-        bar = Gtk.CenterBox()
-        bar.add_css_class('launcher-status-bar')
-        bar.set_hexpand(True)
-        time_label = Gtk.Label(xalign=0)
-        time_label.add_css_class('dim-label')
-        info = Gtk.Label(xalign=1)
-        info.add_css_class('dim-label')
-        info.set_ellipsize(Pango.EllipsizeMode.END)
-        bar.set_start_widget(time_label)
-        bar.set_end_widget(info)
-        win.status_bar_time = time_label
-        win.status_bar_info = info
-        win._status_bar = bar
-        self.apply_status_bar()
-        return bar
-
-    def apply_status_bar(self) -> None:
-        win = self._win
-        bar = getattr(win, '_status_bar', None)
-        if bar is None:
-            return
-        try:
-            bar.set_visible(bool(getattr(win.config, 'status_bar_visible',
-                                         False)))
-        except Exception:
-            pass
-
     def _apply_widget_alignment(self) -> None:
         """Widget lines follow the home alignment pref (centered like the
         slots by default, left-aligned like theme-presets.jpg when set)."""
@@ -397,13 +363,16 @@ class HomePage:
 
         win = self._win
         now = datetime.now()
-        use_24h = resolve_24h(win.config)
-        win.clock_label.set_text(format_clock(now, use_24h))
+        clock = format_clock(now, resolve_24h(win.config))
+        win.clock_label.set_text(clock)
         win.date_label.set_text(now.strftime('%a, %b %d').replace(' 0', ' '))
-        bar_time = getattr(win, 'status_bar_time', None)
-        if bar_time is not None:
+        # The top status bar rides this same 1 s tick (no poller of its own).
+        bar = getattr(win, '_status_bar', None)
+        if bar is not None:
             try:
-                bar_time.set_text(format_clock(now, use_24h))
+                bar.set_time(clock)
+                bar.set_flags(win.dnd_state.is_active(now),
+                              win.focus_state.is_active(now))
             except Exception:
                 pass
 
@@ -429,13 +398,14 @@ class HomePage:
                 win.status_strip.set_text(line)
             except Exception:
                 pass
-            bar_info = getattr(win, 'status_bar_info', None)
-            if bar_info is not None:
-                try:
-                    bar_info.set_text(line)
-                except Exception:
-                    pass
-        status_line_async(_done)
+
+        def _snapshot(snapshot: dict) -> None:
+            # Same poll feeds the top status bar; kept for a bar built later.
+            win._status_snapshot = snapshot
+            bar = getattr(win, '_status_bar', None)
+            if bar is not None:
+                bar.set_status(snapshot)
+        status_line_async(_done, on_snapshot=_snapshot)
 
     def set_privacy_snapshot(self, snapshot: dict | None) -> None:
         """Feed the privacy monitor snapshot; the status strip gains the
@@ -447,6 +417,12 @@ class HomePage:
                 for kind, apps in dict(snapshot or {}).items()}
         except Exception:
             win._privacy_snapshot = {}
+        bar = getattr(win, '_status_bar', None)
+        if bar is not None:
+            try:
+                bar.set_privacy(any(win._privacy_snapshot.values()))
+            except Exception:
+                pass
         try:
             win._refresh_status()
         except Exception:

@@ -66,3 +66,31 @@ configure_file(
   install: true,
   install_dir: join_paths(get_option('datadir'), 'dbus-1', 'services'),
 )
+
+# Settings window desktop entry (DBusActivatable=false: the settings
+# and overlay own io.piercingxx.CaptionsSettings / io.piercingxx.Captions
+# as plain Gtk.Application ids, launched via Exec, never bus-activated).
+desktop_conf = configuration_data()
+desktop_conf.set('bindir', bindir)
+
+configure_file(
+  input: 'data/io.piercingxx.CaptionsSettings.desktop.in',
+  output: 'io.piercingxx.CaptionsSettings.desktop',
+  configuration: desktop_conf,
+  install: true,
+  install_dir: join_paths(get_option('datadir'), 'applications'),
+)
+
+install_data(
+  'data/io.piercingxx.CaptionsSettings.metainfo.xml',
+  install_dir: join_paths(get_option('datadir'), 'metainfo'),
+)
+
+# App icon -> hicolor theme. The file is the XX logomark until the
+# owner's xx-captions mark lands; swapping that one file picks up
+# the real mark.
+install_data(
+  'data/icons/io.piercingxx.CaptionsSettings.svg',
+  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor',
+                          'scalable', 'apps'),
+)

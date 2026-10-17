@@ -34,6 +34,24 @@ def drop_layer_shell_preload(environ=os.environ) -> None:
 drop_layer_shell_preload()
 
 
+def drop_portal_opt_out(environ=os.environ) -> None:
+    """Undo the shell-only portal opt-out set by the xx-wm wrapper.
+
+    The shell themes itself, so it starts with ADW_DISABLE_PORTAL=1 and
+    GDK_DEBUG=no-portals: a portal still bound to a previous session's
+    display made GTK startup wait out its Settings timeout (90 s of black
+    screen on the FLX1). Apps the shell launches must get the portal
+    (it carries the dark color-scheme), so both are dropped once GTK and
+    libadwaita have initialised."""
+    environ.pop('ADW_DISABLE_PORTAL', None)
+    flags = [flag for flag in environ.get('GDK_DEBUG', '').split(',')
+             if flag and flag != 'no-portals']
+    if flags:
+        environ['GDK_DEBUG'] = ','.join(flags)
+    else:
+        environ.pop('GDK_DEBUG', None)
+
+
 class XXWMApplication(Adw.Application):
     def __init__(self, replay_welcome: bool = False) -> None:
         super().__init__(
@@ -60,6 +78,7 @@ class XXWMApplication(Adw.Application):
         GLib.timeout_add_seconds(30, self._tick_focus_release)
 
     def do_activate(self) -> None:
+        drop_portal_opt_out()
         if self.props.active_window is not None:
             self.props.active_window.present()
             return
@@ -179,9 +198,37 @@ class XXWMApplication(Adw.Application):
         back.set_application(self)
         self._shell._back_layer = back
 
+        self._start_status_bar()
+
         if self._replay_welcome:
             self._replay_welcome = False
             self._show_welcome_tour()
+
+    def _start_status_bar(self) -> None:
+        """Top status bar: reserves the camera area (exclusive zone) over
+        home and apps; a pull down on it opens the shade, the same verb
+        lisgd's top-edge swipe fires. Built only after first boot, so the
+        wizard never shows it. No layer shell (nested dev run): no bar."""
+        shell = self._shell
+        if shell is None:
+            return
+        try:
+            from status_bar import create_status_bar
+            bar = create_status_bar(config=shell.config,
+                                    on_open_shade=shell._show_shade)
+        except Exception as exc:
+            _log.warning('status bar unavailable: %s', exc)
+            return
+        if bar is None:
+            return
+        bar.set_application(self)
+        shell._status_bar = bar
+        # Seed from the shell's own sources; later ticks keep it current.
+        snapshot = getattr(shell, '_status_snapshot', None)
+        if snapshot:
+            bar.set_status(snapshot)
+        shell._refresh_clock()
+        shell._sync_status_bar()
 
     def _replay_pending_ipc(self) -> None:
         """Run IPC verbs queued before the first present, in arrival order."""
@@ -235,12 +282,20 @@ class XXWMApplication(Adw.Application):
 
     def _show_welcome_tour(self) -> None:
         self._tour_visible = True
+        self._sync_status_bar()
         wizard = FirstBootWizard(on_complete=self._end_welcome_tour, tour_only=True)
         wizard.set_application(self)
         wizard.present()
 
     def _end_welcome_tour(self) -> None:
         self._tour_visible = False
+        self._sync_status_bar()
+
+    def _sync_status_bar(self) -> None:
+        shell = getattr(self, '_shell', None)
+        sync = getattr(shell, '_sync_status_bar', None)
+        if callable(sync):
+            sync()
 
     def _on_notification(
         self, notif_id: int, app_name: str, summary: str, body: str,

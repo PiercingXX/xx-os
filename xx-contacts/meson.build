@@ -53,6 +53,13 @@ install_data(
   install_dir: join_paths(get_option('datadir'), 'metainfo'),
 )
 
+# App icon -> hicolor theme (Icon=io.piercingxx.XXContacts in the desktop)
+install_data(
+  'data/icons/io.piercingxx.XXContacts.svg',
+  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor',
+                          'scalable', 'apps'),
+)
+
 # D-Bus activation for the contacts service: without this file the
 # first idle exit (60 s) silently breaks every client, since nothing
 # can re-start io.piercingxx.Contacts on demand. No SystemdService=

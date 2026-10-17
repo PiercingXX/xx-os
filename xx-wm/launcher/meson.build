@@ -40,6 +40,7 @@ install_data(
   [
     'src/action_sheet.py',
     'src/als_brightness.py',
+    'src/backlight.py',
     'src/app_index.py',
     'src/app_item_actions.py',
     'src/app_names.py',
@@ -61,6 +62,7 @@ install_data(
     'src/config.py',
     'src/contacts.py',
     'src/default_layout.py',
+    'src/desktop_theme.py',
     'src/dialer.py',
     'src/display_manager.py',
     'src/dnd.py',
@@ -76,6 +78,7 @@ install_data(
     'src/home_page.py',
     'src/hud.py',
     'src/ipc.py',
+    'src/keyboard_layouts.py',
     'src/lock_lines.py',
     'src/lock_screen.py',
     'src/main.py',
@@ -116,6 +119,7 @@ install_data(
     'src/smart_lock.py',
     'src/sms.py',
     'src/sound.py',
+    'src/status_bar.py',
     'src/system_settings.py',
     'src/system_status.py',
     'src/tailscale.py',
@@ -289,6 +293,13 @@ configure_file(
   configuration: desktop_conf,
   install: true,
   install_dir: join_paths(get_option('datadir'), 'applications'),
+)
+
+# Shell icon -> hicolor theme (Icon=io.piercingxx.XXWM in the desktop).
+install_data(
+  'data/icons/io.piercingxx.XXWM.svg',
+  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor',
+                          'scalable', 'apps'),
 )
 
 # Session launcher (phoc wrapper) → $prefix/libexec/xx-wm-session

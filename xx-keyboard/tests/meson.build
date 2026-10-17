@@ -45,6 +45,15 @@ test(
   env: test_env,
 )
 
+# xx-keyboard: older-phoc protocol policy (ext vs wlr data control,
+# required globals). Pure helpers, no display needed.
+test(
+  'test-data-control-fallback',
+  executable('test-data-control-fallback', 'test-data-control-fallback.c', pie: true, dependencies: libpos_dep),
+  depends: compile_schemas,
+  env: test_env,
+)
+
 # xx-keyboard: layout-file contract (valid JSON, Piercing letters exact).
 xx_layouts_tester = find_program('test-xx-layouts.py')
 test(
@@ -79,6 +88,25 @@ test(
   env: lifecycle_env,
   timeout: 150,
 )
+
+# xx-keyboard: older-phoc compat. Same lifecycle against a fake
+# compositor offering only zwlr data control (FuriOS FLX1) or none at
+# all; startup must not bail with "Failed to find all Wayland globals".
+foreach dc : ['wlr', 'none']
+  test(
+    'test-kb-lifecycle-@0@'.format(dc),
+    find_program('test-kb-lifecycle.py'),
+    args: [
+      '--binary=' + meson.current_build_dir() / '..' / 'src' / 'xx-keyboard',
+      '--schema-dir=' + meson.project_build_root() / 'data',
+      '--dict-dir=' + meson.project_source_root() / 'glide' / 'dicts',
+      '--data-control=' + dc,
+    ],
+    depends: [compile_schemas, xx_keyboard_bin],
+    env: lifecycle_env,
+    timeout: 150,
+  )
+endforeach
 
 if presage_dep.found()
   # Create a dummy db for testing

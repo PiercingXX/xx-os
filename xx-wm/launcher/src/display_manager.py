@@ -3,7 +3,7 @@ Display power management.
 
 Real power-off goes over zwlr_output_power_manager_v1 (see output_power.py),
 which cuts panel/GPU power; the backlight level is still saved/restored via
-brightnessctl (and switched off as well when the protocol is unavailable),
+brightnessctl and always switched off too (hwcomposer phoc only stops rendering),
 with the wlopm binary kept only as a last fallback — it is not shipped on
 target devices. Blank state is tracked internally (self._blanked), so we
 never depend on querying any backend to wake back up.
@@ -38,6 +38,8 @@ import time
 from typing import Callable
 
 from gi.repository import GLib
+
+import backlight
 
 try:
     from output_power import OutputPower
@@ -213,7 +215,7 @@ def _wlopm(mode: str) -> bool:
 def _brightnessctl(*args: str) -> str | None:
     try:
         return subprocess.check_output(
-            ['brightnessctl'] + list(args),
+            backlight.brightnessctl_args() + list(args),
             text=True, timeout=2, stderr=subprocess.DEVNULL,
         ).strip()
     except Exception:
@@ -525,11 +527,13 @@ class DisplayManager:
         if bright and bright.isdigit() and int(bright) > 0:
             self._saved_brightness = int(bright)
         self._blanked = True
-        if self._set_output_power(False):
-            self._notify_blank_changed()
-            return
+        # The backlight goes off even when the protocol handled the
+        # output: on Halium's hwcomposer phoc, output power off only
+        # stops rendering and the panel stays lit (black, not off).
+        protocol_ok = self._set_output_power(False)
         _brightnessctl('set', '0')
-        _wlopm('off')
+        if not protocol_ok:
+            _wlopm('off')
         self._notify_blank_changed()
 
     def _wake(self) -> None:

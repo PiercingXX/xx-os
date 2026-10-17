@@ -21,6 +21,21 @@ else
     export GTK_THEME=Adwaita
 fi
 
+# Qt apps follow the GTK theme only when a gtk3 platformtheme plugin exists
+# (Qt5's libqgtk3; Qt6 ships no GTK platform theme, so probe both trees).
+for _qt_plugin in \
+    /usr/lib/qt/plugins/platformthemes/libqgtk3.so \
+    /usr/lib64/qt/plugins/platformthemes/libqgtk3.so \
+    /usr/lib/qt6/plugins/platformthemes/libqgtk3.so \
+    /usr/lib64/qt6/plugins/platformthemes/libqgtk3.so; do
+    if [ -e "$_qt_plugin" ]; then
+        QT_QPA_PLATFORMTHEME=gtk3
+        export QT_QPA_PLATFORMTHEME
+        break
+    fi
+done
+unset _qt_plugin
+
 # Marks the real session — enables session-only behavior (app preloading)
 export XX_WM_SESSION=1
 
@@ -39,21 +54,26 @@ if command -v gsettings >/dev/null 2>&1 && \
     gsettings set sm.puri.phoc auto-maximize true 2>/dev/null || true
 fi
 
-# Keyboard layout from the `keyboard_layout` config key (default
-# us+colemak, Settings → Keyboard). mru-sources often stays
-# [('xkb','us')] after a piercing-shell migrate and then the OSK loads
-# QWERTY; pin both keys every session.
+# Keyboard layout from the `keyboard_layout` config key (default us,
+# Settings → Keyboard). The hardware keymap must stay a real xkb layout:
+# piercing-num is OSK-only, so it maps to us here — same rule as
+# launcher/src/keyboard_layouts.py::xkb_for (duplicated: the shell is not
+# importable this early). mru-sources often stays [('xkb','us')] after a
+# piercing-shell migrate; pin both keys every session.
 _keyboard_layout=$(python3 -c "
 import json, re, sys
 try:
     cfg = json.load(open('$HOME/.config/xx-wm/config.json'))
-    layout = str(cfg.get('keyboard_layout', 'us+colemak'))
+    layout = str(cfg.get('keyboard_layout', 'us'))
 except Exception:
-    layout = 'us+colemak'
+    layout = 'us'
+layout = layout.strip().lower()
 if not re.match(r'^[a-z][a-z0-9-]{1,23}(\+[a-z0-9_-]{1,32})?$', layout):
-    layout = 'us+colemak'
+    layout = 'us'
+if layout == 'piercing-num':
+    layout = 'us'
 print(layout)
-" 2>/dev/null || echo 'us+colemak')
+" 2>/dev/null || echo 'us')
 
 if command -v gsettings >/dev/null 2>&1 && \
    gsettings list-schemas 2>/dev/null | grep -q '^org\.gnome\.desktop\.input-sources$'; then

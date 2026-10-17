@@ -136,7 +136,7 @@ def _m45(target: str) -> None:
         from xx_audiobook.ui.setup import SetupPage
 
         lower(SetupPage, caption_is(
-            "PLAYBACK" if target == "setup-playback" else "DOWNLOADS"))
+            "Playback" if target == "setup-playback" else "Downloads"))
         shell.show("setup")
     elif target == "signout":
         shell.show("setup")
@@ -155,9 +155,9 @@ def _m45(target: str) -> None:
         from xx_audiobook.ui.stats import StatsPage
 
         if target == "stats-lower":
-            lower(StatsPage, caption_is("BY MONTH"))
+            lower(StatsPage, caption_is("By month"))
         elif target in ("stats-sessions", "stats-delete"):
-            lower(StatsPage, caption_is("RECENT SESSIONS"))
+            lower(StatsPage, caption_is("Recent sessions"))
         shell.show("setup")
         when(lambda: ctx.started, nav.stats)
         if target == "stats-delete":
@@ -246,7 +246,7 @@ elif TARGET == "book-chapters":
         child = self.body.get_first_child()
         while child is not None and not (
                 isinstance(child, Gtk.Label)  # noqa: F821
-                and child.get_text().startswith("CHAPTERS")):
+                and child.get_text().startswith("Chapters")):
             child.set_visible(False)
             child = child.get_next_sibling()
 
@@ -291,8 +291,12 @@ elif TARGET in ("downloads", "zones", "setup", "signin"):
     seeded = os.environ.get("SNAP_SCENARIO", "seeded") != "empty"
     if TARGET == "zones" and seeded:
         play()
-    if TARGET == "signin" and seeded:
-        # Fit checks run on the seeded HOME: sign out (keeps the books).
+    if TARGET == "signin" and ctx.session.session is not None:
+        # A signed-in HOME: sign out (keeps the books) -> Sign in.
         when(lambda: ctx.started and ctx.signed_in, ctx.sign_out)
+elif TARGET == "checking":
+    # The gate's first frame, held: auth never resolves here.
+    shell._gate = lambda: None
+    shell.root.set_visible_child_name("checking")
 else:
     _m45(TARGET)

@@ -177,7 +177,7 @@ def run_checks(connection, service, book, events):
     service.finish_open((book, 0, 1.0))
 
     root = client.get_all(MPRIS_BUS, MPRIS_PATH, MPRIS_ROOT)
-    check(root["Identity"] == "XX-Audiobook", "Identity")
+    check(root["Identity"] == "xx-audiobook", "Identity")
     check(root["DesktopEntry"] == "io.piercingxx.XXAudiobook",
           "DesktopEntry")
 

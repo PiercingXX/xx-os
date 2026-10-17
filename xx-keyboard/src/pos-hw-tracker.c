@@ -72,6 +72,10 @@ pos_hw_tracker_set_device_state (PosHwTracker *self,
                                  gpointer      device_state)
 {
   self->device_state = device_state;
+  /* Older compositors (e.g. phoc 0.44) may not offer device-state at
+   * all; without it assume no hardware keyboard is attached. */
+  if (device_state == NULL)
+    return;
   zphoc_device_state_v1_add_listener (self->device_state, &device_state_listener, self);
 }
 

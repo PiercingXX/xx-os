@@ -232,7 +232,7 @@ class CalendarApp(Adw.Application):
 class CalendarWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application, db_path: str) -> None:
         super().__init__(application=app)
-        self.set_title("XX-Calendar")
+        self.set_title("xx-calendar")
         self.set_default_size(360, 720)
         try:
             self.set_decorated(False)

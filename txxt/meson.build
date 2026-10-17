@@ -72,6 +72,28 @@ install_data(
 )
 
 install_data(
+  'data/icons/io.piercingxx.TxxT.svg',
+  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor',
+                          'scalable', 'apps'),
+)
+
+# D-Bus activation for the GUI: the desktop entry is DBusActivatable,
+# so the bus must know how to start it. Without this file launchers
+# that activate over D-Bus fail silently (only the Daemon service
+# existed before). Name= must equal the desktop app id, never the
+# daemon name, or the GUI would exit as a secondary instance.
+gui_service_conf = configuration_data()
+gui_service_conf.set('bindir', bindir)
+
+configure_file(
+  input: 'data/io.piercingxx.TxxT.service.in',
+  output: 'io.piercingxx.TxxT.service',
+  configuration: gui_service_conf,
+  install: true,
+  install_dir: join_paths(datadir, 'dbus-1', 'services'),
+)
+
+install_data(
   'data/txxt-daemon.service',
   install_dir: join_paths(get_option('datadir'), 'txxt'),
 )

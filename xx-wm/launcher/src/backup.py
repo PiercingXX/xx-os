@@ -137,7 +137,7 @@ def export_backup(config) -> dict:
         'home_slot_count': config.data.get('home_slot_count'),
         'date_time_mode': config.data.get('date_time_mode', 'date_time'),
         'swipe_down_action': config.data.get('swipe_down_action'),
-        'keyboard_layout': config.data.get('keyboard_layout', 'us+colemak'),
+        'keyboard_layout': config.data.get('keyboard_layout', 'us'),
         'night_light_temp': config.data.get('night_light_temp', 2200),
     }
     for key in _BOOL_KEYS:

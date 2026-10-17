@@ -183,7 +183,7 @@ def test_mpris_props_shape(fake_server):
         service.finish_open(service.open_book_sync("it-1"))
         root = {k: v.unpack()
                 for k, v in service.mpris_root_props().items()}
-        assert root["Identity"] == "XX-Audiobook"
+        assert root["Identity"] == "xx-audiobook"
         assert root["DesktopEntry"] == "io.piercingxx.XXAudiobook"
         assert root["CanQuit"] is True
         player = {k: v.unpack()

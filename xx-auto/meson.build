@@ -59,6 +59,14 @@ install_data(
   install_dir: join_paths(datadir, 'metainfo'),
 )
 
+# App icon -> hicolor theme (Icon=io.piercingxx.XXAuto in the desktop).
+# The file is the XX logomark until the owner's xx-auto mark lands;
+# swapping that one file picks up the real mark.
+install_data(
+  'data/icons/io.piercingxx.XXAuto.svg',
+  install_dir: join_paths(datadir, 'icons', 'hicolor', 'scalable', 'apps'),
+)
+
 systemd_conf = configuration_data()
 systemd_conf.set('bindir', bindir)
 

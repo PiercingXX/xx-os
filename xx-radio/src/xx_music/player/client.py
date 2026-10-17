@@ -83,6 +83,16 @@ class PlayerClient:
         self._call("Rate", GLib.Variant(
             "(ss)", (str(track_id), str(rating))), callback)
 
+    def download(self, items: list[dict],
+                 callback: Callable | None = None) -> None:
+        self._call("Download", GLib.Variant(
+            "(s)", (json.dumps(items),)), callback)
+
+    def remove_download(self, item_id: str,
+                        callback: Callable | None = None) -> None:
+        self._call("RemoveDownload", GLib.Variant(
+            "(s)", (str(item_id),)), callback)
+
     def snapshot(self, callback: Callable | None = None) -> None:
         self._call("Snapshot", None, self._done_string(callback)
                    if callback else None)

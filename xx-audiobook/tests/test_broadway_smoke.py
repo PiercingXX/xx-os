@@ -5,7 +5,9 @@ display, then runs the REAL window (tests/broadway_probe_app.py) in a
 FRESH interpreter with no API base, no keyring and no player service: it
 walks Library, Book, a damaged Book, Series, Collections and Now Playing
 from the cache alone and checks labels + 48 px targets on icon controls,
-at text scale 1 and 2. Fails on a nonzero exit or any FAIL:/CRITICAL:/
+at text scale 1 and 2. Sign-in first: a stored token lands on Library, an
+empty HOME lands on the full-window Sign in, both after a neutral
+Checking frame. Fails on a nonzero exit or any FAIL:/CRITICAL:/
 ERROR: line. Skips cleanly when gtk4-broadwayd is missing. Never kills
 daemons it did not start.
 """
@@ -59,7 +61,8 @@ def _start_broadway(tmp_path: Path):
     pytest.skip("could not start gtk4-broadwayd")
 
 
-def _probe(tmp_path: Path, scale: int) -> str:
+def _probe(tmp_path: Path, scale: int, mode: str = "signed-in",
+           seed: bool = True) -> str:
     home = tmp_path / "home"
     (home / "config" / "xx-wm").mkdir(parents=True)
     (home / "config" / "xx-wm" / "config.json").write_text(
@@ -72,17 +75,18 @@ def _probe(tmp_path: Path, scale: int) -> str:
     env["PYTHONPATH"] = (str(repo_root / "src") + os.pathsep
                          + str(repo_root.parent / "common") + os.pathsep
                          + env.get("PYTHONPATH", ""))
-    seeded = subprocess.run([sys.executable, str(SEED), str(home)],
-                            capture_output=True, text=True, timeout=60,
-                            env=env)
-    assert seeded.returncode == 0, seeded.stderr
+    if seed:
+        seeded = subprocess.run([sys.executable, str(SEED), str(home)],
+                                capture_output=True, text=True, timeout=60,
+                                env=env)
+        assert seeded.returncode == 0, seeded.stderr
     proc, run_dir, display = _start_broadway(tmp_path)
     try:
         env["XDG_RUNTIME_DIR"] = str(run_dir)
         env["GDK_BACKEND"] = "broadway"
         env["BROADWAY_DISPLAY"] = f":{display}"
         completed = subprocess.run(
-            [sys.executable, str(DRIVER)],
+            [sys.executable, str(DRIVER), mode],
             capture_output=True, text=True, timeout=120, env=env)
     finally:
         proc.terminate()
@@ -98,6 +102,25 @@ def _probe(tmp_path: Path, scale: int) -> str:
 def test_offline_window_walks_every_screen_from_cache(tmp_path):
     output = _probe(tmp_path, 1)
     assert "SIZE:360x720" in output
+
+
+def test_signed_in_home_lands_on_library(tmp_path):
+    # Checking first (auth resolves on a worker), then the tabs; never
+    # a flash of Sign in.
+    output = _probe(tmp_path, 1)
+    assert "GATE:checking>app" in output
+
+
+def test_signed_out_home_lands_on_sign_in(tmp_path):
+    # Nothing stored and no hub: Checking, then the full-window Sign in;
+    # the tabs never show.
+    output = _probe(tmp_path, 1, mode="signed-out", seed=False)
+    assert "GATE:checking>signin" in output
+
+
+def test_signed_out_sign_in_fits_at_text_scale_two(tmp_path):
+    output = _probe(tmp_path, 2, mode="signed-out", seed=False)
+    assert "WIDTH:360" in output
 
 
 def test_text_scale_two_still_fits_with_labelled_targets(tmp_path):

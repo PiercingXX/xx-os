@@ -117,6 +117,8 @@ struct _PosInputSurface {
   GSettings                  *a11y_settings;
   GSettings                  *input_settings;
   GSettings                  *osk_settings;
+  GSettings                  *interface_settings;
+  GFileMonitor               *xx_config_monitor;
   GnomeXkbInfo               *xkbinfo;
 
   PosLogindSession           *logind_session;
@@ -1002,6 +1004,9 @@ clipboard_paste_activated (GSimpleAction *action,
   PosInputSurface *self = POS_INPUT_SURFACE (data);
   const char *text;
 
+  if (self->clipboard_manager == NULL)
+    return;
+
   text = pos_clipboard_manager_get_text (self->clipboard_manager);
   if (gm_str_is_null_or_empty (text))
     return;
@@ -1366,6 +1371,15 @@ pos_screen_keyboard_set_enabled (PosInputSurface *self, gboolean enable)
 }
 
 
+static gboolean
+pos_input_surface_animations_enabled (PosInputSurface *self)
+{
+  if (self->interface_settings == NULL)
+    return TRUE;
+  return g_settings_get_boolean (self->interface_settings, "enable-animations");
+}
+
+
 static void
 pos_input_surface_move (PosInputSurface *self)
 {
@@ -1412,12 +1426,21 @@ animate_cb (GtkWidget     *widget,
   PosInputSurface *self = POS_INPUT_SURFACE (widget);
   gint64 time;
   gboolean finished = FALSE;
+  gboolean first_frame;
 
+  first_frame = self->animation.last_frame < 0;
   time = gdk_frame_clock_get_frame_time (frame_clock) - self->animation.last_frame;
-  if (self->animation.last_frame < 0)
+  if (first_frame)
     time = 0;
 
-  self->animation.progress += 0.06666 * time / 16666.00;
+  if (first_frame && self->animation.show)
+    g_debug ("osk-latency: first-frame monotonic=%" G_GINT64_FORMAT, g_get_monotonic_time ());
+
+  /* Show is ~5 frames (≈83 ms); hide keeps the upstream 15-frame slide */
+  if (self->animation.show)
+    self->animation.progress += 0.20 * time / 16666.00;
+  else
+    self->animation.progress += 0.06666 * time / 16666.00;
   self->animation.last_frame = gdk_frame_clock_get_frame_time (frame_clock);
 
   if (self->animation.progress >= 1.0) {
@@ -1528,6 +1551,11 @@ pos_input_surface_set_clipboard_manager (PosInputSurface     *self,
 
   paste_action = g_action_map_lookup_action (G_ACTION_MAP (self), "clipboard-paste");
   g_assert (paste_action);
+
+  /* No data-control protocol on this compositor (older phoc): there is
+   * nothing to paste, and paste starts disabled (see init). */
+  if (clipboard_manager == NULL)
+    return;
 
   g_object_bind_property (clipboard_manager, "has-text",
                           paste_action, "enabled",
@@ -1874,6 +1902,9 @@ on_im_active_changed (PosInputSurface *self, GParamSpec *pspec, PosInputMethod *
 static PosOskWidget *insert_xkb_layout (PosInputSurface *self, const char *type, const char *id);
 static void on_input_setting_changed (PosInputSurface *self, const char *key, GSettings *settings);
 static void ensure_piercing_layout (PosInputSurface *self);
+static void pos_input_surface_apply_primary_layout (PosInputSurface *self);
+static void on_xx_config_changed (GFileMonitor *monitor, GFile *file, GFile *other,
+                                  GFileMonitorEvent event, gpointer user_data);
 
 
 static void
@@ -1903,6 +1934,10 @@ pos_input_surface_constructed (GObject *object)
                       G_CALLBACK (on_input_setting_changed), self,
                       NULL);
     on_input_setting_changed (self, NULL, self->input_settings);
+    /* Live primary switch with no restart: the setup screen writes the
+     * config file, gsettings follows separately. Not on the show path. */
+    self->xx_config_monitor =
+      pos_xx_theme_watch (G_CALLBACK (on_xx_config_changed), self);
   }
 
   g_assert (POS_IS_INPUT_METHOD (self->input_method));
@@ -1941,6 +1976,7 @@ pos_input_surface_destroy (GtkWidget *widget)
                                         on_visible_child_changed,
                                         self);
 
+  g_clear_object (&self->xx_config_monitor);
   g_clear_object (&self->action_map);
   /* Clear array early since this also destroys the osks in the deck */
   g_clear_pointer (&self->osks, g_ptr_array_unref);
@@ -1966,6 +2002,8 @@ pos_input_surface_finalize (GObject *object)
   g_clear_object (&self->a11y_settings);
   g_clear_object (&self->input_settings);
   g_clear_object (&self->osk_settings);
+  g_clear_object (&self->interface_settings);
+  g_clear_object (&self->xx_config_monitor);
   g_clear_object (&self->xkbinfo);
   g_clear_object (&self->clipboard_manager);
   g_clear_object (&self->completer);
@@ -2221,6 +2259,8 @@ pos_input_surface_class_init (PosInputSurfaceClass *klass)
    * PosInputSurface:clipboard-manager:
    *
    * A clipboard manager to use. The clipboard manager is used to get text to paste.
+   * May be %NULL when the compositor offers no data-control protocol; paste
+   * then stays disabled.
    */
   props[PROP_CLIPBOARD_MANAGER] =
     g_param_spec_object ("clipboard-manager", "", "",
@@ -2534,14 +2574,16 @@ on_input_setting_changed (PosInputSurface *self, const char *key, GSettings *set
   }
 
   /* xx-keyboard: an empty source list falls back to the xx-wm
-   * keyboard_layout key (default us+colemak) instead of plain us, and
-   * Piercing is always offered alongside the configured layouts. */
+   * keyboard_layout key (default us) instead of plain us, and
+   * QWERTY + Piercing are always offered alongside the configured
+   * layouts, primary first. */
   if (self->osks->len == 0) {
     g_autofree char *layout_id = pos_xx_theme_keyboard_layout_id ();
     if (insert_xkb_layout (self, "xkb", layout_id) == NULL)
       insert_osk (self, "us", "us", "English (USA)", "us", NULL, NULL);
   }
   ensure_piercing_layout (self);
+  pos_input_surface_apply_primary_layout (self);
 
   set_keymap (self);
 }
@@ -2559,6 +2601,126 @@ ensure_piercing_layout (PosInputSurface *self)
   }
   insert_osk (self, "xkb:piercing-num", "piercing-num",
               "English (Piercing Num)", "piercing-num", NULL, NULL);
+}
+
+
+static PosOskWidget *
+find_osk_by_layout_id (PosInputSurface *self, const char *layout_id)
+{
+  for (guint i = 0; i < self->osks->len; i++) {
+    PosOskWidget *osk = g_ptr_array_index (self->osks, i);
+    if (g_strcmp0 (pos_osk_widget_get_layout_id (osk), layout_id) == 0)
+      return osk;
+  }
+  return NULL;
+}
+
+
+static PosOskWidget *
+ensure_layout_id (PosInputSurface *self, const char *layout_id)
+{
+  PosOskWidget *osk = find_osk_by_layout_id (self, layout_id);
+
+  if (osk != NULL)
+    return osk;
+  if (g_strcmp0 (layout_id, XX_LAYOUT_PIERCING_ID) == 0) {
+    return insert_osk (self, "xkb:piercing-num", "piercing-num",
+                       "English (Piercing Num)", "piercing-num", NULL, NULL);
+  }
+  osk = insert_xkb_layout (self, "xkb", layout_id);
+  if (osk != NULL)
+    return osk;
+  /* No system xkb entry (headless tests, minimal image): still offer the
+   * id so the switcher order holds and the primary can start. */
+  {
+    g_auto (GStrv) parts = g_strsplit (layout_id, "+", 2);
+    const char *layout = (parts[0] != NULL && *parts[0] != '\0') ? parts[0] : layout_id;
+    const char *variant = (parts[0] != NULL && parts[1] != NULL && *parts[1] != '\0')
+      ? parts[1] : NULL;
+    g_autofree char *name = g_strdup_printf ("xkb:%s", layout_id);
+    return insert_osk (self, name, layout_id, layout_id, layout, variant, NULL);
+  }
+}
+
+
+static int
+layout_order_index (const char *layout_id, char **order)
+{
+  for (int i = 0; order[i] != NULL; i++) {
+    if (g_strcmp0 (order[i], layout_id) == 0)
+      return i;
+  }
+  return G_MAXINT;
+}
+
+
+static void
+sort_osks_by_order (PosInputSurface *self, char **order)
+{
+  /* Insertion sort: at most a handful of layouts, and the array owns
+   * widgets that must not be freed by a remove. */
+  for (guint i = 1; i < self->osks->len; i++) {
+    gpointer item = g_ptr_array_index (self->osks, i);
+    const char *id = pos_osk_widget_get_layout_id (POS_OSK_WIDGET (item));
+    int key = layout_order_index (id, order);
+    guint j = i;
+    while (j > 0) {
+      gpointer prev = g_ptr_array_index (self->osks, j - 1);
+      const char *prev_id = pos_osk_widget_get_layout_id (POS_OSK_WIDGET (prev));
+      if (layout_order_index (prev_id, order) <= key)
+        break;
+      self->osks->pdata[j] = prev;
+      j--;
+    }
+    self->osks->pdata[j] = item;
+  }
+}
+
+
+/* Switcher offers primary first, then QWERTY and Piercing Num
+ * (deduplicated), and starts on the primary. Cheap: only inserts the
+ * missing ids and re-sorts; never clears the deck. */
+static void
+pos_input_surface_apply_primary_layout (PosInputSurface *self)
+{
+  g_autofree char *primary = pos_xx_theme_keyboard_layout_id ();
+  g_auto (GStrv) order = pos_xx_theme_layout_order (primary);
+  PosOskWidget *first = NULL;
+
+  for (int i = 0; order[i] != NULL; i++) {
+    PosOskWidget *osk = ensure_layout_id (self, order[i]);
+    if (osk != NULL)
+      update_osk_key_height (self, osk);
+  }
+  sort_osks_by_order (self, order);
+
+  first = find_osk_by_layout_id (self, order[0]);
+  if (first == NULL)
+    return;
+  hdy_deck_set_visible_child (self->deck, GTK_WIDGET (first));
+  if (POS_INPUT_SURFACE_IS_LANG_LAYOUT (first))
+    self->last_layout = GTK_WIDGET (first);
+}
+
+
+static void
+on_xx_config_changed (GFileMonitor *monitor,
+                      GFile *file,
+                      GFile *other,
+                      GFileMonitorEvent event,
+                      gpointer user_data)
+{
+  PosInputSurface *self = POS_INPUT_SURFACE (user_data);
+
+  if (event != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT &&
+      event != G_FILE_MONITOR_EVENT_CREATED &&
+      event != G_FILE_MONITOR_EVENT_DELETED &&
+      event != G_FILE_MONITOR_EVENT_CHANGED)
+    return;
+
+  g_debug ("xx config changed, switching to new primary layout");
+  pos_input_surface_apply_primary_layout (self);
+  set_keymap (self);
 }
 
 
@@ -2638,6 +2800,10 @@ pos_input_surface_init (PosInputSurface *self)
                                    entries,
                                    G_N_ELEMENTS (entries),
                                    self);
+  /* Paste stays disabled until a clipboard manager with text arrives
+   * (compositors without data control never enable it). */
+  action = g_action_map_lookup_action (G_ACTION_MAP (self->action_map), "clipboard-paste");
+  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), FALSE);
   gtk_widget_insert_action_group (GTK_WIDGET (self),
                                   "win",
                                   G_ACTION_GROUP (self->action_map));
@@ -2657,6 +2823,17 @@ pos_input_surface_init (PosInputSurface *self)
   self->xkbinfo = gnome_xkb_info_new ();
   self->input_settings = g_settings_new ("org.gnome.desktop.input-sources");
   self->osk_settings = g_settings_new ("mobi.phosh.osk");
+  /* enable-animations=false must mean zero slide; tolerate a missing
+   * schema (headless tests) by leaving animations on. */
+  {
+    GSettingsSchemaSource *source = g_settings_schema_source_get_default ();
+    g_autoptr (GSettingsSchema) schema = NULL;
+    if (source != NULL)
+      schema = g_settings_schema_source_lookup (source, "org.gnome.desktop.interface", TRUE);
+    self->interface_settings = schema != NULL
+      ? g_settings_new ("org.gnome.desktop.interface")
+      : NULL;
+  }
   g_signal_connect_swapped (self->osk_settings, "changed::completion-mode",
                             G_CALLBACK (on_completion_mode_changed),
                             self);
@@ -2745,6 +2922,9 @@ pos_input_surface_set_visible (PosInputSurface *self, gboolean visible)
   if (visible == self->surface_visible)
     return;
 
+  if (visible)
+    g_debug ("osk-latency: activate monotonic=%" G_GINT64_FORMAT, g_get_monotonic_time ());
+
   self->surface_visible = visible;
   g_object_notify_by_pspec (G_OBJECT (self), props[PROP_SURFACE_VISIBLE]);
 
@@ -2755,6 +2935,20 @@ pos_input_surface_set_visible (PosInputSurface *self, gboolean visible)
 
   if (self->animation.id)
     g_source_remove (self->animation.id);
+  self->animation.id = 0;
+
+  if (visible) {
+    /* Keys are already built at startup, so map immediately: the first
+     * frame is committed synchronously and the tick only finishes the
+     * short ease-out. With animations off there is no slide at all. */
+    g_debug ("osk-latency: map monotonic=%" G_GINT64_FORMAT, g_get_monotonic_time ());
+    if (!pos_input_surface_animations_enabled (self)) {
+      self->animation.progress = 1.0;
+      pos_input_surface_move (self);
+      return;
+    }
+    pos_input_surface_move (self);
+  }
 
   self->animation.id = g_timeout_add_seconds (1, animation_timeout_cb, self);
   gtk_widget_add_tick_callback (GTK_WIDGET (self), animate_cb, NULL, NULL);

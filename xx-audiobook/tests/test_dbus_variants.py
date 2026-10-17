@@ -86,7 +86,7 @@ def test_property_get_boxes_single_variant():
         variant = service._dispatch_props(
             "Get", ("org.mpris.MediaPlayer2", "Identity"))
         (boxed,) = variant.unpack()
-        assert boxed == "XX-Audiobook"
+        assert boxed == "xx-audiobook"
         with pytest.raises(service_module.ServiceError):
             service._dispatch_props("Get", ("org.mpris.MediaPlayer2",
                                             "Nope"))

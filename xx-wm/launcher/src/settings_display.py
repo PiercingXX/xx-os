@@ -252,7 +252,9 @@ class DisplaySection(settings_page._Section):
         self._profile_box = power[1]
         self._status = power[2]
         self._render_night(win)
-        return night + power
+        bar = ui.group('Status bar', [self._status_bar_row(win)],
+                       note='Keeps apps below the front camera.')
+        return night + power + bar
 
     def refresh(self, win) -> None:
         from settings_page import _run_bg
@@ -418,6 +420,45 @@ class DisplaySection(settings_page._Section):
 
     def _say(self, text: str) -> None:
         ui.say(self._status, text)
+
+    # -- status bar height (status_bar.py) ---------------------------------
+    def _status_bar_row(self, win):
+        """Slider for the top status bar height: live, so the owner can
+        line the bar's edge up under the camera hole on the real phone."""
+        from gi.repository import Gtk
+        import settings_launcher
+        import status_bar
+
+        bar = getattr(win, '_status_bar', None)
+        height = getattr(bar, 'height', None) or status_bar.resolve_height(
+            win.config)
+        scale = Gtk.Scale.new_with_range(
+            Gtk.Orientation.HORIZONTAL, status_bar.MIN_HEIGHT,
+            status_bar.MAX_HEIGHT, 1)
+        scale.set_value(float(height))
+        scale.set_draw_value(False)
+        scale.set_hexpand(True)
+        row = settings_launcher._scale_row(
+            'Status bar height', '%d px' % height, scale)
+        scale.connect('value-changed',
+                      lambda s: self._on_status_bar_height(win, s, row))
+        return row
+
+    def _on_status_bar_height(self, win, scale, row=None) -> None:
+        import status_bar
+
+        height = status_bar.clamp_height(round(scale.get_value()))
+        if height is None:
+            return
+        if row is not None:
+            row.value_label.set_text('%d px' % height)
+        try:
+            win.config.set(status_bar.CONFIG_KEY, height)
+        except Exception:
+            pass
+        bar = getattr(win, '_status_bar', None)
+        if bar is not None:
+            bar.apply_config()
 
 
 def _read_active(bus_name: str) -> str | None:

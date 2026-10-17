@@ -525,6 +525,8 @@ class LauncherSection(settings_page._Section):
                                      _attr(win, 'date_time_mode',
                                            'date_time'),
                                      lambda v: self._set_date_time(win, v))),
+            # The top status bar's clock and glyphs (status_bar.py); the
+            # strip keeps the camera area clear either way.
             switch('status_bar', 'Show Status Bar', '',
                    _attr(win, 'status_bar_visible', False),
                    self._on_status_bar),

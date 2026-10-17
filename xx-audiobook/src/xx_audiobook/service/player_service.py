@@ -50,7 +50,7 @@ MPRIS_PLAYER = "org.mpris.MediaPlayer2.Player"
 PROPS_INTERFACE = "org.freedesktop.DBus.Properties"
 ACTIONS_INTERFACE = "io.piercingxx.XXAuto.Actions1"
 DESKTOP_ENTRY = "io.piercingxx.XXAudiobook"
-IDENTITY = "XX-Audiobook"
+IDENTITY = "xx-audiobook"
 
 ERROR = PLAYER_INTERFACE + ".Error"
 

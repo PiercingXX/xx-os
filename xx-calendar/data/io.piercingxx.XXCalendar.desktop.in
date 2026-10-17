@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=XX-Calendar
+Name=xx-calendar
+GenericName=Calendar
 Comment=Text-first calendar: it shows you your day
 Exec=@bindir@/xx-calendar
+Icon=io.piercingxx.XXCalendar
 DBusActivatable=true
 MimeType=text/calendar;
 Terminal=false

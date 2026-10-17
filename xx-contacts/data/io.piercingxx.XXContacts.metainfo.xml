@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>io.piercingxx.XXContacts</id>
-  <name>Contacts</name>
+  <name>xx-contacts</name>
   <summary>Text-first address book over the system contacts</summary>
   <description>
     <p>A UI over the Evolution Data Server address book. Not a second

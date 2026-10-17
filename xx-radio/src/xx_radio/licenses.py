@@ -12,7 +12,7 @@ to ``about_content`` / ``licenses_page``.
 from __future__ import annotations
 
 
-def entries(app_name: str = "XX-Radio") -> list:
+def entries(app_name: str = "xx-radio") -> list:
     """The About screen's license table: the app first, then everything
     it uses, shared shell first and engine pieces after."""
     from xx_ui import widgets

@@ -18,6 +18,8 @@ if _LAYER_SHELL:
     from gi.repository import Gtk4LayerShell as LayerShell
 
 from config import DANGER_RED, THEME_PRESETS, ShellConfig, ThemePreset
+from keyboard_layouts import CHOICES as KEYBOARD_CHOICES
+from keyboard_layouts import xkb_for
 # Single source of truth with the lock screen: a PIN longer than the lock
 # screen's entry cap could be set here but never typed back = permanent lockout
 from lock_screen import _MAX_PIN
@@ -115,6 +117,44 @@ def theme_css(preset: ThemePreset) -> str:
     min-height: 44px;
     padding: 0 14px;
 }}
+.kb-card {{
+    background: {preset.surface};
+    background-image: none;
+    color: {preset.foreground};
+    border: 1px solid {preset.border};
+    border-radius: 16px;
+    box-shadow: none;
+    padding: 12px 14px;
+    font-weight: 400;
+}}
+.kb-card:hover {{ background: {preset.surface_alt}; }}
+.kb-card.selected,
+.kb-card.selected:hover {{
+    background: {preset.foreground};
+    color: {preset.background};
+    border-color: {preset.foreground};
+}}
+.kb-name {{
+    font-size: 12pt;
+}}
+.kb-tag {{
+    font-size: 8pt;
+    color: {preset.muted};
+}}
+.kb-card.selected .kb-tag {{
+    color: alpha({preset.background}, 0.6);
+}}
+.kb-key {{
+    font-size: 9pt;
+    min-height: 24px;
+    border-radius: 6px;
+    border: 1px solid {preset.border};
+    color: {preset.muted};
+}}
+.kb-card.selected .kb-key {{
+    border-color: alpha({preset.background}, 0.25);
+    color: {preset.background};
+}}
 .tz-list,
 .tz-list row {{
     background: transparent;
@@ -141,6 +181,19 @@ _THEME_ROWS_CSS = ''.join(
     f'.theme-row-{p.key}.selected {{ box-shadow: 0 0 0 2px {p.foreground}; }}'
     for p in THEME_PRESETS.values()
 ).encode()
+
+#: Top letter row of each first-boot layout, as xx-keyboard draws it
+#: (xx-keyboard/src/layouts/<key>.json, first row of the default level).
+_KEYBOARD_TOP_ROWS = {
+    'us': 'QWERTYUIOP',
+    'us+colemak': 'QWFPGJLUY;',
+    'piercing-num': 'QRFWG;LPYZ',
+}
+
+#: Caption beside a layout name: Piercing Num has no hardware keymap.
+_KEYBOARD_TAGS = {'piercing-num': 'ON-SCREEN'}
+
+_DEFAULT_KEYBOARD = 'us'
 
 _TIMEZONES = [
     'UTC', 'America/New_York', 'America/Chicago', 'America/Denver',
@@ -264,9 +317,23 @@ def keyboard_step_available() -> bool:
     )
 
 
+def setup_pending(config_path) -> bool:
+    """True when first boot must run: no config yet, or a wizard that
+    wrote config (Keyboard step) but never reached Finish. Configs from
+    before the marker have no `setup_complete` key and count as done."""
+    import json
+    try:
+        data = json.loads(config_path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get('setup_complete') is False
+
+
 class FirstBootWizard(Gtk.Window):
     """
-    First-run setup (PIN, theme, timezone) followed by the usage walkthrough:
+    First-run setup (keyboard, PIN, theme, timezone) followed by the usage walkthrough:
     an interactive gesture tour, shade / DnD & Focus / config-file pages, and
     a try-the-keyboard step when squeekboard is present. `tour_only=True`
     replays just the walkthrough (`xx-wm --welcome`).
@@ -313,6 +380,9 @@ class FirstBootWizard(Gtk.Window):
         self._stack.set_interpolate_size(False)
 
         self._stack.add_named(self._build_welcome(), 'welcome')
+        # Layout before the PIN: the keypad is numeric, but every later
+        # text field (custom theme hex, Wi-Fi) types on this layout.
+        self._stack.add_named(self._build_keyboard_step(), 'keyboard')
         self._stack.add_named(self._build_pin_step(), 'pin')
         self._stack.add_named(self._build_pin_confirm_step(), 'pin_confirm')
         self._stack.add_named(self._build_theme_step(), 'theme')
@@ -335,8 +405,7 @@ class FirstBootWizard(Gtk.Window):
     @staticmethod
     def is_needed() -> bool:
         from pathlib import Path
-        config_path = Path.home() / '.config' / 'xx-wm' / 'config.json'
-        return not config_path.exists()
+        return setup_pending(Path.home() / '.config' / 'xx-wm' / 'config.json')
 
     def _page(self) -> Gtk.Box:
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
@@ -385,13 +454,120 @@ class FirstBootWizard(Gtk.Window):
         next_btn = Gtk.Button(label='Get started')
         next_btn.add_css_class('wizard-next')
         next_btn.set_hexpand(True)
-        next_btn.connect('clicked', lambda _b: self._stack.set_visible_child_name('pin'))
+        next_btn.connect('clicked',
+                         lambda _b: self._stack.set_visible_child_name('keyboard'))
 
         page.append(self._title_block(
             'PiercingXX', 'Let\'s set up your device.\nThis takes about a minute.'))
         page.append(self._centered())
         page.append(next_btn)
         return page
+
+    def _build_keyboard_step(self) -> Gtk.Widget:
+        page = self._page()
+
+        # One card per first-boot layout: name, then its top letter row
+        # drawn as keycaps so the choice reads before anything is typed.
+        # Selected inverts (foreground fill), like every XX selection.
+        self._keyboard_choice = _DEFAULT_KEYBOARD
+        self._keyboard_applied: str | None = None
+        self._keyboard_cards: dict[str, Gtk.Widget] = {}
+        cards = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        for key, name in KEYBOARD_CHOICES:
+            card = Gtk.Button()
+            card.add_css_class('kb-card')
+            card.set_hexpand(True)
+            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            name_label = Gtk.Label(label=name, xalign=0)
+            name_label.add_css_class('kb-name')
+            name_label.set_hexpand(True)
+            name_label.set_ellipsize(Pango.EllipsizeMode.END)
+            head.append(name_label)
+            tag = _KEYBOARD_TAGS.get(key)
+            if tag:
+                tag_label = Gtk.Label(label=tag, xalign=1)
+                tag_label.add_css_class('kb-tag')
+                head.append(tag_label)
+            inner.append(head)
+            # Homogeneous row: ten caps share the card width, so the
+            # preview fits 320 px and large text without a fixed key size.
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            row.set_homogeneous(True)
+            for glyph in _KEYBOARD_TOP_ROWS.get(key, ''):
+                cap = Gtk.Label(label=glyph)
+                cap.add_css_class('kb-key')
+                row.append(cap)
+            inner.append(row)
+            card.set_child(inner)
+            card.connect('clicked', lambda _b, k=key: self._on_keyboard_card(k))
+            self._keyboard_cards[key] = card
+            cards.append(card)
+        self._mark_keyboard_card(self._keyboard_choice)
+
+        more = Gtk.Label(label='More in Settings › Keyboard.',
+                         justify=Gtk.Justification.CENTER)
+        more.add_css_class('wizard-subtitle')
+        more.set_xalign(0.5)
+        more.set_wrap(True)
+        more.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+
+        # Cards scroll instead of pushing the page off a short screen at
+        # large text; centered while they fit.
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        content.set_valign(Gtk.Align.CENTER)
+        content.append(cards)
+        content.append(more)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_vexpand(True)
+        scroller.set_child(content)
+
+        next_btn = Gtk.Button(label='Next')
+        next_btn.add_css_class('wizard-next')
+        next_btn.set_hexpand(True)
+        next_btn.connect('clicked', self._on_keyboard_next)
+
+        page.append(self._title_block(
+            'Keyboard', 'Your main layout. QWERTY and Piercing Num stay '
+            'one switch away on the keyboard.'))
+        page.append(scroller)
+        page.append(next_btn)
+        return page
+
+    def _mark_keyboard_card(self, choice: str) -> None:
+        for key, card in self._keyboard_cards.items():
+            if key == choice:
+                card.add_css_class('selected')
+            else:
+                card.remove_css_class('selected')
+
+    def _on_keyboard_card(self, choice: str) -> None:
+        self._keyboard_choice = choice
+        self._mark_keyboard_card(choice)
+        self._apply_keyboard(choice)
+
+    def _on_keyboard_next(self, _btn: Gtk.Widget | None) -> None:
+        # The untouched default is a choice too: write and apply it once.
+        self._apply_keyboard(self._keyboard_choice)
+        self._stack.set_visible_child_name('pin')
+
+    def _apply_keyboard(self, choice: str) -> None:
+        """Write `keyboard_layout` (xx-keyboard follows the file live)
+        and set the hardware keymap. Idempotent: a choice already
+        applied writes and spawns nothing again."""
+        if choice == self._keyboard_applied:
+            return
+        self._keyboard_applied = choice
+        # The first write creates config.json; mark setup unfinished so a
+        # reboot before Finish reruns the wizard instead of skipping the PIN.
+        if 'setup_complete' not in self._config.data:
+            self._config.data['setup_complete'] = False
+        self._config.set('keyboard_layout', choice)
+        from settings_keyboard import apply_keyboard_layout, parse_layout_key
+        # Fire-and-forget keymap write (Popen, never waited on); Piercing Num
+        # is on-screen only, so xkb gets its hardware keymap (us).
+        apply_keyboard_layout(*parse_layout_key(xkb_for(choice)))
 
     def _build_pin_step(self) -> Gtk.Widget:
         page = self._page()
@@ -750,8 +926,8 @@ class FirstBootWizard(Gtk.Window):
     def _keyboard_page(self) -> Gtk.Widget:
         page, footer = self._tour_scaffold(
             'Try the keyboard',
-            'PiercingXX ships a Colemak layout. Tap the field — the keyboard '
-            'appears whenever you need to type.')
+            'Tap the field — the keyboard appears whenever you need to '
+            'type. Layouts live in Settings › Keyboard.')
         entry = Gtk.Entry()
         entry.set_placeholder_text('Type something…')
         entry.set_hexpand(True)
@@ -849,13 +1025,12 @@ class FirstBootWizard(Gtk.Window):
         row = self._tz_list.get_selected_row()
         tz = _TIMEZONES[row.get_index() if row is not None else 0]
         # Setup is durable from here even if the walkthrough is skipped
+        self._config.data['setup_complete'] = True
         self._config.save()
         self._advance_tour()
         # timedate1 answers asynchronously, so the wizard moves on while the
-        # zone lands in the background. The Colemak OSK needs no settings
-        # daemon help: squeekboard's own layout files provide it, and writing
-        # the desktop input sources key would leak into other desktop
-        # sessions on the same account.
+        # zone lands in the background. The keyboard layout was applied
+        # on its own step, before the PIN.
         set_timezone_async(tz, on_done=self._on_timezone_result)
 
     def _on_timezone_result(self, ok: bool, message: str) -> None:

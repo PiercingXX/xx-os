@@ -149,6 +149,12 @@ install_data(
   install_dir: join_paths(datadir, 'metainfo'),
 )
 
+# App icon -> hicolor theme (Icon=io.piercingxx.XXVitals in the desktop)
+install_data(
+  'data/icons/io.piercingxx.XXVitals.svg',
+  install_dir: join_paths(datadir, 'icons', 'hicolor', 'scalable', 'apps'),
+)
+
 # D-Bus session activation: the .desktop is DBusActivatable, so the bus
 # must know how to start the app. Without this file the first launch
 # from the drawer fails to activate.

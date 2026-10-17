@@ -92,6 +92,25 @@ install_data(
   install_dir: join_paths(datadir, 'metainfo'),
 )
 
+# App icon -> hicolor theme (Icon=io.piercingxx.XXDialer in the desktop)
+install_data(
+  'data/icons/io.piercingxx.XXDialer.svg',
+  install_dir: join_paths(datadir, 'icons', 'hicolor', 'scalable', 'apps'),
+)
+
+# D-Bus activation for the GUI: the desktop entry is DBusActivatable,
+# so the bus must know how to start it (only the Policy service
+# existed before, and launchers failed silently). Name= must equal
+# the desktop app id, never the policy name, or the GUI would exit
+# as a secondary instance.
+configure_file(
+  input: 'data/io.piercingxx.XXDialer.service.in',
+  output: 'io.piercingxx.XXDialer.service',
+  configuration: desktop_conf,
+  install: true,
+  install_dir: join_paths(datadir, 'dbus-1', 'services'),
+)
+
 # D-Bus activation for the policy service -> session bus services dir
 # (its own bus name: the GTK app id io.piercingxx.XXDialer must stay
 # free for the GUI's Gtk.Application registration)

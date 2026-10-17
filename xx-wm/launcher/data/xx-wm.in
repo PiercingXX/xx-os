@@ -24,11 +24,52 @@ fi
 # it shows and hides itself on input-method activation, and the
 # shade/lock windows sit on higher layers. squeekboard stays a runtime
 # fallback for sessions without xx-keyboard installed.
+# _xx_keyboard_start: BEGIN (exercised by tests/test_xx_wm_kb_fallback.py;
+# keep this block runnable standalone under `sh` with PATH fakes)
 if command -v xx-keyboard >/dev/null 2>&1; then
     xx-keyboard &
+    _xx_kb_pid=$!
+    # Watchdog: a too-new xx-keyboard exits within seconds on an older
+    # compositor (e.g. missing Wayland protocols on phoc 0.44), which
+    # would leave the session without any keyboard. If our keyboard is
+    # already gone after a short delay, start phosh-osk-stevia or
+    # squeekboard instead. XX_KB_FALLBACK_DELAY is a test hook (default 5).
+    (
+        sleep "${XX_KB_FALLBACK_DELAY:-5}"
+        _xx_kb_gone=
+        if ! kill -0 "$_xx_kb_pid" 2>/dev/null; then
+            _xx_kb_gone=1
+        elif [ -r "/proc/$_xx_kb_pid/stat" ]; then
+            # An exited child lingers as a zombie until reaped, and
+            # kill -0 still succeeds on those: read the state after the
+            # final ") " (the process name itself may hold ") ").
+            _xx_kb_stat=$(cat "/proc/$_xx_kb_pid/stat" 2>/dev/null)
+            case "${_xx_kb_stat##*) }" in
+                Z*|X*) _xx_kb_gone=1 ;;
+            esac
+        elif command -v ps >/dev/null 2>&1; then
+            case "$(ps -o stat= -p "$_xx_kb_pid" 2>/dev/null)" in
+                *Z*|"") _xx_kb_gone=1 ;;
+            esac
+        fi
+        [ -n "$_xx_kb_gone" ] || exit 0
+        if command -v phosh-osk-stevia >/dev/null 2>&1; then
+            _xx_kb_fb=phosh-osk-stevia
+        elif command -v squeekboard >/dev/null 2>&1; then
+            _xx_kb_fb=squeekboard
+        else
+            exit 0
+        fi
+        if command -v logger >/dev/null 2>&1; then
+            logger -t xx-wm "xx-keyboard exited early, starting $_xx_kb_fb" 2>/dev/null || true
+        fi
+        echo "xx-wm: xx-keyboard exited early, starting $_xx_kb_fb" >&2
+        exec "$_xx_kb_fb"
+    ) &
 elif command -v squeekboard >/dev/null 2>&1; then
     squeekboard &
 fi
+# _xx_keyboard_start: END
 
 # First-login rename so the binding generator reads the migrated
 # gestures.json (ShellConfig also does this; doing it here covers the
@@ -126,6 +167,12 @@ _xx_session_begin() {
     # Pulls graphical-session.target in through BindsTo, which
     # xdg-desktop-portal.service needs (Requisite=...).
     systemctl --user start xx-wm-session.target 2>/dev/null || true
+    # Portals outlive a session restart (the user manager stays up) and
+    # stay bound to the old, dead display: every GTK app then waits out a
+    # Settings timeout and paints light. Restart them on this display.
+    systemctl --user --no-block try-restart \
+        xdg-desktop-portal-gtk.service xdg-desktop-portal.service \
+        2>/dev/null || true
 }
 
 _xx_session_end() {
@@ -182,7 +229,9 @@ while :; do
     mkdir -p "$HOME/.local/share/xx-wm" 2>/dev/null || true
     chmod 700 "$HOME/.local/share/xx-wm" 2>/dev/null || true
     _xx_rotate_err_log
-    LD_PRELOAD="$_xx_preload" @python@ @shell_dir@/main.py "$@" 2>>"$_xx_err_log" &
+    # Portal opt-out is shell-only: main.py drops it once GTK is up.
+    ADW_DISABLE_PORTAL=1 GDK_DEBUG="${GDK_DEBUG:+$GDK_DEBUG,}no-portals" \
+        LD_PRELOAD="$_xx_preload" @python@ @shell_dir@/main.py "$@" 2>>"$_xx_err_log" &
     _child=$!
     wait "$_child"
     _st=$?

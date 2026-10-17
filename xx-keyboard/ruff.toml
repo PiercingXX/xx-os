@@ -1,0 +1,12 @@
+# Ruff configuration for xx-keyboard (lane kb_compat).
+#
+# Same pin as xx-wm's ruff.toml: ruff 0.16+ broadened its default `select`
+# to include flake8-blind-except (BLE), pyupgrade (UP), isort (I),
+# flake8-simplify (SIM) and more. That expansion is a tool-version drift,
+# not this project's policy: the lifecycle fake was written against the
+# classic default (E4/E7/E9/F). Pinning `select` keeps the gate
+# deterministic across ruff versions instead of failing on rules the
+# project never opted into.
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

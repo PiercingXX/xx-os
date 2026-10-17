@@ -245,7 +245,7 @@ def test_destdir_install_radio_files(tmp_path):
     player = (destdir / 'usr/share/dbus-1/services'
               / 'io.piercingxx.XXRadio.Player.service').read_text()
     assert 'Name=io.piercingxx.XXRadio\n' in gui
-    assert 'Exec=/usr/bin/xx-radio\n' in gui
+    assert 'Exec=/usr/bin/xx-radio --gapplication-service\n' in gui
     assert 'Name=io.piercingxx.XXRadio.Player\n' in player
     assert 'Exec=/usr/bin/xx-radio --player-service' in player
 

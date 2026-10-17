@@ -60,6 +60,13 @@ install_data(
   install_dir: join_paths(get_option('datadir'), 'metainfo'),
 )
 
+# App icon → $prefix/share/icons/hicolor/scalable/apps/
+install_data(
+  'data/icons/io.piercingxx.XXEmail.svg',
+  install_dir: join_paths(get_option('datadir'), 'icons', 'hicolor',
+                          'scalable', 'apps'),
+)
+
 # OAuth walkthrough the setup screen links to → $prefix/share/xx-email/docs/
 install_data(
   'docs/oauth-setup.md',

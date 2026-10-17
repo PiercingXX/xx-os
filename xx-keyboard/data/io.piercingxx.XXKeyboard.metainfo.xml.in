@@ -3,7 +3,7 @@
   <id>io.piercingxx.XXKeyboard</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <name>XX Keyboard</name>
+  <name>xx-keyboard</name>
   <summary>On Screen Keyboard for the XX phone (Stevia fork)</summary>
   <replaces>
       <id>sm.puri.Phosh.OskStub</id>

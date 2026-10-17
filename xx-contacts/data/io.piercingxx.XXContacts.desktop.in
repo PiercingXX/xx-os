@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=Contacts
+Name=xx-contacts
+GenericName=Contacts
 Comment=System address book
 Exec=@bindir@/xx-contacts %F
+Icon=io.piercingxx.XXContacts
+DBusActivatable=false
 Terminal=false
 Categories=Utility;ContactManagement;
 MimeType=text/vcard;text/x-vcard;

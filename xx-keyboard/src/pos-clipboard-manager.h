@@ -6,6 +6,7 @@
 #pragma once
 
 #include "ext-data-control-v1-client-protocol.h"
+#include "wlr-data-control-unstable-v1-client-protocol.h"
 
 #include <gdk/gdkwayland.h>
 #include <glib-object.h>
@@ -18,6 +19,8 @@ G_DECLARE_FINAL_TYPE (PosClipboardManager, pos_clipboard_manager, POS, CLIPBOARD
 
 PosClipboardManager *pos_clipboard_manager_new (struct ext_data_control_manager_v1 *manager,
                                                 struct wl_seat                     *seat);
+PosClipboardManager *pos_clipboard_manager_new_wlr (struct zwlr_data_control_manager_v1 *manager,
+                                                    struct wl_seat                      *seat);
 const char          *pos_clipboard_manager_get_text (PosClipboardManager *self);
 GStrv                pos_clipboard_manager_get_texts (PosClipboardManager *self);
 
