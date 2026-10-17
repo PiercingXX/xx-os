@@ -1,47 +1,109 @@
 """Settings + Sync pages for xx-note.
 
-Settings: notes folder (entry + system picker), color mode, sort order,
-and a note that the theme follows the suite. Sync: WebDAV enable switch,
-host/user/path, password into libsecret (never config or logs), Test
-connection and Sync now on worker threads, legible status line.
+Settings: notes folder (type a path and press Enter, or pick one), note
+colors (Keep pastels or brand tones), sort order. Sync: one WebDAV switch;
+its fields show only while it is on: server, user, remote folder and a
+password that goes to libsecret (never config or logs) on Enter, Test or
+Sync now. Test and Sync run on worker threads; one muted line reports
+what came back. Nothing confirms a direct action.
 """
 
 from __future__ import annotations
 
 import threading
 
+from xx_ui import widgets as xw
 
-def _label(Gtk, Pango, text, cls="xx-note-preview", chars=28):  # type: ignore[no-untyped-def]
-    label = Gtk.Label(label=text)
-    label.add_css_class(cls)
+SORT_KEYS = ("updated", "created", "title")
+SORT_LABELS = ("Edited", "Created", "Title")
+COLOR_KEYS = ("keep", "tones")
+COLOR_LABELS = ("Pastels", "Tones")
+
+
+def compact_bar(Gtk, title: str):  # type: ignore[no-untyped-def]
+    """Back chevron + caps title, the xx_ui compact header shape. Returns
+    (bar, back_button) so the shell owns navigation."""
+    bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    bar.add_css_class("xx-page-body")
+    bar.add_css_class("xx-compact-header")
+    back = xw.icon_button("go-previous-symbolic")
+    back.set_can_focus(False)
+    back.set_valign(Gtk.Align.CENTER)
+    bar.append(back)
+    label = xw.caption(title)
+    label.set_hexpand(True)
+    label.set_valign(Gtk.Align.CENTER)
+    bar.append(label)
+    return bar, back
+
+
+def _field(Gtk, caption_text: str, child):  # type: ignore[no-untyped-def]
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    box.add_css_class("xx-note-field")
+    box.append(xw.caption(caption_text))
+    box.append(child)
+    return box
+
+
+def _entry(Gtk, text: str = "", placeholder: str = ""):  # type: ignore[no-untyped-def]
+    entry = xw.deferred_entry(placeholder)
+    entry.set_text(text)
+    entry.set_hexpand(True)
+    return entry
+
+
+class _Segmented:
+    """Joined caps choices (xx_ui segmented) whose selection can move."""
+
+    def __init__(self, Gtk, labels, selected: int, on_pick) -> None:  # type: ignore[no-untyped-def]
+        self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.box.add_css_class("xx-segmented")
+        self.box.add_css_class("xx-note-seg")
+        self.box.set_homogeneous(True)
+        self._buttons = []
+        self.selected = selected
+        count = len(labels)
+        for index, text in enumerate(labels):
+            button = Gtk.Button.new_with_label(text.upper())
+            button.set_can_focus(False)
+            button.add_css_class(
+                "seg-first" if index == 0
+                else "seg-last" if index == count - 1 else "seg-mid"
+            )
+            button.connect("clicked", lambda _b, i=index: self._pick(i, on_pick))
+            self.box.append(button)
+            self._buttons.append(button)
+        self._show()
+
+    def _show(self) -> None:
+        for index, button in enumerate(self._buttons):
+            if index == self.selected:
+                button.add_css_class("seg-selected")
+            else:
+                button.remove_css_class("seg-selected")
+
+    def _pick(self, index: int, on_pick) -> None:  # type: ignore[no-untyped-def]
+        if index == self.selected:
+            return
+        self.selected = index
+        self._show()
+        on_pick(index)
+
+
+def _status_label(Gtk, Pango):  # type: ignore[no-untyped-def]
+    label = Gtk.Label(label="")
+    label.add_css_class("xx-note-status")
     label.set_xalign(0.0)
     label.set_wrap(True)
     label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-    label.set_max_width_chars(chars)
+    label.set_max_width_chars(24)
+    label.set_visible(False)
     return label
 
 
-def _tap_to_focus(Gtk, entry):  # type: ignore[no-untyped-def]
-    """Entries never take focus unless tapped (no OSK pop on page open)."""
-    entry.set_can_focus(False)
-    press = Gtk.GestureClick.new()
-    press.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-    press.connect(
-        "pressed",
-        lambda *_args, target=entry: (target.set_can_focus(True), target.grab_focus()),
-    )
-    entry.add_controller(press)
-
-
-def _row(Gtk, Pango, title, subtitle=""):  # type: ignore[no-untyped-def]
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-    box.set_margin_start(20)
-    box.set_margin_end(20)
-    box.set_margin_top(8)
-    box.append(_label(Gtk, Pango, title, "xx-note-row-title", 24))
-    if subtitle:
-        box.append(_label(Gtk, Pango, subtitle, "xx-note-caption", 30))
-    return box
+def _say(label, text: str) -> None:  # type: ignore[no-untyped-def]
+    label.set_text(text)
+    label.set_visible(bool(text))
 
 
 class SettingsPage:
@@ -49,64 +111,47 @@ class SettingsPage:
         self._Gtk = Gtk
         self._on_changed = on_settings_changed
         self._settings = settings
-        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.box.set_margin_bottom(120)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.header, self.back_button = compact_bar(Gtk, "Settings")
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        body.add_css_class("xx-page-body")
+        body.set_margin_bottom(24)
 
-        self.box.append(_row(Gtk, Pango, "Notes folder",
-                             "Plain Markdown files live here."))
-        self.folder_entry = Gtk.Entry()
-        _tap_to_focus(Gtk, self.folder_entry)
-        self.folder_entry.set_text(settings.resolved_notes_dir().as_posix())
-        self.folder_entry.set_margin_start(20)
-        self.folder_entry.set_margin_end(20)
-        self.folder_entry.set_max_width_chars(24)
-        self.box.append(self.folder_entry)
-        pick = Gtk.Button.new_with_label("Choose folder")
-        pick.set_margin_start(20)
+        folder_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.folder_entry = _entry(Gtk, settings.resolved_notes_dir().as_posix())
+        self.folder_entry.connect("activate", self._apply_folder)
+        folder_row.append(self.folder_entry)
+        pick = xw.icon_button("folder-open-symbolic", None)
         pick.set_can_focus(False)
+        pick.set_valign(Gtk.Align.CENTER)
+        pick.set_tooltip_text("Choose folder")
         pick.connect("clicked", self._pick_folder)
-        self.box.append(pick)
-        apply_btn = Gtk.Button.new_with_label("Use this folder")
-        apply_btn.set_margin_start(20)
-        apply_btn.set_can_focus(False)
-        apply_btn.connect("clicked", self._apply_folder)
-        self.box.append(apply_btn)
+        folder_row.append(pick)
+        body.append(_field(Gtk, "Notes folder", folder_row))
 
-        self.box.append(_row(Gtk, Pango, "Note colors",
-                             "Keep names round-trip in the file either way."))
-        self.color_keep = Gtk.CheckButton.new_with_label("Keep pastels")
-        self.color_tones = Gtk.CheckButton.new_with_label("Brand tones")
-        self.color_tones.set_group(self.color_keep)
-        self.color_keep.set_margin_start(20)
-        self.color_tones.set_margin_start(20)
-        self.color_keep.set_can_focus(False)
-        self.color_tones.set_can_focus(False)
-        if settings.color_mode == "tones":
-            self.color_tones.set_active(True)
-        else:
-            self.color_keep.set_active(True)
-        self.color_keep.connect("toggled", self._color_changed)
-        self.box.append(self.color_keep)
-        self.box.append(self.color_tones)
-
-        self.box.append(_row(Gtk, Pango, "Sort order", ""))
-        self.sort_combo = Gtk.DropDown.new_from_strings(
-            ["Recently updated", "Recently created", "Title"]
+        self.colors = _Segmented(
+            Gtk, COLOR_LABELS,
+            1 if settings.color_mode == "tones" else 0,
+            self._color_changed,
         )
-        self.sort_combo.set_margin_start(20)
-        self.sort_combo.set_can_focus(False)
-        self.sort_combo.set_selected(
-            {"updated": 0, "created": 1, "title": 2}.get(settings.sort_order, 0)
-        )
-        self.sort_combo.connect("notify::selected", self._sort_changed)
-        self.box.append(self.sort_combo)
+        body.append(_field(Gtk, "Note colors", self.colors.box))
 
-        self.box.append(_row(
-            Gtk, Pango, "Theme",
-            "Follows the suite theme live. Change it in xx-wm settings."))
-        self.status = _label(Gtk, Pango, "", "xx-note-caption", 30)
-        self.status.set_margin_start(20)
-        self.box.append(self.status)
+        self.sort = _Segmented(
+            Gtk, SORT_LABELS,
+            {"updated": 0, "created": 1, "title": 2}.get(settings.sort_order, 0),
+            self._sort_changed,
+        )
+        body.append(_field(Gtk, "Sort", self.sort.box))
+
+        self.status = _status_label(Gtk, Pango)
+        body.append(self.status)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_child(body)
+        self.box.append(self.header)
+        self.box.append(scroll)
 
     def _pick_folder(self, _button: object) -> None:
         try:
@@ -116,7 +161,7 @@ class SettingsPage:
                 None, None, lambda dlg, res: self._picked(dlg, res)
             )
         except Exception as exc:
-            self.status.set_text(f"Picker unavailable: {exc}")
+            _say(self.status, f"Picker unavailable: {exc}")
 
     def _picked(self, dialog: object, res: object) -> None:
         try:
@@ -126,44 +171,41 @@ class SettingsPage:
             return
         if path:
             self.folder_entry.set_text(path)
+            self._apply_folder(None)
 
-    def _apply_folder(self, _button: object) -> None:
+    def _apply_folder(self, _widget: object) -> None:
+        from pathlib import Path
+
         from xx_note import paths as paths_mod
         from xx_note import prefs as prefs_mod
 
         target = self.folder_entry.get_text().strip()
         if not target:
-            self.status.set_text("Folder is empty.")
+            _say(self.status, "Folder is empty.")
             return
-        from pathlib import Path
-
         try:
             paths_mod.ensure_notes_tree(Path(target).expanduser())
         except OSError as exc:
-            self.status.set_text(f"Cannot use that folder: {exc}")
+            _say(self.status, f"Cannot use that folder: {exc}")
             return
+        _say(self.status, "")
         self._settings.notes_dir = target
         prefs_mod.save(self._settings)
-        self.status.set_text("Folder saved.")
         if self._on_changed is not None:
             self._on_changed()
 
-    def _color_changed(self, _button: object) -> None:
+    def _color_changed(self, index: int) -> None:
         from xx_note import prefs as prefs_mod
 
-        self._settings.color_mode = (
-            "tones" if self.color_tones.get_active() else "keep"
-        )
+        self._settings.color_mode = COLOR_KEYS[index]
         prefs_mod.save(self._settings)
         if self._on_changed is not None:
             self._on_changed()
 
-    def _sort_changed(self, _combo: object, _param: object) -> None:
+    def _sort_changed(self, index: int) -> None:
         from xx_note import prefs as prefs_mod
 
-        self._settings.sort_order = ("updated", "created", "title")[
-            self.sort_combo.get_selected()
-        ]
+        self._settings.sort_order = SORT_KEYS[index]
         prefs_mod.save(self._settings)
         if self._on_changed is not None:
             self._on_changed()
@@ -176,81 +218,71 @@ class SyncPage:
         self._settings = settings
         self._secrets = secrets
         self._vault_getter = vault_getter
-        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.box.set_margin_bottom(120)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.header, self.back_button = compact_bar(Gtk, "Sync")
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        body.add_css_class("xx-page-body")
+        body.set_margin_bottom(24)
 
-        self.box.append(_row(Gtk, Pango, "WebDAV sync",
-                             "Optional. Off by default. Nextcloud and others."))
-        self.enable = Gtk.Switch()
-        self.enable.set_margin_start(20)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row.add_css_class("xx-setting")
+        row.add_css_class("last")
+        middle = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        middle.set_hexpand(True)
+        middle.set_valign(Gtk.Align.CENTER)
+        middle.append(xw.label("WebDAV", "xx-title"))
+        self.state_label = xw.label(self._state_text(), "xx-secondary")
+        middle.append(self.state_label)
+        row.append(middle)
+        self.enable = xw.make_switch(settings.webdav_enabled)
         self.enable.set_can_focus(False)
-        self.enable.set_active(settings.webdav_enabled)
         self.enable.connect("notify::active", self._enabled_changed)
-        self.box.append(self.enable)
+        row.append(self.enable)
+        body.append(row)
 
-        self.box.append(_row(Gtk, Pango, "Server", "https://host/remote.php/dav"))
-        self.url_entry = Gtk.Entry()
-        _tap_to_focus(Gtk, self.url_entry)
-        self.url_entry.set_text(settings.webdav_url)
-        self.url_entry.set_margin_start(20)
-        self.url_entry.set_margin_end(20)
-        self.url_entry.set_max_width_chars(24)
-        self.box.append(self.url_entry)
-
-        self.box.append(_row(Gtk, Pango, "User", ""))
-        self.user_entry = Gtk.Entry()
-        _tap_to_focus(Gtk, self.user_entry)
-        self.user_entry.set_text(settings.webdav_user)
-        self.user_entry.set_margin_start(20)
-        self.user_entry.set_margin_end(20)
-        self.box.append(self.user_entry)
-
-        self.box.append(_row(Gtk, Pango, "Remote folder", ""))
-        self.path_entry = Gtk.Entry()
-        _tap_to_focus(Gtk, self.path_entry)
-        self.path_entry.set_text(settings.webdav_path)
-        self.path_entry.set_margin_start(20)
-        self.path_entry.set_margin_end(20)
-        self.box.append(self.path_entry)
-
-        self.box.append(_row(Gtk, Pango, "Password",
-                             "Kept in the keyring, never in settings."))
-        self.pass_entry = Gtk.Entry()
-        _tap_to_focus(Gtk, self.pass_entry)
+        self.fields = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.url_entry = _entry(Gtk, settings.webdav_url,
+                                "https://host/remote.php/dav")
+        self.fields.append(_field(Gtk, "Server", self.url_entry))
+        self.user_entry = _entry(Gtk, settings.webdav_user)
+        self.fields.append(_field(Gtk, "User", self.user_entry))
+        self.path_entry = _entry(Gtk, settings.webdav_path, "Notes/")
+        self.fields.append(_field(Gtk, "Remote folder", self.path_entry))
+        self.pass_entry = _entry(Gtk)
         self.pass_entry.set_visibility(False)
         self.pass_entry.set_input_purpose(Gtk.InputPurpose.PASSWORD)
-        self.pass_entry.set_margin_start(20)
-        self.pass_entry.set_margin_end(20)
-        self.box.append(self.pass_entry)
-        save_btn = Gtk.Button.new_with_label("Save password")
-        save_btn.set_margin_start(20)
-        save_btn.set_can_focus(False)
-        save_btn.connect("clicked", self._save_password)
-        self.box.append(save_btn)
+        self.pass_entry.connect("activate", self._save_password)
+        self.fields.append(_field(Gtk, "Password", self.pass_entry))
 
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        actions.set_margin_start(20)
-        actions.set_margin_top(8)
-        self.test_button = Gtk.Button.new_with_label("Test connection")
+        actions.add_css_class("xx-note-actions")
+        actions.set_homogeneous(True)
+        self.test_button = xw.outline_button("Test", lambda: self.test_connection())
         self.test_button.set_can_focus(False)
-        self.test_button.connect("clicked", lambda _b: self.test_connection())
         actions.append(self.test_button)
-        self.sync_button = Gtk.Button.new_with_label("Sync now")
+        self.sync_button = xw.primary_button("Sync now", lambda: self.sync_now())
         self.sync_button.set_can_focus(False)
-        self.sync_button.connect("clicked", lambda _b: self.sync_now())
         actions.append(self.sync_button)
-        self.box.append(actions)
+        self.fields.append(actions)
+        self.fields.set_visible(settings.webdav_enabled)
+        body.append(self.fields)
 
-        self.status = _label(Gtk, Pango, self._status_text(),
-                             "xx-note-caption", 30)
-        self.status.set_margin_start(20)
-        self.box.append(self.status)
+        self.status = _status_label(Gtk, Pango)
+        body.append(self.status)
 
-    def _status_text(self) -> str:
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_child(body)
+        self.box.append(self.header)
+        self.box.append(scroll)
+
+    def _state_text(self) -> str:
         if not self._settings.webdav_enabled:
-            return "Sync is off. Notes stay on this phone."
-        last = self._settings.last_sync or "never synced"
-        return f"Last sync: {last}"
+            return "Off"
+        if not self._settings.last_sync:
+            return "Never synced"
+        return f"Last sync {self._settings.last_sync}"
 
     def _persist_fields(self) -> None:
         from xx_note import prefs as prefs_mod
@@ -265,32 +297,34 @@ class SyncPage:
 
         self._settings.webdav_enabled = self.enable.get_active()
         prefs_mod.save(self._settings)
-        self.status.set_text(self._status_text())
+        self.fields.set_visible(self._settings.webdav_enabled)
+        self.state_label.set_text(self._state_text())
+        _say(self.status, "")
 
-    def _save_password(self, _button: object) -> None:
-        self._persist_fields()
+    def _typed_password(self) -> str:
+        """Take the typed password off the screen; the worker stores it."""
         password = self.pass_entry.get_text()
-        if not password:
-            self.status.set_text("Type the password first.")
-            return
+        if password:
+            self.pass_entry.set_text("")
+            self.pass_entry.set_placeholder_text("Saved in keyring")
+        return password
+
+    def _store(self, password: str) -> None:
+        """Worker side: save a freshly typed password in the keyring."""
         host = self._host_of()
-        if host is None:
-            self.status.set_text("Set a valid server URL first.")
+        if password and host is not None:
+            self._secrets.set_password(host, self._settings.webdav_user, password)
+
+    def _save_password(self, _entry: object) -> None:
+        self._persist_fields()
+        if self._host_of() is None:
+            _say(self.status, "Set a valid server URL first.")
             return
-
-        def work() -> None:
-            self._secrets.set_password(
-                host, self._settings.webdav_user, password
-            )
-            self._GLib.idle_add(self._note_saved)
-
-        thread = threading.Thread(target=work, daemon=True)
+        password = self._typed_password()
+        if not password:
+            return
+        thread = threading.Thread(target=self._store, args=(password,), daemon=True)
         thread.start()
-
-    def _note_saved(self) -> bool:
-        self.pass_entry.set_text("")
-        self.status.set_text("Password saved in the keyring.")
-        return False
 
     def _host_of(self) -> str | None:
         from urllib import parse as _parse
@@ -316,11 +350,13 @@ class SyncPage:
 
     def test_connection(self) -> None:
         self._persist_fields()
-        self.status.set_text("Testing...")
+        password = self._typed_password()
+        _say(self.status, "Testing...")
         self.test_button.set_sensitive(False)
 
         def work() -> None:
             try:
+                self._store(password)
                 ok = self._client().check()
                 self._GLib.idle_add(self._tested, ok, "")
             except Exception as exc:
@@ -331,15 +367,16 @@ class SyncPage:
 
     def _tested(self, ok: bool, problem: str) -> bool:
         self.test_button.set_sensitive(True)
-        self.status.set_text("Connected." if ok else f"Failed: {problem}")
+        _say(self.status, "Connected." if ok else f"Failed: {problem}")
         return False
 
     def sync_now(self, on_done=None) -> None:  # type: ignore[no-untyped-def]
         self._persist_fields()
         if not self._settings.webdav_enabled:
-            self.status.set_text("Turn sync on first.")
+            _say(self.status, "Turn sync on first.")
             return
-        self.status.set_text("Syncing...")
+        password = self._typed_password()
+        _say(self.status, "Syncing...")
         self.sync_button.set_sensitive(False)
 
         def work() -> None:
@@ -347,6 +384,7 @@ class SyncPage:
                 from xx_note import prefs as prefs_mod
                 from xx_note import sync_engine as engine_mod
 
+                self._store(password)
                 vault = self._vault_getter()
                 result = engine_mod.reconcile(
                     vault, self._client(),
@@ -370,7 +408,8 @@ class SyncPage:
 
     def _synced(self, summary: str, on_done) -> bool:  # type: ignore[no-untyped-def]
         self.sync_button.set_sensitive(True)
-        self.status.set_text(summary)
+        self.state_label.set_text(self._state_text())
+        _say(self.status, summary)
         if on_done is not None:
             on_done()
         return False

@@ -30,10 +30,13 @@ wide (works down to 320 px, large text; also fits 600x1333 FLX1 and 360x800).
 - Android: `GridScreen` + `NoteCard` (title, 6-line preview, labels, tone),
   capture box starts typing immediately, long-press multi-select, pull to
   refresh triggers sync.
-- Linux: notes list with Pinned/Other sections, capture entry at top
-  (does not steal focus at startup — no OSK pop), tap opens editor,
-  long-press multi-select (pin/archive/label/trash), refresh button runs a
-  WebDAV pass on a worker thread. Cards show tone dot from `color:`.
+- Linux: two-column staggered card grid with Pinned/Others sections and
+  the Android capture bar at the bottom instead of a FAB (Enter makes a
+  note, the box makes a checklist; it never steals focus at startup — no
+  OSK pop), tap opens editor, long-press multi-select (pin/archive/trash)
+  with the header as the selection bar. Cards fill per `color:` (Keep
+  pastels or D12 tones) and show dimmed-marker previews, `3 / 7` checklist
+  progress and label chips. Empty lists show nothing.
 
 ### F3. Editor: live Markdown styling + read view, autosave, undo (R4)
 - Android: `EditorScreen` Compose `BasicTextField` with inline spans
@@ -134,7 +137,7 @@ wide (works down to 320 px, large text; also fits 600x1333 FLX1 and 360x800).
 | Labels + label grid | Labels tab + per-label list |
 | Archive | Archive tab (unarchive/restore) |
 | Trash (days chip) | Trash tab (restore, empty-expired, days chip) |
-| Search field | Search entry atop Notes (unfocusable until tapped, per suite rules) |
+| Search field | Header search icon opens the search box atop Notes |
 | Settings | Settings tab (folder, colors, sort, theme note) |
 | Sync + Resolve sheets | Sync tab (status, Test, Sync now, conflicts list) |
 | Setup | First-run page (Use locally / WebDAV) |

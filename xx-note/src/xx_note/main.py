@@ -12,21 +12,6 @@ import os
 import sys
 import threading
 
-APP_CSS = """
-.xx-note-title { font-size: 30px; font-weight: 400; }
-.xx-note-caption { font-size: 11px; }
-.xx-note-row { min-height: 64px; padding: 8px 0; }
-.xx-note-row-title { font-size: 16px; font-weight: 500; }
-.xx-note-preview { font-size: 14px; }
-.xx-note-chip { font-size: 11px; }
-.xx-note-tab { min-height: 48px; min-width: 0; padding-left: 4px;
-  padding-right: 4px; font-size: 12px; }
-.xx-note-fab { min-width: 56px; min-height: 56px; border-radius: 20px;
-  border: 1px solid @theme_fg_color; padding-left: 12px; padding-right: 12px; }
-.xx-note-toolbar-button { min-width: 40px; min-height: 44px;
-  padding-left: 4px; padding-right: 4px; }
-.xx-note-tone { min-width: 12px; min-height: 12px; border-radius: 9999px; }
-"""
 
 
 def _require_gtk():  # type: ignore[no-untyped-def]
@@ -57,7 +42,7 @@ class NoteApplication:
 
     def _on_activate(self, app: object) -> None:
         if self.window is not None:
-            self.window.present()
+            self.window.win.present()
             return
         from xx_note import paths as paths_mod
         from xx_note import prefs as prefs_mod
@@ -81,7 +66,7 @@ class NoteApplication:
         try:
             import xx_ui
 
-            self._theme_unsub = xx_ui.on_change(lambda _t: self._apply_theme())
+            self._theme_unsub = xx_ui.on_change(self._apply_theme)
         except Exception:
             self._theme_unsub = None
         scenario = os.environ.get("XX_NOTE_SCENARIO", "")
@@ -96,23 +81,20 @@ class NoteApplication:
         self._app._note_window = self.window
         self.window.win.present()
 
-    def _apply_theme(self) -> None:
+    def _apply_theme(self, theme=None) -> None:  # type: ignore[no-untyped-def]
+        """Shared xx_ui stylesheet, then the app layer rendered from the
+        same theme (colors and text scale), on every live change."""
         try:
             import xx_ui
 
-            xx_ui.apply(self.window.win if self.window else None)
+            if theme is None:
+                theme = xx_ui.apply(self.window.win if self.window else None)
         except Exception:
-            pass
+            return
         try:
-            Gtk = self._Gtk
-            Gdk = self._Gdk
-            provider = Gtk.CssProvider()
-            provider.load_from_data(APP_CSS.encode("utf-8"))
-            display = Gdk.Display.get_default()
-            if display is not None:
-                Gtk.StyleContext.add_provider_for_display(
-                    display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-                )
+            from xx_note.ui import style as style_mod
+
+            style_mod.install(theme)
         except Exception:
             pass
 

@@ -24,9 +24,9 @@ def ensure_tags(buffer) -> dict[str, object]:  # type: ignore[no-untyped-def]
     table = buffer.get_tag_table()
     tags: dict[str, object] = {}
     specs = {
-        "md-h1": {"scale": 1.5, "weight": 500},
-        "md-h2": {"scale": 1.3, "weight": 500},
-        "md-h3": {"scale": 1.15, "weight": 500},
+        "md-h1": {"scale": 1.4, "weight": 400},
+        "md-h2": {"scale": 1.25, "weight": 400},
+        "md-h3": {"scale": 1.1, "weight": 400},
         "md-bold": {"weight": 700},
         "md-italic": {"style": 2},
         "md-strike": {"strikethrough": True},

@@ -10,6 +10,7 @@ bodies, never otherwise.
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 from xx_note import checklist as _checklist
 from xx_note import edit_history as _history
@@ -18,6 +19,76 @@ from xx_note import markdown_format as _format
 from xx_note.ui import markdown_tags as _tags
 
 AUTOSAVE_MS = 750
+
+ICON_DIR = Path(__file__).with_name("icons")
+
+# (name, kind, face, command): kind "icon" names a symbolic icon, "text"
+# a Pango-markup face; None draws a hairline group break.
+TOOLS = (
+    ("Undo", "icon", "edit-undo-symbolic", "undo"),
+    ("Redo", "icon", "edit-redo-symbolic", "redo"),
+    None,
+    ("Heading 1", "text", "H1", _format.Command.H1),
+    ("Heading 2", "text", "H2", _format.Command.H2),
+    ("Heading 3", "text", "H3", _format.Command.H3),
+    None,
+    ("Bold", "icon", "format-text-bold-symbolic", _format.Command.BOLD),
+    ("Italic", "icon", "format-text-italic-symbolic", _format.Command.ITALIC),
+    ("Strikethrough", "icon", "format-text-strikethrough-symbolic",
+     _format.Command.STRIKE),
+    ("Highlight", "hl", "ab", _format.Command.HIGHLIGHT),
+    ("Inline code", "text", "&lt;&gt;", _format.Command.CODE),
+    None,
+    ("Bulleted list", "icon", "view-list-bullet-symbolic",
+     _format.Command.BULLET),
+    ("Numbered list", "icon", "view-list-ordered-symbolic",
+     _format.Command.NUMBER),
+    ("Checkbox", "icon", "checkbox-checked-symbolic", _format.Command.TASK),
+    ("Quote", "text", "&gt;", _format.Command.QUOTE),
+    None,
+    ("Link", "icon", "insert-link-symbolic", _format.Command.LINK),
+)
+
+
+def _archive_icon():  # type: ignore[no-untyped-def]
+    """The archive glyph (Android draws its own; Adwaita has none)."""
+    from gi.repository import Gio
+
+    path = ICON_DIR / "xx-note-archive-symbolic.svg"
+    return Gio.FileIcon.new(Gio.File.new_for_path(str(path)))
+
+
+def _icon_button(Gtk, icon_name: str, gicon=None):  # type: ignore[no-untyped-def]
+    button = Gtk.Button()
+    button.add_css_class("xx-btn")
+    button.add_css_class("xx-btn-icon")
+    button.set_can_focus(False)
+    button.set_valign(Gtk.Align.CENTER)
+    if gicon is not None:
+        image = Gtk.Image.new_from_gicon(gicon)
+    else:
+        image = Gtk.Image.new_from_icon_name(icon_name)
+    image.set_pixel_size(20)
+    button.set_child(image)
+    return button
+
+
+def _tool_button(Gtk, kind: str, face: str):  # type: ignore[no-untyped-def]
+    button = Gtk.Button()
+    button.add_css_class("xx-note-tool")
+    button.set_can_focus(False)
+    if kind == "icon":
+        image = Gtk.Image.new_from_icon_name(face)
+        image.set_pixel_size(20)
+        button.set_child(image)
+    else:
+        label = Gtk.Label()
+        label.set_markup(face)
+        if kind == "hl":
+            label.add_css_class("xx-note-hl")
+            label.set_valign(Gtk.Align.CENTER)
+        button.set_child(label)
+    return button
 
 
 class EditorPage:
@@ -34,40 +105,54 @@ class EditorPage:
         self._loading = False
         self._read_mode = False
 
+        self._pinned = False
+        self._archived = False
+        self._lead = ""
+
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        top.set_margin_start(20)
-        top.set_margin_end(20)
-        top.set_margin_top(8)
-        self.back_button = Gtk.Button.new_with_label("Back")
-        self.back_button.add_css_class("xx-note-toolbar-button")
-        self.back_button.set_can_focus(False)
+        # Compact bar: back, then read/edit, pin and archive as icons.
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        top.add_css_class("xx-page-body")
+        top.add_css_class("xx-compact-header")
+        self.back_button = _icon_button(Gtk, "go-previous-symbolic")
         top.append(self.back_button)
-        self.mode_button = Gtk.Button.new_with_label("Read")
-        self.mode_button.add_css_class("xx-note-toolbar-button")
-        self.mode_button.set_can_focus(False)
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        top.append(spacer)
+        self.mode_button = _icon_button(Gtk, "view-reveal-symbolic")
+        self.mode_button.set_tooltip_text("Read")
         self.mode_button.connect("clicked", lambda _b: self.toggle_mode())
         top.append(self.mode_button)
-        self.pin_button = Gtk.Button.new_with_label("Pin")
-        self.pin_button.add_css_class("xx-note-toolbar-button")
-        self.pin_button.set_can_focus(False)
+        self.pin_button = _icon_button(Gtk, "view-pin-symbolic")
+        self.pin_button.set_tooltip_text("Pin")
         self.pin_button.connect("clicked", lambda _b: self._toggle_key("pinned"))
         top.append(self.pin_button)
+        self.archive_button = _icon_button(Gtk, "", gicon=_archive_icon())
+        self.archive_button.set_tooltip_text("Archive")
+        self.archive_button.connect(
+            "clicked", lambda _b: self._toggle_key("archived")
+        )
+        top.append(self.archive_button)
         self.box.append(top)
 
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        title_box.add_css_class("xx-note-editor-title")
         self.title_entry = Gtk.Entry()
+        self.title_entry.add_css_class("xx-note-title-entry")
+        self.title_entry.add_css_class("xx-display-face")
         self.title_entry.set_placeholder_text("Title")
+        self.title_entry.set_has_frame(False)
         self.title_entry.set_can_focus(False)
         _tap = Gtk.GestureClick.new()
         _tap.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         _tap.connect("pressed", self._on_title_tapped)
         self.title_entry.add_controller(_tap)
-        self.title_entry.set_margin_start(20)
-        self.title_entry.set_margin_end(20)
-        self.title_entry.set_max_width_chars(24)
+        self.title_entry.set_max_width_chars(12)
+        self.title_entry.set_hexpand(True)
         self.title_entry.connect("changed", lambda _e: self._schedule_save())
-        self.box.append(self.title_entry)
+        title_box.append(self.title_entry)
+        self.box.append(title_box)
 
         self.stack = Gtk.Stack()
         self.stack.set_vexpand(True)
@@ -80,11 +165,13 @@ class EditorPage:
             Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
         )
         self.textview = Gtk.TextView()
+        self.textview.add_css_class("xx-note-body")
         self.textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self.textview.set_top_margin(8)
+        self.textview.set_top_margin(12)
         self.textview.set_left_margin(20)
         self.textview.set_right_margin(20)
-        self.textview.set_bottom_margin(120)
+        self.textview.set_bottom_margin(24)
+        self.textview.set_pixels_below_lines(4)
         edit_scroll.set_child(self.textview)
         self.stack.add_named(edit_scroll, "edit")
 
@@ -94,8 +181,8 @@ class EditorPage:
         self.read_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.read_box.set_margin_start(20)
         self.read_box.set_margin_end(20)
-        self.read_box.set_margin_top(8)
-        self.read_box.set_margin_bottom(120)
+        self.read_box.set_margin_top(12)
+        self.read_box.set_margin_bottom(24)
         read_scroll.set_child(self.read_box)
         self.stack.add_named(read_scroll, "read")
 
@@ -106,40 +193,30 @@ class EditorPage:
         click.connect("pressed", self._on_tap)
         self.textview.add_controller(click)
 
-        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        toolbar.set_margin_start(8)
-        toolbar.set_margin_end(8)
-        toolbar.set_margin_top(4)
-        toolbar.set_margin_bottom(4)
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
-        scroll.set_child(toolbar)
-        self.box.append(scroll)
-        for label, command in (
-            ("B", _format.Command.BOLD),
-            ("I", _format.Command.ITALIC),
-            ("S", _format.Command.STRIKE),
-            ("H", _format.Command.HIGHLIGHT),
-            ("<>", _format.Command.CODE),
-            ("link", _format.Command.LINK),
-            ("H1", _format.Command.H1),
-            ("H2", _format.Command.H2),
-            ("H3", _format.Command.H3),
-            ("-", _format.Command.BULLET),
-            ("1.", _format.Command.NUMBER),
-            ("[ ]", _format.Command.TASK),
-            (">", _format.Command.QUOTE),
-            ("undo", None),
-            ("redo", None),
-        ):
-            button = Gtk.Button.new_with_label(label)
-            button.add_css_class("xx-note-toolbar-button")
-            button.set_can_focus(False)
-            if command is None:
-                if label == "undo":
-                    button.connect("clicked", lambda _b: self.undo())
-                else:
-                    button.connect("clicked", lambda _b: self.redo())
+        # Format toolbar (Android FormatToolbar order): history, headings,
+        # emphasis, lists, link. Equal 44 px tools, hairline group breaks,
+        # scrolls sideways where the row is wider than the phone.
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        toolbar.set_valign(Gtk.Align.CENTER)
+        self.toolbar = Gtk.ScrolledWindow()
+        self.toolbar.add_css_class("xx-note-toolbar")
+        self.toolbar.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        self.toolbar.set_child(toolbar)
+        self.box.append(self.toolbar)
+        for spec in TOOLS:
+            if spec is None:
+                sep = Gtk.Box()
+                sep.add_css_class("xx-note-tool-sep")
+                sep.set_valign(Gtk.Align.CENTER)
+                toolbar.append(sep)
+                continue
+            name, kind, face, command = spec
+            button = _tool_button(Gtk, kind, face)
+            button.set_tooltip_text(name)
+            if command == "undo":
+                button.connect("clicked", lambda _b: self.undo())
+            elif command == "redo":
+                button.connect("clicked", lambda _b: self.redo())
             else:
                 button.connect(
                     "clicked", lambda _b, c=command: self.apply_format(c)
@@ -153,11 +230,22 @@ class EditorPage:
     def bind(self, vault) -> None:  # type: ignore[no-untyped-def]
         self._vault = vault
 
-    def load_note(self, note_id: str, file_name: str, title: str, body: str) -> None:
+    def load_note(self, note_id: str, file_name: str, title: str, body: str,
+                  pinned: bool = False, archived: bool = False) -> None:
         self._loading = True
         try:
+            self._pinned = bool(pinned)
+            self._archived = bool(archived)
+            self._show_flags()
+            if self._read_mode:
+                self.toggle_mode()
             self._note_id = note_id
             self._file_name = file_name
+            # The blank line(s) after the frontmatter are file layout, not
+            # text: hide them from the editor, write them back on save.
+            stripped = body.lstrip("\n")
+            self._lead = body[: len(body) - len(stripped)]
+            body = stripped
             self._history.clear()
             self.title_entry.set_text(title)
             self.buffer.set_text(body)
@@ -173,7 +261,12 @@ class EditorPage:
 
     def toggle_mode(self) -> None:
         self._read_mode = not self._read_mode
-        self.mode_button.set_label("Edit" if self._read_mode else "Read")
+        image = self.mode_button.get_child()
+        image.set_from_icon_name(
+            "document-edit-symbolic" if self._read_mode else "view-reveal-symbolic"
+        )
+        self.mode_button.set_tooltip_text("Edit" if self._read_mode else "Read")
+        self.toolbar.set_visible(not self._read_mode)
         self.stack.set_visible_child_name("read" if self._read_mode else "edit")
         if self._read_mode:
             start, end = self.buffer.get_bounds()
@@ -225,6 +318,11 @@ class EditorPage:
             self._save_timer = 0
         self._do_save()
 
+    def flush(self) -> None:
+        """Write a pending autosave now (leaving the editor)."""
+        if self._save_timer:
+            self.save_now()
+
     def _replace(self, text: str, start: int, end: int) -> None:
         self._loading = True
         try:
@@ -263,6 +361,7 @@ class EditorPage:
         body = self.current_body()
         title = self.title_entry.get_text()
         self._history.push(body)
+        body = self._lead + body if body else body
 
         def work() -> None:
             try:
@@ -315,10 +414,23 @@ class EditorPage:
             offset = sum(len(part) + 1 for part in lines[:line_no]) + len(toggled)
             self._replace(new_text, offset, offset)
 
+    def _show_flags(self) -> None:
+        for button, on in ((self.pin_button, self._pinned),
+                           (self.archive_button, self._archived)):
+            if on:
+                button.add_css_class("xx-note-on")
+            else:
+                button.remove_css_class("xx-note-on")
+
     def _toggle_key(self, key: str) -> None:
         if self._vault is None or self._file_name is None:
             return
         file_name = self._file_name
+        if key == "pinned":
+            self._pinned = not self._pinned
+        else:
+            self._archived = not self._archived
+        self._show_flags()
 
         def work() -> None:
             try:
@@ -344,41 +456,42 @@ class EditorPage:
         thread.start()
 
     def _render_read(self, title: str, body: str) -> None:
+        """Rendered view: headings in the display face, tasks as boxes,
+        list markers dropped. The title stays in the title row above."""
         Gtk = self._Gtk
-        Pango = self._Pango
         child = self.read_box.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
             self.read_box.remove(child)
             child = nxt
-        title_label = Gtk.Label(label=title or "Untitled")
-        title_label.add_css_class("xx-note-row-title")
-        title_label.set_xalign(0.0)
-        title_label.set_wrap(True)
-        title_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        title_label.set_max_width_chars(28)
-        self.read_box.append(title_label)
+        del title
         for line in body.split("\n"):
             stripped = line.strip()
-            if not stripped:
+            if not stripped or stripped.startswith("```"):
                 continue
-            if stripped.startswith("### "):
-                widget = self._read_label(stripped[4:], "xx-note-row-title")
-            elif stripped.startswith("## "):
-                widget = self._read_label(stripped[3:], "xx-note-row-title")
-            elif stripped.startswith("# "):
-                widget = self._read_label(stripped[2:], "xx-note-row-title")
-            elif stripped.startswith("- [ ] ") or stripped.startswith("- [x] "):
-                widget = self._read_label(
-                    ("[ ] " if stripped[3:4] == " " else "[x] ") + stripped[6:],
-                    "xx-note-preview",
+            heading = stripped.lstrip("#")
+            if stripped.startswith("#") and heading.startswith(" "):
+                widget = self._read_label(heading.strip(), "xx-note-read-heading")
+                widget.add_css_class("xx-display-face")
+                widget.set_margin_top(8)
+            elif stripped[:6] in ("- [ ] ", "- [x] ", "- [X] "):
+                done = stripped[3] in "xX"
+                widget = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+                box = Gtk.Image.new_from_icon_name(
+                    "checkbox-checked-symbolic" if done else "checkbox-symbolic"
                 )
+                box.set_pixel_size(18)
+                box.set_valign(Gtk.Align.START)
+                widget.append(box)
+                text = self._read_label(_strip_inline(stripped[6:]), "xx-note-read")
+                text.set_hexpand(True)
+                if done:
+                    text.add_css_class("xx-note-read-done")
+                widget.append(text)
             elif stripped.startswith(("- ", "* ", "+ ")):
-                widget = self._read_label(stripped[2:], "xx-note-preview")
-            elif stripped.startswith("```"):
-                continue
+                widget = self._read_label(_strip_inline(stripped[2:]), "xx-note-read")
             else:
-                widget = self._read_label(_strip_inline(stripped), "xx-note-preview")
+                widget = self._read_label(_strip_inline(stripped), "xx-note-read")
             self.read_box.append(widget)
 
     def _read_label(self, text: str, cls: str):  # type: ignore[no-untyped-def]
@@ -387,7 +500,7 @@ class EditorPage:
         label.set_xalign(0.0)
         label.set_wrap(True)
         label.set_wrap_mode(self._Pango.WrapMode.WORD_CHAR)
-        label.set_max_width_chars(32)
+        label.set_max_width_chars(24)
         return label
 
 

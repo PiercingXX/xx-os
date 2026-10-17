@@ -1,29 +1,40 @@
 """Main window: notes grid, labels, archive, trash, settings, sync, editor.
 
-One window, one ``Gtk.Stack`` of pages, four bottom tabs (Notes, Labels,
-Archive, Trash) with Settings/Sync/Editor pushed on top. Header is plain
-text (no HeaderBar chrome); the search entry stays unfocusable until
-tapped so the on-screen keyboard never pops on launch. Every list row is
-64 px with ellipsized title + wrapped preview; the body scrolls while
-header and tabs stay fixed. All disk reads ride a worker thread.
+One window, one ``Gtk.Stack`` of pages, four caps bottom tabs (Notes,
+Labels, Archive, Trash) under an xx_ui page header whose icons open
+search, Sync and Settings; Settings, Sync and the editor push on top with
+their own back bar. Notes is the Android grid: a two-column staggered
+card grid with Pinned/Others, and a capture bar instead of a FAB (type a
+title and press Enter, or tap the checklist box). Long-press selects;
+the header turns into the selection bar. Empty lists show nothing. The
+search and capture entries stay unfocusable until tapped so the on-screen
+keyboard never pops on launch. All disk reads ride a worker thread.
 """
 
 from __future__ import annotations
 
 import threading
 
+from xx_ui import widgets as xw
+
 from xx_note import labels as _labels
+from xx_note import note_colors as _colors
+from xx_note import preview as _preview
 from xx_note import store as _store
 from xx_note import trash as _trash
 from xx_note.ui import editor as _editor
 from xx_note.ui import settings_view as _settings_view
 
-KEEP_COLORS = (
-    "default", "red", "orange", "yellow", "green", "teal", "blue",
-    "purple", "pink", "brown", "gray", "dark",
-)
-
 TABS = ("notes", "labels", "archive", "trash")
+TAB_TITLES = {"notes": "Notes", "labels": "Labels", "archive": "Archive",
+              "trash": "Trash"}
+CARD_CHIPS = 2
+
+
+def _plural(count: int, word: str) -> str:
+    if count <= 0:
+        return ""
+    return f"{count} {word}{'' if count == 1 else 's'}"
 
 
 class NoteWindow:
@@ -40,56 +51,102 @@ class NoteWindow:
         self._selecting = False
         self._label_filter: str | None = None
         self._query = ""
+        self._search_open = False
+        self._page = "notes"
+        self._tab = "notes"
 
         self.win = Adw.ApplicationWindow(application=app)
         self.win.set_title("xx-note")
         self.win.set_default_size(360, 720)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        root.add_css_class("xx-note-root")
+        root.add_css_class("xx-page")
         self.win.set_content(root)
 
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        header.set_margin_start(20)
-        header.set_margin_end(20)
-        header.set_margin_top(12)
-        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        title_box.set_hexpand(True)
-        self.title_label = Gtk.Label(label="xx-note")
-        self.title_label.add_css_class("xx-note-title")
-        self.title_label.set_xalign(0.0)
-        self.title_label.set_max_width_chars(12)
-        self.title_label.set_ellipsize(Pango.EllipsizeMode.END)
-        title_box.append(self.title_label)
-        self.caption = Gtk.Label(label="")
-        self.caption.add_css_class("xx-note-caption")
-        self.caption.set_xalign(0.0)
-        self.caption.set_max_width_chars(24)
-        self.caption.set_ellipsize(Pango.EllipsizeMode.END)
-        title_box.append(self.caption)
-        header.append(title_box)
-        self.sync_button = Gtk.Button.new_with_label("Sync")
-        self.sync_button.set_can_focus(False)
-        self.sync_button.connect("clicked", lambda _b: self.show_page("sync"))
-        header.append(self.sync_button)
-        self.gear_button = Gtk.Button.new_with_label("Settings")
-        self.gear_button.set_can_focus(False)
-        self.gear_button.connect("clicked", lambda _b: self.show_page("settings"))
-        header.append(self.gear_button)
-        root.append(header)
+        # Header: page title + count caption + icons, or the selection bar.
+        self.header = Gtk.Stack()
+        self.header.set_transition_type(Gtk.StackTransitionType.NONE)
+        self.header.set_hhomogeneous(True)
+        self.header.set_vhomogeneous(False)
+        root.append(self.header)
 
+        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        head.add_css_class("xx-page-body")
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        top.add_css_class("xx-page-top")
+        self.title_label = xw.label("Notes", "xx-display")
+        self.title_label.set_max_width_chars(8)
+        self.title_label.set_hexpand(True)
+        self.title_label.set_valign(Gtk.Align.CENTER)
+        top.append(self.title_label)
+        self.search_button = self._icon("system-search-symbolic",
+                                        self.toggle_search, "Search")
+        top.append(self.search_button)
+        self.sync_button = self._icon("view-refresh-symbolic",
+                                      lambda: self.show_page("sync"), "Sync")
+        top.append(self.sync_button)
+        self.gear_button = self._icon("emblem-system-symbolic",
+                                      lambda: self.show_page("settings"),
+                                      "Settings")
+        top.append(self.gear_button)
+        head.append(top)
+        self.caption = xw.caption("")
+        head.append(self.caption)
+        self.header.add_named(head, "title")
+
+        select = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        select.add_css_class("xx-page-body")
+        select.add_css_class("xx-page-top")
+        select.append(self._icon("window-close-symbolic",
+                                 lambda: self._bulk("clear"), "Done"))
+        self.select_label = xw.label("", "xx-title")
+        self.select_label.set_hexpand(True)
+        self.select_label.set_margin_start(8)
+        self.select_label.set_valign(Gtk.Align.CENTER)
+        select.append(self.select_label)
+        select.append(self._icon("view-pin-symbolic",
+                                 lambda: self._bulk("pin"), "Pin"))
+        select.append(self._icon("", lambda: self._bulk("archive"), "Archive",
+                                 gicon=_editor._archive_icon()))
+        select.append(self._icon("user-trash-symbolic",
+                                 lambda: self._bulk("trash"), "Trash"))
+        self.header.add_named(select, "select")
+
+        # Search (opened from the header icon) and the label filter chip.
+        self.search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.search_box.add_css_class("xx-note-search")
+        self.search_box.add_css_class("xx-searchbar-boxed")
         self.search = Gtk.SearchEntry()
         self.search.set_placeholder_text("Search notes")
-        self.search.set_margin_start(20)
-        self.search.set_margin_end(20)
-        self.search.set_margin_top(8)
+        self.search.set_hexpand(True)
         self.search.set_can_focus(False)
-        self.search.set_max_width_chars(24)
+        self.search.set_max_width_chars(16)
         self.search.connect("search-changed", self._on_search)
         press = Gtk.GestureClick.new()
         press.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         press.connect("pressed", self._on_search_tapped)
         self.search.add_controller(press)
-        root.append(self.search)
+        self.search_box.append(self.search)
+        self.search_box.set_visible(False)
+        root.append(self.search_box)
+
+        self.filter_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.filter_box.add_css_class("xx-note-filter")
+        self.filter_chip = Gtk.Button()
+        self.filter_chip.add_css_class("xx-chip")
+        self.filter_chip.add_css_class("selected")
+        self.filter_chip.add_css_class("xx-note-filter-chip")
+        self.filter_chip.set_can_focus(False)
+        chip_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.filter_text = Gtk.Label(label="")
+        chip_row.append(self.filter_text)
+        chip_row.append(xw.icon_image("window-close-symbolic", 16))
+        self.filter_chip.set_child(chip_row)
+        self.filter_chip.connect("clicked", lambda _b: self._filter_label(None))
+        self.filter_box.append(self.filter_chip)
+        self.filter_box.set_visible(False)
+        root.append(self.filter_box)
 
         self.stack = Gtk.Stack()
         self.stack.set_vexpand(True)
@@ -97,98 +154,153 @@ class NoteWindow:
         self.stack.set_transition_type(Gtk.StackTransitionType.NONE)
         root.append(self.stack)
 
-        self.notes_scroll = self._make_scroll()
-        self.notes_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.notes_scroll.set_child(self.notes_list)
-        self.stack.add_named(self.notes_scroll, "notes")
+        self.notes_list = self._add_list_page("notes")
+        self.labels_list = self._add_list_page("labels")
+        self.archive_list = self._add_list_page("archive")
+        self.trash_list = self._add_list_page("trash")
 
-        labels_scroll = self._make_scroll()
-        self.labels_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        labels_scroll.set_child(self.labels_list)
-        self.stack.add_named(labels_scroll, "labels")
-
-        archive_scroll = self._make_scroll()
-        self.archive_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        archive_scroll.set_child(self.archive_list)
-        self.stack.add_named(archive_scroll, "archive")
-
-        trash_scroll = self._make_scroll()
-        self.trash_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        trash_scroll.set_child(self.trash_list)
-        self.stack.add_named(trash_scroll, "trash")
-
-        settings_scroll = self._make_scroll()
         self.settings_page = _settings_view.SettingsPage(
             Gtk, Pango, GLib, settings,
             on_settings_changed=self._on_settings_changed,
         )
-        settings_scroll.set_child(self.settings_page.box)
-        self.stack.add_named(settings_scroll, "settings")
+        self.settings_page.back_button.connect("clicked", lambda _b: self.go_back())
+        self.stack.add_named(self.settings_page.box, "settings")
 
-        sync_scroll = self._make_scroll()
         self.sync_page = _settings_view.SyncPage(
             Gtk, Pango, GLib, settings, secrets, lambda: self._vault
         )
-        sync_scroll.set_child(self.sync_page.box)
-        self.stack.add_named(sync_scroll, "sync")
+        self.sync_page.back_button.connect("clicked", lambda _b: self.go_back())
+        self.stack.add_named(self.sync_page.box, "sync")
 
         self.editor_page = _editor.EditorPage(
             Gtk, Pango, GLib, on_saved=self._on_editor_saved
         )
         self.editor_page.bind(vault)
-        self.editor_page.back_button.connect(
-            "clicked", lambda _b: self.show_page("notes")
-        )
+        self.editor_page.back_button.connect("clicked", lambda _b: self.go_back())
         self.stack.add_named(self.editor_page.box, "editor")
 
-        overlay = Gtk.Overlay()
-        root.remove(self.stack)
-        overlay.set_child(self.stack)
-        self.fab = Gtk.Button.new_with_label("New")
-        self.fab.add_css_class("xx-note-fab")
-        self.fab.set_can_focus(False)
-        self.fab.set_halign(Gtk.Align.END)
-        self.fab.set_valign(Gtk.Align.END)
-        self.fab.set_margin_end(16)
-        self.fab.set_margin_bottom(76)
-        self.fab.connect("clicked", lambda _b: self.new_note())
-        overlay.add_overlay(self.fab)
-        root.append(overlay)
+        # Capture bar: Android's answer to a FAB. Enter makes the note
+        # (typed text becomes its title); the box makes a checklist.
+        self.capture_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self.capture_bar.add_css_class("xx-note-capture")
+        self.capture = xw.deferred_entry("Take a note...")
+        self.capture.set_hexpand(True)
+        self.capture.set_valign(Gtk.Align.CENTER)
+        self.capture.connect("activate", self._on_capture)
+        self.capture_bar.append(self.capture)
+        self.capture_bar.append(self._icon(
+            "checkbox-checked-symbolic", self._on_capture_checklist,
+            "New checklist"))
+        root.append(self.capture_bar)
 
-        tabs = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        tabs.set_homogeneous(True)
+        self.tabs = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.tabs.add_css_class("xx-tabs")
+        self.tabs.set_homogeneous(True)
         self._tab_buttons: dict[str, object] = {}
         for key in TABS:
-            button = Gtk.Button.new_with_label(key.capitalize())
-            button.add_css_class("xx-note-tab")
+            button = Gtk.Button.new_with_label(TAB_TITLES[key].upper())
+            button.add_css_class("xx-tab")
             button.set_can_focus(False)
+            child = button.get_child()
+            if isinstance(child, Gtk.Label):
+                child.set_max_width_chars(8)
             button.connect("clicked", lambda _b, k=key: self.show_page(k))
-            tabs.append(button)
+            self.tabs.append(button)
             self._tab_buttons[key] = button
-        root.append(tabs)
+        root.append(self.tabs)
+        self.show_page("notes")
 
-    def _make_scroll(self):  # type: ignore[no-untyped-def]
-        scroll = self._Gtk.ScrolledWindow()
+    # ---- building blocks -------------------------------------------------
+
+    def _icon(self, name: str, callback, tooltip: str = "", gicon=None):  # type: ignore[no-untyped-def]
+        button = _editor._icon_button(self._Gtk, name, gicon=gicon)
+        if tooltip:
+            button.set_tooltip_text(tooltip)
+        button.connect("clicked", lambda _b: callback())
+        return button
+
+    def _add_list_page(self, name: str):  # type: ignore[no-untyped-def]
+        Gtk = self._Gtk
+        scroll = Gtk.ScrolledWindow()
         scroll.set_vexpand(True)
         scroll.set_hexpand(True)
-        scroll.set_policy(self._Gtk.PolicyType.NEVER, self._Gtk.PolicyType.AUTOMATIC)
-        return scroll
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        body.add_css_class("xx-page-body")
+        body.set_margin_bottom(16)
+        scroll.set_child(body)
+        self.stack.add_named(scroll, name)
+        return body
+
+    def _wrap_label(self, text: str, cls: str, lines: int, chars: int = 10):  # type: ignore[no-untyped-def]
+        label = self._Gtk.Label(label=text)
+        label.add_css_class(cls)
+        label.set_xalign(0.0)
+        label.set_wrap(True)
+        label.set_wrap_mode(self._Pango.WrapMode.WORD_CHAR)
+        label.set_lines(lines)
+        label.set_ellipsize(self._Pango.EllipsizeMode.END)
+        label.set_max_width_chars(chars)
+        return label
+
+    # ---- navigation ------------------------------------------------------
 
     def show_page(self, name: str) -> None:
-        if name in ("settings", "sync", "editor"):
-            self.fab.set_visible(False)
-        else:
-            self.fab.set_visible(True)
+        if self._page == "editor" and name != "editor":
+            self.editor_page.flush()
+        if name in TABS:
+            self._tab = name
+        self._page = name
+        tab_page = name in TABS
+        notes = name == "notes"
+        self.header.set_visible(tab_page)
+        self.tabs.set_visible(tab_page)
+        self.capture_bar.set_visible(notes and not self._selecting)
+        self.search_box.set_visible(notes and self._search_open)
+        self.filter_box.set_visible(notes and self._label_filter is not None)
+        self.header.set_visible_child_name(
+            "select" if notes and self._selecting else "title"
+        )
+        self.search_button.set_visible(notes)
         self.stack.set_visible_child_name(name)
-        if name in self._tab_buttons:
+        if tab_page:
+            self.title_label.set_text(TAB_TITLES[name])
+            self._update_caption()
             for key, button in self._tab_buttons.items():
                 if key == name:
-                    button.add_css_class("suggested-action")
+                    button.add_css_class("active")
                 else:
-                    button.remove_css_class("suggested-action")
+                    button.remove_css_class("active")
+
+    def go_back(self) -> None:
+        self.show_page(self._tab)
 
     def open_sheet(self, name: str) -> None:
         self.show_page(name)
+
+    def toggle_search(self) -> None:
+        self._search_open = not self._search_open
+        if self._search_open:
+            self.search_box.set_visible(True)
+            self.search.set_can_focus(True)
+            self.search.grab_focus()
+        else:
+            self.search.set_text("")
+            self.search.set_can_focus(False)
+            self.search_box.set_visible(False)
+
+    def _update_caption(self) -> None:
+        live = [n for n in self._notes if not n.archived]
+        text = {
+            "notes": _plural(len(live), "note"),
+            "labels": _plural(len(_labels.aggregate([n.labels for n in live])), "label"),
+            "archive": _plural(len([n for n in self._notes if n.archived]), "note"),
+            "trash": _plural(len(self._trash_notes), "note"),
+        }.get(self._tab, "")
+        self.caption.set_text(text.upper())
+        self.caption.set_visible(bool(text))
+
+    # ---- data ------------------------------------------------------------
 
     def seed_demo(self, scenario: str) -> None:
         vault = self._vault
@@ -197,39 +309,40 @@ class NoteWindow:
             return
         if vault.scan():
             return
-        vault.create("Grocery list", "- [ ] oat milk\n- [x] bin bags\n",
-                     note_type="checklist", labels=["home", "errands"])
-        note = vault.create("Trip ideas", "# Lisbon\n\nTrams, custards, miradouros.\n",
+        from xx_note import frontmatter as fm
+
+        def _set(note, **values) -> None:  # type: ignore[no-untyped-def]
+            text = vault.read(note.path)
+            if text is None:
+                return
+
+            def _mutate(keys: fm.OwnedKeys) -> None:
+                for key, value in values.items():
+                    setattr(keys, key, value)
+
+            vault.write(note.path, fm.parse(text).rewritten(_mutate))
+
+        vault.create("Grocery list", "- [ ] oat milk\n- [ ] coffee, the dark one\n"
+                     "- [x] bin bags\n", note_type="checklist",
+                     labels=["home", "errands"])
+        trip = vault.create("Trip ideas", "# Lisbon\n\nTrams, custards, "
+                            "**miradouros** at dusk. Ask about the ferry.\n",
                             labels=["travel"])
-        vault.create("Meeting notes", "## Standup\n\n- ship the editor\n- fix sync\n",
-                     labels=["work"])
-        text = vault.read(note.path)
-        if text is not None:
-            from xx_note import frontmatter as fm
-
-            doc = fm.parse(text)
-
-            def _pin(keys: fm.OwnedKeys) -> None:
-                keys.pinned = True
-
-            vault.write(note.path, doc.rewritten(_pin))
-        vault.create("Archived thought", "Old but kept.", labels=[])
-        for item in vault.scan():
-            if item.title == "Archived thought":
-                text = vault.read(item.path)
-                if text is not None:
-                    from xx_note import frontmatter as fm2
-
-                    doc = fm2.parse(text)
-
-                    def _arch(keys: fm2.OwnedKeys) -> None:
-                        keys.archived = True
-
-                    vault.write(item.path, doc.rewritten(_arch))
-        vault.create("To delete", "This one is trashed.")
-        for item in vault.scan():
-            if item.title == "To delete":
-                vault.trash_note(item.path)
+        _set(trip, pinned=True)
+        bike = vault.create("Bike service", "Rear brake rubbing at full lock. "
+                            "Mention the headset creak too.\n",
+                            labels=["errands"])
+        _set(bike, pinned=True, color="banana")
+        vault.create("Meeting notes", "## Standup\n\n- ship the editor\n"
+                     "- fix sync\n- ask about staging DNS\n", labels=["work"])
+        reading = vault.create("Reading", "- [ ] Le Guin, The Dispossessed\n"
+                               "- [x] Solaris\n", note_type="checklist")
+        _set(reading, color="sage")
+        vault.create("Loft", "2410 x 1870, joist at 400 centres.\n")
+        archived = vault.create("Archived thought", "Old but kept.", labels=[])
+        _set(archived, archived=True)
+        doomed = vault.create("To delete", "This one is trashed.")
+        vault.trash_note(doomed.path)
 
     def refresh(self) -> None:
         def work() -> None:
@@ -248,25 +361,29 @@ class NoteWindow:
             notes = [n for n in self._vault.scan() if not n.archived]
         except OSError:
             return
+        notes = self._sorted(notes)
         if notes:
             self._notes = notes
-            self.open_note(notes[0].id)
+            pick = next((n for n in notes if n.note_type == "checklist"), notes[0])
+            self.open_note(pick.id)
 
     def refresh_sync(self) -> None:
-        notes = self._notes
-        trash_notes = self._trash_notes
-        self._render(notes, trash_notes)
+        self._render(self._notes, self._trash_notes)
 
     def _render(self, notes: list, trash_notes: list) -> bool:  # type: ignore[no-untyped-def]
         self._notes = notes
         self._trash_notes = trash_notes
         live = [n for n in notes if not n.archived]
-        count = len(live)
-        self.caption.set_text(f"{count} note{'s' if count != 1 else ''}")
+        self._selected &= {n.id for n in live}
+        if not self._selected:
+            self._selecting = False
         self._render_notes(live)
         self._render_labels(live)
         self._render_archive([n for n in notes if n.archived])
         self._render_trash(trash_notes)
+        self.select_label.set_text(f"{len(self._selected)} selected")
+        if self._page in TABS:
+            self.show_page(self._page)
         return False
 
     def _sorted(self, notes: list) -> list:  # type: ignore[no-untyped-def]
@@ -290,207 +407,199 @@ class NoteWindow:
             ]
         return self._sorted(notes)
 
+    # ---- notes grid ------------------------------------------------------
+
     def _render_notes(self, notes: list) -> None:  # type: ignore[no-untyped-def]
         self._clear(self.notes_list)
         if self._label_filter:
-            chip = self._chip_row(f"Label: {self._label_filter} (tap to clear)")
-            self.notes_list.append(chip)
-        capture = self._Gtk.Entry()
-        capture.set_placeholder_text("Take a note...")
-        capture.set_margin_start(20)
-        capture.set_margin_end(20)
-        capture.set_margin_top(8)
-        capture.set_can_focus(False)
-        press = self._Gtk.GestureClick.new()
-        press.set_propagation_phase(self._Gtk.PropagationPhase.CAPTURE)
-        press.connect("pressed", self._on_capture_tapped, capture)
-        capture.add_controller(press)
-        capture.connect("activate", self._on_capture)
-        self.notes_list.append(capture)
-        if self._selecting and self._selected:
-            bar = self._selection_bar()
-            self.notes_list.append(bar)
+            xw.fit_text(self.filter_text, self._label_filter.upper(), 16)
         shown = self._visible_notes(notes)
         pinned = [n for n in shown if n.pinned]
         others = [n for n in shown if not n.pinned]
+        first = True
         if pinned:
-            self.notes_list.append(self._section("Pinned"))
-            for note in pinned:
-                self.notes_list.append(self._note_row(note))
+            self.notes_list.append(self._section("Pinned", first))
+            self.notes_list.append(self._grid(pinned))
+            first = False
         if others:
             if pinned:
-                self.notes_list.append(self._section("Others"))
-            for note in others:
-                self.notes_list.append(self._note_row(note))
-        if not shown:
-            self.notes_list.append(
-                self._empty("No notes yet. Tap New to start one.")
-            )
+                self.notes_list.append(self._section("Others", first))
+            else:
+                spacer = self._Gtk.Box()
+                spacer.set_size_request(-1, 8)
+                self.notes_list.append(spacer)
+            self.notes_list.append(self._grid(others))
+
+    def _section(self, text: str, first: bool):  # type: ignore[no-untyped-def]
+        label = xw.section_label(text)
+        if first:
+            label.add_css_class("xx-note-first")
+        return label
+
+    def _grid(self, notes: list):  # type: ignore[no-untyped-def]
+        """Staggered two columns: each card drops into the shorter one."""
+        Gtk = self._Gtk
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_homogeneous(True)
+        columns = []
+        for _ in range(2):
+            column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            column.set_valign(Gtk.Align.START)
+            row.append(column)
+            columns.append(column)
+        heights = [0, 0]
+        for note in notes:
+            index = 0 if heights[0] <= heights[1] else 1
+            columns[index].append(self._card(note))
+            heights[index] += self._card_weight(note)
+        return row
+
+    def _card_weight(self, note) -> int:  # type: ignore[no-untyped-def]
+        lines = len(_preview.preview_lines(note.body))
+        extra = 1 if note.labels or _preview.checklist_progress(note.body)[1] else 0
+        return 3 + lines + extra
+
+    def _card(self, note):  # type: ignore[no-untyped-def]
+        Gtk = self._Gtk
+        card = Gtk.Button()
+        card.add_css_class("xx-note-card")
+        card.set_can_focus(False)
+        tone = _colors.card_class(note.color, self._settings.color_mode)
+        if tone:
+            card.add_css_class(tone)
+        if note.id in self._selected:
+            card.add_css_class("selected")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        title = note.title or "Untitled"
+        title_label = self._wrap_label(title, "xx-note-card-title", 2)
+        title_label.add_css_class("xx-display-face")
+        box.append(title_label)
+        markup = _preview.preview_markup(note.body, title=title)
+        if markup:
+            body = self._wrap_label("", "xx-note-card-preview",
+                                    _preview.PREVIEW_LINES)
+            body.set_markup(markup)
+            box.append(body)
+        # Android order: checklist progress, then the label chips (they
+        # wrap rather than widen a narrow column).
+        done, total = _preview.checklist_progress(note.body)
+        if total:
+            progress = xw.label(f"{done} / {total}", "xx-note-card-progress")
+            progress.add_css_class("xx-display-face")
+            box.append(progress)
+        if note.labels:
+            chips = Gtk.FlowBox()
+            chips.add_css_class("xx-note-chips")
+            chips.set_selection_mode(Gtk.SelectionMode.NONE)
+            chips.set_can_focus(False)
+            chips.set_column_spacing(4)
+            chips.set_row_spacing(4)
+            chips.set_max_children_per_line(6)
+            chips.set_margin_top(2)
+            texts = note.labels[:CARD_CHIPS]
+            if len(note.labels) > CARD_CHIPS:
+                texts = texts + [f"+{len(note.labels) - CARD_CHIPS}"]
+            for text in texts:
+                chip = Gtk.Label()
+                chip.add_css_class("xx-note-chip")
+                xw.fit_text(chip, text.upper(), 10)
+                chip.set_halign(Gtk.Align.START)
+                chips.append(chip)
+                chips.get_last_child().set_can_focus(False)
+            box.append(chips)
+        card.set_child(box)
+        card.connect("clicked", lambda _b: self._card_tapped(note.id))
+        long_press = Gtk.GestureLongPress.new()
+        long_press.connect("pressed", self._on_long_press, note.id)
+        card.add_controller(long_press)
+        return card
+
+    def _card_tapped(self, note_id: str) -> None:
+        if self._selecting:
+            if note_id in self._selected:
+                self._selected.discard(note_id)
+            else:
+                self._selected.add(note_id)
+            if not self._selected:
+                self._selecting = False
+            self._render(self._notes, self._trash_notes)
+            return
+        self.open_note(note_id)
+
+    # ---- labels, archive, trash -----------------------------------------
+
+    def _row_box(self, last: bool, on_tap=None):  # type: ignore[no-untyped-def]
+        Gtk = self._Gtk
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row.add_css_class("xx-row")
+        if last:
+            row.add_css_class("last")
+        if on_tap is not None:
+            tap = Gtk.GestureClick.new()
+            tap.connect("released", lambda *_a: on_tap())
+            row.add_controller(tap)
+        return row
+
+    def _row_text(self, primary: str, secondary: str = ""):  # type: ignore[no-untyped-def]
+        middle = self._Gtk.Box(orientation=self._Gtk.Orientation.VERTICAL, spacing=2)
+        middle.set_hexpand(True)
+        middle.set_valign(self._Gtk.Align.CENTER)
+        title = xw.label(primary, "xx-title")
+        title.set_max_width_chars(12)
+        middle.append(title)
+        if secondary:
+            sub = xw.label(secondary, "xx-secondary")
+            sub.set_max_width_chars(12)
+            middle.append(sub)
+        return middle
+
+    def _action(self, text: str, callback):  # type: ignore[no-untyped-def]
+        button = self._Gtk.Button.new_with_label(text.upper())
+        button.add_css_class("xx-note-action")
+        button.set_can_focus(False)
+        button.set_valign(self._Gtk.Align.CENTER)
+        button.connect("clicked", lambda _b: callback())
+        return button
 
     def _render_labels(self, notes: list) -> None:  # type: ignore[no-untyped-def]
         self._clear(self.labels_list)
         counts = _labels.aggregate([n.labels for n in notes])
-        if not counts:
-            self.labels_list.append(self._empty("No labels yet."))
-            return
-        for name in sorted(counts, key=str.casefold):
-            row = self._Gtk.Button()
-            row.add_css_class("xx-note-row")
-            row.set_can_focus(False)
-            inner = self._Gtk.Box(orientation=self._Gtk.Orientation.HORIZONTAL, spacing=8)
-            inner.set_margin_start(20)
-            inner.set_margin_end(20)
-            title = self._Gtk.Label(label=f"{name} ({counts[name]})")
-            title.add_css_class("xx-note-row-title")
-            title.set_xalign(0.0)
-            title.set_hexpand(True)
-            title.set_max_width_chars(22)
-            title.set_ellipsize(self._Pango.EllipsizeMode.END)
-            inner.append(title)
-            row.set_child(inner)
-            row.connect("clicked", lambda _b, n=name: self._filter_label(n))
+        names = sorted(counts, key=str.casefold)
+        for index, name in enumerate(names):
+            row = self._row_box(index == len(names) - 1,
+                                lambda n=name: self._filter_label(n))
+            row.append(self._row_text(name))
+            count = xw.label(str(counts[name]), "xx-note-meta", xalign=1.0)
+            count.set_valign(self._Gtk.Align.CENTER)
+            row.append(count)
             self.labels_list.append(row)
 
     def _render_archive(self, notes: list) -> None:  # type: ignore[no-untyped-def]
         self._clear(self.archive_list)
-        if not notes:
-            self.archive_list.append(self._empty("Nothing archived."))
-            return
-        self.archive_list.append(self._section("Archive"))
-        for note in self._sorted(notes):
-            self.archive_list.append(self._note_row(note))
+        ordered = self._sorted(notes)
+        for index, note in enumerate(ordered):
+            lines = _preview.preview_lines(note.body, 1)
+            row = self._row_box(index == len(ordered) - 1,
+                                lambda i=note.id: self.open_note(i))
+            row.append(self._row_text(note.title or "Untitled",
+                                      lines[0] if lines else ""))
+            row.append(self._action(
+                "Unarchive", lambda p=note.path: self._set_flag(p, "archived", False)))
+            self.archive_list.append(row)
 
     def _render_trash(self, notes: list) -> None:  # type: ignore[no-untyped-def]
         import time
 
         self._clear(self.trash_list)
         now_ms = int(time.time() * 1000)
-        if not notes:
-            self.trash_list.append(self._empty("Trash is empty."))
-            return
-        for note in notes:
+        for index, note in enumerate(notes):
             stamp = _store._parse_iso_ms(note.trashed_at)
             days = _trash.days_remaining(stamp, now_ms)
-            chip = "today" if days == 0 else (f"{days}d left" if days else "")
-            self.trash_list.append(self._trash_row(note, chip))
-
-    def _note_row(self, note) -> object:  # type: ignore[no-untyped-def]
-        Gtk = self._Gtk
-        row = Gtk.Button()
-        row.add_css_class("xx-note-row")
-        row.set_can_focus(False)
-        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        inner.set_margin_start(20)
-        inner.set_margin_end(20)
-        dot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        dot.add_css_class("xx-note-tone")
-        dot.set_valign(Gtk.Align.CENTER)
-        try:
-            dot.set_opacity(0.25 + 0.75 * (
-                (KEEP_COLORS.index(note.color) + 1) / len(KEEP_COLORS)
-                if note.color in KEEP_COLORS else 0.5
-            ))
-        except ValueError:
-            dot.set_opacity(0.5)
-        inner.append(dot)
-        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        text.set_hexpand(True)
-        title = Gtk.Label(label=note.title or "Untitled")
-        title.add_css_class("xx-note-row-title")
-        title.set_xalign(0.0)
-        title.set_max_width_chars(22)
-        title.set_ellipsize(self._Pango.EllipsizeMode.END)
-        text.append(title)
-        preview = _store._preview(note.body, 2).replace("\n", " ")
-        if preview:
-            sub = Gtk.Label(label=preview[:160])
-            sub.add_css_class("xx-note-preview")
-            sub.set_xalign(0.0)
-            sub.set_max_width_chars(28)
-            sub.set_ellipsize(self._Pango.EllipsizeMode.END)
-            text.append(sub)
-        if note.labels:
-            lab = Gtk.Label(label=", ".join(note.labels[:4]))
-            lab.add_css_class("xx-note-chip")
-            lab.set_xalign(0.0)
-            lab.set_max_width_chars(28)
-            lab.set_ellipsize(self._Pango.EllipsizeMode.END)
-            text.append(lab)
-        inner.append(text)
-        row.set_child(inner)
-        row.connect("clicked", lambda _b: self.open_note(note.id))
-        long_press = Gtk.GestureLongPress.new()
-        long_press.connect("pressed", self._on_long_press, note.id)
-        row.add_controller(long_press)
-        return row
-
-    def _trash_row(self, note, chip: str) -> object:  # type: ignore[no-untyped-def]
-        Gtk = self._Gtk
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        box.set_margin_start(20)
-        box.set_margin_end(20)
-        box.set_margin_top(8)
-        title = Gtk.Label(label=note.title or "Untitled")
-        title.add_css_class("xx-note-row-title")
-        title.set_xalign(0.0)
-        title.set_hexpand(True)
-        title.set_max_width_chars(16)
-        title.set_ellipsize(self._Pango.EllipsizeMode.END)
-        box.append(title)
-        if chip:
-            meta = Gtk.Label(label=chip)
-            meta.add_css_class("xx-note-chip")
-            meta.set_max_width_chars(8)
-            box.append(meta)
-        restore = Gtk.Button.new_with_label("Restore")
-        restore.set_can_focus(False)
-        restore.connect("clicked", lambda _b: self._restore(note.path))
-        box.append(restore)
-        return box
-
-    def _selection_bar(self):  # type: ignore[no-untyped-def]
-        Gtk = self._Gtk
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        bar.set_margin_start(20)
-        bar.set_margin_top(8)
-        for label, action in (
-            ("Pin", "pin"), ("Archive", "archive"), ("Trash", "trash"),
-            ("Clear", "clear"),
-        ):
-            button = Gtk.Button.new_with_label(label)
-            button.set_can_focus(False)
-            button.connect("clicked", lambda _b, a=action: self._bulk(a))
-            bar.append(button)
-        return bar
-
-    def _section(self, text: str):  # type: ignore[no-untyped-def]
-        label = self._Gtk.Label(label=text.upper())
-        label.add_css_class("xx-note-caption")
-        label.set_xalign(0.0)
-        label.set_margin_start(20)
-        label.set_margin_top(12)
-        label.set_max_width_chars(24)
-        return label
-
-    def _chip_row(self, text: str):  # type: ignore[no-untyped-def]
-        button = self._Gtk.Button.new_with_label(text)
-        button.set_margin_start(20)
-        button.set_margin_end(20)
-        button.set_margin_top(8)
-        button.set_can_focus(False)
-        button.connect("clicked", lambda _b: self._filter_label(None))
-        return button
-
-    def _empty(self, text: str):  # type: ignore[no-untyped-def]
-        label = self._Gtk.Label(label=text)
-        label.add_css_class("xx-note-preview")
-        label.set_xalign(0.0)
-        label.set_margin_start(20)
-        label.set_margin_top(24)
-        label.set_wrap(True)
-        label.set_wrap_mode(self._Pango.WrapMode.WORD_CHAR)
-        label.set_max_width_chars(30)
-        return label
+            chip = "Today" if days == 0 else (f"{days}d left" if days else "")
+            row = self._row_box(index == len(notes) - 1)
+            row.append(self._row_text(note.title or "Untitled", chip))
+            row.append(self._action("Restore", lambda p=note.path: self._restore(p)))
+            self.trash_list.append(row)
 
     def _clear(self, box) -> None:  # type: ignore[no-untyped-def]
         child = box.get_first_child()
@@ -498,6 +607,8 @@ class NoteWindow:
             nxt = child.get_next_sibling()
             box.remove(child)
             child = nxt
+
+    # ---- input -----------------------------------------------------------
 
     def _on_search_tapped(self, gesture, _n: int, _x: float, _y: float) -> None:  # type: ignore[no-untyped-def]
         self.search.set_can_focus(True)
@@ -507,26 +618,29 @@ class NoteWindow:
         self._query = self.search.get_text()
         self._render(self._notes, self._trash_notes)
 
-    def _on_capture_tapped(self, gesture, _n: int, _x: float, _y: float, entry) -> None:  # type: ignore[no-untyped-def]
-        entry.set_can_focus(True)
-        entry.grab_focus()
-
     def _on_capture(self, entry: object) -> None:
         text = entry.get_text().strip()
-        if not text:
-            return
         entry.set_text("")
+        self._create(text or "Untitled", "", "note")
 
+    def _on_capture_checklist(self) -> None:
+        text = self.capture.get_text().strip()
+        self.capture.set_text("")
+        self._create(text or "Untitled", "- [ ] ", "checklist")
+
+    def _create(self, title: str, body: str, note_type: str) -> None:
         def work() -> None:
-            note = self._vault.create(text, "")
-            self._GLib.idle_add(self._open_after_create, note.id)
+            note = self._vault.create(title, body, note_type=note_type)
+            self._GLib.idle_add(self._open_after_create, note)
 
         thread = threading.Thread(target=work, daemon=True)
         thread.start()
 
-    def _open_after_create(self, note_id: str) -> bool:
+    def _open_after_create(self, note) -> bool:  # type: ignore[no-untyped-def]
+        if not any(n.id == note.id for n in self._notes):
+            self._notes = [*self._notes, note]
         self.refresh()
-        self.open_note(note_id)
+        self.open_note(note.id)
         return False
 
     def _on_long_press(self, _gesture: object, _x: float, _y: float, note_id: str) -> None:
@@ -541,16 +655,16 @@ class NoteWindow:
             self._render(self._notes, self._trash_notes)
             return
         selected = set(self._selected)
+        chosen = [n for n in self._notes if n.id in selected]
+        # Android's pin target: pin unless every selected note is pinned.
+        pin_target = not all(n.pinned for n in chosen)
         self._selected.clear()
         self._selecting = False
 
         def work() -> None:
             from xx_note import frontmatter as fm
 
-            for note_id in selected:
-                note = next((n for n in self._notes if n.id == note_id), None)
-                if note is None:
-                    continue
+            for note in chosen:
                 if action == "trash":
                     self._vault.trash_note(note.path)
                     continue
@@ -561,7 +675,7 @@ class NoteWindow:
 
                 def _mutate(keys: fm.OwnedKeys, a: str = action) -> None:
                     if a == "pin":
-                        keys.pinned = True
+                        keys.pinned = pin_target
                     elif a == "archive":
                         keys.archived = True
 
@@ -574,14 +688,34 @@ class NoteWindow:
         thread = threading.Thread(target=work, daemon=True)
         thread.start()
 
+    def _set_flag(self, path: str, key: str, value: bool) -> None:
+        def work() -> None:
+            from xx_note import frontmatter as fm
+
+            text = self._vault.read(path)
+            if text is None:
+                return
+
+            def _mutate(keys: fm.OwnedKeys) -> None:
+                setattr(keys, key, value)
+
+            try:
+                self._vault.write(path, fm.parse(text).rewritten(_mutate))
+            except (OSError, ValueError):
+                return
+            self._GLib.idle_add(self._after_bulk)
+
+        thread = threading.Thread(target=work, daemon=True)
+        thread.start()
+
     def _after_bulk(self) -> bool:
         self.refresh()
         return False
 
     def _filter_label(self, name: str | None) -> None:
         self._label_filter = name
-        self.show_page("notes")
         self._render(self._notes, self._trash_notes)
+        self.show_page("notes")
 
     def _restore(self, path: str) -> None:
         def work() -> None:
@@ -604,12 +738,7 @@ class NoteWindow:
         return False
 
     def new_note(self) -> None:
-        def work() -> None:
-            note = self._vault.create("Untitled", "")
-            self._GLib.idle_add(self._open_after_create, note.id)
-
-        thread = threading.Thread(target=work, daemon=True)
-        thread.start()
+        self._create("Untitled", "", "note")
 
     def open_note(self, note_id: str) -> None:
         note = next((n for n in self._notes if n.id == note_id), None)
@@ -622,5 +751,6 @@ class NoteWindow:
 
         doc = fm.parse(text)
         self.editor_page.load_note(note.id, note.path, doc.title or note.title,
-                                   doc.body_text)
+                                   doc.body_text, pinned=note.pinned,
+                                   archived=note.archived)
         self.show_page("editor")
