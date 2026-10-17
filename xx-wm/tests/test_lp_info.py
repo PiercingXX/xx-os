@@ -25,10 +25,10 @@ def config(tmp_path, monkeypatch):
 class TestInfoConfigKeys:
     def test_defaults(self, config):
         assert config.data['weather_temp_unit'] == 'fahrenheit'
-        assert config.data['clock_24h'] is None
+        assert config.data['clock_24h'] is True
         assert config.data['weather_auto_location'] is True
         assert config.weather_temp_unit == 'fahrenheit'
-        assert config.clock_24h is None
+        assert config.clock_24h is True
         assert config.weather_auto_location is True
 
     def test_get_passthrough(self, config):
@@ -371,6 +371,8 @@ class TestClockFormat:
     def test_resolve_null_follows_gnome(self, config, monkeypatch):
         import clock_format
         from clock_format import resolve_24h
+        assert config.clock_24h is True  # 24-hour by default
+        config.set_clock_24h(None)       # 'System' still follows GNOME
         assert config.clock_24h is None
         assert resolve_24h(config, gnome_24h=True) is True
         assert resolve_24h(config, gnome_24h=False) is False

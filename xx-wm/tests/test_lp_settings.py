@@ -71,7 +71,7 @@ class TestGenericGetSet:
     def test_get_returns_default_for_missing(self, _isolated_home):
         cfg = _cfg()
         assert cfg.get('weather_temp_unit', 'fahrenheit') == 'fahrenheit'
-        assert cfg.get('clock_24h', None) is None
+        assert cfg.get('clock_24h', None) is True  # 24-hour default
         assert cfg.get('drawer_sort', 'default') == 'default'
         assert cfg.get('home_to_recents', False) is False
 

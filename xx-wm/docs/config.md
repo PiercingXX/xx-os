@@ -59,7 +59,7 @@ migration steps are ever required.
 | `weather_location` | string | `""` | Location for the weather widget as `lat,lon` (e.g. `"48.85,2.35"`), used when `weather_lat`/`weather_lon` are unset. Anything else is ignored. |
 | `weather_temp_unit` | string | `"fahrenheit"` | `"fahrenheit"` or `"celsius"`: Open-Meteo unit and widget suffix (`72°F` / `22°C`). The 15-minute cache is keyed by unit. |
 | `weather_auto_location` | bool | `true` | Coarse GeoClue fix when no manual coordinates are set (cached, refreshed at most every 30 minutes). Manual coordinates always win; with no fix the line stays hidden. |
-| `clock_24h` | bool\|null | `null` | Home and lock-screen clock: `true` for 24-hour, `false` for 12-hour with no AM/PM, `null` to follow `org.gnome.desktop.interface clock-format`. |
+| `clock_24h` | bool\|null | `true` | Home and lock-screen clock: `true` for 24-hour, `false` for 12-hour with no AM/PM, `null` to follow `org.gnome.desktop.interface clock-format`. |
 
 ### Drawer & search
 

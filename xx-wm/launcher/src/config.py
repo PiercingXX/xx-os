@@ -124,7 +124,7 @@ DEFAULT_CONFIG = {
     'weather_location': '',
     'weather_temp_unit': 'fahrenheit',
     'weather_auto_location': True,
-    'clock_24h': None,
+    'clock_24h': True,  # owner: 24-hour by default; None follows GNOME
     'xxdb_enabled': False,
     'xxdb_persistent': False,
     'keyboard_layout': 'us',
