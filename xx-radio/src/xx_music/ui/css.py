@@ -195,6 +195,60 @@ progressbar.xx-mu-meter trough, progressbar.xx-mu-meter progress {
 progressbar.xx-mu-meter trough { background-color: alpha(${fg}, 0.12); }
 progressbar.xx-mu-meter progress { background-color: ${fg}; }
 .xx-mu-firstrun { background-color: ${bg}; }
+
+/* Minimal Mode: the theme foreground at four weights, never a fill */
+label.xx-mm-strong, button.xx-mm-btn.xx-mm-strong label {
+  color: ${fg}; font-weight: 700; }
+label.xx-mm-plain, button.xx-mm-btn.xx-mm-plain label {
+  color: alpha(${fg}, 0.9); font-weight: 400; }
+label.xx-mm-quiet, button.xx-mm-btn.xx-mm-quiet label {
+  color: alpha(${fg}, 0.5); font-weight: 400; }
+label.xx-mm-off, button.xx-mm-btn.xx-mm-off label {
+  color: alpha(${fg}, 0.25); font-weight: 400; }
+.xx-mm-s12 { font-size: ${mm12}px; }
+.xx-mm-s13 { font-size: ${mm13}px; }
+.xx-mm-s14 { font-size: ${mm14}px; }
+.xx-mm-s15 { font-size: ${mm15}px; }
+.xx-mm-s17 { font-size: ${mm17}px; }
+.xx-mm-b12 { font-size: ${mmb12}px; }
+.xx-mm-b13 { font-size: ${mmb13}px; }
+.xx-mm-b14 { font-size: ${mmb14}px; }
+.xx-mm-b15 { font-size: ${mmb15}px; }
+.xx-mm-b17 { font-size: ${mmb17}px; }
+.xx-mm-caps { letter-spacing: 0.14em; }
+button.xx-mm-btn, .xx-mu button.xx-mm-btn, .xx-mu-sheet button.xx-mm-btn {
+  background: none; border: none; box-shadow: none; border-radius: 0;
+  min-height: 40px; min-width: 0; padding: 0 4px; }
+button.xx-mm-btn.xx-mm-word { padding: 0 8px; }
+button.xx-mm-btn.xx-mm-flush { padding-left: 0; }
+button.xx-mm-btn.xx-mm-word.xx-mm-tight { padding: 0 6px; }
+button.xx-mm-btn.xx-mm-flush-end { padding-right: 0; }
+button.xx-mm-btn:active label { opacity: 0.55; }
+button.xx-mm-btn:focus-visible { outline: 1px solid alpha(${fg}, 0.5); }
+button.xx-mm-row { background: none; border: none; box-shadow: none;
+  border-radius: 0; padding: 8px 0; min-height: 0; }
+button.xx-mm-row:active label { opacity: 0.55; }
+flowbox.xx-mm-flow > flowboxchild { padding: 0; min-height: 0; }
+.xx-mm-section { margin-top: 24px; margin-bottom: 4px; min-height: 32px; }
+.xx-mm-section.first { margin-top: 8px; }
+progressbar.xx-mm-hairline trough, progressbar.xx-mm-hairline progress {
+  min-height: 1px; min-width: 0; border-radius: 0; }
+progressbar.xx-mm-hairline { min-width: 0; }
+progressbar.xx-mm-hairline trough { background-color: alpha(${fg}, 0.10); }
+progressbar.xx-mm-hairline progress { background-color: alpha(${fg}, 0.9); }
+.xx-mm-np-title { font-size: ${mm_np}px; font-weight: 700; color: alpha(${fg}, 0.9); }
+.xx-mm-tabs { border-top: 1px solid alpha(${fg}, 0.10);
+  background-color: ${bg}; padding: 2px 8px; }
+button.xx-mm-btn.xx-mm-tab { padding: 0 2px; min-height: 44px; }
+.xx-mm-mini { background-color: ${bg}; }
+.xx-mm-banner { padding: 6px 12px 6px 20px; min-height: 44px;
+  border-bottom: 1px solid alpha(${fg}, 0.10); background-color: ${bg}; }
+.xx-mm-toast { padding: 12px 20px; background-color: ${bg};
+  border-top: 1px solid alpha(${fg}, 0.10); }
+.xx-mu-stepnum.xx-mm-stepnum { border: none; background: none;
+  color: alpha(${fg}, 0.5); font-size: ${mm15}px; }
+.xx-mu-stepnum.xx-mm-stepnum.done, .xx-mu-stepnum.xx-mm-stepnum.now,
+.xx-mu-stepnum.xx-mm-stepnum.bad { color: ${fg}; font-weight: 700; }
 .xx-mu-mark { color: ${fg}; }
 """)
 
@@ -219,6 +273,12 @@ def render(theme) -> str:
     values = {key: str(round(px * theme.scale)) for key, px in _BASE.items()}
     # Four caps tabs share 360 px: they grow with the text size only so far.
     values["tab"] = str(round(11 * min(theme.scale, 1.3)))
+    # Minimal Mode: text follows the text size; button words stop at
+    # 1.3x so a row of brackets still fits 320 px.
+    for px in (12, 13, 14, 15, 17):
+        values[f"mm{px}"] = str(round(px * theme.scale))
+        values[f"mmb{px}"] = str(round(px * min(theme.scale, 1.3)))
+    values["mm_np"] = str(round(26 * min(theme.scale, 1.5)))
     values.update(fg=theme.foreground, bg=theme.background,
                   surface=theme.surface, muted=theme.muted,
                   danger="#ff6b6b")

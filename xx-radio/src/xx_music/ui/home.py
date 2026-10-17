@@ -7,6 +7,9 @@ a Moods & genres card shelf. Empty shelves are hidden. The cached copy
 paints at once; the fresh one replaces it when the worker answers, with
 a 2 px loading line under the header meanwhile. Errors keep whatever is
 on screen and add one muted line.
+
+Minimal Mode: the chips are words and every shelf is ``Title — Artist``
+rows, five of them before "more…", with no art anywhere.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from gi.repository import Gtk
 from xx_music.engine import (CHARTS, ERROR_TEXT, HOME, MOODS, EngineError,
                              ErrorKind, Item, ItemKind, Mood, Shelf, Track)
 from xx_music.tasks import Generation
-from xx_music.ui import common, css, menus
+from xx_music.ui import common, css, menus, minimal
 from xx_ui import widgets
 
 QUICK_ROWS = 4
@@ -63,6 +66,7 @@ class HomePage:
         self.history: list[Track] = []
         self.painted = False
         self.note = ""
+        self.expanded: set[str] = set()
         self.loading = common.LoadingLine()
         self.body = common.vbox(0)
         self.body.set_margin_bottom(28)
@@ -73,6 +77,7 @@ class HomePage:
         root.append(self.scroll)
         self.widget = root
         ui.on_downloads(self._repaint)
+        minimal.listen(self._repaint)
         self.reload(from_cache=True)
 
     # -- data -------------------------------------------------------------------
@@ -148,7 +153,7 @@ class HomePage:
             body.append(holder)
         ordered = self._ordered()
         if not ordered:
-            empty = widgets.empty_state(
+            empty = common.empty_state(
                 self.note or EMPTY_TEXT,
                 "Search" if not self.note else "Retry",
                 (lambda: self.ui.shell.show("search")) if not self.note
@@ -208,6 +213,8 @@ class HomePage:
 
     def _shelf_widget(self, shelf: Shelf) -> Gtk.Widget:
         items = list(shelf.items)
+        if minimal.active():
+            return self._minimal_shelf(shelf.title, items)
         if all(i.kind == ItemKind.MOOD for i in items):
             return self._mood_cards(items)
         tracks = [i.track for i in items if i.track is not None]
@@ -223,6 +230,29 @@ class HomePage:
                 self.ui, item, lambda i=item: self._open(i, items),
                 lambda i=item: self._menu(i), offline=offline))
         return common.carousel(tiles)
+
+    def _minimal_shelf(self, title: str, items: list[Item]) -> Gtk.Widget:
+        """``Title — Artist`` rows, five before "more…"."""
+        from xx_music.ui import pages
+
+        def opener(item: Item):
+            if item.kind == ItemKind.MOOD:
+                return lambda: pages.open_mood(
+                    self.ui, Mood(item.id, item.title, item.subtitle))
+            return lambda: self._open(item, items)
+
+        def toggle() -> None:
+            self.expanded ^= {title}
+            self._paint()
+
+        entries = [(minimal.item_text(
+            item, item.kind == ItemKind.TRACK
+            and item.id in self.ui.downloaded), opener(item),
+            None if item.kind == ItemKind.MOOD
+            else (lambda i=item: self._menu(i))) for item in items]
+        box = minimal.shelf(entries, title in self.expanded, toggle)
+        box.add_css_class("xx-page-body")
+        return box
 
     def _song_columns(self, tracks: list[Track], title: str) -> Gtk.Widget:
         columns = []
@@ -271,4 +301,5 @@ class HomePage:
             menus.track_menu(self.ui, item.track)
         else:
             menus.item_menu(self.ui, item)
+
 

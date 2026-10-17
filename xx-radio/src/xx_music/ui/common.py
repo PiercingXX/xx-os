@@ -16,12 +16,13 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk, Pango  # noqa: E402
 
 from xx_music.engine import Item, ItemKind, Track  # noqa: E402
-from xx_music.ui import css, fmt  # noqa: E402
+from xx_music.ui import css, fmt, minimal  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 
 #: Display roles take the brand display face (Space Mono over the house
 #: mono; a family the person picked stays in charge).
 DISPLAY_ROLES = frozenset({"xx-mu-h1", "xx-mu-h2", "xx-mu-np-title",
+                           "xx-mm-np-title",
                            "xx-mu-readout", "xx-mu-code"})
 
 TILE_PX = 120
@@ -86,6 +87,8 @@ def name(widget: Gtk.Widget, text: str, tip: bool = False) -> Gtk.Widget:
 def fit(button: Gtk.Button, chars: int) -> Gtk.Button:
     """A text button that ellipsizes instead of widening the window."""
     child = button.get_child()
+    if button.has_css_class("xx-mm-btn"):
+        return button  # minimal words size themselves
     if isinstance(child, Gtk.Label):
         # Short words never ellipsize (letter-spaced caps would misfire);
         # only text longer than the budget can.
@@ -111,7 +114,11 @@ def icon_button(icon: str, text: str, callback, px: int = 20
 
 def header(back, title: str, subtitle: str = "",
            icon: str = "", icon_text: str = "", icon_cb=None) -> Gtk.Box:
-    """xx_ui's compact sub-page bar with labelled 48 px targets."""
+    """xx_ui's compact sub-page bar with labelled 48 px targets; in
+    Minimal Mode, words: ``back``, the caption, the trailing action."""
+    if minimal.active():
+        return minimal_header(back, title, subtitle,
+                              (icon_text or title) if icon else "", icon_cb)
     bar = widgets.compact_header(back, title, subtitle, icon, icon_cb)
     back_button = bar.get_first_child()
     back_button.set_size_request(48, 48)
@@ -120,6 +127,38 @@ def header(back, title: str, subtitle: str = "",
         trailing = bar.get_last_child()
         trailing.set_size_request(48, 48)
         name(trailing, icon_text or title)
+    return bar
+
+
+def minimal_header(back, title: str, subtitle: str = "",
+                   action: str = "", action_cb=None) -> Gtk.Box:
+    bar = hbox(4)
+    bar.add_css_class("xx-page-body")
+    bar.add_css_class("xx-mm-header")
+    bar.set_margin_top(4)
+    bar.set_margin_bottom(4)
+    back_word = minimal.word_button("back", back, minimal.Tone.QUIET,
+                                    spoken="Back")
+    back_word.add_css_class("xx-mm-flush")
+    bar.append(back_word)
+    texts = vbox(0)
+    texts.set_hexpand(True)
+    texts.set_valign(Gtk.Align.CENTER)
+    caption = minimal.text(title.upper(), minimal.Tone.QUIET, 12, chars=18)
+    caption.add_css_class("xx-mm-caps")
+    texts.append(caption)
+    if subtitle:
+        texts.append(minimal.text(subtitle, minimal.Tone.QUIET, 12,
+                                  chars=24))
+    bar.append(texts)
+    if action and action_cb is not None:
+        words = {"more options": "more"}.get(action.lower(), action.lower())
+        if len(words) > 8:
+            words = words.split()[0]
+        trailing = minimal.word_button(words, action_cb, minimal.Tone.QUIET,
+                                       spoken=action)
+        trailing.add_css_class("xx-mm-flush-end")
+        bar.append(trailing)
     return bar
 
 
@@ -419,7 +458,7 @@ def art(ui, url: str, title: str, px: int = 0, shape: str = "r4",
     square = Square(holder, px, limit)
     square.update_property([Gtk.AccessibleProperty.LABEL],
                            [f"Art for {title}"])
-    if not url or ui is None or ui.art is None:
+    if not url or ui is None or ui.art is None or minimal.active():
         return square
     picture = Gtk.Picture()
     picture.set_content_fit(Gtk.ContentFit.COVER)
@@ -472,7 +511,23 @@ def track_row(ui, track: Track, on_play, on_menu=None, *,
               show_art: bool = True, meta: str | None = None,
               lead: str = "") -> Gtk.Button:
     """A song row: art (or its number), title, artists, duration, a
-    labelled More button; long-press opens the same menu."""
+    labelled More button; long-press opens the same menu. Minimal Mode:
+    title and artists in words, ``▸`` on the playing one, no art or
+    icons (long-press opens the menu)."""
+    if minimal.active():
+        title_text = track.title if number is None or now \
+            else f"{number}. {track.title}"
+        sub_text = fmt.joined(lead, fmt.track_line(track, extra))
+        if offline:
+            sub_text = f"{sub_text}  {minimal.ON_PHONE}".strip()
+        if track.explicit:
+            sub_text = fmt.joined("E", sub_text)
+        trailing = meta if meta is not None else fmt.duration(
+            track.duration_s)
+        return minimal.list_row(
+            title_text, sub_text, on_play, on_menu,
+            now=now, meta=trailing,
+            spoken=f"{track.title}, {track.artist_line}".strip(", "))
     row = Gtk.Button()
     row.add_css_class("xx-mu-row")
     if last:
@@ -533,6 +588,11 @@ def track_row(ui, track: Track, on_play, on_menu=None, *,
 def item_row(ui, item: Item, on_open, on_menu=None, *, last: bool = False,
              line_text: str | None = None) -> Gtk.Button:
     """An album, artist or playlist row (artists get a round avatar)."""
+    if minimal.active():
+        sub = line_text if line_text is not None else fmt.item_line(item)
+        return minimal.list_row(
+            minimal.title_artist(item.title, opens=True), sub, on_open,
+            on_menu, spoken=f"{item.title}, {sub}".strip(", "))
     row = Gtk.Button()
     row.add_css_class("xx-mu-row")
     if last:
@@ -597,6 +657,11 @@ def tile(ui, item: Item, on_open, on_menu=None, px: int = TILE_PX,
 def section(text: str, action: str = "", callback=None,
             first: bool = False) -> Gtk.Box:
     """A caps section label with an optional trailing text action."""
+    if minimal.active():
+        head = minimal.section(text, action, callback)
+        if first:
+            head.add_css_class("first")
+        return head
     head = hbox(0)
     head.add_css_class("xx-mu-section")
     head.add_css_class("xx-mu-section-head")
@@ -627,7 +692,18 @@ def carousel(children: list[Gtk.Widget], spacing: int = 12
 
 
 def chips(items: list, scroll: bool = True) -> Gtk.Widget:
-    """A row of caps chips. ``items``: (label, selected, callback)."""
+    """A row of caps chips. ``items``: (label, selected, callback).
+    Minimal Mode: a scrolling row of words, the selected one Strong."""
+    if minimal.active():
+        row = hbox(0)
+        for text, selected, callback in items:
+            row.append(minimal.word_button(
+                text.lower(), callback, minimal.toggled(selected)))
+        scroll = hscroll(row)
+        row.set_margin_start(12)
+        row.set_margin_end(12)
+        scroll.add_css_class("xx-mm-words")
+        return scroll
     bar = widgets.chip_bar(items)
     bar.add_css_class("xx-mu-chips")
     bar.add_css_class("xx-mu-hscroll")
@@ -647,6 +723,12 @@ def chips(items: list, scroll: bool = True) -> Gtk.Widget:
 
 def flow_chips(items: list, per_line: int = 3) -> Gtk.FlowBox:
     """Wrapping chips (recent searches, sleep minutes)."""
+    if minimal.active():
+        words = minimal.flow([minimal.word_button(
+            text, callback, minimal.toggled(selected) if selected
+            else minimal.Tone.PLAIN, chars=24)
+            for text, selected, callback in items], spacing=0)
+        return words
     flow = Gtk.FlowBox()
     flow.set_selection_mode(Gtk.SelectionMode.NONE)
     flow.set_column_spacing(8)
@@ -672,7 +754,13 @@ def flow_chips(items: list, per_line: int = 3) -> Gtk.FlowBox:
 
 
 def grid_chips(items: list, per_line: int = 4) -> Gtk.Grid:
-    """Equal-width chips in a fixed grid (sleep minutes)."""
+    """Equal-width chips in a fixed grid (sleep minutes). Minimal Mode:
+    brackets, the selected one Strong."""
+    if minimal.active():
+        brackets = minimal.flow([minimal.bracket_button(
+            text.lower(), callback, minimal.toggled(selected))
+            for text, selected, callback in items], spacing=8)
+        return brackets
     grid = Gtk.Grid()
     grid.set_column_spacing(8)
     grid.set_row_spacing(8)
@@ -711,11 +799,19 @@ def sheet(title: str, subtitle: str = "") -> tuple:
     if subtitle:
         texts.append(label(subtitle, "xx-secondary", chars=24))
     head.append(texts)
-    head.append(icon_button("window-close-symbolic", "Close",
-                            dialog.close))
+    head.append(_close(dialog))
     box.append(head)
     dialog.set_child(box)
     return dialog, box
+
+
+def _close(dialog) -> Gtk.Widget:
+    """A sheet's close target: the word in Minimal Mode, else the icon."""
+    if minimal.active():
+        word = minimal.word_button("close", dialog.close, spoken="Close")
+        word.add_css_class("xx-mm-flush-end")
+        return word
+    return icon_button("window-close-symbolic", "Close", dialog.close)
 
 
 def present(dialog, parent: Gtk.Widget):
@@ -725,6 +821,8 @@ def present(dialog, parent: Gtk.Widget):
 
 
 def menu_row(icon: str, text: str, callback) -> Gtk.Button:
+    if minimal.active():
+        return minimal.text_row(minimal.sentence_word(text), callback)
     button = Gtk.Button()
     button.add_css_class("xx-mu-menu")
     row = hbox(16)
@@ -738,7 +836,8 @@ def menu_row(icon: str, text: str, callback) -> Gtk.Button:
 def menu_sheet(ui, title: str, subtitle: str, art_widget: Gtk.Widget,
                entries: list) -> tuple:
     """A long-press menu: the thing's art and name, then 48 px rows.
-    ``entries``: (icon, text, callback) or None for a hairline."""
+    ``entries``: (icon, text, callback) or None for a hairline. Minimal
+    Mode: no art and no icons, the entries as words."""
     gi.require_version("Adw", "1")
     from gi.repository import Adw
 
@@ -750,8 +849,9 @@ def menu_sheet(ui, title: str, subtitle: str, art_widget: Gtk.Widget,
     box.add_css_class("xx-mu-sheet")
     head = hbox(14)
     head.set_margin_bottom(10)
-    art_widget.set_valign(Gtk.Align.CENTER)
-    head.append(art_widget)
+    if not minimal.active():
+        art_widget.set_valign(Gtk.Align.CENTER)
+        head.append(art_widget)
     texts = vbox(2)
     texts.set_hexpand(True)
     texts.set_valign(Gtk.Align.CENTER)
@@ -759,8 +859,7 @@ def menu_sheet(ui, title: str, subtitle: str, art_widget: Gtk.Widget,
     if subtitle:
         texts.append(label(subtitle, "xx-secondary", chars=24))
     head.append(texts)
-    head.append(icon_button("window-close-symbolic", "Close",
-                            dialog.close))
+    head.append(_close(dialog))
     box.append(head)
     rule = Gtk.Separator.new(Gtk.Orientation.HORIZONTAL)
     rule.set_margin_bottom(4)
@@ -804,16 +903,32 @@ def confirm(parent: Gtk.Widget, heading: str, body: str, responses: list,
         dialog.close()
         on_response(response_id)
 
+    if minimal.active():
+        row.set_homogeneous(False)
     for response_id, text, kind in responses:
-        maker = {"primary": widgets.primary_button,
-                 "danger": widgets.danger_button}.get(
-                     kind, widgets.outline_button)
-        button = maker(text, lambda r=response_id: _answer(r))
+        button = minimal.button(text, lambda r=response_id: _answer(r),
+                                kind)
         fit(button, 14)
         row.append(button)
     box.append(row)
     dialog.connect("closed", lambda _d: _answer(responses[0][0]))
     return present(dialog, parent)
+
+
+def empty_state(text: str, action: str = "", callback=None) -> Gtk.Widget:
+    """The one-sentence empty state; in Minimal Mode, a Quiet line and
+    a bracketed action."""
+    if not minimal.active():
+        return widgets.empty_state(text, action or None, callback)
+    box = vbox(4)
+    box.append(minimal.text(text, minimal.Tone.QUIET, 15, wrap=True,
+                            chars=28))
+    if action:
+        act = minimal.bracket_button(action.lower(), callback,
+                                     minimal.Tone.STRONG)
+        act.set_halign(Gtk.Align.START)
+        box.append(act)
+    return box
 
 
 def toast(ui, text: str, action_label: str = "",

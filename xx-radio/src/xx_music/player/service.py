@@ -363,8 +363,17 @@ class PlayerService:
         return {tid for tid, at in self._heard.items()
                 if now - at < P.HEARD_EXCLUDE_S}
 
+    def minimal_mode(self) -> bool:
+        """The window's Minimal Mode (``config.json``): no art at all,
+        the system's media controls included."""
+        try:
+            raw = json.loads(self.paths.config_path().read_text("utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(raw, dict) and bool(raw.get("minimal_mode"))
+
     def art_url_for(self, track: Track | None) -> str:
-        if track is None:
+        if track is None or self.minimal_mode():
             return ""
         if track.art_url.startswith("file://"):
             return track.art_url

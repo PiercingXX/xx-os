@@ -5,7 +5,7 @@ long-press) offers Play next, Move up, Move down and Remove.
 
 from __future__ import annotations
 
-from xx_music.ui import common, menus
+from xx_music.ui import common, menus, minimal
 
 
 class QueueView:
@@ -18,6 +18,7 @@ class QueueView:
         self._key = None
         ui.player.connect_queue(self.update)
         ui.player.connect(self._maybe)
+        minimal.listen(self.update)
 
     def _maybe(self) -> None:
         key = (self.ui.player.queue_version, self.ui.player.index,

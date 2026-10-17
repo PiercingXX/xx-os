@@ -4,7 +4,9 @@
 the size needed, serves the disk cache when present, and otherwise
 fetches on its own small pool. Identical requests in flight share one
 fetch. ``deliver(texture)`` runs on the main loop; nothing arrives for
-an empty url (the screens keep their initials tile).
+an empty url (the screens keep their initials tile). While ``enabled``
+is off (Minimal Mode) every request is refused: no art is fetched, not
+even from the disk cache.
 """
 
 from __future__ import annotations
@@ -48,6 +50,9 @@ class ArtLoader:
         self._waiting: dict[str, list[Callable]] = {}
         self._memory: dict[str, object] = {}
         self.fetches = 0
+        #: Off in Minimal Mode: requests are refused and counted.
+        self.enabled = True
+        self.refused = 0
 
     def _path(self, key: str) -> Path | None:
         if self._dir is None:
@@ -58,6 +63,10 @@ class ArtLoader:
     def request(self, url: str, px: int,
                 deliver: Callable[[object], None]) -> None:
         if not url:
+            return
+        if not self.enabled:
+            with self._lock:
+                self.refused += 1
             return
         if url.startswith("file://"):
             sized = url

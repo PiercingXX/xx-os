@@ -2,17 +2,29 @@
 
 Small and isolated: Now Playing and the mini player call in here, and
 everything else stays untouched for the parallel lanes.
+
+Minimal Mode: the button is the word ``cast`` (Strong while casting),
+the playing-on line is plain text with ``[ bring back ]``, the volume is
+``[ - ] vol 40% [ + ]``, and the sheet's rows are words.
 """
 
 from __future__ import annotations
 
 from gi.repository import Gtk
 
-from xx_music.ui import common
+from xx_music.ui import common, minimal
+
+#: Minimal Mode's volume step for ``[ - ]`` / ``[ + ]``.
+VOLUME_STEP = 0.1
 
 
 def cast_button(ui, px: int = 20) -> Gtk.Button:
-    """An icon button that opens the device sheet."""
+    """An icon button that opens the device sheet (the word ``cast`` in
+    Minimal Mode)."""
+    if minimal.active():
+        return minimal.word_button("cast", lambda: open_cast_sheet(ui),
+                                   minimal.Tone.QUIET,
+                                   spoken="Play on another speaker")
     button = common.icon_button("audio-speakers-symbolic",
                                 "Play on another speaker",
                                 lambda: open_cast_sheet(ui), px)
@@ -20,8 +32,30 @@ def cast_button(ui, px: int = 20) -> Gtk.Button:
     return button
 
 
+def set_casting(button: Gtk.Button, on: bool) -> None:
+    """Light the cast button while casting (Strong word, or inverted)."""
+    if button.has_css_class("xx-mm-btn"):
+        minimal.set_tone(button, minimal.toggled(on))
+    elif on:
+        button.add_css_class("on")
+    else:
+        button.remove_css_class("on")
+
+
 def playing_line(ui) -> Gtk.Box:
     """The "Playing on <device>" row with Bring back to phone."""
+    if minimal.active():
+        box = common.hbox(8)
+        text = minimal.text("", minimal.Tone.PLAIN, 13, chars=24)
+        text.set_hexpand(True)
+        box.append(text)
+        back = minimal.bracket_button("bring back", ui.player.stop_casting,
+                                      minimal.Tone.STRONG, size=13,
+                                      spoken="Bring back to phone")
+        box.append(back)
+        box.text = text
+        box.back = back
+        return box
     box = common.hbox(8)
     box.add_css_class("xx-mu-cast-line")
     text = common.label("", "xx-secondary", chars=24)
@@ -42,13 +76,61 @@ def sync_line(box: Gtk.Box, cast: dict) -> None:
     name = str(cast.get("connectedName") or "")
     box.set_visible(bool(cast.get("connectedId")))
     if cast.get("connectedId"):
-        box.text.set_text(f"Playing on {name or 'speaker'}")
+        words = f"Playing on {name or 'speaker'}"
+        if box.back.has_css_class("xx-mm-btn"):
+            words = minimal.sentence_word(words)
+        box.text.set_text(words)
     else:
         box.text.set_text("")
 
 
+def volume_text(level) -> str:
+    """``vol 40%`` (Minimal Mode's speaker volume)."""
+    try:
+        pct = round(min(max(float(level), 0.0), 1.0) * 100)
+    except (TypeError, ValueError):
+        pct = 100
+    return f"vol {pct}%"
+
+
+def _minimal_volume_row(ui) -> Gtk.Box:
+    """``[ - ] vol 40% [ + ]``, only visible while casting."""
+    box = common.hbox(8)
+    box.set_halign(Gtk.Align.CENTER)
+    state = {"level": 1.0}
+
+    def nudge(step: float) -> None:
+        state["level"] = min(max(state["level"] + step, 0.0), 1.0)
+        readout.set_text(volume_text(state["level"]))
+        ui.player.set_volume(state["level"])
+
+    box.append(minimal.bracket_button("-", lambda: nudge(-VOLUME_STEP),
+                                      minimal.Tone.QUIET,
+                                      spoken="Volume down"))
+    readout = minimal.text(volume_text(1.0), minimal.Tone.QUIET, 13, chars=9,
+                           xalign=0.5)
+    readout.add_css_class("xx-mu-num")
+    box.append(readout)
+    box.append(minimal.bracket_button("+", lambda: nudge(VOLUME_STEP),
+                                      minimal.Tone.QUIET,
+                                      spoken="Volume up"))
+
+    def _sync(cast: dict) -> None:
+        try:
+            state["level"] = float(cast.get("volume", 1.0))
+        except (TypeError, ValueError):
+            pass
+        readout.set_text(volume_text(state["level"]))
+        box.set_visible(bool(cast.get("connectedId")))
+
+    box.sync = _sync
+    return box
+
+
 def volume_row(ui) -> Gtk.Box:
     """A small speaker-volume slider, only visible while casting."""
+    if minimal.active():
+        return _minimal_volume_row(ui)
     box = common.hbox(10)
     box.add_css_class("xx-mu-cast-vol")
     glyph = common.label("VOL", "xx-mu-label", chars=4)
@@ -86,8 +168,6 @@ def volume_row(ui) -> Gtk.Box:
 
 def open_cast_sheet(ui):
     """This phone + discovered devices + Searching… + errors."""
-    from xx_ui import widgets
-
     player = ui.player
     dialog, box = common.sheet("Play on", "Choose a speaker")
     status = common.vbox(4)
@@ -113,7 +193,7 @@ def open_cast_sheet(ui):
             name = str(cast.get("connectedName") or "speaker")
             rows.append(common.label(f"Playing on {name}",
                                      "xx-mu-strong", chars=24))
-            back = widgets.outline_button(
+            back = minimal.outline(
                 "Bring back to phone", player.stop_casting)
             common.fit(back, 18)
             rows.append(back)
@@ -136,7 +216,7 @@ def open_cast_sheet(ui):
             rows.append(common.muted("Searching…"))
         elif not devices:
             rows.append(common.muted("No speakers found on this Wi-Fi."))
-        again = widgets.outline_button(
+        again = minimal.outline(
             "Search again",
             lambda: (player.refresh_cast(), common.later(600, refresh)))
         common.fit(again, 14)

@@ -4,6 +4,9 @@ A 64 px row on ``surface``: 48 px art, title, artist (or the player's
 problem sentence), play/pause and next, and a 2 px progress line along
 the bottom edge. Tapping anywhere else opens Now Playing. Only the
 progress line moves per tick.
+
+Minimal Mode: no art and no fill, a 1 px progress hairline on top, one
+line ``Title — Artist`` and ``[ pause ]`` / ``[ play ]``.
 """
 
 from __future__ import annotations
@@ -11,17 +14,68 @@ from __future__ import annotations
 from gi.repository import GLib, Gtk
 
 from xx_music.ui import cast as cast_ui
-from xx_music.ui import common
+from xx_music.ui import common, minimal
 from xx_ui import widgets
 
 
 class MiniPlayer:
     def __init__(self, ui, open_playing) -> None:
         self.ui = ui
+        self.open_playing = open_playing
         self._art_for = None
         self._tick = 0
-        player = ui.player
         self.widget = common.vbox(0)
+        self._build()
+        ui.player.connect(self.update)
+        self.widget.connect("map", lambda _w: self._arm())
+        self.widget.connect("unmap", lambda _w: self._disarm())
+        minimal.listen(self._rebuild)
+        self.update()
+
+    def _rebuild(self) -> None:
+        common.clear(self.widget)
+        self._art_for = None
+        self._build()
+        self.update()
+
+    def _build(self) -> None:
+        if minimal.active():
+            self._build_minimal()
+        else:
+            self._build_regular()
+
+    def _build_minimal(self) -> None:
+        player = self.ui.player
+        self.minimal = True
+        self.widget.remove_css_class("xx-mu-mini")
+        self.widget.add_css_class("xx-mm-mini")
+        self.bar = minimal.hairline(0.0)
+        self.bar.update_property([Gtk.AccessibleProperty.LABEL],
+                                 ["Song progress"])
+        self.widget.append(self.bar)
+        row = common.hbox(4)
+        row.set_margin_start(12)
+        row.set_margin_end(10)
+        opener = Gtk.Button()
+        opener.add_css_class("xx-mm-row")
+        opener.set_hexpand(True)
+        self.line = minimal.text("", minimal.Tone.PLAIN, 14, chars=24)
+        opener.set_child(self.line)
+        opener.connect("clicked", lambda _b: self.open_playing())
+        self.opener = opener
+        row.append(opener)
+        self.play = minimal.bracket_button("play", player.play_pause,
+                                           minimal.Tone.STRONG, size=14)
+        row.append(self.play)
+        self.cast = cast_ui.cast_button(self.ui)
+        row.append(self.cast)
+        self.widget.append(row)
+
+    def _build_regular(self) -> None:
+        player = self.ui.player
+        open_playing = self.open_playing
+        self.minimal = False
+        self.widget.remove_css_class("xx-mm-mini")
         self.widget.add_css_class("xx-mu-mini")
         row = common.hbox(4)
         row.set_margin_start(12)
@@ -64,10 +118,6 @@ class MiniPlayer:
         self.widget.append(row)
         self.bar = common.line(0.0, "Song progress")
         self.widget.append(self.bar)
-        player.connect(self.update)
-        self.widget.connect("map", lambda _w: self._arm())
-        self.widget.connect("unmap", lambda _w: self._disarm())
-        self.update()
 
     def _arm(self) -> None:
         if not self._tick:
@@ -95,6 +145,9 @@ class MiniPlayer:
         self.widget.set_visible(track is not None)
         if track is None:
             return
+        if self.minimal:
+            self._update_minimal(track)
+            return
         if self._art_for != track.id:
             self._art_for = track.id
             common.clear(self.art_slot)
@@ -114,5 +167,23 @@ class MiniPlayer:
             "media-playback-pause-symbolic" if playing
             else "media-playback-start-symbolic")
         common.name(self.play, "Pause" if playing else "Play")
+        common.name(self.opener,
+                    f"Now playing: {track.title}. Open the player.")
+
+    def _update_minimal(self, track) -> None:
+        player = self.ui.player
+        problem = player.problem
+        if problem:
+            self.line.set_text(problem.get("text", ""))
+            minimal.set_tone(self.line, minimal.Tone.QUIET)
+        else:
+            self.line.set_text(minimal.title_artist(track.title,
+                                                    track.artist_line))
+            minimal.set_tone(self.line, minimal.Tone.PLAIN)
+        self._progress()
+        word = "pause" if player.playing else "play"
+        self.play.get_child().set_text(minimal.bracket(word))
+        cast_ui.set_casting(self.cast, player.casting)
+        common.name(self.play, word.capitalize())
         common.name(self.opener,
                     f"Now playing: {track.title}. Open the player.")

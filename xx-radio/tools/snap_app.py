@@ -8,6 +8,8 @@ SNAP_SCENARIO picks the state:
   firstrun     a fresh HOME with the first-run screen
 SNAP_ENGINE (ready | token-missing | failed | updating) and
 SNAP_FIRSTRUN (running | failed | done) script the engine stand-ins.
+SNAP_MINIMAL=1 saves Minimal Mode in the HOME's settings first, so the
+window starts in it exactly as it would after a restart.
 The player is a LocalBackend over the seeded queue (no service), the
 engine the demo FakeEngine; nothing touches libsecret or a socket.
 """
@@ -47,6 +49,10 @@ def make_window(app):
     paths = SPEC.paths()
     queue = Queue.load(paths.queue_path()) if SCENARIO in (
         "seeded", "signed-out") else Queue()
+    if os.environ.get("SNAP_MINIMAL") == "1":
+        from xx_music.ui.store import UiStore
+
+        UiStore(paths, engine.key).set_pref("minimal_mode", True)
     paused = os.environ.get("SNAP_PAUSED") == "1"
     backend = LocalBackend(queue, PAUSED if paused else PLAYING, 83.0,
                            radio=_radio)
