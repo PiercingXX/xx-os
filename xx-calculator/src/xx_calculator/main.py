@@ -777,6 +777,10 @@ class CalcWindow:
 
     def _render_expression(self) -> None:
         text = self.builder.expression
+        if self._bright and self._bright_text:
+            # The one result line after "=" carries the grouped number
+            # (the preview slot under it is blank now).
+            text = format_number(self._bright_text)
         try:
             self.expr_label.set_text(text)
             for limit, cls in _EXPR_SIZE_CLASSES:
@@ -821,9 +825,13 @@ class CalcWindow:
         except Exception:
             pass
 
-    def _show_committed(self, text: str) -> None:
+    def _show_committed(self) -> None:
+        # After "=" the expression line already reads the result (the
+        # builder is seeded with it), so the slot under it goes blank
+        # instead of repeating the number. It stays visible, empty, so
+        # it keeps its line height and the big result does not jump.
         try:
-            self.result_label.set_text(text)
+            self.result_label.set_text("")
             self.result_label.remove_css_class("xx-calc-preview")
             self.result_label.remove_css_class("xx-calc-error")
             self.result_label.remove_css_class("xx-calc-error-light")
@@ -859,7 +867,7 @@ class CalcWindow:
             self.store.add(self.builder.expression, outcome.text,
                            int(time.time() * 1000))
             self._bright_text = outcome.text
-            self._show_committed(format_number(outcome.text))
+            self._show_committed()
             self._bright = True
             self._error_shown = False
             self.builder.seed(outcome.text)

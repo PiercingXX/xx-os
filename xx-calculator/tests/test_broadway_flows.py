@@ -36,13 +36,22 @@ def _flows():
         w.builder.clear(); w.builder.raw("2+3×4"); w._on_edited()
         check("preview", w.result_label.get_text() == "14", w.result_label.get_text())
         w._on_equals()
-        check("equals-bright", w._bright and w.result_label.get_text() == "14")
+        check("equals-bright", w._bright and w.expr_label.get_text() == "14", w.expr_label.get_text())
+        shown = [t for t in (w.expr_label.get_text(), w.result_label.get_text()) if t == "14"]
+        check("equals-shows-result-once", len(shown) == 1, repr(w.result_label.get_text()))
+        check("equals-slot-keeps-height", w.result_label.get_visible())
         check("history-stored", len(w.store.list()) == 1 and w.store.list()[0].result == "14")
         w._digit("5")()
         check("digit-after-equals-clears", w.builder.expression == "5" and not w._bright)
         w._on_equals()
         w._on_plus()
         check("operator-continues", w.builder.expression == "5+")
+        w.builder.clear(); w.builder.raw("1234×1000"); w._on_edited(); w._on_equals()
+        check("equals-result-grouped", w.expr_label.get_text() == "1,234,000"
+              and w.result_label.get_text() == "", w.expr_label.get_text())
+        w._on_plus()
+        check("grouped-result-continues", w.builder.expression == "1234000+",
+              w.builder.expression)
         w.builder.clear(); w.builder.raw("5÷0"); w._on_edited(); w._on_equals()
         check("divide-error", w.result_label.get_text() == "Can't divide by 0", w.result_label.get_text())
         check("error-keeps-expr", w.builder.expression == "5÷0")
