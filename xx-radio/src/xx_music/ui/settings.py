@@ -148,6 +148,15 @@ class SettingsPage:
             entries = []
         box.append(nav_row("Killed artists", blocked_summary(len(entries)),
                            self.open_blocked))
+        try:
+            disliked = list(self.ui.store.disliked())
+        except Exception:  # noqa: BLE001 - settings never fail
+            disliked = []
+        count = len(disliked)
+        box.append(nav_row("Thumbs down",
+                           "None" if not count else
+                           "1 song" if count == 1 else f"{count} songs",
+                           self.open_disliked))
         box.append(switch_row(
             "Remove their downloads too",
             "Delete downloads by killed artists instead of hiding them",
@@ -157,6 +166,9 @@ class SettingsPage:
 
     def open_blocked(self) -> None:
         self.ui.shell.push(BlockedView(self.ui).widget, "Killed artists")
+
+    def open_disliked(self) -> None:
+        self.ui.shell.push(DislikedView(self.ui).widget, "Thumbs down")
 
     def _set(self, key: str, value) -> None:
         self.prefs[key] = value
@@ -365,6 +377,61 @@ class BlockedView:
     def unblock(self, entry) -> None:
         self.ui.unblock_artist(entry.id, entry.name,
                                lambda _e: self.paint())
+
+
+class DislikedView:
+    def __init__(self, ui) -> None:
+        self.ui = ui
+        self.body = common.vbox(0)
+        self.body.add_css_class("xx-page-body")
+        self.body.set_margin_bottom(24)
+        root = common.vbox(0)
+        root.add_css_class("xx-mu")
+        root.append(common.header(ui.shell.pop, "Thumbs down",
+                                  "Hidden from suggestions"))
+        root.append(common.scroller(self.body))
+        self.widget = root
+        self.paint()
+
+    def paint(self) -> None:
+        common.clear(self.body)
+        try:
+            tracks = list(self.ui.store.disliked())
+        except Exception:  # noqa: BLE001 - settings never fail
+            tracks = []
+        if not tracks:
+            self.body.append(common.muted(
+                "Nothing thumbed down. Songs you thumb down hide "
+                "from suggestions but stay findable by search."))
+            return
+        for index, track in enumerate(tracks):
+            row = common.hbox(12)
+            texts = common.vbox(2)
+            texts.set_hexpand(True)
+            texts.set_valign(Gtk.Align.CENTER)
+            texts.append(common.label(track.title, "xx-title", chars=20))
+            if track.artist_line:
+                texts.append(common.label(track.artist_line, "xx-secondary",
+                                          chars=24))
+            row.append(texts)
+            clear = widgets.outline_button(
+                "Remove", lambda t=track: self.clear(t))
+            common.fit(clear, 10)
+            clear.set_valign(Gtk.Align.CENTER)
+            common.name(clear, f"Remove thumbs down for {track.title}")
+            row.append(clear)
+            wrap = common.vbox(0)
+            wrap.add_css_class("xx-mu-row")
+            if index == len(tracks) - 1:
+                wrap.add_css_class("last")
+            wrap.append(row)
+            self.body.append(wrap)
+
+    def clear(self, track) -> None:
+        from xx_music.engine import Rating
+
+        self.ui.rate(track, Rating.DISLIKE,
+                     lambda _v: self.paint())
 
 
 class LogView:

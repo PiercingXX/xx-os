@@ -93,38 +93,122 @@ def is_track_blocked(track: Track,
     return blocked is not None and blocked.is_track_blocked(track)
 
 
+def _disliked_track_ids(ratings) -> set[str]:
+    if not ratings:
+        return set()
+    try:
+        from xx_music.thumbs import disliked_ids as _thumbs_disliked
+    except Exception:  # noqa: BLE001 - thumbs never breaks the filter
+        return set()
+    try:
+        return set(_thumbs_disliked(ratings))
+    except Exception:  # noqa: BLE001 - a bad ratings map filters nothing
+        return set()
+
+
+def _is_disliked_track(track: Track, disliked: set[str]) -> bool:
+    return bool(disliked) and track.id in disliked
+
+
+def _is_disliked_item(item: Item, disliked: set[str]) -> bool:
+    if not disliked:
+        return False
+    if item.kind == ItemKind.TRACK and item.track is not None:
+        return item.track.id in disliked
+    return False
+
+
+def _order_with_thumbs_tracks(tracks: list[Track], ratings) -> list[Track]:
+    if not ratings:
+        return tracks
+    try:
+        from xx_music.thumbs import order_tracks as _order
+    except Exception:  # noqa: BLE001 - ordering never breaks the filter
+        return tracks
+    try:
+        return _order(tracks, ratings)
+    except Exception:  # noqa: BLE001 - a bad ratings map keeps order
+        return tracks
+
+
+def _order_with_thumbs_items(items: list[Item], ratings) -> list[Item]:
+    if not ratings:
+        return items
+    try:
+        from xx_music.thumbs import order_items as _order_items
+    except Exception:  # noqa: BLE001 - ordering never breaks the filter
+        return items
+    try:
+        return _order_items(items, ratings)
+    except Exception:  # noqa: BLE001 - a bad ratings map keeps order
+        return items
+
+
+def _order_with_thumbs_shelves(shelves: list[Shelf],
+                               ratings) -> list[Shelf]:
+    if not ratings:
+        return shelves
+    try:
+        from xx_music.thumbs import order_shelves as _order_shelves
+    except Exception:  # noqa: BLE001 - ordering never breaks the filter
+        return shelves
+    try:
+        return _order_shelves(shelves, ratings)
+    except Exception:  # noqa: BLE001 - a bad ratings map keeps order
+        return shelves
+
+
 def filter_tracks(tracks: list[Track] | tuple[Track, ...],
-                  blocked: BlockedArtists | None) -> list[Track]:
-    if blocked is None:
+                  blocked: BlockedArtists | None,
+                  ratings=None) -> list[Track]:
+    disliked = _disliked_track_ids(ratings)
+    if blocked is None and not disliked:
         return list(tracks)
-    return [t for t in tracks if not blocked.is_track_blocked(t)]
+    kept = [t for t in tracks
+            if not _is_disliked_track(t, disliked)
+            and (blocked is None or not blocked.is_track_blocked(t))]
+    return _order_with_thumbs_tracks(kept, ratings)
 
 
 def filter_items(items: list[Item] | tuple[Item, ...],
-                 blocked: BlockedArtists | None) -> list[Item]:
-    if blocked is None:
-        return list(items)
-    return [i for i in items if not _blocked_item(i, blocked)]
+                 blocked: BlockedArtists | None,
+                 ratings=None) -> list[Item]:
+    disliked = _disliked_track_ids(ratings)
+    if blocked is None and not disliked:
+        return _order_with_thumbs_items(list(items), ratings)
+    kept = [i for i in items
+            if not _is_disliked_item(i, disliked)
+            and not _blocked_item(i, blocked)]
+    return _order_with_thumbs_items(kept, ratings)
 
 
 def filter_shelves(shelves: list[Shelf],
-                   blocked: BlockedArtists | None) -> list[Shelf]:
-    if blocked is None:
+                   blocked: BlockedArtists | None,
+                   ratings=None) -> list[Shelf]:
+    if blocked is None and not ratings:
         return list(shelves)
     out: list[Shelf] = []
     for shelf in shelves:
-        items = tuple(filter_items(list(shelf.items), blocked))
+        items = tuple(filter_items(list(shelf.items), blocked, ratings))
         if items:
             out.append(Shelf(shelf.title, items))
-    return out
+    return _order_with_thumbs_shelves(out, ratings)
 
 
 def filter_search(results: SearchResults,
-                  blocked: BlockedArtists | None) -> SearchResults:
-    if blocked is None:
+                  blocked: BlockedArtists | None,
+                  ratings=None, top_only: bool = False) -> SearchResults:
+    if blocked is None and not ratings:
         return results
+    disliked = _disliked_track_ids(ratings)
+    if top_only and disliked:
+        tracks = tuple(t for t in filter_tracks(
+            list(results.tracks), blocked, None)
+            if t.id not in disliked)
+    else:
+        tracks = tuple(filter_tracks(list(results.tracks), blocked))
     return SearchResults(
-        tracks=tuple(filter_tracks(list(results.tracks), blocked)),
+        tracks=tracks,
         albums=tuple(filter_items(list(results.albums), blocked)),
         artists=tuple(filter_items(list(results.artists), blocked)),
         playlists=tuple(filter_items(list(results.playlists), blocked)))
@@ -177,18 +261,21 @@ def fetch_radio_filtered(engine, seed_track_id: str,
                          queued_ids: set[str] | None = None,
                          heard_ids: set[str] | None = None,
                          disliked_ids: set[str] | None = None,
+                         ratings=None,
                          ) -> list[Track]:
     """Radio results with blocked artists skipped, refilled when short.
 
     Asks for more while the filtered batch is short and the engine
     still answers, so a queue never runs dry because of blocks.
+    Disliked songs never return; liked artists rank first, down-heavy
+    artists rank last (deterministic, stable for engine ties).
     """
     want = max(int(limit), 0)
     if want <= 0:
         return []
     queued = set(queued_ids or ())
     heard = set(heard_ids or ())
-    disliked = set(disliked_ids or ())
+    disliked = set(disliked_ids or ()) | _disliked_track_ids(ratings)
     seen = set(exclude or ())
     collected: list[Track] = []
     collected_ids: set[str] = set()
@@ -211,23 +298,37 @@ def fetch_radio_filtered(engine, seed_track_id: str,
                 break
         if len(collected) >= want or len(batch) < need:
             break
-    return collected[:want]
+    return _order_with_thumbs_tracks(collected[:want], ratings)
 
 
 class FilteredEngine(Engine):
-    """One filter layer over any engine: blocked artists never surface.
+    """One filter layer over any engine: blocked artists never surface,
+    disliked songs never return to suggestions, and thumbs reorder.
 
     Wraps catalog reads (home, search, artist/album/playlist pages,
     charts, library, mood shelves, radio) so screens need no changes.
+    ``ratings_fn`` returns the local ratings map
+    (``dict[track_id, (Rating, Track)]``) or None; it runs on the
+    worker, so disk reads are fine.
     """
 
     def __init__(self, inner: Engine,
-                 blocked: BlockedArtists | None) -> None:
+                 blocked: BlockedArtists | None,
+                 ratings_fn=None) -> None:
         self._inner = inner
         self._blocked = blocked
+        self._ratings_fn = ratings_fn
         self.key = inner.key
         self.name = inner.name
         self.capabilities = inner.capabilities
+
+    def _ratings(self):
+        if self._ratings_fn is None:
+            return None
+        try:
+            return self._ratings_fn()
+        except Exception:  # noqa: BLE001 - ratings never break catalog
+            return None
 
     def supports(self, capability: str) -> bool:
         return self._inner.supports(capability)
@@ -242,28 +343,64 @@ class FilteredEngine(Engine):
         return self._inner.sign_out()
 
     def search(self, query: str, kind=None, limit: int = 20):
-        return filter_search(
-            self._inner.search(query, kind, limit), self._blocked)
+        ratings = self._ratings()
+        raw = self._inner.search(query, kind, limit)
+        if ratings:
+            return filter_search(raw, self._blocked, ratings,
+                                 top_only=kind is None)
+        return filter_search(raw, self._blocked)
 
     def suggestions(self, query: str) -> list[str]:
-        return self._inner.suggestions(query)
+        found = self._inner.suggestions(query)
+        ratings = self._ratings()
+        if not ratings:
+            return found
+        try:
+            from xx_music.thumbs import filter_suggestion_strings
+        except Exception:  # noqa: BLE001 - suggestions never break
+            return found
+        try:
+            return filter_suggestion_strings(list(found), ratings)
+        except Exception:  # noqa: BLE001 - a bad map keeps suggestions
+            return found
 
     def home(self) -> list[Shelf]:
-        return filter_shelves(self._inner.home(), self._blocked)
+        return filter_shelves(self._inner.home(), self._blocked,
+                              self._ratings())
 
     def moods(self):
         return self._inner.moods()
 
     def mood_shelves(self, mood_id: str) -> list[Shelf]:
         return filter_shelves(
-            self._inner.mood_shelves(mood_id), self._blocked)
+            self._inner.mood_shelves(mood_id), self._blocked,
+            self._ratings())
 
     def charts(self, region: str = "") -> list[Shelf]:
         return filter_shelves(
-            self._inner.charts(region), self._blocked)
+            self._inner.charts(region), self._blocked, self._ratings())
 
     def library(self, section) -> list[Item]:
-        return filter_items(self._inner.library(section), self._blocked)
+        from xx_music.engine import LibrarySection as _Section
+
+        ratings = self._ratings()
+        if section == _Section.LIKED and ratings:
+            try:
+                from xx_music.thumbs import liked_tracks, merge_liked
+            except Exception:  # noqa: BLE001 - merge never breaks
+                return filter_items(
+                    self._inner.library(section), self._blocked)
+            try:
+                remote = self._inner.library(section)
+            except Exception:
+                raise
+            try:
+                merged = merge_liked(liked_tracks(ratings), list(remote))
+            except Exception:  # noqa: BLE001 - a bad map keeps remote
+                return filter_items(remote, self._blocked)
+            return filter_items(merged, self._blocked)
+        return filter_items(self._inner.library(section), self._blocked,
+                            ratings)
 
     def album(self, album_id: str) -> AlbumPage:
         return filter_album_page(
@@ -280,7 +417,8 @@ class FilteredEngine(Engine):
     def radio(self, seed_track_id: str, limit: int = 25,
               exclude=frozenset()) -> list[Track]:
         return fetch_radio_filtered(
-            self._inner, seed_track_id, self._blocked, limit, set(exclude))
+            self._inner, seed_track_id, self._blocked, limit, set(exclude),
+            ratings=self._ratings())
 
     def lyrics(self, track_id: str):
         return self._inner.lyrics(track_id)
@@ -303,19 +441,24 @@ def artist_key(track: Track) -> str:
 
 def build_offline_mix(tracks: list[Track], seed: Track | None,
                       heard_ids: set[str], limit: int = OFFLINE_MIX_LIMIT,
-                      blocked: BlockedArtists | None = None
+                      blocked: BlockedArtists | None = None,
+                      ratings=None
                       ) -> list[Track]:
     """Up to ``limit`` on-phone songs: no heard songs, the seed artist at
     most 1 in 4, no artist again within 3 places."""
     seed_key = artist_key(seed) if seed is not None else ""
+    disliked = _disliked_track_ids(ratings)
+    ordered = _order_with_thumbs_tracks(list(tracks), ratings)
     max_seed = max(1, limit // 4)
     picked: list[Track] = []
     seed_count = 0
     recent: list[str] = []
-    for track in tracks:
+    for track in ordered:
         if len(picked) >= limit:
             break
         if track.id in heard_ids:
+            continue
+        if track.id in disliked:
             continue
         if blocked is not None and blocked.is_track_blocked(track):
             continue

@@ -446,11 +446,14 @@ class LocalBackend:
     def rate(self, track_id, rating) -> None:
         self.calls.append("rate")
         if rating == Rating.DISLIKE.value:
-            for index, track in enumerate(self.queue.tracks):
-                if track.id == track_id and index != self.queue.index:
-                    self.queue.remove(index)
-                    self._push(True)
-                    return
+            dropped = self.queue.remove_id(track_id)
+            if dropped:
+                if not self.queue.tracks:
+                    self.status = STOPPED
+                elif self.status == STOPPED and self.queue.tracks:
+                    self.status = PAUSED
+                self.position_s = 0.0
+                self._push(True)
 
     def download(self, items) -> None:
         self.calls.append("download")

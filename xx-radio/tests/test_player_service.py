@@ -385,6 +385,7 @@ def test_start_radio_extends_from_seed(tmp_path):
 
 def test_dislike_leaves_queue_and_radio(tmp_path):
     service, _, conn, engine, _, _ = _attached(SPEC, tmp_path)
+    engine.signed_in = True
     service.play(_tracks("tr-001", "tr-002", "tr-003"))
     service.rate("tr-002", "dislike")
     assert engine.ratings.get("tr-002") == e.Rating.DISLIKE

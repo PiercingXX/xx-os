@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from gi.repository import GLib, GObject, Gtk, Pango
 
-from xx_music.engine import LYRICS, RATE, Lyrics, Rating
+from xx_music.engine import LYRICS, Lyrics, Rating
 from xx_music.tasks import Generation
 from xx_music.ui import cast as cast_ui
 from xx_music.ui import common, css, fmt, menus
@@ -550,9 +550,8 @@ class NowPlaying:
 
     def _footer(self, track) -> None:
         player = self.ui.player
-        can_rate = self.ui.supports(RATE)
-        self.like.set_visible(can_rate)
-        self.dislike.set_visible(can_rate)
+        self.like.set_visible(True)
+        self.dislike.set_visible(True)
         rating = player.rating(track.id)
         for button, value, word in ((self.like, Rating.LIKE, "Like"),
                                     (self.dislike, Rating.DISLIKE,

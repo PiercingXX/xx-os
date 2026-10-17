@@ -19,6 +19,7 @@ from xx_music.ui.context import ACTIVE, DONE, FAILED, QUEUED, DownloadRow
 from xx_ui import widgets
 
 PHONE = "phone"
+DISLIKED = "disliked"
 SIGNED_IN_SECTIONS = (
     (LibrarySection.PLAYLISTS.value, "Playlists"),
     (LibrarySection.SONGS.value, "Songs"),
@@ -26,17 +27,21 @@ SIGNED_IN_SECTIONS = (
     (LibrarySection.ARTISTS.value, "Artists"),
     (LibrarySection.LIKED.value, "Liked"),
     (LibrarySection.HISTORY.value, "History"),
+    (DISLIKED, "Thumbs down"),
     (PHONE, "On this phone"),
 )
 SIGNED_OUT_SECTIONS = (
     (PHONE, "On this phone"),
     (LibrarySection.LIKED.value, "Liked"),
     (LibrarySection.HISTORY.value, "History"),
+    (DISLIKED, "Thumbs down"),
 )
 EMPTY = {
     PHONE: "Nothing on this phone yet. Download songs, albums and "
            "playlists from their menus.",
     LibrarySection.LIKED.value: "Songs you like show here.",
+    DISLIKED: "Songs you thumb down hide from suggestions. "
+              "Remove one here to see it again.",
     LibrarySection.HISTORY.value: "Songs you play show here.",
     LibrarySection.PLAYLISTS.value: "No playlists in your library yet.",
     LibrarySection.SONGS.value: "No songs in your library yet.",
@@ -91,8 +96,7 @@ class LibraryPage:
         if self.section == PHONE:
             self.ui.refresh_downloads()
         elif self.section in (LibrarySection.LIKED.value,
-                              LibrarySection.HISTORY.value) \
-                and not self.ui.signed_in:
+                              LibrarySection.HISTORY.value, DISLIKED):
             self.show_section(self.section)
 
     def reload(self) -> None:
@@ -106,6 +110,11 @@ class LibraryPage:
         self.generation.next()
         if key == PHONE:
             self._paint_phone()
+            return
+        if key == DISLIKED:
+            self.ui.io(self.ui.store.disliked,
+                       lambda tracks: self._paint_tracks(
+                           tracks, key), lambda _e: None)
             return
         if not self.ui.signed_in or not self.ui.supports(LIBRARY):
             store = self.ui.store
@@ -175,7 +184,7 @@ class LibraryPage:
         if not tracks:
             self._gutter(common.muted(EMPTY[key]))
             return
-        title = dict(SIGNED_IN_SECTIONS)[key]
+        title = dict([*SIGNED_IN_SECTIONS, *SIGNED_OUT_SECTIONS])[key]
         origin = {"type": "library", "title": title}
         head = common.section(fmt.songs(len(tracks)), "Play",
                               lambda: self.ui.player.play(tracks, 0, origin),

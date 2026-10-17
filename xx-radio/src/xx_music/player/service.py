@@ -29,8 +29,8 @@ from xx_music.cast.queueing import local_index_after_cast  # noqa: E402
 from xx_music.cast.server import CastHttpServer  # noqa: E402
 from xx_music.cast.server import lan_address as cast_lan_address  # noqa: E402
 from xx_music.cast.server import sniff_type as cast_sniff_type  # noqa: E402
-from xx_music.engine import (ERROR_TEXT, RADIO, Engine, EngineError,  # noqa: E402
-                             ErrorKind, Rating, Track)
+from xx_music.engine import (ERROR_TEXT, RADIO, RATE, Engine,  # noqa: E402
+                             EngineError, ErrorKind, Rating, Track)
 from xx_music.paths import AppPaths  # noqa: E402
 from xx_music.player import actions as actions_mod  # noqa: E402
 from xx_music.player import api as api_mod  # noqa: E402
@@ -606,13 +606,49 @@ class PlayerService:
         self._executor.submit(self._radio_work, self._generation,
                               str(origin["seed"]))
 
+    def _thumb_ratings(self):
+        try:
+            import json as _json
+
+            raw = (self.paths.state_dir() / "ratings.json").read_text(
+                encoding="utf-8")
+            data = _json.loads(raw)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        found = {}
+        for track_id, entry in data.items():
+            try:
+                if not isinstance(entry, dict):
+                    continue
+                found[str(track_id)] = (
+                    Rating(str(entry.get("rating") or "none")),
+                    Track.from_dict(entry["track"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return found or None
+
+    def _can_rate_remote(self) -> bool:
+        try:
+            if RATE not in getattr(self.engine, "capabilities", ()):
+                return False
+        except Exception:  # noqa: BLE001 - unknown engine: try remote
+            pass
+        try:
+            status = self.engine.status()
+        except Exception:  # noqa: BLE001 - status never blocks a rating
+            return bool(getattr(self.engine, "signed_in", False))
+        return bool(getattr(status, "signed_in", False))
+
     def _radio_work(self, generation: int, seed: str) -> None:
         try:
             self.blocked.refresh()
             kept = P.fetch_radio_filtered(
                 self.engine, seed, self.blocked, RADIO_LIMIT,
                 self.queue.ids() | self.heard_ids(),
-                self.queue.ids(), self.heard_ids(), self._disliked)
+                self.queue.ids(), self.heard_ids(), self._disliked,
+                ratings=self._thumb_ratings())
         except Exception as exc:  # noqa: BLE001 - radio stays finite then
             log.debug("radio extension failed: %s", exc)
             self._idle_add(self._radio_done, generation, [])
@@ -628,22 +664,26 @@ class PlayerService:
         self._announce(structural=True)
 
     def _rate_work(self, track_id: str, rating: Rating) -> None:
-        try:
-            self.engine.rate(track_id, rating)
-        except Exception as exc:  # noqa: BLE001 - rating failure is a note
-            log.debug("rate %s failed: %s", track_id, exc)
-            return
+        if self._can_rate_remote():
+            try:
+                self.engine.rate(track_id, rating)
+            except Exception as exc:  # noqa: BLE001 - remote is best effort
+                log.debug("rate %s failed: %s", track_id, exc)
         self._idle_add(self._rate_done, track_id, rating)
 
     def _rate_done(self, track_id: str, rating: Rating) -> None:
         if rating == Rating.DISLIKE:
             self._disliked.add(track_id)
+            current = self.queue.current()
+            was_current = current is not None and current.id == track_id
             dropped = self.queue.remove_id(track_id)
             if dropped:
                 self._save_if_needed(force=True)
                 self._announce(structural=True)
                 if self.queue.current() is None:
                     self._stop_playback()
+                elif was_current:
+                    self._play_index(self.queue.index)
         elif rating == Rating.LIKE:
             self._disliked.discard(track_id)
         else:

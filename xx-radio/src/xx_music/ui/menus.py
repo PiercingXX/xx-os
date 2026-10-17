@@ -6,7 +6,7 @@ its entry (never greyed out).
 
 from __future__ import annotations
 
-from xx_music.engine import (RADIO, RATE, STREAM, Item, ItemKind, Rating,
+from xx_music.engine import (RADIO, STREAM, Item, ItemKind, Rating,
                              Track)
 from xx_music.ui import common
 
@@ -59,9 +59,8 @@ def track_menu(ui, track: Track, queue_index: int | None = None):
     if album is not None:
         entries.append(("media-optical-symbolic", "Go to album",
                         lambda: shell.open_album(album.id, album.title)))
-    if ui.supports(STREAM) or ui.supports(RATE):
-        entries.append(None)
     if ui.supports(STREAM):
+        entries.append(None)
         if track.id in ui.downloaded:
             entries.append(("user-trash-symbolic", "Remove download",
                             lambda: (player.remove_download(track.id),
@@ -71,15 +70,15 @@ def track_menu(ui, track: Track, queue_index: int | None = None):
                             lambda: (player.download([download_payload(
                                 "track", track.id, track.title, track)]),
                                 common.toast(ui, "Downloading"))))
-    if ui.supports(RATE):
-        liked = player.rating(track.id) == Rating.LIKE
-        disliked = player.rating(track.id) == Rating.DISLIKE
-        entries.append(("xx-music-thumb-up-symbolic",
-                        "Remove like" if liked else "Like",
-                        lambda: ui.rate(track, Rating.LIKE)))
-        entries.append(("xx-music-thumb-down-symbolic",
-                        "Remove dislike" if disliked else "Dislike",
-                        lambda: ui.rate(track, Rating.DISLIKE)))
+    liked = player.rating(track.id) == Rating.LIKE
+    disliked = player.rating(track.id) == Rating.DISLIKE
+    entries.append(None)
+    entries.append(("xx-music-thumb-up-symbolic",
+                    "Remove thumbs up" if liked else "Thumbs up",
+                    lambda: ui.rate(track, Rating.LIKE)))
+    entries.append(("xx-music-thumb-down-symbolic",
+                    "Remove thumbs down" if disliked else "Thumbs down",
+                    lambda: ui.rate(track, Rating.DISLIKE)))
     from xx_music.ui.kill import request_kill, targets_for_track
 
     kills = targets_for_track(track)

@@ -49,6 +49,10 @@ def _read(path: Path, default):
 
 def _write(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
     os.replace(tmp, path)
@@ -163,7 +167,12 @@ class UiStore:
                 continue
         return found
 
-    def set_rating(self, track: Track, rating: Rating) -> None:
+    def rating_of(self, track_id: str) -> Rating:
+        found = self.ratings().get(str(track_id or ""))
+        return found[0] if found else Rating.NONE
+
+    def set_rating(self, track: Track, rating: Rating,
+                   engine_key: str = "") -> None:
         with self._lock:
             raw = _read(self._state("ratings.json"), {})
             if not isinstance(raw, dict):
@@ -171,15 +180,46 @@ class UiStore:
             if rating == Rating.NONE:
                 raw.pop(track.id, None)
             else:
-                raw[track.id] = {"rating": rating.value,
-                                 "track": track.to_dict(),
-                                 "at": time.time()}
+                raw[track.id] = {
+                    "rating": rating.value,
+                    "track": track.to_dict(),
+                    "artists": [{"id": a.id, "name": a.name}
+                                for a in track.artists or ()],
+                    "engine": str(engine_key or self._key),
+                    "at": time.time(),
+                }
             _write(self._state("ratings.json"), raw)
 
     def liked(self) -> list[Track]:
         rated = self.ratings()
         return [track for rating, track in rated.values()
                 if rating == Rating.LIKE]
+
+    def disliked(self) -> list[Track]:
+        rated = self.ratings()
+        return [track for rating, track in rated.values()
+                if rating == Rating.DISLIKE]
+
+    def disliked_ids(self) -> set[str]:
+        return {tid for tid, (rating, _t) in self.ratings().items()
+                if rating == Rating.DISLIKE}
+
+    # -- thumb kill hints (suggest "Kill <artist>?" once) -----------------------
+    def thumb_suggested(self) -> set[str]:
+        raw = _read(self._state("thumb-kill-suggestions.json"), [])
+        return {str(k) for k in raw} if isinstance(raw, list) else set()
+
+    def note_thumb_suggested(self, key: str) -> set[str]:
+        key = str(key or "")
+        if not key:
+            return self.thumb_suggested()
+        with self._lock:
+            seen = self.thumb_suggested()
+            if key not in seen:
+                seen.add(key)
+                _write(self._state("thumb-kill-suggestions.json"),
+                       sorted(seen))
+            return seen
 
     # -- settings ----------------------------------------------------------------------
     def prefs(self) -> dict[str, Any]:

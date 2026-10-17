@@ -99,7 +99,8 @@ class UiContext:
         self.art = art
         self.store = store or UiStore(self.paths, engine.key)
         self.blocked = BlockedArtists(self.store.blocked_path())
-        self.engine = FilteredEngine(engine, self.blocked)
+        self.engine = FilteredEngine(engine, self.blocked,
+                                     ratings_fn=self._ratings_for_filter)
         self._raw_engine = engine
         self.hooks = hooks or Hooks()
         self.health = HealthMonitor(self.hooks.source_name or engine.name)
@@ -259,9 +260,93 @@ class UiContext:
         elif action_id == "retry" and self.shell is not None:
             self.shell.retry()
 
-    def rate(self, track: Track, rating: Rating) -> None:
-        """Like / Dislike from any screen: through the player service
-        (engine rating when signed in) and into the local list."""
+    def _ratings_for_filter(self):
+        try:
+            return self.store.ratings()
+        except Exception:  # noqa: BLE001 - ratings never break catalog
+            return None
+
+    def rate(self, track: Track, rating: Rating,
+             on_done=None) -> None:
+        """Thumbs up / down from any screen: local first, always.
+
+        The local value is the truth: it persists even signed out,
+        offline, or with an engine that cannot rate. When signed in
+        with a rating-capable engine the player service also forwards
+        it to the engine (best effort).
+        """
         self.player.rate(track.id, rating)
         value = self.player.rating(track.id)
-        self.io(lambda: self.store.set_rating(track, value))
+
+        def work():
+            self.store.set_rating(track, value,
+                                  engine_key=self._raw_engine.key)
+            return value
+
+        def done(stored) -> None:
+            if stored == Rating.LIKE and bool(
+                    (self.prefs or {}).get("keep_liked_offline")):
+                try:
+                    from xx_music.ui.menus import download_payload
+
+                    self.player.download([download_payload(
+                        "track", track.id, track.title, track)])
+                except Exception:  # noqa: BLE001 - keep-liked is best effort
+                    pass
+            self._maybe_suggest_kill(track)
+            if on_done is not None:
+                on_done(stored)
+
+        self.io(work, done, lambda _e: on_done(value)
+                if on_done is not None else None)
+
+    def _maybe_suggest_kill(self, track: Track) -> None:
+        try:
+            from xx_music.thumbs import (kill_candidate, suggestion_key)
+            from xx_music.ui.kill import request_kill
+        except Exception:  # noqa: BLE001 - a hint never breaks a rating
+            return
+        try:
+            ratings = self.store.ratings()
+            already = self.store.thumb_suggested()
+            found = kill_candidate(ratings, self.blocked, already)
+        except Exception:  # noqa: BLE001 - a hint never breaks a rating
+            return
+        if found is None:
+            return
+        aid, name = found
+        try:
+            self.store.note_thumb_suggested(suggestion_key(aid, name))
+        except Exception:  # noqa: BLE001 - suggest once is best effort
+            pass
+        try:
+            request_kill(self, aid, name)
+        except Exception:  # noqa: BLE001 - a hint never breaks a rating
+            pass
+
+    def clear_rating(self, track_id: str, on_done=None) -> None:
+        try:
+            current = self.player.rating(track_id)
+        except Exception:  # noqa: BLE001 - an empty player clears nothing
+            return
+        if current == Rating.NONE:
+            if on_done is not None:
+                on_done(Rating.NONE)
+            return
+        found = self.store.ratings().get(str(track_id or ""))
+        track = found[1] if found else None
+        if track is None:
+            try:
+                queued = list(getattr(self.player, "queue", ()))
+            except Exception:  # noqa: BLE001 - no queue to search
+                queued = []
+            track = next((t for t in queued if t.id == track_id), None)
+        self.player.rate(track_id, current)
+        value = self.player.rating(track_id)
+        if track is None:
+            if on_done is not None:
+                on_done(value)
+            return
+        self.io(lambda: (self.store.set_rating(
+            track, value, engine_key=self._raw_engine.key), value)[1],
+            on_done, lambda _e: None)
