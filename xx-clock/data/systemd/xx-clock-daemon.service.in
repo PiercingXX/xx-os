@@ -1,0 +1,12 @@
+[Unit]
+Description=xx-clock alarm and timer service
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=@bindir@/xx-clock --daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

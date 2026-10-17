@@ -394,7 +394,7 @@ link_squeekboard_layouts() {
 # The XX apps live next to xx-wm in the monorepo. xx-find is deliberately
 # absent: Find My Device is built but must not be installed or run until the
 # owner turns it on. One app failing to build never blocks the shell.
-XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-calculator xx-email xx-vitals xx-share xx-captions xx-auto xx-radio xx-audiobook xx-note xx-weather xx-files xx-auth"
+XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-calculator xx-email xx-vitals xx-share xx-captions xx-auto xx-radio xx-audiobook xx-note xx-weather xx-files xx-auth xx-clock"
 
 install_apps() {
     for app in $XX_APPS; do

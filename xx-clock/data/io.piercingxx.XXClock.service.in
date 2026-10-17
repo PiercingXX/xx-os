@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=io.piercingxx.XXClock
+Exec=@bindir@/xx-clock --gapplication-service

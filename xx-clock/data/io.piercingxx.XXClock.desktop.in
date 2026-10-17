@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=xx-clock
+GenericName=Clock
+Comment=Alarms, timers and clock
+Exec=@bindir@/xx-clock
+Icon=io.piercingxx.XXClock
+DBusActivatable=true
+Terminal=false
+Categories=Utility;Clock;
+StartupNotify=true

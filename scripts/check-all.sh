@@ -4,7 +4,7 @@
 # prefers its own .venv (sherpa-onnx/vosk); real-speech tests skip without it.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-PROJECTS=${*:-"xx-wm common xx-contacts xx-dialer txxt xx-calendar xx-calculator xx-email xx-vitals xx-share xx-captions xx-find xx-auto xx-audiobook xx-radio xx-note xx-weather xx-files xx-auth"}
+PROJECTS=${*:-"xx-wm common xx-contacts xx-dialer txxt xx-calendar xx-calculator xx-email xx-vitals xx-share xx-captions xx-find xx-auto xx-audiobook xx-radio xx-note xx-weather xx-files xx-auth xx-clock"}
 pick_python() {
     for py in "${PYTHON:-}" "$ROOT/.venv/bin/python" "$ROOT/xx-wm/.venv/bin/python"; do
         [ -n "$py" ] && [ -x "$py" ] && { echo "$py"; return; }

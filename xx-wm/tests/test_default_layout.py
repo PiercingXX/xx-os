@@ -26,6 +26,7 @@ _ALL_APPS = {
     'org.gnome.Calendar',
     'org.gnome.Calculator',
     'io.piercingxx.XXAuth',
+    'io.piercingxx.XXClock',
     'org.postmarketos.Megapixels',
     'waydroid.com.synology.projectkailash',
     'io.piercingxx.XXFiles',
@@ -108,7 +109,7 @@ class TestResolver:
         assert comms['folder'][0]['app_id'] is None  # built-in dialer
 
         tools = slots[4]
-        assert [m['label'] for m in tools['folder']] == ['Firefox', 'Calculator', 'Authenticator', 'Camera', 'Photos', 'Files']
+        assert [m['label'] for m in tools['folder']] == ['Firefox', 'Calculator', 'Clock', 'Authenticator', 'Camera', 'Photos', 'Files']
 
     def test_seeded_labels_become_renames(self):
         resolver = _full_resolver()
