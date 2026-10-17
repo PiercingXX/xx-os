@@ -569,10 +569,11 @@ class TestSettingsMenu:
         w = _bare(window)
         card = w._build_gestures_card()
         assert 'xx-set-card' in card.classes
-        assert len(card.children) == 6
+        # Long-press home + the four system swipes; the home side swipes
+        # moved to Home & launcher (Android parity).
+        assert len(card.children) == 5
         assert all('clicked' in row.handlers for row in card.children)
-        assert set(w._gesture_binding_labels) == {'swipe_left_home',
-                                                  'swipe_right_home'}
+        assert set(w._gesture_binding_labels) == {'long_press_home'}
         assert len(w._system_gesture_labels) == 4
 
 

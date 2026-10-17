@@ -38,11 +38,13 @@ shell_datadir = join_paths(get_option('datadir'), shell_subdir)
 # both the flat imports and the asset lookups.
 install_data(
   [
+    'src/action_sheet.py',
     'src/als_brightness.py',
     'src/app_index.py',
     'src/app_item_actions.py',
     'src/app_names.py',
     'src/app_permissions.py',
+    'src/app_size.py',
     'src/app_standby.py',
     'src/app_switcher.py',
     'src/back_gesture.py',

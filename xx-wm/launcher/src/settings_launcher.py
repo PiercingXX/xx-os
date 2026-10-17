@@ -1,6 +1,8 @@
-"""Launcher settings section: the Linux counterpart of the Android
-launcher's preferences screen (home, widgets, weather, clock, drawer,
-gestures, appearance), all backed by config.json with hot reload.
+"""Home & launcher settings: the Linux twin of the Android xx-launcher
+preferences screen (Home Screen, Widgets, App Drawer, Gestures), with
+the same rows, titles, summaries, choices, defaults and order, all
+backed by config.json / gestures.json with hot reload. The row-by-row
+map is docs/launcher-settings-parity.md.
 """
 from __future__ import annotations
 
@@ -9,24 +11,37 @@ import settings_ui as ui
 
 WIDGET_ORDER = ('time', 'date', 'weather', 'battery')
 
+# Android widget names (its keys are clock/date/weather/battery).
 _WIDGET_TITLES = {
-    'time': 'Time',
+    'time': 'Clock',
     'date': 'Date',
     'weather': 'Weather',
     'battery': 'Battery',
 }
 
 _TAP_LABELS = {
-    'default': 'Default',
+    'default': 'Default action',
     'none': 'None',
     'refresh': 'Refresh',
 }
 
-_TEMP_CHOICES = (('fahrenheit', '°F'), ('celsius', '°C'))
-_CLOCK_CHOICES = ((None, 'System'), (False, '12 h'), (True, '24 h'))
-_SORT_CHOICES = (('default', 'Pinned first'), ('az', 'A–Z'),
-                 ('install', 'Install date'))
+# Android list preferences: (value, entry label), in Android's order.
+_SLOT_COUNT_CHOICES = tuple(
+    [(0, 'None')] + [(n, str(n)) for n in range(1, 9)])
 _ALIGN_CHOICES = (('left', 'Left'), ('center', 'Center'), ('right', 'Right'))
+_DATE_TIME_CHOICES = (('off', 'Off'), ('date_only', 'Date only'),
+                      ('date_time', 'Date and time'))
+_TEMP_CHOICES = (('fahrenheit', 'Fahrenheit'), ('celsius', 'Celsius'))
+_SORT_CHOICES = (('default', 'Default (pinned first)'),
+                 ('alphabetical', 'Alphabetical'),
+                 ('alphabetical_no_priority', 'Alphabetical (no priority)'),
+                 ('install_date', 'Install date'),
+                 ('apk_size', 'APK size'))
+_SWIPE_DOWN_CHOICES = (('notifications', 'Expand notifications'),
+                       ('web_search', 'Web search'),
+                       ('disabled', 'Disabled'))
+# Linux only: Android follows the system 12/24 h setting.
+_CLOCK_CHOICES = ((None, 'System'), (False, '12 h'), (True, '24 h'))
 _MODE_CHOICES = (('theme', 'Theme'), ('light', 'Light'), ('dark', 'Dark'),
                  ('system', 'System'))
 _FONT_ORDER = ('system-light', 'monospace', 'space-mono', 'jetbrains-mono',
@@ -40,8 +55,30 @@ _FONT_LABELS = {
     'custom': 'Custom',
 }
 
-_DOUBLE_TAP_TITLE = 'Double-tap home'
-_LONG_PRESS_TITLE = 'Long-press home'
+# Android strings (res/values/strings.xml, res/xml/preferences.xml).
+WIDGETS_SUMMARY = 'Enable, reorder, and set tap actions'
+GESTURES_SUMMARY = 'What every swipe, tap, and long-press does'
+RESET_TITLE = 'Reset home layout'
+RESET_SUMMARY = ('Clear the home screen and folders and seed the suite '
+                 'defaults again')
+# The Android help text (gestures_help_text); the two lines that work
+# differently here say it the Linux way: long-press edits home, and a
+# slot is changed from edit mode.
+GESTURES_HELP = (
+    'Swipe up — open the app drawer\n'
+    'Swipe down — notifications or web search\n'
+    'Swipe left / right — launch the configured apps\n'
+    'Double-tap — lock the screen\n'
+    'Long-press the background — edit the home screen\n'
+    'Tap a slot — launch the app or open its folder\n'
+    'Tap an empty slot — choose an app\n'
+    'In edit mode — change, rename, reorder or clear a slot\n'
+    'Long-press any app row — actions: add to home, hide, rename, '
+    'folders, uninstall\n'
+    'In search, start with ! for a web search')
+
+_SWIPE_APP_TITLES = {'swipe_left_home': 'Swipe Left App',
+                     'swipe_right_home': 'Swipe Right App'}
 
 
 def _config_get(win, key: str, default):
@@ -65,7 +102,7 @@ def _tap_text(win, key: str) -> str:
     try:
         tap = win.config.widgets.get(key, {}).get('tap', 'default')
     except Exception:
-        return 'Default'
+        return _TAP_LABELS['default']
     if isinstance(tap, dict) and tap.get('app'):
         app_id = str(tap['app'])
         try:
@@ -75,28 +112,7 @@ def _tap_text(win, key: str) -> str:
         except Exception:
             pass
         return app_id
-    return _TAP_LABELS.get(tap, 'Default')
-
-
-def _binding_text(win, key: str) -> str:
-    try:
-        action = win.gesture_config.get(key) or 'none'
-    except Exception:
-        return 'Not set'
-    if action == 'none':
-        return 'Not set'
-    if action == 'edit':
-        return 'Edit mode'
-    if action.startswith('launch:'):
-        app_id = action[len('launch:'):]
-        try:
-            for entry in win.app_index.entries:
-                if entry.app_id == app_id:
-                    return win.config.label_for(app_id, entry.name)
-        except Exception:
-            pass
-        return app_id
-    return action.replace('_', ' ').title()
+    return _TAP_LABELS.get(tap, _TAP_LABELS['default'])
 
 
 def location_text(win) -> str:
@@ -367,6 +383,99 @@ def _scale_row(title: str, value_text: str, slider):
     return row
 
 
+def _attr(win, name: str, default):
+    """A ShellConfig property, with ``default`` for bare test doubles."""
+    try:
+        value = getattr(win.config, name)
+    except Exception:
+        return default
+    return default if callable(value) else value
+
+
+def _status(win, message: str) -> None:
+    try:
+        win._show_status(message)
+    except Exception:
+        pass
+
+
+def _close(win) -> None:
+    host = getattr(win, '_sheet_host', None)
+    if host is not None:
+        host.close_all()
+
+
+def _app_names(win) -> dict:
+    """{app_id: display name} for every installed app."""
+    names = {}
+    try:
+        for entry in win.app_index.entries:
+            names[entry.app_id] = win.config.label_for(entry.app_id,
+                                                       entry.name)
+    except Exception:
+        pass
+    return names
+
+
+def _widget_keys(win) -> list:
+    """Widget keys in their home order (enabled or not)."""
+    try:
+        configs = win.config.widgets
+    except Exception:
+        return list(WIDGET_ORDER)
+    return sorted(configs, key=lambda k: configs[k].get('order', 99))
+
+
+def _swipe_app_text(win, key: str) -> str:
+    """Swipe Left/Right App summary: the bound app's name, else empty
+    (Android shows nothing while the swipe opens its default app)."""
+    try:
+        action = win.gesture_config.get(key) or 'none'
+    except Exception:
+        return ''
+    if action == 'none':
+        return ''
+    if action.startswith('launch:'):
+        app_id = action[len('launch:'):]
+        return _app_names(win).get(app_id, app_id)
+    return {'camera': 'Camera', 'dialer': 'Phone'}.get(
+        action, action.replace('_', ' ').title())
+
+
+def confirm_reset_home(win) -> None:
+    """Android "Reset home layout" (Backup & Restore): confirm, then wipe
+    slots, renames and swipe apps and seed the defaults again."""
+    from gi.repository import Adw
+
+    dialog = Adw.AlertDialog(heading=RESET_TITLE, body=RESET_SUMMARY + '?')
+    dialog.add_response('cancel', 'Cancel')
+    dialog.add_response('reset', 'Reset')
+    dialog.set_response_appearance('reset', Adw.ResponseAppearance.DESTRUCTIVE)
+    dialog.set_default_response('cancel')
+    dialog.set_close_response('cancel')
+
+    def _on_response(_dialog, response: str) -> None:
+        win._launcher_dialog = None
+        if response != 'reset':
+            return
+        try:
+            reset_home_layout(win.config, win.gesture_config)
+        except Exception:
+            return
+        try:
+            win._refresh_after_item_action()
+        except Exception:
+            pass
+        _status(win, 'Home layout reset.')
+
+    dialog.connect('response', _on_response)
+    win._launcher_dialog = dialog
+    try:
+        dialog.present(win)
+    except Exception:
+        win._launcher_dialog = None
+
+
 def build_appearance_group(win) -> list:
     """Mode, font and text size: launcher prefs shown on the Display &
     appearance page under the theme swatches."""
@@ -375,54 +484,149 @@ def build_appearance_group(win) -> list:
 
 class LauncherSection(settings_page._Section):
     key = 'launcher'
-    title = 'Home screen'
+    title = 'Home Screen'
 
     def build(self, win) -> list:
-        win._launcher_binding_labels = {}
         win._launcher_updating = False
-        home = ui.group(self.title, [
-            ui.nav_row('Alignment', '',
-                       lambda r: self._pick_choice(
-                           win, r, 'Alignment', _ALIGN_CHOICES,
-                           lambda v: self._set_alignment(win, v))),
-            ui.nav_row('Clock', '',
-                       lambda r: self._pick_choice(
-                           win, r, 'Clock', _CLOCK_CHOICES,
-                           lambda v: self._set_clock(win, v))),
-            ui.nav_row('Reset home layout…', 'Back to the default slots',
-                       lambda _r: self._confirm_reset(win))])
-        win._launcher_home_rows = home[1]
-        widgets_group = ui.group(
-            'Widgets', note='Tap a widget to choose what tapping it on '
-                            'home does.')
-        win._launcher_widgets_box = widgets_group[1]
-        weather = self._build_weather_group(win)
-        drawer = self._build_drawer_group(win)
-        gestures = self._build_gestures_group(win)
+        win._launcher_rows = {}
+        rows = win._launcher_rows
+
+        def nav(key, title, subtitle, handler):
+            row = ui.nav_row(title, subtitle, handler)
+            rows[key] = row
+            return row
+
+        def switch(key, title, subtitle, active, handler):
+            row = ui.switch_row(title, subtitle, bool(active))
+            row.switch.connect('notify::active',
+                               lambda sw, _p: self._on_switch(
+                                   win, handler, sw))
+            rows[key] = row
+            return row
+
+        config = win.config
+        home = ui.group('Home Screen', [
+            # Android asks for the HOME role here; XX-WM is the shell,
+            # so it is always the home screen.
+            ui.row('Default Launcher', 'XX-WM is always the home screen'),
+            nav('slot_count', 'Home Slot Count', '',
+                lambda r: self._pick(win, r, 'Home Slot Count',
+                                     _SLOT_COUNT_CHOICES,
+                                     self._slot_count_value(win),
+                                     lambda v: self._set_slot_count(win, v))),
+            nav('alignment', 'Text Alignment', '',
+                lambda r: self._pick(win, r, 'Text Alignment',
+                                     _ALIGN_CHOICES,
+                                     _attr(win, 'home_alignment', 'center'),
+                                     lambda v: self._set_alignment(win, v))),
+            nav('date_time', 'Date/Time Mode', '',
+                lambda r: self._pick(win, r, 'Date/Time Mode',
+                                     _DATE_TIME_CHOICES,
+                                     _attr(win, 'date_time_mode',
+                                           'date_time'),
+                                     lambda v: self._set_date_time(win, v))),
+            switch('status_bar', 'Show Status Bar', '',
+                   _attr(win, 'status_bar_visible', False),
+                   self._on_status_bar),
+            nav('clock', 'Clock Format', '',
+                lambda r: self._pick(win, r, 'Clock Format', _CLOCK_CHOICES,
+                                     _config_get(win, 'clock_24h', None),
+                                     lambda v: self._set_clock(win, v))),
+        ])
+        widgets = ui.group('Widgets', [
+            nav('widgets', 'Widgets', WIDGETS_SUMMARY,
+                lambda r: self._open_widgets(win, r)),
+            nav('temp_unit', 'Temperature Unit', '',
+                lambda r: self._pick(win, r, 'Temperature Unit',
+                                     _TEMP_CHOICES,
+                                     _config_get(win, 'weather_temp_unit',
+                                                 'fahrenheit'),
+                                     lambda v: self._set_temp_unit(win, v))),
+            switch('auto_location', 'Auto Location', 'For the forecast',
+                   _config_get(win, 'weather_auto_location', True),
+                   self._on_auto_loc),
+            nav('location', 'Manual Location', '',
+                lambda r: self._open_location(win, r)),
+        ])
+        drawer = ui.group('App Drawer', [
+            switch('auto_keyboard', 'Auto-show Keyboard', '',
+                   _attr(win, 'auto_show_keyboard', False),
+                   self._on_auto_keyboard),
+            nav('sort', 'Sort Mode', '',
+                lambda r: self._pick(win, r, 'Sort Mode', _SORT_CHOICES,
+                                     _attr(win, 'drawer_sort', 'default'),
+                                     lambda v: self._set_sort(win, v))),
+            nav('hidden', 'Hidden Apps', '',
+                lambda r: self._open_hidden_apps(win, r)),
+            switch('auto_launch', 'Search Auto-launch',
+                   'Opens a lone match; a leading space stops it',
+                   _attr(win, 'search_auto_launch', False),
+                   self._on_auto_launch),
+        ])
+        gestures = ui.group('Gestures', [
+            nav('help', 'Gestures', GESTURES_SUMMARY,
+                lambda r: self._open_help(win, r)),
+            switch('swipe_left_on', 'Enable Swipe Left', '',
+                   _attr(win, 'swipe_left_enabled', True),
+                   lambda w, on: self._set_bool(
+                       w, 'set_swipe_left_enabled', on)),
+            nav('swipe_left_home', 'Swipe Left App', '',
+                lambda r: self._pick_swipe_app(win, r, 'swipe_left_home')),
+            switch('swipe_right_on', 'Enable Swipe Right', '',
+                   _attr(win, 'swipe_right_enabled', True),
+                   lambda w, on: self._set_bool(
+                       w, 'set_swipe_right_enabled', on)),
+            nav('swipe_right_home', 'Swipe Right App', '',
+                lambda r: self._pick_swipe_app(win, r, 'swipe_right_home')),
+            nav('swipe_down', 'Swipe Down Action', '',
+                lambda r: self._pick(win, r, 'Swipe Down Action',
+                                     _SWIPE_DOWN_CHOICES,
+                                     _attr(win, 'swipe_down_action',
+                                           'notifications'),
+                                     lambda v: self._set_swipe_down(win, v))),
+            switch('double_tap', 'Double Tap to Lock', '',
+                   self._double_tap_on(win), self._on_double_tap),
+            switch('recents', 'Home Button Opens Recents', '',
+                   _config_get(win, 'home_to_recents', False),
+                   self._on_recents),
+        ])
+        _ = config
         self.refresh(win)
-        return home + widgets_group + weather + drawer + gestures
+        return home + widgets + drawer + gestures
 
     def refresh(self, win) -> None:
         self._sync_switches(win)
-        self._render_home(win)
-        self._render_widgets(win)
-        self._render_weather(win)
-        self._render_gesture_rows(win)
+        self._render_values(win)
         self._render_font(win)
-        self._render_sort(win)
         self._render_mode(win)
 
     # -- shared ---------------------------------------------------------
 
+    def _row(self, win, key):
+        return (getattr(win, '_launcher_rows', None) or {}).get(key)
+
+    def _on_switch(self, win, handler, switch) -> None:
+        if getattr(win, '_launcher_updating', False):
+            return
+        handler(win, bool(switch.get_active()))
+
     def _sync_switches(self, win) -> None:
         win._launcher_updating = True
         try:
-            for attr, value in (
-                    ('_launcher_auto_loc', _config_get(win, 'weather_auto_location', True)),
-                    ('_launcher_auto_launch', bool(getattr(
-                        win.config, 'search_auto_launch', False))),
-                    ('_launcher_recents', _config_get(win, 'home_to_recents', False))):
-                switch = getattr(win, attr, None)
+            for key, value in (
+                    ('status_bar', _attr(win, 'status_bar_visible', False)),
+                    ('auto_location', _config_get(
+                        win, 'weather_auto_location', True)),
+                    ('auto_keyboard', _attr(win, 'auto_show_keyboard',
+                                            False)),
+                    ('auto_launch', _attr(win, 'search_auto_launch', False)),
+                    ('swipe_left_on', _attr(win, 'swipe_left_enabled', True)),
+                    ('swipe_right_on', _attr(win, 'swipe_right_enabled',
+                                             True)),
+                    ('double_tap', self._double_tap_on(win)),
+                    ('recents', _config_get(win, 'home_to_recents', False))):
+                row = self._row(win, key)
+                switch = getattr(row, 'switch', None)
                 if switch is not None:
                     try:
                         switch.set_active(bool(value))
@@ -431,218 +635,255 @@ class LauncherSection(settings_page._Section):
         finally:
             win._launcher_updating = False
 
-    def _pick_choice(self, win, anchor, title: str, choices, apply) -> None:
+    def _render_values(self, win) -> None:
+        """Each list row shows its current entry under the title."""
+        values = {
+            'slot_count': _choice_label(
+                _SLOT_COUNT_CHOICES, self._slot_count_value(win), ''),
+            'alignment': _choice_label(
+                _ALIGN_CHOICES, _attr(win, 'home_alignment', 'center'),
+                'Center'),
+            'date_time': _choice_label(
+                _DATE_TIME_CHOICES, _attr(win, 'date_time_mode',
+                                          'date_time'), 'Date and time'),
+            'clock': _choice_label(
+                _CLOCK_CHOICES, _config_get(win, 'clock_24h', None),
+                'System'),
+            'temp_unit': _choice_label(
+                _TEMP_CHOICES, _config_get(win, 'weather_temp_unit',
+                                           'fahrenheit'), 'Fahrenheit'),
+            'location': location_text(win),
+            'sort': _choice_label(
+                _SORT_CHOICES, _attr(win, 'drawer_sort', 'default'),
+                _SORT_CHOICES[0][1]),
+            'swipe_left_home': _swipe_app_text(win, 'swipe_left_home'),
+            'swipe_right_home': _swipe_app_text(win, 'swipe_right_home'),
+            'swipe_down': _choice_label(
+                _SWIPE_DOWN_CHOICES, _attr(win, 'swipe_down_action',
+                                           'notifications'),
+                _SWIPE_DOWN_CHOICES[0][1]),
+        }
+        for key, text in values.items():
+            ui.set_subtitle(self._row(win, key), text)
+
+    def _pick(self, win, anchor, title: str, choices, current, apply) -> None:
+        """An Android list preference: the entries in a sheet, the
+        current one checked."""
         actions = getattr(win, 'item_actions', None)
         if actions is None:
             return
+        checked = next((i for i, (value, _label) in enumerate(choices)
+                        if value == current and type(value) is type(current)),
+                       None)
         actions._show_action_menu(
             anchor, title,
-            [(label, lambda value=value: apply(value))
-             for value, label in choices])
+            [(label, lambda value=value: self._apply(win, apply, value))
+             for value, label in choices],
+            checked=checked)
 
-    def _switch(self, win, attr: str, title: str, subtitle: str, active,
-                handler):
-        row = ui.switch_row(title, subtitle, bool(active))
-        row.switch.connect('notify::active',
-                           lambda sw, _p: handler(win, sw))
-        setattr(win, attr, row.switch)
-        return row
+    def _apply(self, win, apply, value) -> None:
+        apply(value)
+        self._render_values(win)
 
-    # -- Home -----------------------------------------------------------
-
-    def _render_home(self, win) -> None:
-        card = getattr(win, '_launcher_home_rows', None)
-        if card is None:
+    def _set_bool(self, win, setter: str, value: bool) -> None:
+        try:
+            getattr(win.config, setter)(bool(value))
+        except Exception:
             return
-        rows = []
-        child = card.get_first_child()
-        while child is not None:
-            rows.append(child)
-            child = child.get_next_sibling()
-        if len(rows) < 2:
+        try:
+            win._apply_config_change()
+        except Exception:
+            pass
+
+    # -- Home Screen ----------------------------------------------------
+
+    def _slot_count_value(self, win) -> int:
+        try:
+            return int(win.config.effective_slot_count())
+        except Exception:
+            return 4
+
+    def _set_slot_count(self, win, value: int) -> None:
+        try:
+            win.config.set_home_slot_count(int(value))
+        except Exception:
             return
-        ui.set_subtitle(rows[0], _choice_label(
-            _ALIGN_CHOICES, getattr(win.config, 'home_alignment', 'center'),
-            'Center'))
-        ui.set_subtitle(rows[1], _choice_label(
-            _CLOCK_CHOICES, _config_get(win, 'clock_24h', None), 'System'))
+        self._refresh_home(win)
 
     def _set_alignment(self, win, value: str) -> None:
         try:
             win.config.set_home_alignment(value)
         except Exception:
             return
-        self._render_home(win)
         try:
             win._apply_config_change()
         except Exception:
             pass
 
-    def _confirm_reset(self, win) -> None:
-        from gi.repository import Adw
-
-        dialog = Adw.AlertDialog(
-            heading='Reset home layout?',
-            body=('Clears home slots, renames and swipe bindings, '
-                  'then reseeds the default layout.'))
-        dialog.add_response('cancel', 'Cancel')
-        dialog.add_response('reset', 'Reset')
-        dialog.set_response_appearance(
-            'reset', Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response('cancel')
-        dialog.set_close_response('cancel')
-
-        def _on_response(_dialog, response: str) -> None:
-            win._launcher_dialog = None
-            if response != 'reset':
-                return
-            try:
-                reset_home_layout(win.config, win.gesture_config)
-            except Exception:
-                return
-            try:
-                win._refresh_after_item_action()
-            except Exception:
-                pass
-            try:
-                win._show_status('Home layout reset.')
-            except Exception:
-                pass
-
-        dialog.connect('response', _on_response)
-        win._launcher_dialog = dialog
+    def _set_date_time(self, win, value: str) -> None:
         try:
-            dialog.present(win)
+            win.config.set_date_time_mode(value)
         except Exception:
-            win._launcher_dialog = None
-
-    # -- Widgets --------------------------------------------------------
-
-    def _render_widgets(self, win) -> None:
-        """One row per widget: name, its tap action, the on/off switch.
-        A tap on the row picks the tap action; the last row reorders."""
-        box = getattr(win, '_launcher_widgets_box', None)
-        if box is None:
             return
         try:
-            configs = win.config.widgets
-        except Exception:
-            configs = {}
-        ordered = sorted(configs, key=lambda k: configs[k].get('order', 99))
-        rows = []
-        for key in ordered:
-            row = ui.switch_row(
-                _WIDGET_TITLES.get(key, key),
-                'On tap: %s' % _tap_text(win, key),
-                bool(configs[key].get('enabled', True)),
-                on_activate=lambda r, k=key: self._pick_tap(win, r, k))
-            row.switch.connect(
-                'notify::active',
-                lambda sw, _p, k=key: self._on_widget_flipped(win, k, sw))
-            rows.append(row)
-        if len(ordered) > 1:
-            rows.append(ui.nav_row(
-                'Rearrange widgets…', 'Drag to set the order on home',
-                lambda r: self._show_widget_reorder(win, r)))
-        ui.fill(box, rows)
-
-    def _on_widget_flipped(self, win, key: str, switch) -> None:
-        if getattr(win, '_launcher_updating', False):
-            return
-        try:
-            win.config.set_widget_enabled(key, bool(switch.get_active()))
             win._build_widget_block()
         except Exception:
             pass
 
-    def _show_widget_reorder(self, win, anchor) -> None:
-        """The shared drag-to-reorder sheet (reorder_sheet.py)."""
+    def _on_status_bar(self, win, on: bool) -> None:
+        self._set_bool(win, 'set_status_bar_visible', on)
+
+    def _set_clock(self, win, value) -> None:
+        _config_set(win, 'clock_24h', value)
+        try:
+            win._refresh_clock()
+        except Exception:
+            pass
+
+    def _refresh_home(self, win) -> None:
+        try:
+            win._home_launcher.refresh()
+            win._populate_apps(win.apps_search.get_text())
+        except Exception:
+            pass
+
+    # -- Widgets ----------------------------------------------------------
+
+    def _open_widgets(self, win, anchor) -> None:
+        """The Android Widgets dialog: per widget a switch, ↑ ↓ to move
+        it, and its tap action; the sheet re-renders in place."""
         actions = getattr(win, 'item_actions', None)
         if actions is None:
             return
-        try:
-            configs = win.config.widgets
-        except Exception:
-            return
-        ordered = sorted(configs, key=lambda k: configs[k].get('order', 99))
-        actions.show_reorder(
-            anchor, 'Rearrange widgets',
-            [(key, _WIDGET_TITLES.get(key, key)) for key in ordered],
-            on_order_changed=lambda ids: self._apply_widget_order(win, ids))
+        from gi.repository import Gtk
+        from xx_ui import widgets
 
-    def _apply_widget_order(self, win, ids: list) -> None:
+        box = widgets.dialog_box('Widgets')
+        box.set_spacing(4)
+        rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.append(rows)
+
+        def rebuild() -> None:
+            child = rows.get_first_child()
+            while child is not None:
+                nxt = child.get_next_sibling()
+                rows.remove(child)
+                child = nxt
+            ordered = _widget_keys(win)
+            for index, key in enumerate(ordered):
+                rows.append(self._widget_line(
+                    win, anchor, key, index, len(ordered), rebuild))
+
+        rebuild()
+        box.append(widgets.primary_button(
+            'OK', lambda: _close(win)))
+        actions._show_popover(anchor, box)
+
+    def _widget_line(self, win, anchor, key: str, index: int, total: int,
+                     rebuild):
+        from gi.repository import Gtk
+        from xx_ui import widgets
+
         try:
-            if win.config.set_widget_order(list(ids)):
+            enabled = bool(win.config.widgets.get(key, {}).get(
+                'enabled', True))
+        except Exception:
+            enabled = True
+        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        line.add_css_class('xx-widget-line')
+        switch = widgets.make_switch(enabled)
+        switch.connect('notify::active', lambda sw, _p: self._flip_widget(
+            win, key, sw.get_active(), rebuild))
+        line.append(switch)
+        text = Gtk.Button()
+        text.add_css_class('xx-set-press')
+        column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        column.append(widgets.wrap_label(_WIDGET_TITLES.get(key, key),
+                                         'xx-title'))
+        column.append(widgets.wrap_label('Tap: %s' % _tap_text(win, key)))
+        text.set_child(column)
+        text.set_hexpand(True)
+        text.connect('clicked',
+                     lambda _b: self._pick_tap(win, anchor, key))
+        line.append(text)
+        for glyph, delta in (('↑', -1), ('↓', 1)):
+            move = Gtk.Button(label=glyph)
+            move.add_css_class('home-edit-ctl')
+            move.set_sensitive(0 <= index + delta < total)
+            move.connect('clicked', lambda _b, d=delta: self._move_widget(
+                win, key, d, rebuild))
+            line.append(move)
+        return line
+
+    def _flip_widget(self, win, key: str, on: bool, rebuild) -> None:
+        try:
+            win.config.set_widget_enabled(key, bool(on))
+            win._build_widget_block()
+        except Exception:
+            pass
+
+    def _move_widget(self, win, key: str, delta: int, rebuild) -> None:
+        keys = _widget_keys(win)
+        if key not in keys:
+            return
+        index = keys.index(key)
+        target = index + delta
+        if not 0 <= target < len(keys):
+            return
+        keys[index], keys[target] = keys[target], keys[index]
+        try:
+            if win.config.set_widget_order(keys):
                 win._build_widget_block()
         except Exception:
             pass
-        self._render_widgets(win)
+        rebuild()
 
     def _pick_tap(self, win, anchor, key: str) -> None:
         actions = getattr(win, 'item_actions', None)
         if actions is None:
             return
-        choices = [
-            ('Default', lambda: self._set_tap(win, key, 'default')),
-            ('None', lambda: self._set_tap(win, key, 'none')),
-            ('Refresh', lambda: self._set_tap(win, key, 'refresh')),
-            ('Choose app…', lambda: self._pick_tap_app(win, key)),
-        ]
+        try:
+            current = win.config.widgets.get(key, {}).get('tap', 'default')
+        except Exception:
+            current = 'default'
+        values = ['default', 'none'] + (['refresh'] if key == 'weather'
+                                        else [])
+        choices = [(_TAP_LABELS[value],
+                    lambda value=value: self._set_tap(win, anchor, key, value))
+                   for value in values]
+        choices.append(('Choose App…',
+                        lambda: self._pick_tap_app(win, anchor, key)))
+        checked = values.index(current) if current in values else (
+            len(values) if isinstance(current, dict) else None)
         actions._show_action_menu(
-            anchor, 'On tap: %s' % _WIDGET_TITLES.get(key, key), choices)
+            anchor, 'Tap: %s' % _WIDGET_TITLES.get(key, key), choices,
+            checked=checked)
 
-    def _set_tap(self, win, key: str, tap) -> None:
+    def _set_tap(self, win, anchor, key: str, tap) -> None:
         try:
             win.config.set_widget_tap(key, tap)
         except Exception:
             pass
-        self._render_widgets(win)
+        self._open_widgets(win, anchor)
 
-    def _pick_tap_app(self, win, key: str) -> None:
-        try:
-            win._pick_widget_tap = key
-            win.stack.set_visible_child_name('apps')
-            win._show_status('Tap an app to open on widget tap.')
-        except Exception:
-            pass
+    def _pick_tap_app(self, win, anchor, key: str) -> None:
+        self._pick_app(
+            win, anchor, lambda app_id: self._set_tap(
+                win, anchor, key, {'app': app_id}),
+            clear_label=_TAP_LABELS['default'],
+            on_clear=lambda: self._set_tap(win, anchor, key, 'default'))
 
-    # -- Weather --------------------------------------------------------
-
-    def _build_weather_group(self, win) -> list:
-        win._launcher_unit_row = ui.nav_row(
-            'Temperature unit', '',
-            lambda r: self._pick_choice(
-                win, r, 'Temperature unit', _TEMP_CHOICES,
-                lambda v: self._set_temp_unit(win, v)))
-        auto = self._switch(
-            win, '_launcher_auto_loc', 'Auto location',
-            'For the forecast',
-            _config_get(win, 'weather_auto_location', True),
-            self._on_auto_loc)
-        win._launcher_location_row = ui.nav_row(
-            'Manual location', '', lambda r: self._open_location(win, r))
-        return ui.group('Weather', [win._launcher_unit_row, auto,
-                                    win._launcher_location_row])
-
-    def _render_weather(self, win) -> None:
-        ui.set_subtitle(getattr(win, '_launcher_unit_row', None),
-                        _choice_label(_TEMP_CHOICES, _config_get(
-                            win, 'weather_temp_unit', 'fahrenheit'), '°F'))
-        ui.set_subtitle(getattr(win, '_launcher_location_row', None),
-                        location_text(win))
+    # -- Weather (Linux: the location Android asks the system for) ---------
 
     def _set_temp_unit(self, win, value: str) -> None:
         _config_set(win, 'weather_temp_unit', value)
-        self._render_weather(win)
         try:
             win._refresh_weather()
         except Exception:
             pass
 
-    def _on_auto_loc(self, win, switch) -> None:
-        if getattr(win, '_launcher_updating', False):
-            return
-        _config_set(win, 'weather_auto_location', bool(switch.get_active()))
+    def _on_auto_loc(self, win, on: bool) -> None:
+        _config_set(win, 'weather_auto_location', bool(on))
         try:
             win._refresh_weather(force=True)
         except Exception:
@@ -655,7 +896,7 @@ class LauncherSection(settings_page._Section):
         except Exception:
             lat, lon = None, None
         return ui.form_sheet(
-            win, anchor, 'Manual location',
+            win, anchor, 'Manual Location',
             [('lat', 'Latitude', '' if lat is None else lat, 'number'),
              ('lon', 'Longitude', '' if lon is None else lon, 'number')],
             'Save location', lambda values: self._save_location(win, values),
@@ -678,7 +919,7 @@ class LauncherSection(settings_page._Section):
             return 'Set both latitude and longitude.'
         _config_set(win, 'weather_lat', lat)
         _config_set(win, 'weather_lon', lon)
-        self._render_weather(win)
+        ui.set_subtitle(self._row(win, 'location'), location_text(win))
         try:
             win._refresh_weather(force=True)
             win._show_status('Location saved.' if lat is not None
@@ -687,131 +928,134 @@ class LauncherSection(settings_page._Section):
             pass
         return None
 
-    # -- Clock ----------------------------------------------------------
+    # -- App Drawer -------------------------------------------------------
 
-    def _set_clock(self, win, value) -> None:
-        _config_set(win, 'clock_24h', value)
-        self._render_home(win)
+    def _on_auto_keyboard(self, win, on: bool) -> None:
         try:
-            win._refresh_clock()
+            win.config.set_auto_show_keyboard(bool(on))
         except Exception:
             pass
 
-    # -- Drawer ---------------------------------------------------------
-
-    def _build_drawer_group(self, win) -> list:
-        win._launcher_sort_box = ui.nav_row(
-            'Default sort', '', lambda r: self._pick_sort(win, r))
-        auto = self._switch(
-            win, '_launcher_auto_launch', 'Search auto-launch',
-            'Opens a lone match; a leading space stops it',
-            getattr(win.config, 'search_auto_launch', False),
-            self._on_auto_launch)
-        return ui.group('App drawer', [win._launcher_sort_box, auto])
-
-    def _sort_label(self, win) -> str:
-        current = _config_get(win, 'drawer_sort', 'default')
-        return _choice_label(_SORT_CHOICES, current, _SORT_CHOICES[0][1])
-
-    def _render_sort(self, win) -> None:
-        ui.set_subtitle(getattr(win, '_launcher_sort_box', None),
-                        self._sort_label(win))
-
-    def _pick_sort(self, win, anchor) -> None:
-        self._pick_choice(win, anchor, 'Default sort', _SORT_CHOICES,
-                          lambda value: self._set_sort(win, value))
-
     def _set_sort(self, win, value: str) -> None:
-        _config_set(win, 'drawer_sort', value)
-        self._render_sort(win)
+        try:
+            win.config.set_drawer_sort(value)
+        except Exception:
+            _config_set(win, 'drawer_sort', value)
+        try:
+            from drawer_page import drawer_sort_label
+            win._sort_btn.set_label(drawer_sort_label(value))
+        except Exception:
+            pass
         try:
             win._populate_apps(win.apps_search.get_text())
         except Exception:
             pass
 
-    def _on_auto_launch(self, win, switch) -> None:
-        if getattr(win, '_launcher_updating', False):
-            return
+    def _on_auto_launch(self, win, on: bool) -> None:
         try:
-            win.config.set_search_auto_launch(bool(switch.get_active()))
+            win.config.set_search_auto_launch(bool(on))
         except Exception:
             pass
 
-    # -- Gestures -------------------------------------------------------
-
-    def _build_gestures_group(self, win) -> list:
-        rows = []
-        for key, title in (('double_tap_home', _DOUBLE_TAP_TITLE),
-                           ('long_press_home', _LONG_PRESS_TITLE)):
-            row = ui.nav_row(
-                title, _binding_text(win, key),
-                lambda r, k=key, t=title: self._pick_home_gesture(
-                    win, k, t, r))
-            win._launcher_binding_labels[key] = row.subtitle_label
-            rows.append(row)
-        rows.append(self._switch(
-            win, '_launcher_recents', 'Home opens recents',
-            'When already on home',
-            _config_get(win, 'home_to_recents', False), self._on_recents))
-        return ui.group('Gestures on home', rows)
-
-    def _render_gesture_rows(self, win) -> None:
-        for key, label in (getattr(win, '_launcher_binding_labels', None)
-                           or {}).items():
-            try:
-                label.set_text(_binding_text(win, key))
-            except Exception:
-                pass
-
-    def _pick_home_gesture(self, win, key: str, title: str,
-                           anchor=None) -> None:
+    def _open_hidden_apps(self, win, anchor) -> None:
+        """Android Hidden Apps: the hidden apps by name; a tap shows one
+        in the drawer again."""
+        try:
+            hidden = sorted(win.config.hidden_apps or ())
+        except Exception:
+            hidden = []
+        if not hidden:
+            _status(win, 'No hidden apps')
+            return
+        names = _app_names(win)
+        labels = sorted(((names.get(app_id, app_id), app_id)
+                         for app_id in hidden), key=lambda p: p[0].casefold())
         actions = getattr(win, 'item_actions', None)
         if actions is None:
             return
-        from gesture_config import VALID_ACTIONS
-        if key == 'long_press_home':
-            choices = [
-                ('Edit mode', lambda: self._set_home_gesture(win, key, 'edit')),
-                ('Settings', lambda: self._set_home_gesture(win, key, 'settings')),
-                ('None', lambda: self._set_home_gesture(win, key, 'none')),
-            ]
-        else:
-            choices = [
-                (action.replace('_', ' ').title(),
-                 lambda action=action: self._set_home_gesture(win, key, action))
-                for action in sorted(VALID_ACTIONS)]
-        choices.append(('Choose app…',
-                        lambda: self._pick_home_gesture_app(win, key, title)))
-        choices.append(('Default',
-                        lambda: self._reset_home_gesture(win, key)))
-        actions._show_action_menu(anchor, title, choices)
+        actions._show_action_menu(
+            anchor, 'Hidden Apps',
+            [(label, lambda app_id=app_id: self._unhide(win, app_id))
+             for label, app_id in labels])
 
-    def _set_home_gesture(self, win, key: str, action: str) -> None:
+    def _unhide(self, win, app_id: str) -> None:
+        try:
+            hidden = [h for h in win.config.hidden_apps if h != app_id]
+            win.config.set_hidden_apps(hidden)
+        except Exception:
+            return
+        _status(win, 'Shown')
+        try:
+            win._populate_apps(win.apps_search.get_text())
+        except Exception:
+            pass
+
+    # -- Gestures ---------------------------------------------------------
+
+    def _open_help(self, win, anchor) -> None:
+        ui.info_sheet(win, anchor, 'Gestures', GESTURES_HELP)
+
+    def _pick_swipe_app(self, win, anchor, key: str) -> None:
+        """Android opens its app picker; "Clear" (when an app is set)
+        returns the swipe to its default app."""
+        try:
+            current = win.gesture_config.get(key) or 'none'
+        except Exception:
+            current = 'none'
+        self._pick_app(
+            win, anchor,
+            lambda app_id: self._set_swipe_app(win, key, 'launch:' + app_id),
+            clear_label='Clear' if current != 'none' else None,
+            on_clear=lambda: self._set_swipe_app(win, key, 'none'))
+
+    def _set_swipe_app(self, win, key: str, action: str) -> None:
         try:
             win.gesture_config.set(key, action)
         except (ValueError, AttributeError):
             return
-        self._render_gesture_rows(win)
-
-    def _reset_home_gesture(self, win, key: str) -> None:
+        self._render_values(win)
         try:
-            win.gesture_config.reset(key)
-        except AttributeError:
-            return
-        self._render_gesture_rows(win)
-
-    def _pick_home_gesture_app(self, win, key: str, title: str) -> None:
-        try:
-            win._pick_gesture_key = key
-            win.stack.set_visible_child_name('apps')
-            win._show_status(f'Tap an app to bind to {title}.')
+            win._refresh_gesture_labels()
         except Exception:
             pass
 
-    def _on_recents(self, win, switch) -> None:
-        if getattr(win, '_launcher_updating', False):
+    def _set_swipe_down(self, win, value: str) -> None:
+        try:
+            win.config.set_swipe_down_action(value)
+        except Exception:
+            pass
+
+    def _double_tap_on(self, win) -> bool:
+        try:
+            return win.gesture_config.get('double_tap_home') == 'lock_screen'
+        except Exception:
+            return False
+
+    def _on_double_tap(self, win, on: bool) -> None:
+        try:
+            win.gesture_config.set('double_tap_home',
+                                   'lock_screen' if on else 'none')
+        except (ValueError, AttributeError):
+            pass
+
+    def _on_recents(self, win, on: bool) -> None:
+        _config_set(win, 'home_to_recents', bool(on))
+
+    # -- the shared app picker (Android AppPickerActivity) ----------------
+
+    def _pick_app(self, win, anchor, on_pick, clear_label=None,
+                  on_clear=None) -> None:
+        actions = getattr(win, 'item_actions', None)
+        if actions is None:
             return
-        _config_set(win, 'home_to_recents', bool(switch.get_active()))
+        names = _app_names(win)
+        choices = []
+        if clear_label and on_clear is not None:
+            choices.append((clear_label, on_clear))
+        for name, app_id in sorted(((n, a) for a, n in names.items()),
+                                   key=lambda p: p[0].casefold()):
+            choices.append((name, lambda app_id=app_id: on_pick(app_id)))
+        actions._show_action_menu(anchor, 'Select App', choices)
 
     # -- Appearance (shown on the Display & appearance page) -------------
 
@@ -840,8 +1084,9 @@ class LauncherSection(settings_page._Section):
                         self._mode_label(win))
 
     def _pick_mode(self, win, anchor) -> None:
-        self._pick_choice(win, anchor, 'Mode', _MODE_CHOICES,
-                          lambda value: self._set_mode(win, value))
+        self._pick(win, anchor, 'Mode', _MODE_CHOICES,
+                   _attr(win, 'appearance_mode', 'theme'),
+                   lambda value: self._set_mode(win, value))
 
     def _set_mode(self, win, value: str) -> None:
         try:
@@ -909,11 +1154,10 @@ class LauncherSection(settings_page._Section):
         if actions is None:
             return
         current = _font_key(win)
-        choices = [
-            (_FONT_LABELS[key] + (' ✓' if key == current else ''),
-             lambda key=key: self._set_font(win, key))
-            for key in _FONT_ORDER]
-        actions._show_action_menu(anchor, 'Font', choices)
+        choices = [(_FONT_LABELS[key], lambda key=key: self._set_font(win, key))
+                   for key in _FONT_ORDER]
+        actions._show_action_menu(anchor, 'Font', choices,
+                                  checked=_FONT_ORDER.index(current))
 
     def _set_font(self, win, key: str) -> None:
         try:

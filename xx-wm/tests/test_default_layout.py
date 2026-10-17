@@ -171,7 +171,9 @@ class TestApplyDefaultLayout:
         assert [s['label'] for s in config.home_slots] == ['Notes', 'Audio', 'Comms', 'Calendar', 'Tools']
         assert config._labels['org.gnome.Calendar'] == 'Calendar'
         assert config.hidden_apps == STOCK_HIDDEN_APPS
-        assert gestures.bindings == {'swipe_left_home': 'launch:skippy-pwa.desktop'}
+        assert gestures.bindings == {
+            'swipe_left_home': 'launch:skippy-pwa.desktop',
+            'swipe_right_home': 'camera'}
         assert config.default_layout_applied is True
 
     def test_flag_set_even_when_nothing_resolves(self):
@@ -205,7 +207,9 @@ class TestApplyDefaultLayout:
             find_by_name=lambda name: None,
         )
         apply_default_layout(config, gestures, resolver=resolver)
-        assert gestures.bindings == {}
+        # Left stays unbound (its default app opens); right is the camera,
+        # as the Android seeder sets it.
+        assert gestures.bindings == {'swipe_right_home': 'camera'}
 
 
 class TestRemapSupersededHome:

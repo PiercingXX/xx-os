@@ -70,7 +70,14 @@ class HomePage:
 
         # --- Bottom 2/3: launcher — vertically centered ---
         def _get_home_slots() -> list[dict]:
-            return win.config.home_slots
+            # Android "Home Slot Count": the first N slots show; the rest
+            # stay stored. Edit mode works on the same visible prefix.
+            visible = getattr(win.config, 'visible_home_slots', None)
+            return visible() if callable(visible) else win.config.home_slots
+
+        def _empty_slots() -> int:
+            empty = getattr(win.config, 'empty_home_slots', None)
+            return empty() if callable(empty) else 0
 
         def _launch_slot(slot: dict) -> None:
             win._launch_slot(slot)
@@ -87,6 +94,8 @@ class HomePage:
             is_paused_fn=win.focus_state.is_paused_app,
             get_alignment_fn=lambda: win.config.home_alignment,
             on_status_fn=win._show_status,
+            get_empty_count_fn=_empty_slots,
+            on_empty_tap=lambda: self._pick_empty_slot(),
         )
 
         launcher_inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -180,6 +189,40 @@ class HomePage:
                 _launch_cmd(cmd)
                 win.drop_to_background()
 
+    def build_status_bar(self):
+        """Android "Show Status Bar": a slim top bar (time left, network
+        and battery right) over the launcher pages. Hidden by default,
+        like Android's launcher hiding the system status bar."""
+        from gi.repository import Gtk, Pango
+
+        win = self._win
+        bar = Gtk.CenterBox()
+        bar.add_css_class('launcher-status-bar')
+        bar.set_hexpand(True)
+        time_label = Gtk.Label(xalign=0)
+        time_label.add_css_class('dim-label')
+        info = Gtk.Label(xalign=1)
+        info.add_css_class('dim-label')
+        info.set_ellipsize(Pango.EllipsizeMode.END)
+        bar.set_start_widget(time_label)
+        bar.set_end_widget(info)
+        win.status_bar_time = time_label
+        win.status_bar_info = info
+        win._status_bar = bar
+        self.apply_status_bar()
+        return bar
+
+    def apply_status_bar(self) -> None:
+        win = self._win
+        bar = getattr(win, '_status_bar', None)
+        if bar is None:
+            return
+        try:
+            bar.set_visible(bool(getattr(win.config, 'status_bar_visible',
+                                         False)))
+        except Exception:
+            pass
+
     def _apply_widget_alignment(self) -> None:
         """Widget lines follow the home alignment pref (centered like the
         slots by default, left-aligned like theme-presets.jpg when set)."""
@@ -210,9 +253,16 @@ class HomePage:
             'weather': win.weather_label,
             'battery': win.status_strip,
         }
+        # Android "Date/Time Mode": Off hides the clock and date, Date
+        # only hides the clock, Date and time shows both.
+        mode = getattr(win.config, 'date_time_mode', 'date_time')
         for key, _conf in win.config.ordered_widgets():
             widget = widget_map.get(key)
             if widget is None:
+                continue
+            if key == 'time' and mode != 'date_time':
+                continue
+            if key == 'date' and mode == 'off':
                 continue
             if key not in win._widget_taps_wired:
                 self._wire_widget_tap(widget, key)
@@ -347,9 +397,15 @@ class HomePage:
 
         win = self._win
         now = datetime.now()
-        win.clock_label.set_text(
-            format_clock(now, resolve_24h(win.config)))
+        use_24h = resolve_24h(win.config)
+        win.clock_label.set_text(format_clock(now, use_24h))
         win.date_label.set_text(now.strftime('%a, %b %d').replace(' 0', ' '))
+        bar_time = getattr(win, 'status_bar_time', None)
+        if bar_time is not None:
+            try:
+                bar_time.set_text(format_clock(now, use_24h))
+            except Exception:
+                pass
 
     def _tick_clock(self) -> bool:
         self._refresh_clock()
@@ -373,6 +429,12 @@ class HomePage:
                 win.status_strip.set_text(line)
             except Exception:
                 pass
+            bar_info = getattr(win, 'status_bar_info', None)
+            if bar_info is not None:
+                try:
+                    bar_info.set_text(line)
+                except Exception:
+                    pass
         status_line_async(_done)
 
     def set_privacy_snapshot(self, snapshot: dict | None) -> None:
@@ -438,16 +500,48 @@ class HomePage:
         elif action == 'rearrange':
             win.item_actions.show_home_reorder(widget)
 
-    def _add_app_slot(self, entry: AppEntry) -> None:
+    def _visible_insert_index(self) -> int | None:
+        """Where a new home slot goes so it shows: the first empty
+        visible slot, else right after the visible ones (the count then
+        grows, like Android's picker filling an empty slot). None when
+        home is full (8 slots, the stored cap)."""
         win = self._win
         slots = win.config.home_slots
         if len(slots) >= 8:
+            return None
+        count = getattr(win.config, 'home_slot_count', None)
+        if not isinstance(count, int) or len(slots) < count:
+            return len(slots)
+        return count if count < 8 else None
+
+    def _grow_slot_count(self, index: int) -> None:
+        """A slot inserted past the visible count makes the count grow."""
+        win = self._win
+        count = getattr(win.config, 'home_slot_count', None)
+        if isinstance(count, int) and index >= count:
+            win.config.set_home_slot_count(index + 1)
+
+    def _pick_empty_slot(self) -> None:
+        """An empty "· · ·" slot goes straight to the app picker."""
+        win = self._win
+        win._pick_slot_mode = True
+        win._pick_slot_target = None
+        win.stack.set_visible_child_name('apps')
+        win._show_status('Tap an app to add it to home.')
+
+    def _add_app_slot(self, entry: AppEntry) -> None:
+        win = self._win
+        slots = win.config.home_slots
+        index = self._visible_insert_index()
+        if index is None:
             win._show_status('Home is full — remove a slot first.')
             return
         display = win.config.label_for(entry.app_id, entry.name)
-        slots.append({'type': 'app', 'label': display, 'app_id': entry.app_id,
-                      'cmd': None, 'folder': None})
+        slots.insert(index, {'type': 'app', 'label': display,
+                             'app_id': entry.app_id, 'cmd': None,
+                             'folder': None})
         win.config.set_home_slots(slots)
+        self._grow_slot_count(index)
         win.stack.set_visible_child_name('home')
         win._home_launcher.refresh()
         win._populate_apps(win.apps_search.get_text())
@@ -462,12 +556,14 @@ class HomePage:
         if error is not None:
             win._show_status(error)
             return
-        if len(slots) >= 8:
+        index = self._visible_insert_index()
+        if index is None:
             win._show_status('Home is full — remove a slot first.')
             return
-        slots.append({'type': 'folder', 'label': name.strip(), 'app_id': None,
-                      'cmd': None, 'folder': []})
+        slots.insert(index, {'type': 'folder', 'label': name.strip(),
+                             'app_id': None, 'cmd': None, 'folder': []})
         win.config.set_home_slots(slots)
+        self._grow_slot_count(index)
         win._home_launcher.refresh()
         win._home_launcher.set_edit_mode(True)
 
@@ -491,6 +587,11 @@ class HomePage:
             return
         removed = slots.pop(idx)
         win.config.set_home_slots(slots)
+        count = getattr(win.config, 'home_slot_count', None)
+        if isinstance(count, int) and idx < count:
+            # Android's removeSlot shifts later slots up and shrinks the
+            # count, so no empty "· · ·" row is left behind.
+            win.config.set_home_slot_count(count - 1)
         win._home_launcher.refresh(preserve_folder=True)
         win._populate_apps(win.apps_search.get_text())
         win._show_status(f'{removed.get("label", "Slot")} removed from home.')

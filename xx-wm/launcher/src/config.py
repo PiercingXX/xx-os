@@ -62,6 +62,16 @@ DEFAULT_CONFIG = {
     'home_to_recents': False,
     'search_auto_launch': False,
     'drawer_sort': 'default',
+    # Android launcher parity (docs/launcher-settings-parity.md). Slot
+    # count None = every slot shows (configs from before the setting).
+    'home_slot_count': None,
+    'date_time_mode': 'date_time',
+    'status_bar_visible': False,
+    'auto_show_keyboard': False,
+    'swipe_left_enabled': True,
+    'swipe_right_enabled': True,
+    # None until migrated from gestures.json swipe_down_top (window init).
+    'swipe_down_action': None,
     'preload_gesture_apps': False,
     'default_layout_applied': False,
     'app_labels': {},
@@ -134,9 +144,22 @@ def same_app_id(first: object, second: object) -> bool:
 _STRING_KEYS = ('apn', 'apn_user', 'apn_pass', 'weather_location',
                 'keyboard_layout')
 
-# Drawer sort modes (docs/config.md): 'default' pins first then A–Z,
-# 'az' is plain A–Z with no pin priority, 'install' is newest first.
-_DRAWER_SORTS = ('default', 'az', 'install')
+# Drawer sort modes, the Android launcher's values (docs/config.md):
+# 'default' = A–Z with pinned apps first in their manual order,
+# 'alphabetical' = A–Z with pinned apps first (A–Z among themselves),
+# 'alphabetical_no_priority' = plain A–Z, 'install_date' = newest first,
+# 'apk_size' = largest installed size first; pinned float on all but
+# alphabetical_no_priority.
+DRAWER_SORTS = ('default', 'alphabetical', 'alphabetical_no_priority',
+                'install_date', 'apk_size')
+# Values written before the Android set: read and migrated on load.
+LEGACY_DRAWER_SORTS = {'az': 'alphabetical_no_priority',
+                       'install': 'install_date'}
+
+# Android launcher list preferences (values as on Android).
+SLOT_COUNT_MAX = 8
+DATE_TIME_MODES = ('off', 'date_only', 'date_time')
+SWIPE_DOWN_ACTIONS = ('notifications', 'web_search', 'disabled')
 
 # Light/dark switch owned by the Launcher settings section (docs/config.md
 # "Appearance"): 'theme' keeps the preset-driven behavior, light/dark force
@@ -222,6 +245,11 @@ class ShellConfig:
             if key in _STRING_KEYS and not isinstance(value, str):
                 continue
             self.data[key] = value
+        legacy_sort = LEGACY_DRAWER_SORTS.get(self.data.get('drawer_sort'))
+        if legacy_sort is not None:
+            # 'az'/'install' predate the Android sort names; the next
+            # save writes the new name.
+            self.data['drawer_sort'] = legacy_sort
 
     def save(self) -> None:
         payload = json.dumps(self.data, indent=2) + '\n'
@@ -840,11 +868,105 @@ class ShellConfig:
     @property
     def drawer_sort(self) -> str:
         val = self.data.get('drawer_sort', DEFAULT_CONFIG['drawer_sort'])
-        return val if val in _DRAWER_SORTS else 'default'
+        val = LEGACY_DRAWER_SORTS.get(val, val)
+        return val if val in DRAWER_SORTS else 'default'
 
     def set_drawer_sort(self, mode: str) -> None:
-        if mode in _DRAWER_SORTS:
+        mode = LEGACY_DRAWER_SORTS.get(mode, mode)
+        if mode in DRAWER_SORTS:
             self.data['drawer_sort'] = mode
+            self.save()
+
+    # -- Android launcher parity prefs --------------------------------------
+
+    @property
+    def home_slot_count(self) -> int | None:
+        """Visible home slots (Android "Home Slot Count", 0–8), or None
+        when never set: then every stored slot shows."""
+        value = self.data.get('home_slot_count')
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return max(0, min(SLOT_COUNT_MAX, value))
+
+    def effective_slot_count(self) -> int:
+        """The count the home screen shows (settings row value)."""
+        count = self.home_slot_count
+        if count is None:
+            return min(SLOT_COUNT_MAX, len(self.home_slots))
+        return count
+
+    def set_home_slot_count(self, count: int) -> None:
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            return
+        self.data['home_slot_count'] = max(0, min(SLOT_COUNT_MAX, count))
+        self.save()
+
+    def visible_home_slots(self) -> list[dict]:
+        """The slots home shows: the first ``home_slot_count`` (slots
+        past the count stay stored, as on Android)."""
+        slots = self.home_slots
+        count = self.home_slot_count
+        return slots if count is None else slots[:count]
+
+    def empty_home_slots(self) -> int:
+        """Placeholder rows ("· · ·") under the filled visible slots."""
+        count = self.home_slot_count
+        if count is None:
+            return 0
+        return max(0, count - len(self.home_slots))
+
+    @property
+    def date_time_mode(self) -> str:
+        value = self.data.get('date_time_mode', 'date_time')
+        return value if value in DATE_TIME_MODES else 'date_time'
+
+    def set_date_time_mode(self, mode: str) -> None:
+        if mode in DATE_TIME_MODES:
+            self.data['date_time_mode'] = mode
+            self.save()
+
+    @property
+    def status_bar_visible(self) -> bool:
+        return self.data.get('status_bar_visible') is True
+
+    def set_status_bar_visible(self, enabled: bool) -> None:
+        self.data['status_bar_visible'] = bool(enabled)
+        self.save()
+
+    @property
+    def auto_show_keyboard(self) -> bool:
+        return self.data.get('auto_show_keyboard') is True
+
+    def set_auto_show_keyboard(self, enabled: bool) -> None:
+        self.data['auto_show_keyboard'] = bool(enabled)
+        self.save()
+
+    @property
+    def swipe_left_enabled(self) -> bool:
+        return self.data.get('swipe_left_enabled', True) is not False
+
+    def set_swipe_left_enabled(self, enabled: bool) -> None:
+        self.data['swipe_left_enabled'] = bool(enabled)
+        self.save()
+
+    @property
+    def swipe_right_enabled(self) -> bool:
+        return self.data.get('swipe_right_enabled', True) is not False
+
+    def set_swipe_right_enabled(self, enabled: bool) -> None:
+        self.data['swipe_right_enabled'] = bool(enabled)
+        self.save()
+
+    @property
+    def swipe_down_action(self) -> str:
+        value = self.data.get('swipe_down_action')
+        return value if value in SWIPE_DOWN_ACTIONS else 'notifications'
+
+    def set_swipe_down_action(self, action: str) -> None:
+        if action in SWIPE_DOWN_ACTIONS:
+            self.data['swipe_down_action'] = action
             self.save()
 
     @property
@@ -1133,3 +1255,26 @@ def install_custom_font(config: 'ShellConfig', path: str,
     config.save()
     return True, family
 
+
+def migrate_launcher_prefs(config, gestures) -> bool:
+    """One-time moves onto the Android launcher prefs; True when saved.
+
+    The home swipe-down used to run the system top-edge slot
+    (gestures.json swipe_down_top); it now has its own Android pref,
+    seeded from that slot: 'none' becomes 'disabled', anything else
+    keeps opening the shade ('notifications')."""
+    data = getattr(config, 'data', None)
+    if not isinstance(data, dict):
+        return False
+    if data.get('swipe_down_action') in SWIPE_DOWN_ACTIONS:
+        return False
+    try:
+        top = gestures.get('swipe_down_top') if gestures is not None else None
+    except Exception:
+        top = None
+    data['swipe_down_action'] = 'disabled' if top == 'none' else 'notifications'
+    try:
+        config.save()
+    except Exception:
+        return False
+    return True

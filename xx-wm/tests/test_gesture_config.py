@@ -35,8 +35,16 @@ class TestGestureConfig:
 
     def test_home_swipe_defaults(self):
         gc = GestureConfig()
-        assert gc.get('swipe_left_home') == 'none'  # Skippy is seeded at first boot
-        assert gc.get('swipe_right_home') == 'camera'
+        # Unset on both sides (Android): left opens the camera, right the
+        # dialer; first boot binds Skippy left and the camera right.
+        assert gc.get('swipe_left_home') == 'none'
+        assert gc.get('swipe_right_home') == 'none'
+        from gesture_config import home_swipe_action
+        assert home_swipe_action(gc, 'swipe_left_home') == 'camera'
+        assert home_swipe_action(gc, 'swipe_right_home') == 'dialer'
+        gc.set('swipe_left_home', 'launch:skippy.desktop')
+        assert home_swipe_action(gc, 'swipe_left_home') == (
+            'launch:skippy.desktop')
 
     def test_pixel_nav_defaults(self):
         gc = GestureConfig()

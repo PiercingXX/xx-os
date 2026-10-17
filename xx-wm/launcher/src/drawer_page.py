@@ -15,12 +15,18 @@ _WEB_SEARCH_URL = 'https://duckduckgo.com/?q='
 # closes the drawer.
 SHEET_GAP_FRACTION = 0.12
 
-_DRAWER_SORT_MODES = ('default', 'az', 'install')
+# The Android launcher's sort modes (config.DRAWER_SORTS), in its order;
+# the drawer's sort toggle cycles them with these short labels.
+_DRAWER_SORT_MODES = ('default', 'alphabetical', 'alphabetical_no_priority',
+                      'install_date', 'apk_size')
 _DRAWER_SORT_LABELS = {
     'default': 'Default',
-    'az': 'A-Z',
-    'install': 'Install date',
+    'alphabetical': 'A-Z',
+    'alphabetical_no_priority': 'A-Z, no pins',
+    'install_date': 'Install date',
+    'apk_size': 'Size',
 }
+_LEGACY_SORTS = {'az': 'alphabetical_no_priority', 'install': 'install_date'}
 
 _SETTINGS_ROW_LABEL = 'launcher settings'
 
@@ -29,7 +35,8 @@ _NEW_APP_SECONDS = 3600.0
 
 
 def next_drawer_sort(mode: str) -> str:
-    """Next sort mode for the toggle button: default → az → install."""
+    """Next sort mode for the toggle button, in the Android order."""
+    mode = _LEGACY_SORTS.get(mode, mode)
     if mode not in _DRAWER_SORT_MODES:
         return 'default'
     return _DRAWER_SORT_MODES[
@@ -38,6 +45,7 @@ def next_drawer_sort(mode: str) -> str:
 
 def drawer_sort_label(mode: str) -> str:
     """Toggle button label for a sort mode."""
+    mode = _LEGACY_SORTS.get(mode, mode)
     return _DRAWER_SORT_LABELS.get(mode, _DRAWER_SORT_LABELS['default'])
 
 
@@ -49,7 +57,31 @@ def drawer_sort_of(win) -> str:
         mode = win.config.drawer_sort
     except Exception:
         pass
+    mode = _LEGACY_SORTS.get(mode, mode)
     return mode if mode in _DRAWER_SORT_MODES else 'default'
+
+
+def sort_browse_list(entries: list, mode: str, pinned: list,
+                     install_time=None, size_of=None) -> list:
+    """The Android drawer sort (AppDrawerActivity.sortApps), pure.
+
+    The base order is A–Z (as the index returns it), newest install
+    first, or largest first; pinned apps then float to the top — in
+    their manual order for 'default', in the base order for the
+    others — except for 'alphabetical_no_priority'."""
+    mode = _LEGACY_SORTS.get(mode, mode)
+    base = list(entries)
+    if mode == 'install_date' and install_time is not None:
+        base = sorted(base, key=install_time, reverse=True)
+    elif mode == 'apk_size' and size_of is not None:
+        base = sorted(base, key=size_of, reverse=True)
+    if mode == 'alphabetical_no_priority':
+        return base
+    order = {app_id: i for i, app_id in enumerate(pinned)}
+    pinned_rows = [e for e in base if e.app_id in order]
+    if mode == 'default':
+        pinned_rows.sort(key=lambda e: order[e.app_id])
+    return pinned_rows + [e for e in base if e.app_id not in order]
 
 
 def settings_row_visible(query: str) -> bool:
@@ -351,7 +383,11 @@ class DrawerPage:
     def _home_slot_app_ids(self) -> set[str]:
         win = self._win
         ids: set[str] = set()
-        for slot in win.config.home_slots:
+        # Apps on slots past the Home Slot Count are not on screen, so
+        # the drawer lists them (Android hides visible slots only).
+        visible = getattr(win.config, 'visible_home_slots', None)
+        slots = visible() if callable(visible) else win.config.home_slots
+        for slot in slots:
             if slot.get('app_id'):
                 ids.add(str(slot['app_id']))
             for member in slot.get('folder') or []:
@@ -379,6 +415,22 @@ class DrawerPage:
             if members:
                 out.append((idx, slot, members))
         return out
+
+    def _size_lookup(self):
+        """Installed-size key for the "APK size" sort. Sizes are looked
+        up off the main loop; the list re-sorts when they arrive."""
+        win = self._win
+        cache = getattr(win, '_app_sizes', None)
+        if cache is None:
+            from app_size import SizeCache
+            cache = win._app_sizes = SizeCache()
+        try:
+            entries = list(win.app_index.entries)
+        except Exception:
+            entries = []
+        cache.ensure(entries, lambda: win._populate_apps(
+            win.apps_search.get_text()))
+        return lambda entry: cache.size(entry.app_id)
 
     @staticmethod
     def _install_time(entry: AppEntry) -> float:
@@ -438,14 +490,11 @@ class DrawerPage:
             home_ids = set(win._home_slot_app_ids()) - pinned_ids
             browse_hidden = set(win.config.hidden_apps) | home_ids
             results = [e for e in results if e.app_id not in browse_hidden]
-            if sort_mode == 'install':
-                results = sorted(results, key=win._install_time, reverse=True)
-            if sort_mode != 'az':
-                # Pinned apps surface first, in their pinned order
-                pinned_order = {app_id: i for i, app_id in enumerate(win.config.pinned)}
-                pinned = sorted((e for e in results if e.app_id in pinned_order),
-                                key=lambda e: pinned_order[e.app_id])
-                results = pinned + [e for e in results if e.app_id not in pinned_order]
+            results = sort_browse_list(
+                results, sort_mode, list(win.config.pinned or ()),
+                install_time=win._install_time,
+                size_of=(self._size_lookup() if sort_mode == 'apk_size'
+                         else None))
 
         win._last_search_results = results if trimmed else []
 

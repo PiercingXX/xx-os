@@ -22,6 +22,7 @@ HEADER_PX = 26
 BODY_PX = 17
 DIALOG_PX = 21
 BAR_TITLE_PX = 18
+INFO_PX = 14
 _WRAP_CHARS = 18
 _SHEET_FIELDS_UNSCROLLED = 3
 _SHEET_MAX_HEIGHT = 340
@@ -81,6 +82,9 @@ def css(theme, scale: float) -> str:
     padding: 0 8px;
 }}
 .xx-settings .xx-set-big {{ font-size: {header}; color: {fg}; }}
+.xx-settings .xx-set-info {{ font-size: {info}; line-height: 1.25; }}
+.xx-settings .xx-menu-check {{ font-size: {body}; color: {fg}; }}
+.xx-settings .xx-widget-line {{ min-height: 56px; }}
 .xx-settings list.reorder-list {{ background-color: transparent; }}
 .xx-settings list.reorder-list > row {{
     background-color: transparent;
@@ -93,7 +97,7 @@ def css(theme, scale: float) -> str:
 .xx-set-chart-bar.today {{ background-color: {fg}; }}
 """.format(title=px(TITLE_PX), sub=px(SUBTITLE_PX), cap=px(CAPTION_PX),
            header=px(HEADER_PX), bar=px(BAR_TITLE_PX),
-           body=px(BODY_PX), dialog=px(DIALOG_PX),
+           body=px(BODY_PX), dialog=px(DIALOG_PX), info=px(INFO_PX),
            fg=theme.foreground, bg=theme.background, surface=theme.surface,
            surface_alt=theme.surface_alt, border=theme.border)
 
@@ -408,3 +412,27 @@ def form_sheet(win, anchor, title: str, fields, commit_label: str,
         if hasattr(popover, 'connect'):
             popover.connect('closed', lambda _p: _keyboard(win, False))
     return box, entries
+
+
+def info_sheet(win, anchor, title: str, text: str):
+    """A read-only sheet: title, wrapped text and one OK (Android's
+    AlertDialog with a message and an OK button)."""
+    from xx_ui import widgets
+
+    box = widgets.dialog_box(title)
+    box.add_css_class('xx-set-sheet')
+    body = widgets.wrap_label(text, 'xx-title')
+    body.add_css_class('xx-set-info')
+    box.append(body)
+    shown: dict = {}
+
+    def _ok() -> None:
+        popover = shown.pop('popover', None)
+        if popover is not None:
+            popover.popdown()
+
+    box.append(widgets.primary_button('OK', _ok))
+    actions = getattr(win, 'item_actions', None)
+    if actions is not None and anchor is not None:
+        shown['popover'] = actions._show_popover(anchor, box)
+    return box

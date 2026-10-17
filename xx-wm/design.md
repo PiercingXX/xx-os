@@ -60,9 +60,10 @@ Every dialog and action menu the shell draws (long-press menus, rename entries, 
 
 | Gesture | Action |
 |---|---|
-| Swipe left on home | Launch configured app (seeded: **Skippy**, resolved by app name — it installs as a PWA so its id varies; unbound if absent) |
-| Swipe right on home | Launch configured app (default: Camera) |
-| Swipe down | Notifications **or** search (user choice) |
+| Swipe left on home | Launch the Swipe Left App (seeded: **Skippy**, resolved by app name — it installs as a PWA so its id varies; no app → Camera). Enable Swipe Left turns it off. |
+| Swipe right on home | Launch the Swipe Right App (seeded: Camera; no app → Dialer). Enable Swipe Right turns it off. |
+| Swipe down on home | Swipe Down Action: Expand notifications, Web search, or Disabled |
+| Double-tap home | Lock the screen when Double Tap to Lock is on (off by default) |
 | Double-tap | Lock screen (kept on Linux — Android dropped it only because it needed the accessibility service) |
 | Short swipe up from bottom | Home (system-level, via lisgd). Works over any screen, including recents. |
 | Long swipe up from bottom | App switcher / recents, full-screen (system-level, via lisgd). Swipe down, tap the dim, or back resumes the current app — home is the short swipe. |
@@ -127,7 +128,7 @@ Modeled on the Pixel's Focus Mode. The user picks a list of distracting apps; wh
 
 ### Settings scope
 
-The in-shell Settings page holds system sections — the things a config file can't own: WiFi networks, Bluetooth pairing, cellular/APN, sound devices, battery/power, system updates, backup/restore actions, about — plus one **Launcher** section mirroring the Android launcher's settings: home alignment and layout reset, widgets, weather, clock, drawer, gestures, appearance. It replaces both GNOME Settings and phosh-mobile-settings for everything that applies to this shell. Every *shell* preference lives in `~/.config/xx-wm/` and is edited there, through home edit mode, or through the Launcher section. The shell hot-reloads the config file, so editing it in a terminal is a first-class workflow.
+The in-shell Settings page holds system sections — the things a config file can't own: WiFi networks, Bluetooth pairing, cellular/APN, sound devices, battery/power, system updates, backup/restore actions, about — plus one **Home & launcher** page that is the Android launcher's preference screen row for row (Home Screen, Widgets, App Drawer, Gestures — see `docs/launcher-settings-parity.md`). Menus and pickers open as in-window bottom sheets, like the Android launcher's ActionSheet; the system edge swipes live under System › Navigation gestures. It replaces both GNOME Settings and phosh-mobile-settings for everything that applies to this shell. Every *shell* preference lives in `~/.config/xx-wm/` and is edited there, through home edit mode, or through the Launcher section. The shell hot-reloads the config file, so editing it in a terminal is a first-class workflow.
 
 Theme presets are also offered as a dedicated Appearance surface on the Settings page so they can be changed without a keyboard.
 

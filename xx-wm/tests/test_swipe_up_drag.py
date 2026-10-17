@@ -206,14 +206,41 @@ class TestDragHandlers:
             bound.end(gesture, 0.0, -200.0)
             assert ns.stack.shown == []
 
-    def test_horizontal_swipe_never_claims(self, window_mod, monkeypatch):
-        ns, bound, _dispatched, _keyboards = _handler_ns(window_mod,
-                                                         monkeypatch)
+    def test_horizontal_swipe_claims_as_side_swipe(self, window_mod,
+                                                   monkeypatch):
+        # Side swipes work from anywhere on home, slots included (the
+        # full-width slot buttons used to swallow them): the capture drag
+        # claims a sideways drag and runs the side swipe on release.
+        ns, bound, dispatched, _keyboards = _handler_ns(window_mod,
+                                                        monkeypatch)
         gesture = _FakeGesture()
+        _FakeGLib.now_us = 0
         bound.begin(gesture, 100.0, 500.0)
-        bound.update(gesture, 90.0, -10.0)
-        assert ns._swipe_drag_claimed is False
-        assert gesture.states == []
+        _FakeGLib.now_us = 100_000
+        bound.update(gesture, 120.0, -10.0)
+        assert ns._swipe_drag_claimed is True
+        bound.end(gesture, 120.0, -10.0)
+        assert dispatched == ['dialer']  # no app bound: Android's dialer
+
+    def test_short_slow_side_drag_does_nothing(self, window_mod,
+                                               monkeypatch):
+        ns, bound, dispatched, _keyboards = _handler_ns(window_mod,
+                                                        monkeypatch)
+        gesture = _FakeGesture()
+        _FakeGLib.now_us = 0
+        bound.begin(gesture, 200.0, 500.0)
+        _FakeGLib.now_us = 900_000
+        bound.update(gesture, -40.0, 0.0)
+        bound.end(gesture, -40.0, 0.0)
+        assert dispatched == []
+
+    def test_side_swipe_thresholds(self, window_mod):
+        assert window_mod.decide_side_swipe(-100.0, 0.0) == 'left'
+        assert window_mod.decide_side_swipe(140.0, 0.0) == 'right'
+        assert window_mod.decide_side_swipe(-60.0, -900.0) == 'left'
+        assert window_mod.decide_side_swipe(-60.0, -100.0) is None
+        assert window_mod.should_claim_horizontal_drag(30.0, 5.0)
+        assert not window_mod.should_claim_horizontal_drag(30.0, 25.0)
 
     def test_fast_swipe_up_opens_drawer(self, window_mod, monkeypatch):
         ns, bound, _dispatched, keyboards = _handler_ns(window_mod,
