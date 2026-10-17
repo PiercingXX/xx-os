@@ -1870,6 +1870,11 @@ class QuickActionsPanel(Gtk.Box):
         if expanded:
             self._sync_sliders_to_live_state_async()
 
+    def sync_sliders_async(self) -> None:
+        """sync_sliders without blocking: the reads (brightnessctl,
+        pactl) run on a worker and the values land on the main loop."""
+        self._sync_sliders_to_live_state_async()
+
     def sync_sliders(self) -> None:
         self._sync_sliders_to_live_state()
 

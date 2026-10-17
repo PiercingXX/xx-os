@@ -1292,8 +1292,13 @@ class NotificationShade(Gtk.Window):
         except Exception:
             pass
         qa = getattr(self, 'quick_actions', None)
-        if qa is not None and hasattr(qa, 'sync_sliders'):
-            qa.sync_sliders()
+        if qa is not None:
+            # Slider reads spawn brightnessctl/pactl: never on the show path.
+            sync_async = getattr(qa, 'sync_sliders_async', None)
+            if callable(sync_async):
+                sync_async()
+            elif hasattr(qa, 'sync_sliders'):
+                qa.sync_sliders()
         if _LAYER_SHELL and LayerShell.is_supported():
             LayerShell.set_keyboard_mode(self, LayerShell.KeyboardMode.EXCLUSIVE)
         try:

@@ -169,3 +169,17 @@ def test_sheet_carries_the_design_ramp():
         assert f'alpha(#f4f4f4, {stop})' in css, stop
     assert '.shade-handle' in css
     assert 'scrolledwindow.shade-notif-card' in css
+
+
+def test_show_path_reads_sliders_off_the_main_loop():
+    # brightnessctl/pactl reads used to run synchronously every time the
+    # shade opened
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / 'launcher' / 'src'
+           / 'notification_shade.py').read_text()
+    show = src[src.index('def show_shade'):]
+    show = show[:show.index('\n    def ', 10)]
+    assert 'sync_sliders_async' in show
+    qa = (Path(__file__).resolve().parent.parent / 'launcher' / 'src'
+          / 'quick_actions.py').read_text()
+    assert 'def sync_sliders_async(self)' in qa
