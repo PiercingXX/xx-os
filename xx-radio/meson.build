@@ -32,7 +32,7 @@ foreach pkg : ['xx_music', 'xx_radio']
   install_subdir(
     join_paths('src', pkg),
     install_dir: app_datadir,
-    exclude_directories: ['__pycache__'],
+    exclude_directories: ['__pycache__', 'player/__pycache__', 'ui/__pycache__', 'youtube/__pycache__'],
   )
 endforeach
 

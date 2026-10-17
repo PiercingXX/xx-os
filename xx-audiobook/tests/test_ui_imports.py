@@ -41,3 +41,11 @@ def test_app_css_renders_for_every_text_scale():
         assert "${" not in css
         assert "@theme_fg_color" in css
     assert "font-size: 44px" in style.render(2.0)
+
+
+def test_meson_installs_the_whole_package():
+    # Same rule as xx-auto: no hand-kept module list to fall out of date.
+    from pathlib import Path
+    meson = (Path(__file__).resolve().parent.parent / 'meson.build').read_text()
+    assert "install_subdir(\n  join_paths('src', 'xx_audiobook')" in meson
+    assert "'src/xx_audiobook/" not in meson

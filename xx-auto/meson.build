@@ -22,37 +22,12 @@ app_id     = 'io.piercingxx.XXAuto'
 app_subdir = 'xx-auto'
 app_datadir = join_paths(datadir, app_subdir)
 
-install_data(
-  [
-    'src/xx_auto/__init__.py',
-    'src/xx_auto/__main__.py',
-    'src/xx_auto/main.py',
-    'src/xx_auto/demo.py',
-    'src/xx_auto/session_pick.py',
-    'src/xx_auto/elapsed.py',
-    'src/xx_auto/favourite_pick.py',
-    'src/xx_auto/car_decision.py',
-    'src/xx_auto/maps_resolve.py',
-    'src/xx_auto/maps_launch.py',
-    'src/xx_auto/drive_tiles.py',
-    'src/xx_auto/settings_store.py',
-    'src/xx_auto/applog.py',
-    'src/xx_auto/mpris.py',
-    'src/xx_auto/contacts_client.py',
-    'src/xx_auto/bluez.py',
-    'src/xx_auto/car_watch.py',
-    'src/xx_auto/backup.py',
-    'src/xx_auto/licenses.py',
-  ],
-  install_dir: join_paths(app_datadir, 'xx_auto'),
-)
-
-install_data(
-  [
-    'src/xx_auto/icons/xx-auto-thumb-up-symbolic.svg',
-    'src/xx_auto/icons/xx-auto-thumb-down-symbolic.svg',
-  ],
-  install_dir: join_paths(app_datadir, 'xx_auto', 'icons'),
+# The whole package (modules + icons): a hand-kept file list missed
+# media_apps.py, so Radio/Audiobook read 'not installed' on a real phone.
+install_subdir(
+  join_paths('src', 'xx_auto'),
+  install_dir: app_datadir,
+  exclude_directories: ['__pycache__', 'icons/__pycache__'],
 )
 
 launcher_conf = configuration_data()

@@ -27,59 +27,10 @@ app_datadir = join_paths(datadir, app_subdir)
 
 # Python package: installed flat into the datadir like XX-WM does, so the
 # launcher runs `python3 -m xx_audiobook`-style entry with sibling imports.
-install_data(
-  [
-    'src/xx_audiobook/__init__.py',
-    'src/xx_audiobook/__main__.py',
-    'src/xx_audiobook/main.py',
-    'src/xx_audiobook/paths.py',
-    'src/xx_audiobook/prefs.py',
-    'src/xx_audiobook/auth.py',
-    'src/xx_audiobook/api.py',
-    'src/xx_audiobook/store.py',
-    'src/xx_audiobook/repos.py',
-    'src/xx_audiobook/api_routes.py',
-    'src/xx_audiobook/applog.py',
-    'src/xx_audiobook/timeline.py',
-    'src/xx_audiobook/stream_auth.py',
-    'src/xx_audiobook/sleep.py',
-    'src/xx_audiobook/sync.py',
-    'src/xx_audiobook/restore.py',
-    'src/xx_audiobook/player.py',
-    'src/xx_audiobook/download.py',
-    'src/xx_audiobook/fmt.py',
-    'src/xx_audiobook/browse.py',
-    'src/xx_audiobook/bookmarks.py',
-    'src/xx_audiobook/reviews.py',
-    'src/xx_audiobook/stats.py',
-    'src/xx_audiobook/zones.py',
-  ],
-  install_dir: join_paths(app_datadir, 'xx_audiobook'),
-)
-
-# GTK pages (M3): Library, Book, Now Playing, pushed views, shell.
-install_data(
-  [
-    'src/xx_audiobook/ui/__init__.py',
-    'src/xx_audiobook/ui/book.py',
-    'src/xx_audiobook/ui/browse.py',
-    'src/xx_audiobook/ui/common.py',
-    'src/xx_audiobook/ui/context.py',
-    'src/xx_audiobook/ui/library.py',
-    'src/xx_audiobook/ui/playing.py',
-    'src/xx_audiobook/ui/shell.py',
-    'src/xx_audiobook/ui/style.py',
-  ],
-  install_dir: join_paths(app_datadir, 'xx_audiobook', 'ui'),
-)
-
-# Player service subpackage (background daemon: own bus name + MPRIS).
-install_data(
-  [
-    'src/xx_audiobook/service/__init__.py',
-    'src/xx_audiobook/service/player_service.py',
-  ],
-  install_dir: join_paths(app_datadir, 'xx_audiobook', 'service'),
+install_subdir(
+  join_paths('src', 'xx_audiobook'),
+  install_dir: app_datadir,
+  exclude_directories: ['__pycache__', 'service/__pycache__', 'ui/__pycache__'],
 )
 
 # Launcher -> $prefix/bin/xx-audiobook

@@ -64,3 +64,12 @@ def test_gtk_signal_names_valid():
     unknown = {name for name in used
                if name not in known and not name.startswith("notify::")}
     assert unknown == set(), f"unknown GTK signals: {sorted(unknown)}"
+
+
+def test_meson_installs_the_whole_package():
+    # A hand-kept module list missed media_apps.py, so Radio/Audiobook read
+    # "not installed" on the FLX1. Install the package directory instead.
+    from pathlib import Path
+    meson = (Path(__file__).resolve().parent.parent / 'meson.build').read_text()
+    assert "install_subdir(\n  join_paths('src', 'xx_auto')" in meson
+    assert "'src/xx_auto/" not in meson
