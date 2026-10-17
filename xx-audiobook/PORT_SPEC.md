@@ -382,6 +382,20 @@ Unchanged verbs through the service: `GET /api/locations` →
 to the speaker, never the bearer. HA errors surface verbatim (503
 `stream_not_configured`, 409 `ha_not_configured`, 502s).
 
+M5 UI state API (`src/xx_audiobook/zones.py`, no UI here): the Zones
+screen uses `ZonesState.snapshot()` (`locations`, `targets`, `output`,
+`selected`, `message`, `busy`, `volume`, `zone_playing`) plus
+`refresh()` / `select(location_id)` / `play_on(target, item_id,
+position_s)` / `transport(action, value)` / `seek_by(seconds)` /
+`seek_step(forward)` / `set_volume(v)` (clamped 0–1) / `quieter()` /
+`louder()` / `bring_back_to_phone()` (returns the zone's `item_id` so
+the caller can resume locally, only after the confirmed stop), and
+`submit_refresh` / `submit_select` / `submit_transport` /
+`submit_bring_back` from the GTK thread (results via `GLib.idle_add`).
+`ZoneRepository` underneath mirrors `ZoneRepository.kt` exactly
+(`Phone` vs `ZoneOutput`, output becomes `Phone` only on a good
+`stop`).
+
 ### 2.12 Reviews, bookmarks, stats, collections, series, authors, narrators
 
 Reviews: cached per-item in memory, offline keeps last; `PUT` 403
@@ -399,6 +413,49 @@ fallback from cache; playing chapter marked and kept in view. Search:
 `GET /api/library/facets`. All DTOs decode epoch-seconds wire exactly
 (`Dto.kt`); unknown JSON fields are rejected by the server (422), so the
 client sends only documented keys.
+
+M5 UI state APIs (no UI here; all sync with `submit_*` twins for the
+GTK thread, results via `GLib.idle_add`):
+- Stats (`src/xx_audiobook/stats.py`): `StatsState.view()` (`year`,
+  `stats`, `loading`, `error`, `first_year`, `current_year`,
+  `can_go_back`/`can_go_forward` over [`MIN_YEAR`..current]) plus
+  `select(year)` / `previous_year()` / `next_year()` / `retry()`;
+  `history()` (`sessions`, `total`, `page`, `loading`, `error`,
+  `can_load_more`) plus `load_first_page()` / `load_more()` (page 1
+  replaces, later pages append deduped by `session_id`) /
+  `delete_session(id)` (reloads the year on success; a failed delete
+  keeps the row and reports the reason). Pure helpers:
+  `clamp_year()`, `last_days()` (30-day zero-filled series ending
+  today, oldest first), `monthly_totals()` (12 figures),
+  `format_listened()` ("12 h 5 min" / "40 min" / "0 min").
+- Reviews (`src/xx_audiobook/reviews.py`): `ReviewRepository`
+  (per-item in-memory cache, offline keeps last; `put()` →
+  `WriteOk` / `WriteNotStarted` (403 `not_started`) /
+  `WriteFailed`; `delete_mine()`; admin `admin_delete()`; writes
+  call `on_changed(item_id)` so the detail star line refreshes) and
+  `ReviewsState` for the block (`mine` / newest-first `others` /
+  `gated` / `show_finished_prompt` / `can_load_more`;
+  `start_editing()` shows the gate explanation instead of the form
+  while ineligible; `mark_finished_and_edit()` /
+  `mark_finished_and_save()` finish-then-open; `save()` is
+  optimistic with rollback; `request/delete_mine()` and
+  `request/confirm_delete()` ask first).
+- Bookmarks (`src/xx_audiobook/bookmarks.py`): `BookmarkRepository`
+  (Room-first `local-<uuid>` rows with `pending`
+  create/edit/delete; `add()` / `edit()` (an unsent create stays a
+  create) / `delete()` (an unsent create is forgotten locally);
+  `sync_pending()` replays the queue and returns the remainder; 404
+  drops the row, other errors stay pending; `refresh()` replays
+  first, then `replaceSynced()` keeping pending rows) and the thin
+  `BookmarksState` wrapper.
+- Settings sync: M1's `SettingsSync` already covers every synced
+  pref — the PUT body holds exactly the four phone-owned keys
+  (`skip_back_s`, `skip_forward_s`, `default_speed`,
+  `auto_rewind_s`) plus the `updated_at` stamp, matching
+  `UserSettingsPutDto`; `sleep_*` / `theme_preset` /
+  `library_view` arrive read-only and stay owned elsewhere (§1.4).
+  Pinned by `test_settings_push_sends_only_owned_keys`; no change
+  needed in this lane.
 
 ### 2.13 Theme from the shell config
 
@@ -489,8 +546,11 @@ Modules (`src/xx_audiobook/`): `main.py` (Adw.Application + window),
 session adopt/wipe, 401/403 handling), `store.py` (sqlite3 schema v1 + DAOs +
 library SQL builder), `api.py` (DTO dataclasses + urllib client, timeouts,
 `resolveUrl`, `decodeList`, error taxonomy `Http/Unreachable/Timeout/
-NotSignedIn`), `repos.py` (M1: library/progress/settings mappers + LWW merge;
-later lanes split out bookmarks/reviews/home/zones/downloads), `timeline.py`
+NotSignedIn`), `repos.py` (M1: library/progress/settings mappers + LWW merge),
+`zones.py` (M5: ZoneRepository + ZonesState),
+`stats.py` (M5: year stats + sessions + StatsState),
+`reviews.py` (M5: ReviewRepository + ReviewsState),
+`bookmarks.py` (M5: BookmarkRepository + BookmarksState), `timeline.py`
 (BookTimeline + locate/global/chapter math), `sleep.py` (sleep timer),
 `player.py` (service client + local GStreamer control for M2+), `service/`
 (M2: `player_service.py` D-Bus + MPRIS + playbin), `download.py` (M4),
