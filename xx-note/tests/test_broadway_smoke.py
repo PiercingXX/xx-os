@@ -51,10 +51,38 @@ def _activate(a):
             xx_ui.apply(win.win)
         except Exception:
             pass
+        # The narrowest phone: the selection bar keeps "2 selected" whole.
+        win.win.set_default_size(320, 640)
+        win.win.set_size_request(320, 640)
         win.win.present()
     except Exception:
         failures.append(traceback.format_exc())
+def _select():
+    w = holder["win"]
+    w._on_long_press(None, 0, 0, w._notes[0].id)
+    w._on_long_press(None, 0, 0, w._notes[2].id)
+    return False
+def _check_select():
+    # Headless Broadway never re-lays out the bar, so measure it: with
+    # the label unellipsized, the whole bar must still fit 320 px.
+    from gi.repository import Gtk as _Gtk
+    from gi.repository import Pango as _Pango
+    w = holder["win"]
+    label = w.select_label
+    text = label.get_text()
+    if text != "2 selected":
+        failures.append("selection label reads " + repr(text))
+        return False
+    mode = label.get_ellipsize()
+    label.set_ellipsize(_Pango.EllipsizeMode.NONE)
+    need = label.get_parent().measure(_Gtk.Orientation.HORIZONTAL, -1)[0]
+    label.set_ellipsize(mode)
+    if need > 320:
+        failures.append("selection bar needs %d px at 320" % need)
+    return False
 app.connect("activate", _activate)
+GLib.timeout_add(500, _select)
+GLib.timeout_add(1000, _check_select)
 GLib.timeout_add(1200, lambda: (app.quit(), False)[1])
 code = app.run([])
 print("FAILURES:" + str(len(failures)))

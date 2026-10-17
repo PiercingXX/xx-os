@@ -95,14 +95,16 @@ class NoteWindow:
         head.append(self.caption)
         self.header.add_named(head, "title")
 
+        # Android's SelectionBar: a tight 4 px edge and flush icon targets,
+        # so "N selected" keeps its words at 320 px and at large text.
         select = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        select.add_css_class("xx-page-body")
+        select.add_css_class("xx-note-select")
         select.add_css_class("xx-page-top")
         select.append(self._icon("window-close-symbolic",
                                  lambda: self._bulk("clear"), "Done"))
         self.select_label = xw.label("", "xx-title")
         self.select_label.set_hexpand(True)
-        self.select_label.set_margin_start(8)
+        self.select_label.set_margin_start(4)
         self.select_label.set_valign(Gtk.Align.CENTER)
         select.append(self.select_label)
         select.append(self._icon("view-pin-symbolic",

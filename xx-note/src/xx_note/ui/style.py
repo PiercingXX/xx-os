@@ -67,7 +67,9 @@ textview.xx-note-body, textview.xx-note-body text {
 .xx-note-read { font-size: ${t16}px; color: ${fg}; }
 .xx-note-read-heading { font-size: ${t20}px; color: ${fg}; }
 .xx-note-read-done { color: ${muted}; }
-.xx-note-toolbar { border-top: 1px solid ${border}; padding: 0 12px; }
+.xx-note-toolbar { border-top: 1px solid ${border}; }
+.xx-note-select { padding: 0 4px; }
+.xx-note-select button.xx-btn-icon { padding: 0; min-width: 44px; }
 button.xx-note-tool {
   min-width: 44px; min-height: 48px; padding: 0; border-radius: 12px;
   color: ${fg}; font-size: ${t15}px; }

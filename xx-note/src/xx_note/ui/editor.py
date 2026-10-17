@@ -198,6 +198,11 @@ class EditorPage:
         # scrolls sideways where the row is wider than the phone.
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         toolbar.set_valign(Gtk.Align.CENTER)
+        # The edge inset scrolls with the tools (Android's padding inside
+        # horizontalScroll): padding on the scroller itself cut the row
+        # short of the screen edge, a hard clip with no tool peeking.
+        toolbar.set_margin_start(12)
+        toolbar.set_margin_end(12)
         self.toolbar = Gtk.ScrolledWindow()
         self.toolbar.add_css_class("xx-note-toolbar")
         self.toolbar.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
