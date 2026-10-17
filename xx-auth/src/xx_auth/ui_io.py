@@ -5,10 +5,10 @@ heavy crypto on worker threads)."""
 from __future__ import annotations
 
 
-def _widen_choose(button) -> None:  # type: ignore[no-untyped-def]
+def _widen(button, chars: int) -> None:  # type: ignore[no-untyped-def]
     child = button.get_first_child()
     if child is not None and hasattr(child, "set_max_width_chars"):
-        child.set_max_width_chars(11)
+        child.set_max_width_chars(chars)
 
 
 class IoController:
@@ -30,53 +30,95 @@ def build(window):  # type: ignore[no-untyped-def]
     controller = IoController(window)
 
     header = widgets.compact_header(lambda: window.show("list"), "Import / export", "Aegis vault files")
-    body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 12)
+    body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
 
-    body.append(widgets.section_label("Export"))
-    password = widgets.text_entry("Export password (blank writes a plain file)")
+    def section(title: str, first: bool = False) -> None:
+        label = widgets.section_label(title)
+        label.set_margin_top(8 if first else 28)
+        label.set_margin_bottom(8)
+        body.append(label)
+
+    def labeled(caption_text: str, widget) -> None:  # type: ignore[no-untyped-def]
+        cap = widgets.caption(caption_text)
+        cap.set_margin_bottom(6)
+        body.append(cap)
+        widget.set_margin_bottom(12)
+        body.append(widget)
+
+    section("Export", first=True)
+    password = widgets.text_entry("Blank: plain file")
     password.set_visibility(False)
-    confirm = widgets.text_entry("Confirm password")
+    confirm = widgets.text_entry("Again")
     confirm.set_visibility(False)
-    body.append(password)
-    body.append(confirm)
-    body.append(widgets.primary_button("Export vault file", lambda: do_export()))
+    labeled("Password", password)
+    labeled("Confirm", confirm)
+    export_btn = widgets.primary_button("Export vault file", lambda: do_export())
+    _widen(export_btn, 17)
+    body.append(export_btn)
 
-    body.append(widgets.section_label("Import"))
-    import_password = widgets.text_entry("Vault file password (when encrypted)")
+    section("Import")
+    import_box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+    import_box.set_visible(False)
+    import_password = widgets.text_entry("File password")
     import_password.set_visibility(False)
-    import_password.set_visible(False)
-    body.append(import_password)
+    import_password.set_margin_bottom(12)
+    import_box.append(import_password)
+    body.append(import_box)
     choose_btn = widgets.outline_button("Choose file", lambda: pick_import())
-    _widen_choose(choose_btn)
-    import_row = widgets.setting_row(
-        "Import file", "Aegis vault / URI list",
-        choose_btn, last=False,
-    )
-    body.append(import_row)
-    found = widgets.caption("")
+    _widen(choose_btn, 11)
+    body.append(widgets.setting_row("Vault file", "Aegis or otpauth", choose_btn, last=True))
+    found = widgets.label("", "xx-title")
+    found.set_margin_top(16)
     found.set_visible(False)
     body.append(found)
     merge_row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
-    merge_row.set_halign(Gtk.Align.CENTER)
-    add_btn = widgets.primary_button("Add to vault", lambda: do_apply(True))
-    replace_btn = widgets.danger_button("Replace vault", lambda: do_apply(False))
-    merge_row.append(add_btn)
-    merge_row.append(replace_btn)
+    merge_row.set_homogeneous(True)
+    merge_row.set_margin_top(12)
+    add_btn = widgets.primary_button("Add", lambda: do_apply(True))
+    replace_btn = widgets.outline_button("Replace", lambda: do_apply(False))
+    replace_btn.add_css_class("xx-auth-danger")
+    for btn in (add_btn, replace_btn):
+        btn.set_hexpand(True)
+        _widen(btn, 15)
+        merge_row.append(btn)
     merge_row.set_visible(False)
     body.append(merge_row)
 
-    status = widgets.caption("")
+    status = widgets.wrap_label("")
+    status.set_margin_top(16)
+    status.set_visible(False)
     body.append(status)
+    clearance = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+    clearance.set_size_request(-1, 32)
+    body.append(clearance)
 
     pending = {"raw": None, "password": None}
+    plain = {"armed": False}
 
-    def say(message: str) -> None:
+    def say(message: str, error: bool = False) -> bool:
         status.set_text(message)
+        status.set_visible(bool(message))
+        if error:
+            status.add_css_class("xx-danger-text")
+        else:
+            status.remove_css_class("xx-danger-text")
+        return False
+
+    def fail(message: str) -> bool:
+        return say(message, True)
+
+    def disarm_plain(*_args) -> None:  # type: ignore[no-untyped-def]
+        if plain["armed"]:
+            plain["armed"] = False
+            export_btn.set_label("Export vault file")
+
+    password.connect("changed", disarm_plain)
+    confirm.connect("changed", disarm_plain)
 
     def backend_ready():  # type: ignore[no-untyped-def]
         backend = window.backend
         if backend is None or backend.cipher is None:
-            say("The vault isn't unlocked yet.")
+            fail("The vault isn't unlocked yet.")
             return None
         return backend
 
@@ -86,30 +128,30 @@ def build(window):  # type: ignore[no-untyped-def]
             return
         first, second = password.get_text(), confirm.get_text()
         if first != second:
-            say("The passwords don't match.")
+            fail("The passwords don't match.")
             return
-        if not first:
-            if password.get_text() != "\u0000":
-                say("Blank password writes a PLAIN file. Tap Export again to confirm.")
-                password.get_buffer().set_text("\u0000", 1)
-                return
-            secret: str | None = None
-        else:
-            secret = first
+        if not first and not plain["armed"]:
+            # A plain file holds every secret: the button asks once more.
+            plain["armed"] = True
+            export_btn.set_label("Export plain file")
+            say("")
+            return
+        secret: str | None = first or None
+        disarm_plain()
         password.get_buffer().set_text("", 0)
         confirm.get_buffer().set_text("", 0)
-        chosen = {"secret": secret}
+        say("")
         dialog = Gtk.FileDialog()
         dialog.set_title("Export vault")
         dialog.set_initial_name(accounts_mod.export_file_name())
-        dialog.save(window.win, None, lambda d, r: on_export_chosen(d, r, chosen["secret"]))
+        dialog.save(window.win, None, lambda d, r: on_export_chosen(d, r, secret))
 
     def on_export_chosen(dialog, result, secret) -> None:  # type: ignore[no-untyped-def]
         try:
             target = dialog.save_finish(result)
         except Exception:  # noqa: BLE001
             return
-        path = target.get_file().get_path()
+        path = target.get_path() if target is not None else None
         if not path:
             return
         thread = threading.Thread(target=lambda: export_work(path, secret), daemon=True)
@@ -125,7 +167,7 @@ def build(window):  # type: ignore[no-untyped-def]
                 handle.write(text)
             count = backend.store.count()
         except OSError:
-            window._GLib.idle_add(say, "Couldn't write that file.")
+            window._GLib.idle_add(fail, "Couldn't write that file.")
             return
         window._GLib.idle_add(say, f"Exported {count} account{'s' if count != 1 else ''}.")
 
@@ -141,10 +183,10 @@ def build(window):  # type: ignore[no-untyped-def]
             chosen = dialog.open_finish(result)
         except Exception:  # noqa: BLE001
             return
-        path = chosen.get_file().get_path()
+        path = chosen.get_path() if chosen is not None else None
         if not path:
             return
-        say("Reading file…")
+        say("")
         thread = threading.Thread(target=lambda: import_work(path), daemon=True)
         thread.start()
 
@@ -153,7 +195,7 @@ def build(window):  # type: ignore[no-untyped-def]
             with open(path, "rb") as handle:
                 raw = handle.read(MAX_IMPORT_BYTES + 1)
         except OSError:
-            window._GLib.idle_add(say, "Couldn't read that file.")
+            window._GLib.idle_add(fail, "Couldn't read that file.")
             return
         window._GLib.idle_add(after_read, raw)
 
@@ -162,25 +204,23 @@ def build(window):  # type: ignore[no-untyped-def]
 
         backend = window.backend
         if backend is None or backend.cipher is None:
-            say("The vault isn't unlocked yet.")
-            return False
+            return fail("The vault isn't unlocked yet.")
         secret = import_password.get_text() or None
         try:
             parsed = aegis_mod.parse_file(raw, secret)
         except ValueError as exc:
             if "password is required" in str(exc):
-                import_password.set_visible(True)
-                say("This file is encrypted. Enter its password above and pick it again.")
-                return False
-            say(accounts_mod.import_error_message(exc))
-            return False
+                import_box.set_visible(True)
+                return fail("Encrypted. Enter its password and choose it again.")
+            return fail(accounts_mod.import_error_message(exc))
         pending["raw"] = raw
         pending["password"] = secret
-        found.set_text(f"Found {len(parsed.accounts)} account{'s' if len(parsed.accounts) != 1 else ''}"
-                       + (f", {parsed.skipped} skipped." if parsed.skipped else "."))
+        count = len(parsed.accounts)
+        found.set_text(f"{count} account{'s' if count != 1 else ''}"
+                       + (f", {parsed.skipped} skipped" if parsed.skipped else ""))
         found.set_visible(True)
         merge_row.set_visible(True)
-        replace_btn.set_label("Replace vault")
+        replace_btn.set_label("Replace")
         return False
 
     def do_apply(merge: bool) -> None:
@@ -188,28 +228,33 @@ def build(window):  # type: ignore[no-untyped-def]
         if backend is None or pending["raw"] is None:
             return
         if not merge and replace_btn.get_label() != "Confirm replace":
+            # Replace wipes the vault first: the button asks once more.
             replace_btn.set_label("Confirm replace")
-            say("Replace wipes the vault first. Tap again to confirm.")
             return
-        replace_btn.set_label("Replace vault")
+        replace_btn.set_label("Replace")
         thread = threading.Thread(
             target=lambda: apply_work(backend, pending["raw"], pending["password"], merge), daemon=True)
         thread.start()
+
+    def finish_import(imported: int, skipped: int) -> bool:
+        pending["raw"] = None
+        merge_row.set_visible(False)
+        found.set_visible(False)
+        import_box.set_visible(False)
+        import_password.get_buffer().set_text("", 0)
+        skipped_text = f" Skipped {skipped}." if skipped else ""
+        say(f"Added {imported} account{'s' if imported != 1 else ''}." + skipped_text)
+        window.refresh()
+        return False
 
     def apply_work(backend, raw: bytes, secret: str | None, merge: bool) -> None:  # type: ignore[no-untyped-def]
         try:
             imported, skipped = accounts_mod.import_vault_file(backend.store, raw, secret, backend.cipher, merge)
         except ValueError as exc:
-            window._GLib.idle_add(say, accounts_mod.import_error_message(exc))
+            window._GLib.idle_add(fail, accounts_mod.import_error_message(exc))
             return
         backend.store.save()
-        pending["raw"] = None
-        merge_row.set_visible(False)
-        found.set_visible(False)
-        import_password.get_buffer().set_text("", 0)
-        skipped_text = f" Skipped {skipped}." if skipped else ""
-        window._GLib.idle_add(say, f"Added {imported} account{'s' if imported != 1 else ''}." + skipped_text)
-        window._GLib.idle_add(lambda: window.refresh() or False)
+        window._GLib.idle_add(finish_import, imported, skipped)
 
     page = widgets.page(header, body)
     return page, controller

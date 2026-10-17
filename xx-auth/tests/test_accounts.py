@@ -186,3 +186,22 @@ def test_bare_secret_gets_secret_name(store, cipher):
     account = add_from_text(store, "MZXW6YTBOI", cipher).accounts[0]
     assert account.label == "Secret MZXW"
     assert cipher.decrypt(account.secret) == base32.decode("MZXW6YTBOI")
+
+
+def test_rekey_vault_moves_every_secret_to_the_new_key(store, cipher):
+    add_from_text(store, f"otpauth://totp/A:one?secret={SECRET}", cipher)
+    add_from_text(store, f"otpauth://totp/B:two?secret={SECRET}", cipher)
+    fresh = SecretCipher(os.urandom(32))
+    assert accounts.rekey_vault(store, cipher, fresh) == 2
+    for row in store.get_all():
+        assert fresh.decrypt(row.secret)
+        with pytest.raises(Exception):
+            cipher.decrypt(row.secret)
+
+
+def test_rekey_vault_leaves_the_vault_untouched_on_a_bad_row(store, cipher):
+    add_from_text(store, f"otpauth://totp/A:one?secret={SECRET}", cipher)
+    before = [row.secret for row in store.get_all()]
+    with pytest.raises(Exception):
+        accounts.rekey_vault(store, SecretCipher(os.urandom(32)), cipher)
+    assert [row.secret for row in store.get_all()] == before

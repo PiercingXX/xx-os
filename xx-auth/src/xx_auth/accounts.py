@@ -215,6 +215,20 @@ def delete_account(store: VaultStore, account_id: str) -> None:
     store.delete(account_id)
 
 
+def rekey_vault(store: VaultStore, old: SecretCipher, new: SecretCipher) -> int:
+    """Re-encrypt every secret from ``old`` to ``new`` (an app-password
+    change when the password derives the vault key). All rows decrypt
+    before any is rewritten, so a bad row leaves the vault untouched.
+    Returns the number of rows re-encrypted."""
+    from dataclasses import replace
+
+    rows = store.get_all()
+    plain = [(row, old.decrypt(row.secret)) for row in rows]
+    for row, secret in plain:
+        store.update(replace(row, secret=new.encrypt(secret)))
+    return len(plain)
+
+
 def transfer_uri(store: VaultStore, account_id: str, cipher: SecretCipher) -> str | None:
     account = store.get_by_id(account_id)
     if account is None:

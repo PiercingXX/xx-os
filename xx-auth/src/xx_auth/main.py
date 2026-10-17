@@ -17,11 +17,34 @@ from xx_auth.keystore import MemoryKeyring, SecretCipher
 from xx_auth.prefs import Prefs
 from xx_auth.store import VaultStore
 
-APP_CSS = """
-.xx-auth-code { font-size: 30px; }
-.xx-auth-code .xx-display-face { letter-spacing: 2px; }
-.xx-auth-row { min-height: 64px; }
+# App-local styles on top of xx_ui: the live code in the brand display face
+# (Space Mono, Signal = full foreground), the countdown ring and the quiet
+# destructive outline. Rendered per theme and text scale, re-rendered live.
+_APP_CSS = """
+.xx-auth-code {{ font-size: {code}px; color: {fg}; letter-spacing: 0.04em; }}
+.xx-auth-code.hero {{ font-size: {hero}px; }}
+.xx-auth-code.unreadable {{ color: {muted}; }}
+.xx-auth-secret {{ font-size: {title}px; color: {fg}; letter-spacing: 0.04em; }}
+.xx-auth-row {{ padding-top: 14px; padding-bottom: 14px; }}
+.xx-auth-ring {{ color: alpha({fg}, 0.80); font-size: {time}px; }}
+.xx-auth-ring.warn {{ color: {danger}; }}
+.xx-auth-danger {{ color: {danger}; border-color: alpha({danger}, 0.6); }}
+.xx-auth-counter {{ font-size: {time}px; color: {muted}; }}
 """
+
+
+def app_css(theme) -> str:  # type: ignore[no-untyped-def]
+    """The app stylesheet for one xx_ui theme (colors + text scale)."""
+    from xx_ui import theme as theme_mod
+
+    scale = getattr(theme, "scale", 1.0) or 1.0
+
+    def px(base: int) -> int:
+        return round(base * scale)
+
+    return _APP_CSS.format(
+        code=px(32), hero=px(40), title=px(16), time=px(13),
+        fg=theme.foreground, muted=theme.muted, danger=theme_mod.DANGER_RED)
 
 
 def _require_gtk():
@@ -92,12 +115,20 @@ class AuthWindow:
             from gi.repository import Gdk as GdkMod
             from gi.repository import Gtk as GtkMod
 
-            provider = GtkMod.CssProvider()
-            provider.load_from_data(APP_CSS.encode("utf-8"))
+            import xx_ui
+
             display = GdkMod.Display.get_default()
-            if display is not None:
-                GtkMod.StyleContext.add_provider_for_display(
-                    display, provider, GtkMod.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            if display is None:
+                return
+            provider = GtkMod.CssProvider()
+            GtkMod.StyleContext.add_provider_for_display(
+                display, provider, GtkMod.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+
+            def install(theme) -> None:  # type: ignore[no-untyped-def]
+                provider.load_from_data(app_css(theme).encode("utf-8"))
+
+            install(xx_ui.load())
+            xx_ui.on_change(install)
         except Exception:
             pass
 
@@ -264,8 +295,7 @@ class AuthWindow:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.set_valign(Gtk.Align.CENTER)
         box.set_halign(Gtk.Align.CENTER)
-        label = Gtk.Label(label="Loading…")
-        box.append(label)
+        # Blank while the keyring answers: it takes a moment, not a message.
         self.stack.add_named(box, "loading")
         self.stack.set_visible_child_name("loading")
 
@@ -386,8 +416,12 @@ class AuthWindow:
             if needs_lock and time.monotonic() - self._last_active > idle_limit:
                 self.lock()
                 return True
-            if self.stack.get_visible_child_name() in ("list", "detail"):
-                self.refresh()
+            # Only the visible page ticks, in place: rebuilding hidden pages
+            # every second relayouts the whole window for nothing.
+            visible = self.stack.get_visible_child_name()
+            controller = self._pages.get(visible) if visible in ("list", "detail") else None
+            if controller is not None and hasattr(controller, "tick"):
+                controller.tick()
         return True
 
 

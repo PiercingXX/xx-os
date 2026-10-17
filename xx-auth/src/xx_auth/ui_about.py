@@ -13,19 +13,23 @@ class AboutController:
 
 def build(window):  # type: ignore[no-untyped-def]
     import xx_ui.widgets as widgets
-    from xx_auth import __app_id__, __version__
+    from xx_auth import __version__
 
     Gtk = window._Gtk
     controller = AboutController(window)
 
-    header = widgets.compact_header(lambda: window.show("list"), "About", "xx-auth")
-    body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 12)
-    body.append(widgets.field("App", "xx-auth"))
-    body.append(widgets.field("Version", __version__))
-    body.append(widgets.field("Vault", "Encrypted, offline"))
+    # The offline promise is the header's subtitle; the rows follow the
+    # suite's Setup "About" block (no second About label, no chevron).
+    header = widgets.compact_header(lambda: window.show("list"), "About",
+                                    "No network, no account.")
+    body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     entries = widgets.standard_license_entries("xx-auth")
-    body.append(widgets.about_content("xx-auth", __version__, entries,
-                                      lambda: widgets.show_licenses_dialog(window.win, "xx-auth", entries)))
-    _ = __app_id__
+    spdx = entries[0].spdx if entries else ""
+    version = f"Version {__version__}" + (f" · {spdx}" if spdx else "")
+    body.append(widgets.setting_row("xx-auth", version))
+    body.append(widgets.list_row(
+        "Open-source licenses", f"{len(entries)} components",
+        on_activate=lambda: widgets.show_licenses_dialog(window.win, "xx-auth", entries),
+        last=True))
     page = widgets.page(header, body)
     return page, controller
