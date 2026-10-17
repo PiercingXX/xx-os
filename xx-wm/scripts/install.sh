@@ -444,7 +444,7 @@ _ask_device() {
     whiptail --backtitle "GitHub.com/PiercingXX" --title "Device" \
         --menu "Which device is this? (sets phoc.ini scale)" 0 0 0 \
         "fairphone-5"    "FP5 — DSI-1, scale 2.5" \
-        "furiphone-flx1" "FLX1 — HWCOMPOSER-1, scale 2" \
+        "furiphone-flx1" "FLX1 — HWCOMPOSER-1, scale 1.2" \
         "librem-5"       "Librem 5 — DSI-1, scale 2" \
         "tablet"         "x86 tablet — DSI-1, scale 1.5" \
         "qemu"           "QEMU/UTM VM — Virtual-1, scale 1.5" \
