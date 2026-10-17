@@ -97,9 +97,6 @@ progressbar.xx-mu-line trough, progressbar.xx-mu-line progress {
 progressbar.xx-mu-line { min-width: 0; }
 progressbar.xx-mu-line trough { background-color: alpha(${fg}, 0.12); }
 progressbar.xx-mu-line progress { background-color: ${fg}; }
-.xx-mu-busy { background-color: ${fg}; min-width: 8px; min-height: 8px;
-  border-radius: 1px; }
-.xx-mu-busy.off { background-color: alpha(${fg}, 0.18); }
 
 /* banners */
 .xx-mu-banner { padding: 10px 12px 10px 20px; min-height: 48px;

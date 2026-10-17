@@ -46,32 +46,36 @@ def _dock(dialog, parent):
 
 
 _common.present = _dock
+# Busy squares hold still: headless frames are scarce, and a blink that
+# lands after the last one leaves the window unpainted at capture time.
+_common.BusySquare._blink = lambda self: True
 
 
 def later(ms, fn):
     GLib.timeout_add(ms, lambda: (fn(), False)[1])  # noqa: F821
 
 
-def scroll_to(get_scroller, fraction):
-    """Pages fill in late; scroll once their height has settled (each
-    set_value re-allocates, so never set the same value twice)."""
-    state = {"upper": -1.0, "tries": 10, "seen": 0}
+def skip(get_box, count, wait=600):
+    """Show a page's lower part: hide its first ``count`` children once
+    the page has painted. A late scroll never lands headless (each one
+    re-allocates after the last frame), so the renders cut instead."""
+    def hide():
+        child = get_box().get_first_child()
+        hidden = 0
+        while child is not None and hidden < count:
+            if child.get_visible():
+                child.set_visible(False)
+                hidden += 1
+            child = child.get_next_sibling()
 
-    def step():
-        adj = get_scroller().get_vadjustment()
-        upper = adj.get_upper()
-        state["tries"] -= 1
-        settled = upper > adj.get_page_size() + 1 and upper == state["upper"]
-        state["seen"] = state["seen"] + 1 if settled else 0
-        if state["seen"] >= 2 or state["tries"] <= 0:
-            target = (upper - adj.get_page_size()) * fraction
-            if abs(adj.get_value() - target) > 0.5:
-                adj.set_value(target)
-            return False
-        state["upper"] = upper
-        return True
+    later(wait, hide)
 
-    GLib.timeout_add(120, step)  # noqa: F821
+
+def page_body(widget):
+    """The box inside the first vertical scroller of a page."""
+    scroller = find_scroller(widget)
+    child = scroller.get_child()
+    return child.get_child() if isinstance(child, Gtk.Viewport) else child  # noqa: F821
 
 
 def find_scroller(widget):
@@ -106,9 +110,9 @@ settings = shell.pages["settings"]
 if TARGET == "home":
     pass
 elif TARGET == "home-lower":
-    scroll_to(lambda: shell.pages["home"].scroll, 0.62)
+    skip(lambda: shell.pages["home"].body, 5)
 elif TARGET == "home-end":
-    scroll_to(lambda: shell.pages["home"].scroll, 1.0)
+    skip(lambda: shell.pages["home"].body, 9)
 elif TARGET == "search":
     shell.show("search")
 elif TARGET == "search-typing":
@@ -131,7 +135,7 @@ elif TARGET == "artist":
 elif TARGET == "artist-lower":
     shell.show("search")
     pages.open_artist(ui, "ar-lumen", "Lumen Drive")
-    scroll_to(lambda: find_scroller(top_page()), 1.0)
+    skip(lambda: page_body(top_page()), 4)
 elif TARGET == "album":
     pages.open_album(ui, "al-tide", "Tidewater")
 elif TARGET == "playlist":
@@ -177,15 +181,15 @@ elif TARGET == "library-phone":
 elif TARGET == "library-phone-lower":
     shell.show("library")
     library.pick("phone")
-    scroll_to(lambda: library.body.get_parent().get_parent(), 1.0)
+    skip(lambda: library.body, 5)
 elif TARGET == "settings":
     shell.show("settings")
 elif TARGET == "settings-lower":
     shell.show("settings")
-    scroll_to(lambda: settings.body.get_parent().get_parent(), 0.55)
+    skip(lambda: settings.body, 3)
 elif TARGET == "settings-end":
     shell.show("settings")
-    scroll_to(lambda: settings.body.get_parent().get_parent(), 1.0)
+    skip(lambda: settings.body, 4)
 elif TARGET == "sheet-cap":
     shell.show("settings")
     later(300, settings.open_cap)
@@ -208,7 +212,7 @@ elif TARGET in ("signin", "signin-error"):
             sign = page.xx_page
             sign.paste.set_text("cookie: (pasted)")
             sign.sign_in()
-            scroll_to(lambda: find_scroller(top_page()), 1.0)
+            skip(lambda: page_body(top_page()), 5, 100)
         later(300, _fail)
 elif TARGET == "oauth":
     ui.action("sign-in")
@@ -226,6 +230,10 @@ elif TARGET == "oauth":
         later(200, _code)
 
     later(200, _oauth)
+elif TARGET == "welcome":
+    from xx_radio.ui import account
+
+    later(200, lambda: account.show_welcome(ui, ui.hooks.open_sign_in))
 elif TARGET == "log":
     shell.show("settings")
     settings.open_log()

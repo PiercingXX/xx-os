@@ -67,6 +67,7 @@ oauth oauth signed-out
 log log seeded
 licenses licenses seeded
 firstrun firstrun firstrun
+welcome welcome empty
 firstrun-running firstrun-go firstrun SNAP_FIRSTRUN=running
 firstrun-failed firstrun-go firstrun SNAP_FIRSTRUN=failed
 firstrun-done firstrun-go firstrun SNAP_FIRSTRUN=done
@@ -76,9 +77,10 @@ banner-offline banner-offline seeded
 banner-signedout banner-signedout seeded
 banner-mix banner-mix seeded"
 FIT320="home search-results artist album playing lyrics queue library-phone
-settings engine-updating signin firstrun-failed sheet-sleep-on search-menu"
+settings engine-updating signin firstrun-failed sheet-sleep-on search-menu
+welcome"
 SCALE2="home search-results album playing queue library-phone settings
-engine-ready signin firstrun"
+engine-ready signin firstrun welcome"
 
 home_for() {
     # $1=theme $2=scenario $3=text scale

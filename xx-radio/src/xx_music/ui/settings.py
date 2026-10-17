@@ -126,6 +126,7 @@ class SettingsPage:
     # -- playback and downloads ------------------------------------------------------------
     def _got_prefs(self, prefs: dict) -> None:
         self.prefs = prefs
+        self.ui.prefs = prefs
         self._paint_playback()
         self._paint_downloads()
 

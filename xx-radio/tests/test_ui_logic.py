@@ -105,6 +105,9 @@ def test_history_ratings_and_prefs():
     store.set_rating(_track(3), Rating.NONE)
     assert store.liked() == []
     assert store.prefs()["wifi_only"] is True
+    assert store.prefs()["welcome_done"] is False
+    store.set_pref("welcome_done", True)
+    assert store.prefs()["welcome_done"] is True
     store.set_pref("storage_cap_gb", 5)
     assert store.prefs()["storage_cap_gb"] == 5
 

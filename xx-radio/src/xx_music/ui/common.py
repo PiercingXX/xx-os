@@ -242,35 +242,50 @@ class LoadingLine(Gtk.DrawingArea):
         cr.fill()
 
 
-def busy_square() -> Gtk.Box:
-    """An 8 px square that blinks while its row is busy."""
-    square = Gtk.Box()
-    square.add_css_class("xx-mu-busy")
-    square.set_size_request(8, 8)
-    square.set_valign(Gtk.Align.CENTER)
-    square.set_halign(Gtk.Align.CENTER)
-    state = {"id": 0}
+class BusySquare(Gtk.DrawingArea):
+    """An 8 px square that blinks while its row is busy. It only
+    repaints (never restyles or relayouts) on each blink."""
 
-    def _blink() -> bool:
-        if square.has_css_class("off"):
-            square.remove_css_class("off")
-        else:
-            square.add_css_class("off")
+    __gtype_name__ = "XXMusicBusySquare"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_content_width(8)
+        self.set_content_height(8)
+        self.set_valign(Gtk.Align.CENTER)
+        self.set_halign(Gtk.Align.CENTER)
+        self.set_can_target(False)
+        self.lit = True
+        self._timer = 0
+        self.set_draw_func(self._draw)
+        self.connect("map", self._map)
+        self.connect("unmap", self._unmap)
+        self.update_property([Gtk.AccessibleProperty.LABEL], ["Working"])
+
+    def _blink(self) -> bool:
+        self.lit = not self.lit
+        self.queue_draw()
         return True
 
-    def _map(_w) -> None:
-        if not state["id"]:
-            state["id"] = GLib.timeout_add(520, _blink)
+    def _map(self, _w) -> None:
+        if not self._timer:
+            self._timer = GLib.timeout_add(520, self._blink)
 
-    def _unmap(_w) -> None:
-        if state["id"]:
-            GLib.source_remove(state["id"])
-            state["id"] = 0
+    def _unmap(self, _w) -> None:
+        if self._timer:
+            GLib.source_remove(self._timer)
+            self._timer = 0
 
-    square.connect("map", _map)
-    square.connect("unmap", _unmap)
-    square.update_property([Gtk.AccessibleProperty.LABEL], ["Working"])
-    return square
+    def _draw(self, widget, cr, width, height) -> None:
+        color = widget.get_color()
+        cr.set_source_rgba(color.red, color.green, color.blue,
+                           1.0 if self.lit else 0.2)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+
+
+def busy_square() -> Gtk.Widget:
+    return BusySquare()
 
 
 def tag(text: str, icon: str = "", solid: bool = False) -> Gtk.Box:

@@ -35,6 +35,7 @@ PREF_DEFAULTS: dict[str, Any] = {
     "loudness_leveling": False,
     "charts_region": "",
     "first_run_done": False,
+    "welcome_done": False,
 }
 
 

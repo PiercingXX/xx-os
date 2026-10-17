@@ -30,7 +30,6 @@ FIRST_RUN_TEXT = {
     "search": "Find songs, albums, artists and playlists.",
     "library": "Sign in to see your library. Downloads show here too.",
 }
-CHECKING_TEXT = "Checking…"
 
 BANNER_BUTTONS = {
     "update-engine": "Update",
@@ -95,7 +94,6 @@ class Shell:
             nav = Adw.NavigationView()
             nav.add(Adw.NavigationPage.new_with_tag(
                 widget, self.titles[key], key))
-            nav.connect("popped", self._on_popped)
             self.navs[key] = nav
             self.stack.add_named(nav, key)
 
@@ -188,16 +186,11 @@ class Shell:
     def pop(self) -> None:
         self.current_nav().pop()
 
-    def _on_popped(self, _nav, _page) -> None:
-        pass
-
     def open_item(self, item: Item) -> None:
         from xx_music.ui import pages
 
         if item.kind == ItemKind.TRACK and item.track is not None:
-            self.ui.player.start_radio(item.track) \
-                if self.ui.supports("radio") else \
-                self.ui.player.play([item.track], 0, {"type": "song"})
+            self.play_song(item.track)
             return
         if item.kind == ItemKind.ALBUM:
             pages.open_album(self.ui, item.id, item.title)
@@ -342,6 +335,7 @@ class Shell:
         if self.first_run_widget is not None:
             self.overlay.remove_overlay(self.first_run_widget)
             self.first_run_widget = None
+        offer_welcome(self)
 
 
 def build_window(app, spec: AppSpec, engine: Engine | None = None,
@@ -395,13 +389,33 @@ def start(shell: Shell) -> None:
         ui.set_account(bool(status.signed_in), status.account_name)
 
     ui.run("status", ui.engine.status, _status, lambda _e: None)
-    ui.refresh_downloads()
+
+    def _prefs(prefs: dict) -> None:
+        ui.prefs = prefs
+        ui.refresh_downloads()
+
+    ui.io(ui.store.prefs, _prefs, lambda _e: ui.refresh_downloads())
     first = ui.hooks.first_run
     if first is None:
+        offer_welcome(shell)
         return
 
     def _needed(needed: bool) -> None:
         if needed:
             shell.show_first_run(first.build(ui, shell.hide_first_run))
+        else:
+            offer_welcome(shell)
 
-    ui.io(lambda: bool(first.needed(ui)), _needed, lambda _e: None)
+    ui.io(lambda: bool(first.needed(ui)), _needed,
+          lambda _e: offer_welcome(shell))
+
+
+def offer_welcome(shell: Shell) -> None:
+    """The app's one-time welcome sheet, once the first run is over."""
+    ui = shell.ui
+    welcome = ui.hooks.welcome
+    if welcome is None:
+        return
+    ui.io(lambda: bool(welcome.needed(ui)),
+          lambda needed: welcome.show(ui) if needed else None,
+          lambda _e: None)

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from gi.repository import Gdk, Gtk
 
-from xx_music.ui import common
+from xx_music.ui import common, css
 from xx_music.ui.settings import nav_row, section
 from xx_radio.account import METHOD_OAUTH, AccountState
 from xx_radio.youtube import auth
@@ -224,7 +224,7 @@ class SignInPage:
         head.set_margin_top(8)
         body.append(head)
         intro = common.para(
-            "XX-Radio never sees your password. It borrows the sign-in of "
+            "xx-radio never sees your password. It borrows the sign-in of "
             "a browser session you copy here.", "xx-secondary")
         intro.set_margin_top(8)
         body.append(intro)
@@ -233,7 +233,8 @@ class SignInPage:
         self.paste = PasteBox()
         self.paste.widget.set_margin_top(18)
         body.append(self.paste.widget)
-        buttons = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 10)
+        buttons = Gtk.Box.new(Gtk.Orientation.VERTICAL if css.large_text()
+                              else Gtk.Orientation.HORIZONTAL, 10)
         buttons.set_homogeneous(True)
         buttons.set_margin_top(12)
         paste = widgets.outline_button("Paste", self.paste_clipboard)
@@ -421,3 +422,46 @@ class OAuthPage:
         if error:
             line.add_css_class("xx-mu-error")
         self.code_box.append(line)
+
+
+WELCOME_PITCH = ("YouTube Music on your phone: search, radio, lyrics and "
+                 "downloads.")
+WELCOME_NOTE = ("Signing in adds your library, likes and history. It's "
+                "optional, and a spare account is the careful choice. "
+                "You can sign in later in Settings, Account.")
+
+
+def show_welcome(ui, open_sign_in) -> object:
+    """The one-time welcome sheet: the pitch, then Sign in or Continue.
+    Either answer (or closing it) is remembered, so it shows once."""
+    dialog, box = common.sheet("Welcome")
+    answered: list = []
+
+    def answer(sign_in: bool) -> None:
+        if answered:
+            return
+        answered.append(sign_in)
+        ui.io(lambda: ui.store.set_pref("welcome_done", True))
+        dialog.close()
+        if sign_in:
+            open_sign_in(ui)
+
+    box.append(common.caps(ui.spec.name))
+    pitch = common.para(WELCOME_PITCH, "xx-mu-h2", 22)
+    pitch.set_margin_top(6)
+    box.append(pitch)
+    note = common.para(WELCOME_NOTE, "xx-secondary")
+    note.set_margin_top(10)
+    note.set_margin_bottom(14)
+    box.append(note)
+    sign = widgets.primary_button("Sign in to YouTube Music",
+                                  lambda: answer(True))
+    later = widgets.outline_button("Continue without signing in",
+                                   lambda: answer(False))
+    for button in (sign, later):
+        common.fit(button, 28)
+        button.set_hexpand(True)
+        box.append(button)
+    later.set_margin_top(4)
+    dialog.connect("closed", lambda _d: answer(False))
+    return common.present(dialog, ui.shell.window)

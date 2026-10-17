@@ -61,7 +61,8 @@ def make_window(app):
             signed_in, fail=os.environ.get("SNAP_SIGNIN") == "fail"),
         control=demo_seed.DemoControl(os.environ.get("SNAP_ENGINE",
                                                      "ready")),
-        first_run=first, downloads=demo_seed.demo_downloads
+        first_run=first, welcome=False,
+        downloads=demo_seed.demo_downloads
         if SCENARIO != "empty" else (lambda _ui: []))
 
 

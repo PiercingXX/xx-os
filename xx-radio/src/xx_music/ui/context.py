@@ -53,6 +53,17 @@ class FirstRun:
 
 
 @dataclass
+class Welcome:
+    """A one-time sheet after the first run (the sign-in offer).
+
+    ``needed(ui)`` runs on the worker; ``show(ui)`` presents it on the
+    main loop and remembers the person's choice itself.
+    """
+    needed: Callable[[object], bool]
+    show: Callable[[object], None]
+
+
+@dataclass
 class Hooks:
     #: Name used in banners ("<source> changed something...").
     source_name: str = ""
@@ -64,12 +75,11 @@ class Hooks:
     disclaimer: str = ""
     licenses: Callable[[], list] | None = None
     first_run: FirstRun | None = None
+    welcome: Welcome | None = None
     #: Banner action id -> handler(ui) ("update-engine", "sign-in"...).
     actions: dict[str, Callable[[object], None]] = field(default_factory=dict)
     #: The On this phone rows (worker thread).
     downloads: Callable[[object], list[DownloadRow]] | None = None
-    #: One line about downloads right now (worker thread).
-    offline_text: Callable[[object], str] | None = None
     #: Diagnostics block lines about the engine (worker thread).
     engine_lines: Callable[[object], list[str]] | None = None
 
@@ -94,6 +104,8 @@ class UiContext:
         self.account_name = ""
         self.downloaded: set[str] = set()
         self.downloads: list[DownloadRow] = []
+        #: The settings as last read or written (filled on the worker).
+        self.prefs: dict = {}
         self._health_listeners: list[Callable[[], None]] = []
         self._account_listeners: list[Callable[[], None]] = []
         self._downloads_listeners: list[Callable[[], None]] = []

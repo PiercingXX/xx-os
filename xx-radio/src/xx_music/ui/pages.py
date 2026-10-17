@@ -152,11 +152,12 @@ def _play_buttons(ui, tracks: list[Track], origin: dict,
         else:
             ui.player.play(tracks, 0, origin)
 
-    buttons = [_wide(widgets.primary_button("Play", lambda: play(False))),
-               _wide(widgets.outline_button("Shuffle", lambda: play(True)))]
-    for button, icon in zip(buttons, ("media-playback-start-symbolic",
-                                      "media-playlist-shuffle-symbolic")):
-        _with_icon(button, icon)
+    buttons = [_with_icon(_wide(widgets.primary_button(
+        "Play", lambda: play(False))), "media-playback-start-symbolic")]
+    shuffle = common.icon_button("media-playlist-shuffle-symbolic",
+                                 "Shuffle", lambda: play(True))
+    shuffle.add_css_class("xx-mu-thumb")
+    buttons.append(shuffle)
     if download is not None and ui.supports(STREAM):
         get = common.icon_button(
             "folder-download-symbolic", "Download",

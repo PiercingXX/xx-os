@@ -219,11 +219,10 @@ class LibraryPage:
             self._gutter(box)
 
     def _storage(self, count: int, used: int) -> Gtk.Widget:
-        cap_gb = 2
         try:
-            cap_gb = int(self.ui.store.prefs().get("storage_cap_gb") or 2)
-        except (OSError, ValueError, TypeError):
-            pass
+            cap_gb = int(self.ui.prefs.get("storage_cap_gb") or 2)
+        except (ValueError, TypeError):
+            cap_gb = 2
         cap = cap_gb * 2**30
         box = common.vbox(8)
         box.add_css_class("xx-mu-block")

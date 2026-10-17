@@ -504,7 +504,7 @@ class SetupScreen:
         head.set_margin_top(10)
         body.append(head)
         text = {
-            "idle": "XX-Radio streams with two open-source libraries kept "
+            "idle": "xx-radio streams with two open-source libraries kept "
                     "in a private folder on this phone. Setting them up "
                     "downloads about 40 MB and needs no admin password.",
             "running": "This takes a minute or two. Keep the app open.",

@@ -10,12 +10,12 @@ the license table.
 from __future__ import annotations
 
 from xx_music.ui import downloads as downloads_mod
-from xx_music.ui.context import FirstRun, Hooks, SettingsSection
+from xx_music.ui.context import FirstRun, Hooks, SettingsSection, Welcome
 from xx_radio import __version__, licenses
 
 #: About › the short, honest version of the README's disclaimer.
 DISCLAIMER = (
-    "Unofficial. XX-Radio is not made or approved by YouTube or Google. "
+    "Unofficial. xx-radio is not made or approved by YouTube or Google. "
     "It reads YouTube Music through the interfaces of YouTube's own apps "
     "and plays without ads, which YouTube's terms don't allow. A change "
     "on their side can stop search or playback until the engine is "
@@ -26,7 +26,8 @@ SOURCE_NAME = "YouTube"
 
 
 def make_hooks(spec, engine, manager=None, control=None,
-               first_run=None, downloads=None) -> Hooks:
+               first_run=None, downloads=None, welcome: bool = True
+               ) -> Hooks:
     """Hooks for the shell. ``manager`` is an AccountManager-shaped
     object (default: the engine's own), ``control`` an EngineControl and
     ``first_run`` a ``FirstRunState`` (default: on for the YouTube
@@ -78,6 +79,14 @@ def make_hooks(spec, engine, manager=None, control=None,
             return False
         return first_run.snapshot().state != firstrun.READY
 
+    def welcome_needed(ui) -> bool:
+        if ui.store.prefs().get("welcome_done"):
+            return False
+        try:
+            return not manager.state().signed_in
+        except Exception:  # noqa: BLE001 - no keyring: still offer it
+            return True
+
     def build_first_run(ui, done):
         return playback_engine.SetupScreen(ui, first_run, done).widget
 
@@ -105,10 +114,14 @@ def make_hooks(spec, engine, manager=None, control=None,
         first_run=(FirstRun(needed, build_first_run)
                    if first_run is not None else None),
         actions=actions,
+        welcome=(Welcome(welcome_needed,
+                         lambda ui: account.show_welcome(ui, open_sign_in))
+                 if welcome and manager is not None else None),
         downloads=downloads or downloads_mod.default_rows,
         engine_lines=engine_lines,
     )
     hooks.engine_control = control
+    hooks.open_sign_in = open_sign_in
     return hooks
 
 
