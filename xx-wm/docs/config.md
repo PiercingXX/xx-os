@@ -262,11 +262,11 @@ surface, not the store.
 | `update_script` | string | PiercingXX menu path | Script run by "Update system". |
 | `update_last_check` / `update_snooze_until` | float | `0.0` | Daily update-check bookkeeping. |
 | `keyboard_layout` | string | `"us"` | Primary layout (`us` QWERTY default, `us+colemak` Colemak, `piercing-num` Piercing Num OSK-only). Session start maps `piercing-num` to `us` for the hardware xkb keymap; Settings → Keyboard applies live. xx-keyboard offers primary first, then QWERTY and Piercing Num. Included in backups. |
-| `setup_complete` | bool | absent | Written by first boot: `false` from the Keyboard step, `true` at Finish. `false` reruns the wizard at next start (a reboot mid-setup must not skip the PIN). Absent counts as done, for configs made before the key existed. |
+| `setup_complete` | bool | absent | Written by first boot: `false` from the Keyboard step (or the Status bar step, if it writes first), `true` at Finish. `false` reruns the wizard at next start (a reboot mid-setup must not skip the PIN). Absent counts as done, for configs made before the key existed. |
 | `night_light` | bool | `false` | Night-light master switch state (Settings → Display, "Night" tile). |
 | `night_light_temp` | int | `2200` | Night-light temperature in Kelvin, clamped 2200–6500. Included in backups. |
 | `night_light_schedule` | bool | `false` | When true the light follows sunset-to-sunrise from the weather coordinates instead of staying on. |
-| `status_bar_height` | int\|null | `null` | Height of the top status bar in logical px, clamped 20–96 (Settings → Display, "Status bar height"). The bar reserves this much at the top edge so apps start below the camera hole. `null` uses the device default: 64 on the FuriPhone FLX1 (its punch-hole sits inside the bar), 28 elsewhere. Device-local: never exported in backups. |
+| `status_bar_height` | int\|null | `null` | Height of the top status bar in logical px, clamped 20–96. It is first set by the first-boot Status bar step, between Theme and Timezone: a live strip at the top of the screen follows a slider that starts at the device default, Next saves the height and Use default writes `null`. Settings → Display, "Status bar height", changes it later. The bar reserves this much at the top edge so apps start below the camera hole. `null` uses the device default: 64 on the FuriPhone FLX1 (its punch-hole sits inside the bar), 28 elsewhere. Device-local: never exported in backups. |
 
 ### Wireless debugging (xxdb)
 

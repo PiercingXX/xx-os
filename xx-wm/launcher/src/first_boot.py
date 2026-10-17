@@ -155,6 +155,45 @@ def theme_css(preset: ThemePreset) -> str:
     border-color: alpha({preset.background}, 0.25);
     color: {preset.background};
 }}
+.sb-preview {{
+    background: {preset.surface};
+    border-bottom: 1px solid alpha({preset.foreground}, 0.6);
+}}
+.sb-preview-row {{
+    color: alpha({preset.foreground}, 0.90);
+    padding: 0 28px 6px 28px;
+}}
+.sb-preview-time {{
+    font-size: 13px;
+    font-weight: 500;
+    font-feature-settings: "tnum";
+}}
+.sb-preview-battery {{
+    font-size: 12px;
+    font-feature-settings: "tnum";
+}}
+.sb-value {{
+    font-size: 18pt;
+    font-feature-settings: "tnum";
+    color: {preset.foreground};
+}}
+.wizard-scale trough {{
+    background-color: {preset.surface_alt};
+    min-height: 6px;
+    border-radius: 3px;
+}}
+.wizard-scale highlight {{
+    background-color: {preset.foreground};
+    border-radius: 3px;
+}}
+.wizard-scale slider {{
+    background-color: {preset.foreground};
+    border: none;
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: 12px;
+    margin: -9px;
+}}
 .tz-list,
 .tz-list row {{
     background: transparent;
@@ -331,9 +370,17 @@ def setup_pending(config_path) -> bool:
     return isinstance(data, dict) and data.get('setup_complete') is False
 
 
+def status_bar_start(data, device_default: Callable[[], int]) -> int:
+    """Slider position the Status bar step opens at: a height an earlier,
+    unfinished run saved, else the device default (preselected)."""
+    import status_bar
+    saved = status_bar.clamp_height((data or {}).get(status_bar.CONFIG_KEY))
+    return saved if saved is not None else int(device_default())
+
+
 class FirstBootWizard(Gtk.Window):
     """
-    First-run setup (keyboard, PIN, theme, timezone) followed by the usage walkthrough:
+    First-run setup (keyboard, PIN, theme, status bar, timezone) followed by the usage walkthrough:
     an interactive gesture tour, shade / DnD & Focus / config-file pages, and
     a try-the-keyboard step when squeekboard is present. `tour_only=True`
     replays just the walkthrough (`xx-wm --welcome`).
@@ -386,6 +433,9 @@ class FirstBootWizard(Gtk.Window):
         self._stack.add_named(self._build_pin_step(), 'pin')
         self._stack.add_named(self._build_pin_confirm_step(), 'pin_confirm')
         self._stack.add_named(self._build_theme_step(), 'theme')
+        # After the look is picked: the top strip that keeps apps clear of
+        # the camera hole, sized on the real screen before first use.
+        self._stack.add_named(self._build_status_bar_step(), 'status_bar')
         self._stack.add_named(self._build_timezone_step(), 'timezone')
 
         self._tour_pages = self._build_tour_pages()
@@ -1019,6 +1069,130 @@ class FirstBootWizard(Gtk.Window):
 
     def _on_theme_next(self, _btn: Gtk.Button) -> None:
         self._config.set_theme(self._selected_theme)
+        self._stack.set_visible_child_name('status_bar')
+
+    # ------------------------------------------------------------------
+    # Status bar height (status_bar.py): the strip that reserves the
+    # camera area. The real bar stays hidden while the wizard is up
+    # (status_bar.decide_visible), so this page draws its own copy at the
+    # very top of the screen at the real height.
+    # ------------------------------------------------------------------
+
+    def _status_bar_default(self) -> int:
+        """The device default (scale-aware on punch-hole devices), as the
+        bar resolves it when `status_bar_height` is null."""
+        import status_bar
+        try:
+            panel = status_bar.monitor_panel(self.get_display())
+        except Exception:
+            panel = None
+        return status_bar.device_default_height(status_bar.detect_device(),
+                                                panel)
+
+    def _build_status_bar_step(self) -> Gtk.Widget:
+        import status_bar
+
+        page = self._page()
+        self._sb_height = status_bar_start(self._config.data,
+                                           self._status_bar_default)
+
+        # The preview: a band of exactly the chosen height (the colored
+        # box has no content, so nothing can stretch it) with the clock
+        # and battery laid over its bottom edge as the real bar draws them.
+        self._sb_strip = Gtk.Box()
+        self._sb_strip.add_css_class('sb-preview')
+        self._sb_strip.set_valign(Gtk.Align.START)
+        self._sb_strip.set_can_target(False)
+        self._sb_row = Gtk.CenterBox()
+        self._sb_row.add_css_class('sb-preview-row')
+        self._sb_row.set_valign(Gtk.Align.START)
+        self._sb_row.set_can_target(False)
+        clock = Gtk.Label(label='12:30', xalign=0)
+        clock.add_css_class('sb-preview-time')
+        clock.set_valign(Gtk.Align.END)
+        self._sb_row.set_start_widget(clock)
+        keepout = Gtk.Box()
+        keepout.set_size_request(status_bar.CENTER_KEEPOUT_PX, -1)
+        self._sb_row.set_center_widget(keepout)
+        battery = Gtk.Label(label='84%', xalign=1)
+        battery.add_css_class('sb-preview-battery')
+        battery.set_valign(Gtk.Align.END)
+        self._sb_row.set_end_widget(battery)
+
+        self._sb_value = Gtk.Label(label='')
+        self._sb_value.add_css_class('sb-value')
+        self._sb_value.set_halign(Gtk.Align.CENTER)
+
+        self._sb_scale = Gtk.Scale.new_with_range(
+            Gtk.Orientation.HORIZONTAL, status_bar.MIN_HEIGHT,
+            status_bar.MAX_HEIGHT, 1)
+        self._sb_scale.add_css_class('wizard-scale')
+        self._sb_scale.set_draw_value(False)
+        self._sb_scale.set_hexpand(True)
+        self._sb_scale.set_value(float(self._sb_height))
+        self._sb_scale.connect(
+            'value-changed',
+            lambda scale: self._on_status_bar_slider(scale.get_value()))
+        self._show_status_bar_height(self._sb_height)
+
+        next_btn = Gtk.Button(label='Next')
+        next_btn.add_css_class('wizard-next')
+        next_btn.set_hexpand(True)
+        next_btn.connect('clicked', self._on_status_bar_next)
+
+        default_btn = Gtk.Button(label='Use default')
+        default_btn.add_css_class('flat')
+        default_btn.add_css_class('wizard-skip')
+        default_btn.set_hexpand(True)
+        default_btn.connect('clicked', self._on_status_bar_use_default)
+
+        title = self._title_block('Status bar',
+                                  'Cover the camera with the bar.')
+        # The preview overlays the page top: keep the title below the
+        # tallest bar the slider allows.
+        title.set_margin_top(max(title.get_margin_top(),
+                                 status_bar.MAX_HEIGHT + 16))
+        page.append(title)
+        page.append(self._centered(self._sb_value, self._sb_scale))
+        page.append(next_btn)
+        page.append(default_btn)
+
+        overlay = Gtk.Overlay()
+        overlay.set_child(page)
+        overlay.add_overlay(self._sb_strip)
+        overlay.add_overlay(self._sb_row)
+        return overlay
+
+    def _show_status_bar_height(self, height: int) -> None:
+        for widget in (self._sb_strip, self._sb_row):
+            widget.set_size_request(-1, height)
+        self._sb_value.set_text('%d px' % height)
+
+    def _on_status_bar_slider(self, value: float) -> None:
+        import status_bar
+        height = status_bar.clamp_height(round(value))
+        if height is None:
+            return
+        self._sb_height = height
+        self._show_status_bar_height(height)
+
+    def _save_status_bar_height(self, height: int | None) -> None:
+        """Write `status_bar_height` (None = the device default). The
+        bar reads it when the shell starts after Finish."""
+        import status_bar
+        # Same marker as the Keyboard step: a config written mid-setup
+        # reruns the wizard after a reboot instead of skipping the PIN.
+        if 'setup_complete' not in self._config.data:
+            self._config.data['setup_complete'] = False
+        self._config.set(status_bar.CONFIG_KEY,
+                         status_bar.clamp_height(height))
+
+    def _on_status_bar_next(self, _btn: Gtk.Widget | None) -> None:
+        self._save_status_bar_height(self._sb_height)
+        self._stack.set_visible_child_name('timezone')
+
+    def _on_status_bar_use_default(self, _btn: Gtk.Widget | None) -> None:
+        self._save_status_bar_height(None)
         self._stack.set_visible_child_name('timezone')
 
     def _on_finish(self, _btn: Gtk.Button) -> None:
