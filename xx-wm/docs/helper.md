@@ -76,6 +76,8 @@ the service refuses those with InvalidArgs without contacting polkit.
 | `SetPowerProfile` | `…power-profile` | `allow_active=yes` |
 | `SetInboundPreset` open (`allowed` true) | `…firewall-open` | `allow_active=auth_admin_keep` |
 | `SetInboundPreset` close (`allowed` false) | `…firewall-restrict` | `allow_active=yes` |
+| `SetInboundAllowed` non-empty (leaves ports open) | `…firewall-open` | `allow_active=auth_admin_keep` |
+| `SetInboundAllowed` empty (closes everything) | `…firewall-restrict` | `allow_active=yes` |
 | `SetFirewallEnabled` disable (`enabled` false) | `…firewall-open` | `allow_active=auth_admin_keep` |
 | `SetFirewallEnabled` enable (`enabled` true) | `…firewall-restrict` | `allow_active=yes` |
 | `GetCapabilities`, `GetFirewallState` | none (no auth) | — |
@@ -145,10 +147,20 @@ the service refuses those with InvalidArgs without contacting polkit.
   accept there cannot override a drop in another base chain;
   `GetFirewallState` reports such a `foreign_drop` so the shell says
   so.
+- `SetInboundAllowed` replaces the whole owned set with the features'
+  derived presets (one row per feature: the feature's own control
+  owns its port; the shell re-applies this on every feature or
+  Firewall-switch change). Same allowlist and backends as
+  `SetInboundPreset` (ufw reconciled to the set). Migration: the
+  first call unions the derived set with the old per-preset rows'
+  stored allow-state, so a previously allowed port stays allowed
+  (its feature counts as on for the firewall only) without starting
+  any service; the stored keys are read once, then left alone.
 - `SetFirewallEnabled` enables (nftables installs the preset chain;
   ufw fallback: `default deny incoming` / `allow outgoing`, keeping
   port 22 when `SSH_CONNECTION` is set, then `--force enable`) or
-  disables.
+  disables (nftables removes the owned table and drop-in: off means
+  no table, live or at boot).
 
 ## Shell client
 
@@ -157,7 +169,8 @@ the service refuses those with InvalidArgs without contacting polkit.
 `set_charge_limit`, `set_app_network`, `freeze_cgroup`,
 `clean_system`, `read_log`, `refresh_package_index`,
 `upgrade_system`, `remove_package`, `manage_service`, `set_rfkill`,
-`set_inbound_preset`, `set_firewall_enabled`, `get_firewall_state` —
+`set_inbound_preset`, `set_inbound_allowed`, `set_firewall_enabled`,
+`get_firewall_state` —
 each calling `on_done(ok, result)` exactly once on the main loop. An
 uninstalled or unactivatable helper reports `HELPER_NOT_INSTALLED`
 (`'helper not installed'`) instead of raising.

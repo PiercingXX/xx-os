@@ -1612,18 +1612,29 @@ class TestFirewallSectionUI:
         built = firewall.FirewallSection().build(win)
         assert 'xx-set-caption' in built[0].classes
 
-    def test_switch_calls_helper(self, fake_gi, monkeypatch):
+    def test_toggle_calls_helper_without_popup(self, fake_gi, monkeypatch):
         import helper_client as client
         win = _bare_win()
         section = firewall.FirewallSection()
         section.build(win)
         calls = []
         monkeypatch.setattr(
-            client, 'set_inbound_preset',
-            lambda name, allowed, on_done: (
-                calls.append((name, allowed)), on_done(True, None))[1])
-        section._on_preset(win, 'ssh', True)
-        assert calls == [('ssh', True)]
+            client, 'set_firewall_enabled',
+            lambda enabled, on_done: (
+                calls.append(enabled), on_done(True, None))[1])
+        monkeypatch.setattr(
+            client, 'get_firewall_state',
+            lambda on_done: on_done(True, {
+                'backend': 'nftables', 'enabled': True,
+                'allowed': {}, 'foreign_drop': False}))
+        reapplies = []
+        monkeypatch.setattr(
+            firewall, 'reapply',
+            lambda win, on_done=None: reapplies.append(win))
+        section._on_toggle(win, True)
+        assert calls == [True]
+        assert reapplies == [win]
+        assert win._menus == []
 
     def test_none_backend_honest(self, fake_gi):
         win = _bare_win()

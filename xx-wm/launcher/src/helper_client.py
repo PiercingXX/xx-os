@@ -303,6 +303,27 @@ def set_inbound_preset(name: str, allowed: bool,
                  lambda ok, _result: on_done(ok, None if ok else _result))
 
 
+def set_inbound_allowed(names, on_done: ResultCallback) -> None:
+    """Replace the whole inbound allowed set with the features' derived
+    presets (``SetInboundAllowed``).
+
+    ``names`` lists only the curated preset names; anything else is
+    rejected helper-side. ``on_done(True, None)`` on success,
+    ``(False, error)`` otherwise.
+    """
+    try:
+        Gio, GLib = _gio()
+        params = GLib.Variant('(as)', ([str(name) for name in names],))
+    except ImportError as err:
+        on_done(False, 'D-Bus unavailable: %s' % err)
+        return
+    except TypeError as err:
+        on_done(False, 'inbound names must be a list: %s' % err)
+        return
+    _call_helper('SetInboundAllowed', params,
+                 lambda ok, _result: on_done(ok, None if ok else _result))
+
+
 def set_firewall_enabled(enabled: bool, on_done: ResultCallback) -> None:
     """Enable (``enabled`` True) or disable the inbound firewall.
 

@@ -204,6 +204,17 @@ def describe_user_service(installed: bool, active_state, enabled_state,
     return base
 
 
+def feature_active(info) -> bool:
+    """True when a user-service probe reports installed and running.
+
+    The firewall derivation reads this: turning the feature's own
+    control on opens its ports, turning it off closes them."""
+    try:
+        return bool(info.get('installed')) and info.get('active') is True
+    except AttributeError:
+        return False
+
+
 def describe_ssh(base: str, listening: bool, address=None,
                  password_allowed=None) -> str:
     """SSH row subtitle: base state plus address and key-only note."""

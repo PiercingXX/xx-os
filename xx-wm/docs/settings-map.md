@@ -70,8 +70,8 @@ The rules (owner, "minimal"):
   - `developer`: Wireless debugging, Pair with code
   - `services`: ModemManager, EG25 modem helper, NetworkManager, BlueZ,
     SSH server, Tailscale, Waydroid container; Failed units
-  - `firewall`: Incoming connections (Firewall plus one allow switch per
-    preset)
+  - `firewall`: Firewall (one on/off row; the subtitle names what is
+    currently allowed in — the ports follow their features)
   - `about`: About phone (version, device, OS, kernel, uptime, CPU,
     memory, temperatures, modem, IMEI, IP address), Logs
   - `shell`: the `~/.config/xx-wm/` footnote, last
@@ -90,6 +90,7 @@ Quick-tile long-press targets: Wi-Fi → `wifi`, Bluetooth →
 | About phone › More (caption) | Logs | Logs was the only row left in the card. |
 | About phone › Network (IP list) | IP address | Android's About phone label. The old title read as a network setting. |
 | Wi-Fi "Forget X?" and Bluetooth "Forget X?" popups | Forget runs straight from the network's or device's menu | Picking Forget in that menu is already the decision; Android forgets a Wi-Fi network at once too. |
+| Firewall per-preset allow rows (Nearby share, Wireless debugging, SSH, KDE Connect, Syncthing) | One Firewall on/off row; each feature's own control owns its port(s) | One entry point per feature. The ruleset derives from feature state and is re-applied whenever a feature or the switch changes; previously allowed ports stay allowed once (migration) without starting any service. |
 | "No networks found.", "Wi-Fi is unavailable on this device." | Just the Scan rows | The Wi-Fi row's subtitle already says Off, Unavailable or Not connected. |
 | "No devices yet. Scan to find some.", "Bluetooth is unavailable on this device." | Just the Scan row | The Bluetooth row's subtitle already gives the state. |
 | Sound "No output devices." / "Audio system unavailable." | The card hides | Empty-state line. |
@@ -97,18 +98,9 @@ Quick-tile long-press targets: Wi-Fi → `wifi`, Bluetooth →
 
 ## Still overlapping
 
-These overlaps remain on purpose: they are different controls, they sit
-in rows that other lanes are building, or both.
+This overlap remains on purpose: it is a different setting, not a
+second copy of another row.
 
-- **System › Incoming connections lists SSH, Wireless debugging and
-  Nearby share.** Those are firewall allow rules (open port 22, the xxdb
-  range, the LocalSend port), not copies of the SSH server, Wireless
-  debugging or Nearby share controls. They sit on the same page as the
-  first two now. The finished shape is one row per feature: the SSH
-  server row and the Wireless debugging switch would open their own
-  ports, and Firewall would be a single on/off row. That belongs to the
-  Firewall, SSH and Wireless debugging rows' own work. This pass only
-  moved them.
 - **Home & launcher › Show Status Bar and Display › Status bar height.**
   These are different settings: one controls the clock and glyphs, the
   other the strip's height. Show Status Bar is pinned to the launcher's

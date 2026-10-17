@@ -1,18 +1,31 @@
-"""Firewall / incoming-access settings section (ref firewall-manager.sh).
+"""Firewall settings section: one row; the firewall follows the features.
 
-Presets only, never free-form ports. The privileged work lives in the
-root helper (`SetInboundPreset`, `SetFirewallEnabled`, `GetFirewallState`
+One entry point per feature: SSH, wireless debugging, KDE Connect,
+Syncthing and Nearby share each own their port(s) in our `inet xx_wm`
+table, and the Firewall row is only an on/off switch whose subtitle
+names what is currently allowed in. The ruleset is derived from
+feature state (`features_to_allowed`) and re-applied through the root
+helper (`SetInboundAllowed`, `SetFirewallEnabled`, `GetFirewallState`
 in launcher/helper/xx_wm_helper.py): nftables directly (present
 everywhere) with a ufw fallback only where nft is missing. An accept
-in our own `inet xx_wm` table cannot override a drop in another base
-chain, so when one is detected the section says so instead of
-pretending the switches filter anything.
+in our own table cannot override a drop in another base chain, so
+when one is detected the section says so instead of pretending the
+switch filters anything.
 
 postmarketOS ships no enabled inbound firewall, so there the status
-honestly reads off while the switches still program the nftables
-mechanism for systems that have one.
+honestly reads off and feature changes program nothing.
+
+Migration from the old per-preset rows: the first `SetInboundAllowed`
+unions the derived set with the old rows' stored allow-state, so a
+previously allowed port stays allowed (its feature counts as on for
+the firewall only) without starting any service; the stored keys are
+read once, then left alone (`migrate_legacy_allowed` states the rule;
+later calls derive purely).
 """
 from __future__ import annotations
+
+import json
+from pathlib import Path
 
 import settings_page
 import settings_ui as ui
@@ -88,31 +101,249 @@ def render_nft_rules(allowed: set[str]) -> str:
     return '\n'.join(lines) + '\n'
 
 
+# Display order for the one-line subtitle (PRESETS keys, feature order).
+FEATURES = ('ssh', 'xxdb', 'kdeconnect', 'syncthing', 'nearby')
+
+
+def features_to_allowed(features: dict) -> set[str]:
+    """The allowed presets for feature state ``{name: on}`` (pure).
+
+    One entry point per feature: a feature that is on owns exactly its
+    preset's ports. Unknown names are ignored, so callers can pass
+    their whole feature map."""
+    get = features.get
+    return {name for name in FEATURES if get(name)}
+
+
+def allowed_titles(allowed) -> list[str]:
+    """Display titles for an allowed set, in feature order."""
+    have = set(allowed or ())
+    return [PRESETS[name]['title'] for name in FEATURES if name in have]
+
+
+def subtitle_for_allowed(allowed, *, enabled: bool = True,
+                         backend: str = 'nftables') -> str:
+    """The Firewall row's one-line subtitle: what is allowed in."""
+    if backend == 'none':
+        return 'Off · no inbound firewall, all incoming allowed'
+    if not enabled:
+        return 'Off'
+    titles = allowed_titles(allowed)
+    if titles:
+        return 'Allowing %s' % ', '.join(titles)
+    return 'Blocking all incoming'
+
+
+def migrate_legacy_allowed(legacy_allowed, features: dict) -> set[str]:
+    """Merge the old per-preset rows' stored allow-state into features.
+
+    A port that was allowed before keeps its feature treated as on
+    for the firewall only — no service is ever started here; the
+    helper never starts services either. The stored keys are read
+    once, then left alone: the helper unions them on its first
+    whole-set write and derives purely after that. Accepts the
+    persisted list or a ``{name: allowed}`` state mapping."""
+    if isinstance(legacy_allowed, dict):
+        legacy = {name for name, on in legacy_allowed.items() if on}
+    else:
+        try:
+            legacy = set(legacy_allowed or ())
+        except TypeError:
+            legacy = set()
+    legacy &= set(PRESETS)
+    return features_to_allowed(features) | legacy
+
+
+def share_visible(home=None) -> bool:
+    """True while the xx-share receiver is visible (its own switch).
+
+    Read from xx-share's own config file, never the network; missing
+    or corrupt reads as off. Worker only (file read)."""
+    try:
+        base = Path(home) if home is not None else Path.home()
+        raw = json.loads(
+            (base / '.config' / 'xx-share' / 'config.json').read_text(
+                encoding='utf-8'))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(raw, dict):
+        return False
+    return raw.get('visible') is True
+
+
+def _probe_ssh_active() -> bool:
+    """True while the SSH service is running (worker only)."""
+    try:
+        import settings_services as svc_mod
+        import system_settings
+        entry = next(e for e in svc_mod.SERVICES if e.key == 'ssh')
+        init = system_settings.detect_init()
+        if init == 'systemd':
+            state = svc_mod.ServicesSection._systemd_state(
+                system_settings, entry)
+        elif init == 'openrc':
+            state = svc_mod.ServicesSection._openrc_state(
+                system_settings, entry)
+        else:
+            return False
+    except Exception:
+        return False
+    try:
+        return svc_mod.state_text(state).startswith('On')
+    except Exception:
+        return False
+
+
+def probe_features(*, ssh=None, xxdb: bool = False, kdeconnect=None,
+                   syncthing=None, nearby=None, home=None) -> dict:
+    """Gather the five firewall features (worker only).
+
+    Each argument pins that feature (tests and callers that just
+    changed it); None probes it now: SSH from its service state,
+    KDE Connect / Syncthing from their user-unit probes, Nearby share
+    from xx-share's own visible flag. Never raises."""
+    features: dict = {}
+    try:
+        features['ssh'] = bool(ssh) if ssh is not None \
+            else _probe_ssh_active()
+    except Exception:
+        features['ssh'] = False
+    features['xxdb'] = bool(xxdb)
+    if kdeconnect is None or syncthing is None:
+        try:
+            import settings_connect as connect
+        except ImportError:
+            connect = None
+        if connect is not None:
+            if kdeconnect is None:
+                try:
+                    kdeconnect = connect.feature_active(
+                        connect.kdeconnect_probe())
+                except Exception:
+                    kdeconnect = False
+            if syncthing is None:
+                try:
+                    syncthing = connect.feature_active(
+                        connect.syncthing_probe())
+                except Exception:
+                    syncthing = False
+        if kdeconnect is None:
+            kdeconnect = False
+        if syncthing is None:
+            syncthing = False
+    features['kdeconnect'] = bool(kdeconnect)
+    features['syncthing'] = bool(syncthing)
+    try:
+        features['nearby'] = bool(nearby) if nearby is not None \
+            else share_visible(home)
+    except Exception:
+        features['nearby'] = False
+    return features
+
+
+def _xxdb_enabled(win) -> bool:
+    ctrl = getattr(win, 'xxdb_controller', None)
+    return bool(ctrl is not None and (
+        getattr(ctrl, 'enabled', False)
+        or getattr(ctrl, 'starting', False)))
+
+
+def reapply(win, on_done=None) -> None:
+    """Re-apply the derived ruleset for the current features.
+
+    Worker-gathers feature state, then writes the whole allowed set
+    through the helper. Skips the write when the live set already
+    matches (and programs nothing where no inbound firewall exists).
+    Never raises; ``on_done(ok, detail)`` reports failures."""
+    try:
+        from settings_page import _run_bg
+        import helper_client
+    except ImportError as err:
+        if callable(on_done):
+            on_done(False, str(err))
+        return
+    try:
+        xxdb = _xxdb_enabled(win)
+    except Exception:
+        xxdb = False
+
+    def _work():
+        try:
+            return probe_features(xxdb_enabled=xxdb)
+        except Exception:
+            return None
+
+    def _after(features) -> None:
+        if not isinstance(features, dict):
+            if callable(on_done):
+                on_done(False, 'feature probe failed')
+            return
+        allowed = sorted(features_to_allowed(features))
+        try:
+            helper_client.get_firewall_state(
+                lambda ok, state: _maybe_apply(
+                    ok, state, allowed, on_done))
+        except Exception as err:
+            if callable(on_done):
+                on_done(False, str(err))
+
+    try:
+        _run_bg(_work, _after)
+    except Exception as err:
+        if callable(on_done):
+            on_done(False, str(err))
+
+
+def _maybe_apply(ok: bool, state, allowed: list, on_done) -> None:
+    try:
+        import helper_client
+    except ImportError as err:
+        if callable(on_done):
+            on_done(False, str(err))
+        return
+    if ok and isinstance(state, dict):
+        if state.get('backend') == 'none':
+            if callable(on_done):
+                on_done(True, None)
+            return
+        current = state.get('allowed') or {}
+        have = {name for name, on in current.items() if on} \
+            if isinstance(current, dict) else set()
+        if have == set(allowed):
+            if callable(on_done):
+                on_done(True, None)
+            return
+    try:
+        helper_client.set_inbound_allowed(
+            allowed, on_done or (lambda _ok, _detail: None))
+    except Exception as err:
+        if callable(on_done):
+            on_done(False, str(err))
+
+
 class FirewallSection(settings_page._Section):
-    """Settings section: firewall status plus per-preset allow switches."""
+    """Settings section: one Firewall row with an on/off switch."""
 
     key = 'firewall'
     title = 'Firewall'
 
     def __init__(self) -> None:
+        self._row = None
+        self._switch = None
         self._status = None
-        self._toggle_btn = None
-        self._preset_box = None
         self._note = None
-        self._switches: dict[str, object] = {}
         self._updating = False
         self._state: dict | None = None
 
     def build(self, win) -> list:
-        self._head = ui.action_row(
-            'Firewall', 'Turn on', lambda _r: self._on_toggle(win),
-            subtitle='Checking firewall…')
-        self._status = self._head.subtitle_label
-        self._toggle_btn = self._head.action
-        built = ui.group('Incoming connections', note='')
-        self._preset_box = built[1]
+        row = ui.switch_row(
+            'Firewall', 'Checking firewall…', False,
+            lambda active: self._on_toggle(win, active))
+        self._row = row
+        self._switch = row.switch
+        self._status = row.subtitle_label
+        built = ui.group('Firewall', [row], note='')
         self._note = built[2]
-        self._render_presets(win, {})
         return built
 
     def refresh(self, win) -> None:
@@ -126,36 +357,28 @@ class FirewallSection(settings_page._Section):
 
     # ------------------------------------------------------------ behavior
 
-    def _render_presets(self, win, allowed: dict) -> None:
-        rows = [self._head]
-        for name, preset in PRESETS.items():
-            row = ui.switch_row(
-                preset['title'], preset['detail'],
-                bool(allowed.get(name, False)),
-                lambda active, n=name: self._on_preset(win, n, active))
-            self._switches[name] = row.switch
-            rows.append(row)
-        ui.fill(self._preset_box, rows)
-
     def _show_state(self, win, state) -> None:
         self._state = state if isinstance(state, dict) else None
-        if self._preset_box is None:
+        if self._row is None:
             return
         allowed = (self._state or {}).get('allowed') or {}
-        if not isinstance(allowed, dict):
-            allowed = {}
-        self._render_presets(win, allowed)
+        have = {name for name, on in allowed.items() if on} \
+            if isinstance(allowed, dict) else set()
+        backend = (self._state or {}).get('backend', 'none')
         if self._status is not None:
             try:
-                self._status.set_text(self._status_text())
+                self._status.set_text(subtitle_for_allowed(
+                    have, enabled=self._is_on(), backend=backend))
             except Exception:
                 pass
-        if self._toggle_btn is not None:
+        if self._switch is not None:
+            self._updating = True
             try:
-                self._toggle_btn.set_label(
-                    'TURN OFF' if self._is_on() else 'TURN ON')
+                self._switch.set_active(self._is_on())
             except Exception:
                 pass
+            finally:
+                self._updating = False
         ui.say(self._note, self._note_text())
 
     def _is_on(self) -> bool:
@@ -165,52 +388,26 @@ class FirewallSection(settings_page._Section):
         state = self._state
         if not isinstance(state, dict):
             return 'Status unavailable'
-        backend = state.get('backend', 'none')
-        if backend == 'none':
-            return 'Off · no inbound firewall, all incoming allowed'
-        if backend == 'ufw':
-            return 'On · ufw' if state.get('enabled') else 'Off · ufw disabled'
-        if state.get('enabled'):
-            return 'On · nftables presets installed'
-        return 'Off · no nftables presets installed'
+        allowed = state.get('allowed') or {}
+        have = {name for name, on in allowed.items() if on} \
+            if isinstance(allowed, dict) else set()
+        return subtitle_for_allowed(
+            have, enabled=self._is_on(),
+            backend=state.get('backend', 'none'))
 
     def _note_text(self) -> str:
         state = self._state
         if not isinstance(state, dict):
             return ''
-        if state.get('backend') == 'none':
-            return ('Switches still apply: they program ufw rules and the '
-                    'nftables drop-in on systems that have a firewall.')
         if state.get('foreign_drop'):
             return ('Another firewall is dropping incoming connections; '
-                    'these switches cannot override its drops.')
+                    'this switch cannot override its drops.')
         return ''
 
-    def _on_preset(self, win, name: str, allowed: bool) -> None:
-        try:
-            import helper_client
-        except ImportError as err:
-            win._show_status(f'Could not change {name}: {err}')
+    def _on_toggle(self, win, active: bool) -> None:
+        if self._updating:
             return
-
-        def _done(ok: bool, detail) -> None:
-            if not ok:
-                win._show_status(f'Could not change {name}: {detail}')
-            self.refresh(win)
-
-        try:
-            helper_client.set_inbound_preset(name, bool(allowed), _done)
-        except Exception as err:
-            win._show_status(f'Could not change {name}: {err}')
-
-    def _on_toggle(self, win) -> None:
-        if self._is_on():
-            win.item_actions._show_action_menu(
-                self._toggle_btn, 'Turn the firewall off?',
-                [('Turn off', lambda: self._apply_enabled(win, False)),
-                 ('Cancel', lambda: None)])
-            return
-        self._apply_enabled(win, True)
+        self._apply_enabled(win, bool(active))
 
     def _apply_enabled(self, win, enabled: bool) -> None:
         try:
@@ -223,6 +420,16 @@ class FirewallSection(settings_page._Section):
             if not ok:
                 win._show_status(f'Could not change firewall: {detail}')
             self.refresh(win)
+            if ok and enabled:
+                reapply(win, _re_done)
+
+        def _re_done(ok: bool, detail) -> None:
+            if not ok:
+                try:
+                    win._show_status(
+                        f'Could not follow features: {detail}')
+                except Exception:
+                    pass
 
         try:
             helper_client.set_firewall_enabled(bool(enabled), _done)

@@ -668,8 +668,24 @@ class XXWMApplication(Adw.Application):
         ctrl.on_notify = self._on_xxdb_notify
         ctrl.on_unnotify = self._on_xxdb_unnotify
         shell = self._shell
-        ctrl.on_state_changed = (
-            lambda: GLib.idle_add(shell._refresh_xxdb_section))
+
+        def _on_xxdb_state_changed() -> None:
+            GLib.idle_add(shell._refresh_xxdb_section)
+            try:
+                import settings_firewall
+                settings_firewall.reapply(shell, _on_xxdb_firewall_done)
+            except Exception:
+                pass
+
+        def _on_xxdb_firewall_done(ok: bool, detail) -> None:
+            if not ok:
+                try:
+                    shell._show_status(
+                        'Could not update firewall: %s' % detail)
+                except Exception:
+                    pass
+
+        ctrl.on_state_changed = _on_xxdb_state_changed
         self._shell.xxdb_controller = ctrl
         self._xxdb = ctrl
         self._shell._refresh_xxdb_section()

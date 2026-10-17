@@ -237,6 +237,9 @@ INTROSPECT_XML = """\
       <arg name="name" type="s" direction="in"/>
       <arg name="allowed" type="b" direction="in"/>
     </method>
+    <method name="SetInboundAllowed">
+      <arg name="names" type="as" direction="in"/>
+    </method>
     <method name="SetFirewallEnabled">
       <arg name="enabled" type="b" direction="in"/>
     </method>
@@ -850,15 +853,18 @@ class HelperCore:
         return os.path.join(directory, INBOUND_FILE_NAME)
 
     def load_inbound(self) -> dict:
-        """Persisted ``{'enabled': bool|None, 'allowed': [preset]}``;
-        corrupt state degrades to defaults."""
+        """Persisted ``{'enabled': bool|None, 'allowed': [preset],
+        'migrated': bool}``; corrupt state degrades to defaults.
+        ``migrated`` marks the one-time upgrade from the old per-preset
+        rows to the feature-derived ruleset (read once, then left
+        alone)."""
         try:
             with open(self.inbound_file(), 'r', encoding='utf-8') as handle:
                 raw = json.load(handle)
         except (OSError, ValueError):
-            return {'enabled': None, 'allowed': []}
+            return {'enabled': None, 'allowed': [], 'migrated': False}
         if not isinstance(raw, dict):
-            return {'enabled': None, 'allowed': []}
+            return {'enabled': None, 'allowed': [], 'migrated': False}
         enabled = raw.get('enabled')
         allowed = raw.get('allowed')
         names = [name for name in allowed
@@ -867,6 +873,7 @@ class HelperCore:
         return {
             'enabled': enabled if isinstance(enabled, bool) else None,
             'allowed': sorted(names),
+            'migrated': bool(raw.get('migrated')),
         }
 
     def save_inbound(self, state: dict) -> None:
@@ -953,6 +960,29 @@ class HelperCore:
                        NFT_IN_TABLE_LEGACY])
         except HelperError:
             pass
+
+    def _remove_inbound_dropin(self) -> None:
+        """Best-effort removal of our nftables drop-in (firewall off
+        means no table, live or at boot)."""
+        try:
+            os.remove(os.path.join(self.nft_dropin_dir, NFT_DROPIN_NAME))
+        except OSError:
+            pass
+
+    def _clear_inbound_nft(self) -> None:
+        """Remove the owned live table and drop-in; other tables are
+        never touched."""
+        try:
+            self._nft(['flush', 'chain', NFT_FAMILY, NFT_IN_TABLE,
+                       NFT_IN_CHAIN])
+        except HelperError:
+            pass
+        try:
+            self._nft(['delete', 'table', NFT_FAMILY, NFT_IN_TABLE])
+        except HelperError:
+            pass
+        self._drop_legacy_inbound()
+        self._remove_inbound_dropin()
 
     def apply_inbound(self, allowed) -> None:
         """Reconcile the live `inet xx_wm` table with `allowed`:
@@ -1088,16 +1118,70 @@ class HelperCore:
                 state['enabled'] = True
                 self.save_inbound(state)
             else:
-                self._nft(['flush', 'chain', NFT_FAMILY, NFT_IN_TABLE,
-                           NFT_IN_CHAIN])
-                self._nft(['delete', 'table', NFT_FAMILY, NFT_IN_TABLE])
-                self._drop_legacy_inbound()
+                self._clear_inbound_nft()
                 state = self.load_inbound()
                 state['enabled'] = False
                 self.save_inbound(state)
         else:
             raise _failed('no firewall backend available')
         return bool(enabled)
+
+    def _reconcile_ufw(self, wanted: list) -> None:
+        """Bring the ufw ruleset to ``wanted``: allow missing preset
+        specs, delete present specs outside it. Argv lists only."""
+        try:
+            proc = self._run(['ufw', 'status'])
+            status = getattr(proc, 'stdout', '') or ''
+        except OSError as err:
+            raise _failed('ufw status failed: %s' % err) from None
+        wanted_set = set(wanted)
+        for name in sorted(INBOUND_PRESETS):
+            for spec in self.ufw_specs(name):
+                if name in wanted_set and spec not in status:
+                    self._run_cmd(['ufw', 'allow', spec])
+                elif name not in wanted_set and spec in status:
+                    self._run_cmd(['ufw', '--force', 'delete',
+                                   'allow', spec])
+
+    def set_inbound_allowed(self, names) -> list:
+        """Replace the whole owned inbound set with the features'
+        derived presets (``SetInboundAllowed``).
+
+        Presets only: anything outside INBOUND_PRESETS is InvalidArgs.
+        Migration: the first call unions the derived set with the old
+        per-preset rows' stored allow-state, so a previously allowed
+        port stays allowed (its feature counts as on for the firewall
+        only) without starting any service; the stored keys are read
+        once, then left alone. Later calls derive purely.
+        Firewall off (``enabled`` False) persists the set but leaves
+        no table behind.
+        """
+        if not isinstance(names, (list, tuple, set, frozenset)):
+            raise HelperError(ERROR_INVALID_ARGS,
+                              'inbound names must be a list: %r' % (names,))
+        wanted = sorted(names)
+        for name in wanted:
+            if name not in INBOUND_PRESETS:
+                raise HelperError(ERROR_INVALID_ARGS,
+                                  'unknown inbound preset: %r' % (name,))
+        state = self.load_inbound()
+        if not state['migrated']:
+            wanted = sorted(set(wanted) | set(state['allowed']))
+            state['migrated'] = True
+        state['allowed'] = wanted
+        backend = self.firewall_backend()
+        if backend == 'ufw':
+            self._reconcile_ufw(wanted)
+        elif backend == 'nftables':
+            if state.get('enabled') is False:
+                self._clear_inbound_nft()
+            else:
+                self.apply_inbound(wanted)
+                self.write_inbound_dropin(wanted)
+        else:
+            raise _failed('no firewall backend available')
+        self.save_inbound(state)
+        return wanted
 
     # ----------------------------------------------------------------- state
 
@@ -1170,7 +1254,9 @@ class HelperCore:
                 except HelperError as err:
                     applied['errors'].append(str(err))
         inbound = self.load_inbound()
-        if inbound['allowed'] or inbound['enabled']:
+        if inbound.get('enabled') is False:
+            self._remove_inbound_dropin()
+        elif inbound['allowed'] or inbound['enabled']:
             try:
                 if self.firewall_backend() == 'nftables':
                     self.apply_inbound(inbound['allowed'])
@@ -1265,7 +1351,8 @@ def check_polkit_authorization(connection, sender, action, callback,
 # Method -> (polkit action, interactive): interactive passes
 # AllowUserInteraction and is reserved for auth_admin_keep actions.
 # Argument-dependent methods (ManageService, SetInboundPreset,
-# SetFirewallEnabled) are NOT listed here: policy_for() below decides
+# SetInboundAllowed, SetFirewallEnabled) are NOT listed here:
+# policy_for() below decides
 # them from the already-validated arguments. SetPowerProfile is listed
 # but policy_for() still allowlists its profile first. GetCapabilities
 # and GetFirewallState need no auth and are dispatched before any
@@ -1324,6 +1411,17 @@ def policy_for(method: str, args) -> tuple | None:
             return None
         return (ACTION_FW_OPEN, True) if allowed else (ACTION_FW_RESTRICT,
                                                       False)
+    if method == 'SetInboundAllowed':
+        try:
+            (names,) = args
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(names, (list, tuple)):
+            return None
+        if any(name not in INBOUND_PRESETS for name in names):
+            return None
+        return (ACTION_FW_OPEN, True) if names else (ACTION_FW_RESTRICT,
+                                                    False)
     if method == 'SetFirewallEnabled':
         try:
             (enabled,) = args
@@ -1477,6 +1575,10 @@ class HelperService:
             elif method == 'SetInboundPreset':
                 name, allowed = args
                 self.core.set_inbound_preset(str(name), bool(allowed))
+            elif method == 'SetInboundAllowed':
+                (names,) = args
+                self.core.set_inbound_allowed(
+                    [str(name) for name in names])
             elif method == 'SetFirewallEnabled':
                 (enabled,) = args
                 self.core.set_firewall_enabled(bool(enabled))

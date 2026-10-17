@@ -92,6 +92,27 @@ USER_SERVICES: tuple = (
 SERVICE_ACTIONS = ('Start', 'Stop', 'Restart', 'Enable', 'Disable')
 
 
+def _follow_firewall(win) -> None:
+    """Re-apply the feature-derived firewall set after a firewall
+    feature changed. Failures land in the status line, never a popup."""
+    try:
+        import settings_firewall as firewall
+    except ImportError:
+        return
+
+    def _report(ok: bool, detail) -> None:
+        if not ok:
+            try:
+                win._show_status('Could not update firewall: %s' % detail)
+            except Exception:
+                pass
+
+    try:
+        firewall.reapply(win, _report)
+    except Exception:
+        pass
+
+
 def visible_system_entries(eg25: bool = False, adbd: bool = False) -> list:
     """System entries to render: eg25 only where its manager exists and
     adbd only where its binary is installed (silence, never a dead
@@ -439,6 +460,8 @@ class ServicesSection(settings_page._Section):
                 win._show_status(f'Could not {action} {entry.title}: '
                                  f'{detail}')
             self.refresh(win)
+            if ok and entry.key == 'ssh':
+                _follow_firewall(win)
 
         try:
             helper_client.manage_service(entry.key, action, _done)
@@ -465,6 +488,7 @@ class ServicesSection(settings_page._Section):
         def _done(res) -> None:
             if not isinstance(res, dict) or not res.get('error'):
                 self.refresh(win)
+                _follow_firewall(win)
                 return
             if target is not None:
                 ui.set_subtitle(target, '%s · %s' % (base, res['error']))
