@@ -141,7 +141,7 @@ def main(argv: list[str]) -> int:
     failed = bool(criticals or errors or focus_in_entry)
     if focus_in_entry:
         print("FAIL: a text entry holds focus at startup")
-    for line in ("NAS host: http://127.0.0.1:9",
+    for line in ("NAS HOST",
                  "Sign-in: signed in",
                  "Queue: 2 queued",
                  "Batch history unavailable right now"):

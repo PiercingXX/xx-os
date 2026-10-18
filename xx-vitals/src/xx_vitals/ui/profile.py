@@ -8,7 +8,6 @@ and 507 as a storage-full line while the queue is kept.
 
 from __future__ import annotations
 
-from xx_vitals.core import applog
 from xx_vitals.core import profile_edit
 from xx_vitals.sync import auth as auth_module
 from xx_vitals.sync import status as status_model
@@ -114,11 +113,32 @@ def set_count_while_screen_off(config, enabled: bool, save=None) -> dict:
 
 
 def screen_off_copy() -> str:
-    return (
-        "Count steps while screen is off (uses more battery). "
-        "Without a hardware step counter, steps are only counted "
-        "while the phone is awake."
-    )
+    """Subtitle of the "Count while screen is off" row."""
+    return "Uses more battery"
+
+
+def step_subtitle(line: dict, systemd: bool = True) -> str:
+    """Short subtitle of the "Count my steps" row: where steps come
+    from, never a paragraph (the switch already says on or off)."""
+    if not line.get("enabled"):
+        return ""
+    if not line.get("has_source"):
+        return "No step sensor found"
+    if not systemd:
+        return "While the app is open"
+    if line.get("source") == "hardware":
+        return "Hardware step counter"
+    return "While the phone is awake"
+
+
+GOAL_LABELS = {"steps": "Daily steps goal", "effort": "Daily effort goal",
+               "weekly": "Weekly effort goal"}
+
+
+def goal_error_text(errors: dict) -> str:
+    """One line per bad goal, named the way its field is captioned."""
+    return "\n".join(f"{GOAL_LABELS.get(name, name)}: {message.lower()}"
+                     for name, message in errors.items())
 
 
 def _refresh_baseline(config, state_path=None) -> None:
@@ -621,7 +641,7 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
 
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Gio, Gtk
+    from gi.repository import Gio, Gtk, Pango
 
     from xx_ui import widgets
 
@@ -635,36 +655,21 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
     state = {"overflow": None}
     refs: dict = {}
 
-    def menu() -> object:
-        if state["overflow"] is not None:
-            state["overflow"].popup()
-            return state["overflow"]
-        anchor = header_box.get_first_child()
-        popover = shell_page.open_overflow(anchor, [
-            ("Import Takeout",
-             lambda: open_takeout_import(
-                 window, db, refs["import_notice"].set_text,
-                 on_done=nav.refresh_all)),
-            ("Copy logs", _copy_logs),
-        ])
-        state["overflow"] = popover
-        popover.connect("closed", lambda _p: state.update(overflow=None))
-        return popover
-
     def refresh() -> None:
         while True:
             first = header_box.get_first_child()
             if first is None:
                 break
             header_box.remove(first)
+        # No overflow: Import and Copy logs live on the page itself.
         header_box.append(widgets.page_header(
-            "Profile", _profile_caption(config), overflow_cb=menu))
+            "Profile", _profile_caption(config)))
         _refresh_step_lines()
         _refresh_weight_line()
         refresh_state()
 
     live["refresh"] = refresh
-    live["menu"] = menu
+    live["menu"] = lambda: None
 
     # -- Goals ---------------------------------------------------------
     body.append(widgets.section_label("Goals"))
@@ -691,8 +696,7 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
             effort_raw=effort_entry.get_text(),
             weekly_raw=weekly_entry.get_text())
         if errors:
-            goals_error.set_text("; ".join(
-                f"{name}: {message}" for name, message in errors.items()))
+            goals_error.set_text(goal_error_text(errors))
             return
         goals_error.set_text("")
         _persist_config(config)
@@ -700,10 +704,16 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
 
     # -- Body ----------------------------------------------------------
     body.append(widgets.section_label("Body"))
-    height_entry = widgets.deferred_entry("Metres, e.g. 1.78")
+    height_entry = widgets.deferred_entry("")
     height_entry.set_hexpand(True)
-    if config.height_metres:
-        height_entry.set_text(f"{config.height_metres:.2f}")
+
+    def _show_height() -> None:
+        # The entry reads in the current units: Save parses it that way.
+        height_entry.set_placeholder_text(height_placeholder(config.units))
+        height_entry.set_text(profile_edit.height_input_text(
+            config.height_metres or 0.0, config.units))
+
+    _show_height()
     year_entry = widgets.deferred_entry("e.g. 1990")
     year_entry.set_hexpand(True)
     if config.birth_year:
@@ -714,8 +724,9 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
     body_error.add_css_class("xx-danger-text")
     body.append(body_error)
     body.append(widgets.outline_button("Save", lambda: _save_body()))
-    weight_line = widgets.wrap_label("", "xx-secondary")
-    body.append(widgets.setting_row(
+    weight_line = widgets.label("", "xx-secondary")
+    weight_line.set_ellipsize(Pango.EllipsizeMode.NONE)
+    body.append(_setting_row(
         "Latest weigh-in", "", weight_line, last=True))
     refs["weight_line"] = weight_line
 
@@ -741,7 +752,7 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
         except (OSError, AttributeError):
             latest = None
         if latest is None:
-            weight_line.set_text("No weigh-ins yet")
+            weight_line.set_text("—")
         else:
             weight_line.set_text(format_model.format_weight(
                 latest.weight_kg, config.units))
@@ -757,6 +768,7 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
     def _set_units(units: str) -> None:
         config.units = units
         _persist_config(config)
+        _show_height()
         nav.refresh_all()
 
     # -- Tabs ----------------------------------------------------------
@@ -767,47 +779,52 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
         switch = widgets.make_switch(
             bool(getattr(config, key, True)),
             lambda active, key=key: _set_tab(key, active))
-        body.append(widgets.setting_row(title, "", switch))
+        body.append(_setting_row(title, "", switch))
 
     def _set_tab(key: str, active: bool) -> None:
         setattr(config, key, bool(active))
         _persist_config(config)
         nav.refresh_tabs()
+        # Journal and Browse grow a Settings menu while Profile's tab hides.
+        nav.refresh_all()
 
     # -- Step counting -------------------------------------------------
     body.append(widgets.section_label("Step counting"))
-    step_title = widgets.label("", "xx-title")
-    step_detail = widgets.wrap_label("", "xx-secondary")
-    body.append(step_title)
-    body.append(step_detail)
+    systemd = systemd_user_available()
     collect_switch = widgets.make_switch(
         bool(getattr(config, "collect_enabled", False)),
         lambda active: _toggle_collect(active))
-    body.append(widgets.setting_row(
-        "Count my steps", "", collect_switch, last=True))
-    refs["step_title"] = step_title
-    refs["step_detail"] = step_detail
-
-    def _refresh_step_lines() -> None:
-        line = collect_status(config)
-        step_title.set_text(line["title"])
-        step_detail.set_text(line["detail"])
-
-    def _toggle_collect(active: bool) -> None:
-        set_collect_enabled(config, active)
-        _refresh_step_lines()
-        nav.refresh_all()
-
-    body.append(widgets.wrap_label(screen_off_copy()))
+    collect_row = _setting_row("Count my steps", " ", collect_switch)
+    step_detail = _row_subtitle(collect_row)
+    body.append(collect_row)
     screen_switch = widgets.make_switch(
         bool(getattr(config, "count_while_screen_off", False)),
         lambda active: set_count_while_screen_off(config, active))
-    body.append(widgets.setting_row(
-        "Count while screen is off", "", screen_switch, last=True))
+    body.append(_setting_row(
+        "Count while screen is off", screen_off_copy(), screen_switch,
+        last=True))
     sample_line = widgets.wrap_label("", "xx-secondary")
     sample_button = widgets.outline_button("Sample now", lambda: _sample_now())
     body.append(sample_button)
     body.append(sample_line)
+    refs["step_detail"] = step_detail
+
+    def _refresh_step_lines() -> None:
+        line = collect_status(config)
+        text = step_subtitle(line, systemd)
+        step_detail.set_text(text)
+        step_detail.set_visible(bool(text))
+        if collect_switch.get_active() != line["enabled"]:
+            collect_switch.set_active(line["enabled"])
+        sample_button.set_sensitive(line["enabled"])
+        if not line["enabled"]:
+            sample_line.set_text("")
+
+    def _toggle_collect(active: bool) -> None:
+        if bool(getattr(config, "collect_enabled", False)) == bool(active):
+            return
+        set_collect_enabled(config, active)
+        nav.refresh_all()
 
     def _sample_now() -> None:
         sample_line.set_text("Sampling…")
@@ -817,49 +834,46 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
                 sample_line.set_text(
                     "Sample failed — will retry on the next tick.")
                 return
-            line = collect_status(config)
+            steps = getattr(result, "steps", 0)
             if getattr(result, "outcome", "") == "no-source":
-                sample_line.set_text(line["detail"])
-            elif getattr(result, "steps", 0):
+                sample_line.set_text("No step sensor found")
+            elif steps:
                 sample_line.set_text(
-                    f"Counted {result.steps} steps just now. {line['detail']}")
+                    "Counted 1 step" if steps == 1
+                    else f"Counted {steps:,} steps")
             else:
-                sample_line.set_text(line["detail"])
+                sample_line.set_text("No new steps")
 
         collect_tick_in_background(db, config, done)
 
-    if not systemd_user_available():
-        body.append(widgets.wrap_label(
-            "Systemd user timers are unavailable here — "
-            "sampling runs while the app is open."))
-
     # -- Sync ----------------------------------------------------------
     body.append(widgets.section_label("Sync"))
-    nas_line = widgets.wrap_label("", "xx-body")
-    body.append(nas_line)
-    host_entry = widgets.deferred_entry("NAS host URL")
+    login_line = widgets.wrap_label("", "xx-secondary")
+    pull_line = widgets.wrap_label("", "xx-secondary")
+    push_line = widgets.wrap_label("", "xx-secondary")
+    pending_line = widgets.wrap_label("", "xx-secondary")
+    pending_line.set_margin_bottom(12)
+    for line in (login_line, pull_line, push_line, pending_line):
+        body.append(line)
+    host_entry = widgets.deferred_entry("https://nas.local")
     host_entry.set_text(config.server_url)
     host_entry.set_hexpand(True)
     host_row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
     host_row.append(host_entry)
     host_row.append(widgets.outline_button("Save", lambda: _save_host()))
-    body.append(host_row)
-    login_line = widgets.wrap_label("", "xx-body")
-    pull_line = widgets.wrap_label("", "xx-body")
-    push_line = widgets.wrap_label("", "xx-body")
-    pending_line = widgets.wrap_label("", "xx-body")
-    for line in (login_line, pull_line, push_line, pending_line):
-        body.append(line)
-    xxchat_entry = widgets.deferred_entry("Sign-in host URL")
+    body.append(_labeled("NAS host", host_row))
+    xxchat_entry = widgets.deferred_entry("https://chat.local")
     xxchat_entry.set_text(getattr(config, "xxchat_url", ""))
     xxchat_entry.set_hexpand(True)
-    user_entry = widgets.deferred_entry("Username")
+    user_entry = widgets.deferred_entry("")
     user_entry.set_hexpand(True)
-    password_entry = widgets.deferred_entry("Password")
+    password_entry = widgets.deferred_entry("")
     password_entry.set_visibility(False)
     password_entry.set_hexpand(True)
-    for entry in (xxchat_entry, user_entry, password_entry):
-        body.append(entry)
+    for caption_text, entry in (("Sign-in host", xxchat_entry),
+                                ("Username", user_entry),
+                                ("Password", password_entry)):
+        body.append(_labeled(caption_text, entry))
     signin_button = widgets.primary_button("Sign in", lambda: _sign_in())
     login_message = widgets.wrap_label("", "xx-secondary")
     login_message.set_hexpand(True)
@@ -867,8 +881,6 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
     signin_row.append(signin_button)
     signin_row.append(login_message)
     body.append(signin_row)
-    setup_label = widgets.wrap_label("", "xx-secondary")
-    body.append(setup_label)
     notice = widgets.wrap_label("", "xx-secondary")
     sync_button = widgets.primary_button("Sync now", lambda: _sync_now())
     body.append(sync_button)
@@ -896,15 +908,15 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
         def done(outcome) -> None:
             if isinstance(outcome, BaseException):
                 return
-            nas_line.set_text(f"NAS host: {outcome['host']}")
             login_line.set_text(f"Sign-in: {outcome['login']}")
             pull_line.set_text(f"Last pull: {outcome['last_pull']}")
             push_line.set_text(f"Last push: {outcome['last_push']}")
             pending_line.set_text(f"Queue: {outcome['pending']}")
             _update_signin_sensitive()
             sync_button.set_sensitive(bool(outcome["can_sync"]))
-            setup_label.set_text(
-                "" if outcome["can_sync"] else sync_setup_copy(None) or "")
+            if outcome["can_sync"] and not state.get("batches_asked"):
+                state["batches_asked"] = True
+                refresh_batches()
 
         worker_module.run_in_background(work, done)
 
@@ -1004,9 +1016,6 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
 
     # -- Logs ----------------------------------------------------------
     body.append(widgets.section_label("Logs"))
-    logs_path = widgets.wrap_label(str(applog.log_file()))
-    logs_path.set_selectable(True)
-    body.append(logs_path)
     logs_view = Gtk.TextView()
     logs_view.set_editable(False)
     logs_view.set_cursor_visible(False)
@@ -1018,19 +1027,20 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
     logs_scrolled.set_max_content_height(200)
     logs_scrolled.set_child(logs_view)
     body.append(logs_scrolled)
+    refs["logs_scrolled"] = logs_scrolled
     body.append(widgets.outline_button("Copy logs", lambda: _copy_logs()))
     _refresh_log_view(logs_view)
+    logs_scrolled.set_visible(bool(logs_view.get_buffer().get_char_count()))
 
     def _copy_logs() -> None:
         from xx_vitals.core import applog
 
         lines = applog.log_view_lines()
         logs_view.get_buffer().set_text("\n".join(lines))
+        logs_scrolled.set_visible(bool(lines))
         error = shell_page.copy_to_clipboard("\n".join(lines))
         if error is not None:
             notice.set_text(error)
-            return
-        notice.set_text(f"{len(lines)} log lines copied.")
 
     # -- Import --------------------------------------------------------
     body.append(widgets.section_label("Import"))
@@ -1043,8 +1053,39 @@ def build_profile_page(db, config, secrets, nav, live: dict | None = None,
     body.append(import_notice)
 
     refresh()
-    refresh_batches()
     return widgets.page(header_box, body, None)
+
+
+def height_placeholder(units: str) -> str:
+    return "e.g. 1.78" if units == "metric" else "e.g. 5'10"
+
+
+def _setting_row(title: str, subtitle: str = "", trailing=None,
+                 last: bool = False):
+    """widgets.setting_row whose title and subtitle wrap (two lines
+    each) instead of ellipsizing at large text."""
+    from gi.repository import Pango
+
+    from xx_ui import widgets
+
+    row = widgets.setting_row(title, subtitle, trailing, last=last)
+    label = row.get_first_child().get_first_child()
+    while label is not None:
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.set_wrap(True)
+        label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        label.set_lines(2)
+        label.set_max_width_chars(-1)
+        label.set_width_chars(-1)
+        label = label.get_next_sibling()
+    return row
+
+
+def _row_subtitle(row):
+    """The subtitle label of a widgets.setting_row built with one."""
+    middle = row.get_first_child()
+    title = middle.get_first_child()
+    return title.get_next_sibling()
 
 
 def _refresh_log_view(logs_view) -> None:

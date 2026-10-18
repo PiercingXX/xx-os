@@ -77,6 +77,26 @@ def submit_activity(
     return row_id, None
 
 
+#: (segment label, stored activity type): the journal's own filters.
+ACTIVITY_TYPES = (("Walk", "walk"), ("Run", "run"), ("Bike", "cycle"),
+                  ("Other", "other"))
+
+
+def _labeled(caption_text: str, entry):
+    """Caption over an entry, like the Profile fields."""
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gtk
+
+    from xx_ui import widgets
+
+    box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 6)
+    box.append(widgets.caption(caption_text))
+    box.append(entry)
+    return box
+
+
 def fit_dialog(dialog, box) -> None:
     """Size a sheet to the phone canvas: 320 px content, scrolling body."""
     import gi
@@ -125,12 +145,11 @@ def build_weight_dialog(app_window, db, units: str, measured_at: int, on_saved=N
 
     dialog = Adw.Dialog(title="Log weight")
     box = widgets.dialog_box("Log weight")
-    box.append(widgets.caption("Track a weigh-in"))
     unit = entries.unit_for(units)
     hint = "kg" if unit == entries.WeightUnit.KG else "lb"
-    field = widgets.deferred_entry(f"Weight ({hint})")
+    field = widgets.deferred_entry(hint)
     field.set_input_purpose(Gtk.InputPurpose.NUMBER)
-    box.append(field)
+    box.append(_labeled("Weight", field))
     error_label = widgets.wrap_label("", "xx-secondary")
     error_label.add_css_class("xx-danger-text")
     box.append(error_label)
@@ -162,14 +181,29 @@ def build_activity_dialog(app_window, db, now_ms: int, height_metres: float,
 
     dialog = Adw.Dialog(title="Log activity")
     box = widgets.dialog_box("Log activity")
-    box.append(widgets.caption("Walk · Run · Cycle · Other"))
-    type_field = widgets.deferred_entry("Walk, run, cycle, other")
-    duration_field = widgets.deferred_entry("Duration (minutes)")
+    picked = {"type": ACTIVITY_TYPES[0][1]}
+    holder = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+
+    def pick(value: str) -> None:
+        picked["type"] = value
+        _fill_types()
+
+    def _fill_types() -> None:
+        child = holder.get_first_child()
+        if child is not None:
+            holder.remove(child)
+        holder.append(widgets.segmented([
+            (label, value == picked["type"], lambda value=value: pick(value))
+            for label, value in ACTIVITY_TYPES]))
+
+    _fill_types()
+    box.append(holder)
+    duration_field = widgets.deferred_entry("min")
     duration_field.set_input_purpose(Gtk.InputPurpose.NUMBER)
-    steps_field = widgets.deferred_entry("Steps (optional)")
+    steps_field = widgets.deferred_entry("Optional")
     steps_field.set_input_purpose(Gtk.InputPurpose.NUMBER)
-    for widget in (type_field, duration_field, steps_field):
-        box.append(widget)
+    box.append(_labeled("Duration", duration_field))
+    box.append(_labeled("Steps", steps_field))
     error_label = widgets.wrap_label("", "xx-secondary")
     error_label.add_css_class("xx-danger-text")
     box.append(error_label)
@@ -177,7 +211,7 @@ def build_activity_dialog(app_window, db, now_ms: int, height_metres: float,
 
     def on_save() -> None:
         row_id, error = submit_activity(
-            db, type_field.get_text(), duration_field.get_text(),
+            db, picked["type"], duration_field.get_text(),
             steps_field.get_text(), now_ms, height_metres, weight_kg,
         )
         if error is not None:

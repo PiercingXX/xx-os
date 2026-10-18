@@ -202,67 +202,81 @@ def build_browse_page(db, config, nav, live: dict | None = None) -> object:
     inner.add_named(detail_box, "detail")
 
     def menu() -> object:
+        items = shell_page.settings_items(config, nav)
+        if not items:
+            return None
         if state["overflow"] is not None:
             state["overflow"].popup()
             return state["overflow"]
         anchor = header_box.get_first_child()
-        popover = shell_page.open_overflow(anchor, [
-            ("Log activity", nav.add_activity),
-            ("Log weight", nav.add_weight),
-            ("Settings", lambda: nav.show("profile")),
-        ])
+        popover = shell_page.open_overflow(anchor, items)
         state["overflow"] = popover
         popover.connect("closed", lambda _p: state.update(overflow=None))
         return popover
 
+    def _header(back_cb, title: str, subtitle: str = ""):
+        header = widgets.compact_header(back_cb, title, subtitle)
+        # The browse body already carries the gutter: no second one.
+        header.remove_css_class("xx-page-body")
+        return header
+
+    def to_cats() -> None:
+        state["level"] = "cats"
+        inner.set_visible_child_name("cats")
+
+    def back() -> bool:
+        """Detail -> the metric list it came from -> categories."""
+        if state["level"] == "detail" and state.get("from_metrics"):
+            state["level"] = "metrics"
+            inner.set_visible_child_name("metrics")
+            return True
+        if state["level"] in ("detail", "metrics"):
+            to_cats()
+            return True
+        return False
+
     def open_category(category) -> None:
         if not category.tracked:
-            _show_untracked(category)
-            return
+            return  # a "not tracked" row is information, not a door
         if len(category.metrics) == 1:
             open_metric(category.metrics[0].value)
             return
-        _fill_box(metrics_box, widgets.compact_header(
-            lambda: inner.set_visible_child_name("cats"),
-            category.label, "Choose a metric"))
+        _fill_box(metrics_box, _header(to_cats, category.label))
         for index, key in enumerate(category.metrics):
             metrics_box.append(widgets.list_row(
                 browse_model.METRIC_LABELS[key],
                 latest_value_text(key.value, _dailies(), _weights(), config),
                 leading=widgets.avatar(METRIC_LETTERS.get(key.value, "•"), 40),
-                on_activate=lambda key=key: open_metric(key.value),
+                on_activate=lambda key=key: open_metric(key.value, True),
                 last=index == len(category.metrics) - 1))
+        state["level"] = "metrics"
         inner.set_visible_child_name("metrics")
 
-    def open_metric(metric: str) -> None:
+    def open_metric(metric: str, from_metrics: bool = False) -> None:
         state["metric"] = metric
+        state["from_metrics"] = from_metrics
         _show_detail()
-        inner.set_visible_child_name("detail")
-
-    def _show_untracked(category) -> None:
-        _fill_box(detail_box, widgets.compact_header(
-            lambda: inner.set_visible_child_name("cats"),
-            category.label, "Not tracked"))
-        detail_box.append(widgets.empty_state(
-            f"{category.label} is not tracked."))
+        state["level"] = "detail"
         inner.set_visible_child_name("detail")
 
     def _show_detail() -> None:
         metric = state["metric"]
-        _fill_box(detail_box, widgets.compact_header(
-            lambda: inner.set_visible_child_name("cats"),
-            metric_label(metric), _range_caption()))
+        _fill_box(detail_box, _header(
+            lambda: back(), metric_label(metric), _range_caption()))
+        series, action = _series_for(metric)
+        if series is None:
+            # No data: nothing to read or zoom, at most the one action
+            # that adds some.
+            if action is not None:
+                button = widgets.outline_button(*action)
+                button.set_hexpand(True)
+                detail_box.append(button)
+            return
         detail_box.append(widgets.segmented([
             (zoom, zoom == state["zoom"],
              lambda zoom=zoom: (state.update(zoom=zoom), _show_detail()))
             for zoom in ZOOMS
         ]))
-        series, summary = _series_for(metric)
-        if series is None:
-            detail_box.append(widgets.empty_state(summary))
-            return
-        if summary:
-            detail_box.append(widgets.caption(summary))
         detail_box.append(_chart(series, _accumulates(metric)))
         detail_box.append(_axis_labels(series))
         for title, value in _summary_fields(metric, series):
@@ -274,8 +288,8 @@ def build_browse_page(db, config, nav, live: dict | None = None) -> object:
         except (OSError, AttributeError):
             rows = []
         if not rows:
-            return "No data yet"
-        return f"{rows[-1].date} – {rows[0].date}"
+            return ""
+        return range_caption(rows[-1].date, rows[0].date)
 
     def _series_for(metric: str):
         try:
@@ -289,26 +303,25 @@ def build_browse_page(db, config, nav, live: dict | None = None) -> object:
         if metric == "weight":
             rows = weight_rows(samples, None)
             if not any(row.weight_avg_kg is not None for row in rows):
-                return None, "No weigh-ins yet. Log your weight to see the trend."
-            extractor, accumulates = _metric_extractor("weight")
+                return None, ("Log weight", nav.add_weight)
             height = getattr(config, "height_metres", 0.0) or 0.0
             for row in rows:
                 row.height_metres = height
-            return detail_series(rows, state["zoom"].lower(), "weight"), ""
+            return detail_series(rows, state["zoom"].lower(), "weight"), None
         if metric == "bmi":
             if not getattr(config, "height_metres", 0.0):
-                return None, "Set your height on Profile to see BMI."
+                return None, ("Set height", lambda: nav.show("profile"))
             rows = weight_rows(samples, None)
             height = config.height_metres
             for row in rows:
                 row.height_metres = height
             if not any(_bmi_extractor()(row) is not None for row in rows):
-                return None, "No weigh-ins yet. Log your weight to see the trend."
-            return detail_series(rows, state["zoom"].lower(), "bmi"), ""
+                return None, ("Log weight", nav.add_weight)
+            return detail_series(rows, state["zoom"].lower(), "bmi"), None
         extract, _acc = _metric_extractor(metric)
         if not any(extract(row) is not None for row in dailies):
-            return None, f"No {metric_label(metric).lower()} data yet."
-        return detail_series(dailies, state["zoom"].lower(), metric), ""
+            return None, None
+        return detail_series(dailies, state["zoom"].lower(), metric), None
 
     def _dailies():
         try:
@@ -329,13 +342,15 @@ def build_browse_page(db, config, nav, live: dict | None = None) -> object:
                 break
             header_box.remove(first)
         header_box.append(widgets.page_header(
-            "Browse", "Activity · Body · More", overflow_cb=menu))
+            "Browse", None,
+            overflow_cb=menu if shell_page.settings_items(config, nav)
+            else None))
         _fill_box(cats_box, None)
+        state["level"] = "cats"
+        inner.set_visible_child_name("cats")
         rows = visible_rows(state["query"])
         if not rows:
-            cats_box.append(widgets.empty_state(
-                f"No matches for “{state['query']}”."))
-            return
+            return  # no matches: the list is simply empty
         item_type = _item_type()
         store = Gio.ListStore.new(item_type)
         for category in rows:
@@ -361,12 +376,34 @@ def build_browse_page(db, config, nav, live: dict | None = None) -> object:
     live["refresh"] = refresh
     live["menu"] = menu
     live["open_metric"] = open_metric
+    live["back"] = back
+    live["open_category"] = lambda category_id: open_category(next(
+        c for c in browse_model.search_rows("") if c.id == category_id))
     refresh()
     body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     body.add_css_class("xx-page-body")
     body.append(search_row)
     body.append(inner)
     return widgets.page(header_box, body, None)
+
+
+def range_caption(first_iso: str, last_iso: str) -> str:
+    """Short data range for the detail header: "Sep 18 – Oct 17", with
+    years only when the range crosses one."""
+    from datetime import date
+
+    try:
+        first = date.fromisoformat(first_iso[:10])
+        last = date.fromisoformat(last_iso[:10])
+    except ValueError:
+        return f"{first_iso} – {last_iso}"
+
+    def short(day) -> str:
+        return f"{day.strftime('%b')} {day.day}"
+
+    if first.year != last.year:
+        return f"{short(first)} {first.year} – {short(last)} {last.year}"
+    return f"{short(first)} – {short(last)}"
 
 
 def _fill_box(box, header) -> None:
@@ -391,12 +428,16 @@ def _category_row(category, open_category):
         meta = ""
     else:
         secondary = browse_model.NOT_TRACKED_TAG.capitalize()
-        meta = "—"
+        meta = ""
     letter = CATEGORY_LETTERS.get(category.id, category.label[:1].upper())
-    return widgets.list_row(
+    row = widgets.list_row(
         category.label, secondary, meta=meta,
         leading=widgets.avatar(letter, 40),
-        on_activate=lambda: open_category(category))
+        on_activate=(lambda: open_category(category))
+        if category.tracked else None)
+    # A "not tracked" row reads as a fact: no press state, no dead end.
+    row.set_can_target(category.tracked)
+    return row
 
 
 def _accumulates(metric: str) -> bool:

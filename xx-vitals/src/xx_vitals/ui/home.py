@@ -12,6 +12,8 @@ from datetime import date
 from xx_vitals.core import home as home_model
 
 RING_PX = 248
+#: Room under a FAB page's last row: 56 px FAB + its 20 px margin.
+FAB_CLEARANCE = 76
 DOT_PX = 22
 
 
@@ -162,11 +164,7 @@ def build_home_page(db, config, nav, live: dict | None = None) -> object:
             state["overflow"].popup()
             return state["overflow"]
         anchor = header_box.get_first_child()
-        popover = shell_page.open_overflow(anchor, [
-            ("Log weight", nav.add_weight),
-            ("Import Takeout", nav.import_takeout),
-            ("Settings", lambda: nav.show("profile")),
-        ])
+        popover = shell_page.open_overflow(anchor, home_menu_items(config, nav))
         state["overflow"] = popover
         popover.connect("closed", lambda _p: state.update(overflow=None))
         return popover
@@ -190,7 +188,18 @@ def build_home_page(db, config, nav, live: dict | None = None) -> object:
     live["menu"] = menu
     refresh()
     body.add_css_class("xx-page-body")
+    body.set_margin_bottom(FAB_CLEARANCE)  # the last card scrolls clear of the FAB
     return widgets.page(header_box, body, None, widgets.fab(nav.add_activity))
+
+
+def home_menu_items(config, nav) -> list:
+    """Home's overflow: Log weight (the FAB logs an activity), plus
+    Settings only while the Profile tab is hidden (otherwise the tab is
+    the one way there)."""
+    from xx_vitals.ui import shell as shell_page
+
+    return [("Log weight", nav.add_weight)] + shell_page.settings_items(
+        config, nav)
 
 
 def _today_caption() -> str:
@@ -241,18 +250,41 @@ def _fill_body(body, db, config, nav) -> None:
     body.append(_stat_row(summary))
 
     if not getattr(config, "collect_enabled", False):
-        off = widgets.card()
-        off.append(widgets.caption("Step counting is off"))
-        off.append(widgets.wrap_label(collect_status(config)["detail"]))
-        off.append(widgets.text_button(
-            "Open settings", lambda: nav.show("profile")))
-        body.append(off)
+        body.append(_collect_off_card(config, nav))
 
     body.append(_goals_card(dailies, today, config, nav))
     body.append(_weekly_card(dailies, today, config, nav))
     weight_card = _weight_card(db, config, nav)
     if weight_card is not None:
         body.append(weight_card)
+
+
+def _collect_off_card(config, nav):
+    """Step counting is off: the state and the one action that fixes it."""
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gtk
+
+    from xx_ui import widgets
+
+    def turn_on() -> None:
+        from xx_vitals.ui import profile as profile_page
+
+        profile_page.set_collect_enabled(config, True)
+        nav.refresh_all()
+
+    card = widgets.card()
+    row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
+    line = widgets.wrap_label(collect_status(config)["title"], "xx-title")
+    line.set_hexpand(True)
+    line.set_valign(Gtk.Align.CENTER)
+    row.append(line)
+    button = widgets.outline_button("Turn on", turn_on)
+    button.set_valign(Gtk.Align.CENTER)
+    row.append(button)
+    card.append(row)
+    return card
 
 
 def _legend_row():
@@ -284,7 +316,7 @@ def _stat_row(summary: dict):
     import gi
 
     gi.require_version("Gtk", "4.0")
-    from gi.repository import Gtk
+    from gi.repository import Gtk, Pango
 
     from xx_ui import widgets
 
@@ -302,13 +334,17 @@ def _stat_row(summary: dict):
         value_label.set_xalign(0.5)
         unit_label = widgets.caption(unit)
         unit_label.set_xalign(0.5)
+        unit_label.set_justify(Gtk.Justification.CENTER)
+        unit_label.set_wrap(True)
+        unit_label.set_ellipsize(Pango.EllipsizeMode.NONE)
         cell.append(value_label)
         cell.append(unit_label)
         row.append(cell)
     return row
 
 
-def _goals_card(dailies, today: date, config, nav):
+def _card_title(text: str, meta: str, on_tap):
+    """A card's tappable title row: wrapping title, meta at the end."""
     import gi
 
     gi.require_version("Gtk", "4.0")
@@ -316,35 +352,43 @@ def _goals_card(dailies, today: date, config, nav):
 
     from xx_ui import widgets
 
-    card = widgets.card()
-    title_row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-    title_label = widgets.label("Your daily goals", "xx-title")
+    row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
+    title_label = widgets.wrap_label(text, "xx-title")
     title_label.set_hexpand(True)
-    title_row.append(title_label)
-    title_row.append(widgets.icon_image("go-next-symbolic"))
-    title_button = Gtk.Button()
-    title_button.add_css_class("xx-btn")
-    title_button.set_child(title_row)
-    title_button.connect("clicked", lambda _b: nav.show("profile"))
-    card.append(title_button)
-    card.append(widgets.caption("Last 7 days"))
+    title_label.set_valign(Gtk.Align.CENTER)
+    row.append(title_label)
+    if meta:
+        meta_label = widgets.label(meta, "xx-title")
+        meta_label.set_ellipsize(Pango.EllipsizeMode.NONE)
+        meta_label.set_valign(Gtk.Align.CENTER)
+        row.append(meta_label)
+    button = Gtk.Button()
+    button.add_css_class("xx-btn")
+    button.set_child(row)
+    button.connect("clicked", lambda _b: on_tap())
+    return button
+
+
+def _goals_card(dailies, today: date, config, nav):
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gtk
+
+    from xx_ui import widgets
+
     slots = home_model.last_seven_days(dailies, today)
     hits = sum(
         1 for slot in slots
         if slot.metric is not None
         and (slot.metric.effort_points or 0) >= config.effort_goal)
-    strip = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-    count_box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-    count_box.set_valign(Gtk.Align.CENTER)
-    count_box.append(widgets.label(f"{hits}/7", "xx-display"))
-    achieved = widgets.caption("Achieved")
-    achieved.set_ellipsize(Pango.EllipsizeMode.NONE)
-    count_box.append(achieved)
-    strip.append(count_box)
+    card = widgets.card()
+    card.append(_card_title("Your daily goals", f"{hits}/7",
+                            lambda: nav.show("profile")))
+    card.append(widgets.caption("Last 7 days"))
     dots = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 4)
+    dots.set_homogeneous(True)
     dots.set_hexpand(True)
-    dots.set_halign(Gtk.Align.END)
-    dots.set_valign(Gtk.Align.CENTER)
     for slot in slots:
         cell = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
         if slot.metric is None:
@@ -358,8 +402,7 @@ def _goals_card(dailies, today: date, config, nav):
         letter.set_xalign(0.5)
         cell.append(letter)
         dots.append(cell)
-    strip.append(dots)
-    card.append(strip)
+    card.append(dots)
     return card
 
 
@@ -372,16 +415,8 @@ def _weekly_card(dailies, today: date, config, nav):
     from xx_ui import widgets
 
     card = widgets.card()
-    title_row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
-    title_label = widgets.label("Your weekly target", "xx-title")
-    title_label.set_hexpand(True)
-    title_row.append(title_label)
-    title_row.append(widgets.icon_image("go-next-symbolic"))
-    title_button = Gtk.Button()
-    title_button.add_css_class("xx-btn")
-    title_button.set_child(title_row)
-    title_button.connect("clicked", lambda _b: nav.show("profile"))
-    card.append(title_button)
+    card.append(_card_title("Your weekly target", "",
+                            lambda: nav.show("profile")))
     card.append(widgets.caption(home_model.iso_week_range_label(today)))
     current = home_model.current_iso_week_effort(dailies, today)
     card.append(widgets.label(
@@ -392,8 +427,6 @@ def _weekly_card(dailies, today: date, config, nav):
     bar.set_fraction(min(1.0, current / goal))
     bar.set_show_text(False)
     card.append(bar)
-    card.append(widgets.wrap_label(
-        "Scoring 150 Heart Points a week can help you live longer."))
     return card
 
 
@@ -413,5 +446,4 @@ def _weight_card(db, config, nav):
     card.append(widgets.label(
         format_model.format_weight(samples[0].weight_kg, config.units),
         "xx-display"))
-    card.append(widgets.outline_button("Log weight", nav.add_weight))
     return card
