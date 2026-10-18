@@ -281,6 +281,9 @@ def _install_fake_gi(monkeypatch):
     gtk.PolicyType = SimpleNamespace(NEVER=0, AUTOMATIC=1)
     gtk.InputPurpose = SimpleNamespace(NUMBER=1, FREE_FORM=0)
     gtk.Align = SimpleNamespace(START=0, END=1, CENTER=2, FILL=3)
+    # xx_ui buttons wrap their label (widgets.wrap_to_fit).
+    gtk.NaturalWrapMode = SimpleNamespace(INHERIT=0, NONE=1, WORD=2)
+    gtk.Justification = SimpleNamespace(LEFT=0, RIGHT=1, CENTER=2, FILL=3)
     gtk.STYLE_PROVIDER_PRIORITY_APPLICATION = 100
 
     class _FakeCssProvider:
