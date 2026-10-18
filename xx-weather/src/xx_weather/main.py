@@ -27,6 +27,7 @@ def app_css(scale: float = 1.0) -> str:
 .xx-weather-hour {{ min-height: {px(44)}; }}
 .xx-weather-hours-strip {{ padding-bottom: 4px; }}
 .xx-setting.xx-weather-last, .xx-row.xx-weather-last {{ border-bottom: none; }}
+.xx-weather-busy:disabled {{ opacity: 0.4; }}
 """
 
 
@@ -56,6 +57,30 @@ FOOTER_TEXT = ("NWS weather.gov \u00b7 Open-Meteo.com (CC BY 4.0) "
 ALERT_HOURS = (3, 6, 12)
 ALERT_TEMPS_F = (20, 28, 32, 40)
 
+REFRESH_ERROR = "Couldn't reach weather services."
+
+
+def zip_error_text(message: str) -> str:
+    """What the ZIP field says when adding fails. The lookup's own
+    errors carry URLs and socket text; a phone user gets one plain line."""
+    if message.startswith("Enter a valid"):
+        return message
+    if message.startswith("ZIP code not found"):
+        return "No place found for that ZIP code."
+    return "Couldn't look up that ZIP code."
+
+
+def back_target(page: str) -> str | None:
+    """Where the back gesture (Escape) goes from ``page``: a sub-page
+    returns to its tab, a side tab returns to the forecast."""
+    return {"day": "forecast", "licenses": "settings",
+            "places": "forecast", "settings": "forecast"}.get(page)
+
+
+def detail_tiles(rows: list) -> list:
+    """Only tiles with a reading: a "--" tile tells the user nothing."""
+    return [row for row in rows if row[1] != "--"]
+
 
 class WeatherWindow:
     """Main window; pages live in a Gtk.Stack with bottom tabs."""
@@ -75,6 +100,7 @@ class WeatherWindow:
         self.state = ZipRefreshState()
         self.loading = True
         self.refreshing = False
+        self.adding = False
         self.page = "forecast"
         self.day_date = None
         self._started = False
@@ -120,7 +146,20 @@ class WeatherWindow:
         ])
         shell.append(self.tabs)
         self.win.set_content(shell)
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key)
+        self.win.add_controller(keys)
         self.show("forecast")
+
+    def _on_key(self, _ctrl, keyval, _code, _state) -> bool:
+        """The shell's back gesture arrives as Escape."""
+        if keyval != self._Gdk.KEY_Escape:
+            return False
+        target = back_target(self.page)
+        if target is None:
+            return False
+        self.show(target)
+        return True
 
     # -- theme ---------------------------------------------------------
 
@@ -189,6 +228,7 @@ class WeatherWindow:
         self.forecast_header_box = header
         self.forecast_title = header.get_first_child().get_first_child()
         self.refresh_button = self.forecast_title.get_next_sibling()
+        self.refresh_button.add_css_class("xx-weather-busy")
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         body.set_margin_top(12)
         body.set_margin_bottom(28)
@@ -213,8 +253,10 @@ class WeatherWindow:
         title = place.city if place is not None else "Weather"
         try:
             self.forecast_title.set_text(title)
-            # Nothing saved, nothing to refresh.
+            # Nothing saved, nothing to refresh; a refresh already
+            # running greys the button instead of queueing another.
             self.refresh_button.set_visible(place is not None)
+            self.refresh_button.set_sensitive(not self.refreshing)
         except Exception:  # noqa: BLE001 - title swap is decorative
             pass
 
@@ -237,7 +279,9 @@ class WeatherWindow:
         error = (selected.zip if selected is not None else None)
         error_msg = state.errors.get(error) if error else None
         if error_msg:
-            self.error_label.set_text(error_msg)
+            # The raw failure names URLs and sockets; the user gets one
+            # plain line (REFRESH retries, a stale forecast stays below).
+            self.error_label.set_text(REFRESH_ERROR)
             self.error_label.set_visible(True)
         else:
             self.error_label.set_visible(False)
@@ -332,7 +376,7 @@ class WeatherWindow:
         grid = Gtk.Grid(column_spacing=12, row_spacing=12,
                         column_homogeneous=True)
         for pos, (name, value, sub) in enumerate(
-                self._detail_tiles(data, units)):
+                detail_tiles(self._detail_tiles(data, units))):
             tile = W.card()
             tile.set_spacing(4)
             tile.append(W.caption(name))
@@ -440,7 +484,7 @@ class WeatherWindow:
             sunrise, sunset_sub = "--", ""
         pop = f"{current.pop_pct}%" if current.pop_pct is not None else "--"
         return [
-            ("FEELS LIKE", feels, f"Actual {temp_str(current.temp_f, units)}"),
+            ("FEELS LIKE", feels, ""),
             ("HUMIDITY", humidity, dew),
             ("WIND", wind, wind_sub),
             ("UV INDEX", uv, uv_label(current.uv_index)),
@@ -472,6 +516,8 @@ class WeatherWindow:
         add_row.append(self.zip_entry)
         add_btn = W.text_button("ADD", self._on_add_zip)
         add_btn.set_valign(Gtk.Align.CENTER)
+        add_btn.add_css_class("xx-weather-busy")
+        self.add_button = add_btn
         add_row.append(add_btn)
         body.append(add_row)
         self.zip_error = W.wrap_label("", "xx-secondary")
@@ -488,6 +534,8 @@ class WeatherWindow:
             self.places_body.remove(child)
         places = self.store.places()
         units = self.store.units()
+        selected = self.store.selected()
+        shown = selected.zip if selected is not None else None
         for pos, place in enumerate(places):
             data = self.state.data_by_zip.get(place.zip)
             failed = (place.zip in self.state.errors
@@ -498,13 +546,25 @@ class WeatherWindow:
             else:
                 secondary = ("Couldn't load" if failed else "Loading…")
             trailing = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                               spacing=4)
+                               spacing=8)
             if data is not None:
                 temp = W.label(temp_str(data.current.temp_f, units),
                                "xx-weather-tile-value", xalign=1.0)
                 temp.set_valign(Gtk.Align.CENTER)
+                # "75°" never shrinks to "7…": the place name wraps instead.
+                temp.set_ellipsize(self._Pango.EllipsizeMode.NONE)
                 trailing.append(temp)
             if len(places) > 1:
+                # The place the forecast shows carries a check; the
+                # others keep the same slot so temps and X line up.
+                if place.zip == shown:
+                    mark = W.icon_image("object-select-symbolic")
+                    mark.add_css_class("xx-weather-shown")
+                else:
+                    mark = Gtk.Box()
+                    mark.set_size_request(W.BAR_ICON_PX, -1)
+                mark.set_valign(Gtk.Align.CENTER)
+                trailing.append(mark)
                 remove = W.icon_button("window-close-symbolic",
                                        self._remove_zip_cb(place.zip))
                 remove.set_valign(Gtk.Align.CENTER)
@@ -514,7 +574,8 @@ class WeatherWindow:
                              f"{place.zip} · {secondary}",
                              trailing=trailing,
                              on_activate=self._select_zip_cb(place.zip),
-                             last=pos == len(places) - 1)
+                             last=pos == len(places) - 1,
+                             wrap_secondary=True)
             self.places_body.append(row)
 
     def _remove_zip_cb(self, zip_code: str):
@@ -562,7 +623,7 @@ class WeatherWindow:
 
     def _render_settings(self) -> None:
         W = self._W
-        from xx_phone.weather import Units
+        from xx_phone.weather import Units, temp_str
 
         while (child := self.units_box.get_first_child()) is not None:
             self.units_box.remove(child)
@@ -585,7 +646,7 @@ class WeatherWindow:
             triggers = self.store.ensure_triggers(selected.zip)
             zip_code = selected.zip
             rows.append((
-                "Rain within", "50%+ chance or falling",
+                "Rain within", "50%+ chance",
                 triggers.precip_enabled,
                 lambda on: self._with_triggers(zip_code, precip_enabled=on),
                 [(f"{h}H", triggers.precip_hours == h,
@@ -595,7 +656,8 @@ class WeatherWindow:
                 "At or below", "Temperature",
                 triggers.temp_enabled,
                 lambda on: self._with_triggers(zip_code, temp_enabled=on),
-                [(f"{t}\u00b0F", triggers.temp_at_or_below_f == t,
+                # Stored in °F; shown in the unit chosen above.
+                [(temp_str(t, units), triggers.temp_at_or_below_f == t,
                   self._temp_cb(zip_code, t)) for t in ALERT_TEMPS_F]
                 if triggers.temp_enabled else None))
         for pos, (title, sub, active, callback, chips) in enumerate(rows):
@@ -648,9 +710,17 @@ class WeatherWindow:
             self.store.ensure_triggers(selected.zip)
         self._render_settings()
 
+    def _set_adding(self, busy: bool) -> None:
+        """A lookup in flight greys ADD so a second tap can't queue one."""
+        self.adding = busy
+        self.add_button.set_sensitive(not busy)
+
     def _on_add_zip(self) -> None:
+        if self.adding:
+            return
         raw = self.zip_entry.get_text()
         self.zip_error.set_visible(False)
+        self._set_adding(True)
 
         def _work() -> None:
             from xx_weather.worker import add_place
@@ -658,7 +728,7 @@ class WeatherWindow:
             try:
                 place = add_place(self.store, raw)
             except Exception as exc:  # noqa: BLE001 - show, keep old city
-                message = str(exc) or "Could not save ZIP code."
+                message = zip_error_text(str(exc))
                 self._GLib.idle_add(self._show_zip_error, message)
                 return
             self._GLib.idle_add(self._after_add_zip, place.zip)
@@ -667,11 +737,13 @@ class WeatherWindow:
                          name="xx-weather-add").start()
 
     def _show_zip_error(self, message: str) -> bool:
+        self._set_adding(False)
         self.zip_error.set_text(message)
         self.zip_error.set_visible(True)
         return False
 
     def _after_add_zip(self, zip_code: str) -> bool:
+        self._set_adding(False)
         self.zip_entry.set_text("")
         self._render_settings()
         self._render_places()
@@ -721,7 +793,9 @@ class WeatherWindow:
         summary = ""
         if point is not None:
             bits = [b for b in [hilo(point.hi_f, point.lo_f, units),
-                                f"{point.pop_pct}% precip"
+                                # "60%", as the 10-day row says it: the
+                                # header line fits 320 px at large text.
+                                f"{point.pop_pct}%"
                                 if point.pop_pct is not None else ""]
                     if b]
             summary = " · ".join(bits)
@@ -871,6 +945,12 @@ def _seed_scenario(window, scenario: str, page: str) -> None:
     from xx_weather import demo
 
     store = window.store
+    if scenario.endswith("-c"):
+        # Any scenario in Celsius: "alerts-c" checks the threshold chips.
+        from xx_phone.weather import Units
+
+        scenario = scenario[:-2]
+        store.set_units(Units.CELSIUS)
     if scenario in ("current", "places", "settings", "alerts", "day"):
         demo.seed_places(store) if scenario == "places" \
             else demo.seed_current(store)

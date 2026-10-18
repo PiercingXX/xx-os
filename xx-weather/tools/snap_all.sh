@@ -1,7 +1,7 @@
 #!/bin/sh
 # Seeded screenshots of every xx-weather screen in amoled + paper at the
 # FLX1 canvas (450x1000) and a 360x800 phone, plus fit probes (320 px
-# wide, large text at 1.3) and graphite/aura spot checks:
+# wide, large text at 1.5) and graphite/aura spot checks:
 #   xx-weather/tools/snap_all.sh OUTDIR
 # Writes sheet-{amoled,paper}-{450x1000,360x800}.png and sheet-fit.png.
 # Exits non-zero on any snap WARNING (phone-fit breach).
@@ -77,18 +77,23 @@ group() {
     done
 }
 
+LARGE=', "text_size_scale": 1.5'
+
 fits() {
     # Narrowest canvas, large text, and two more presets.
     snap_one paper fit-narrow-current 320x640 current forecast
     snap_one paper fit-narrow-alerts 320x640 alerts settings
-    snap_one paper fit-large-current 360x800 current forecast \
-        ', "text_size_scale": 1.3'
-    snap_one amoled fit-large-alerts 360x800 alerts settings \
-        ', "text_size_scale": 1.3'
-    snap_one amoled fit-large-places 360x800 places places \
-        ', "text_size_scale": 1.3'
+    snap_one paper fit-narrow-places 320x640 places places
+    snap_one paper fit-narrow-day 320x640 day forecast
+    snap_one paper fit-large-current 360x800 current forecast "$LARGE"
+    snap_one amoled fit-large-alerts 360x800 alerts settings "$LARGE"
+    snap_one amoled fit-large-places 360x800 places places "$LARGE"
+    snap_one amoled fit-large-day 360x800 day forecast "$LARGE"
+    snap_one paper fit-large-licenses 360x800 current licenses "$LARGE"
+    snap_one amoled fit-large-narrow 320x640 alerts settings "$LARGE"
     snap_one graphite fit-spot-current 450x1000 current forecast
     snap_one aura fit-spot-places 450x1000 places places
+    snap_one aura fit-spot-celsius 360x800 alerts-c settings
 }
 
 # One at a time: Broadway display numbers (and their ports) collide
@@ -119,12 +124,18 @@ for theme in amoled paper; do
 done
 montage -label 'narrow' "$WORK/paper-fit-narrow-current.png" \
     -label 'narrow alerts' "$WORK/paper-fit-narrow-alerts.png" \
+    -label 'narrow places' "$WORK/paper-fit-narrow-places.png" \
+    -label 'narrow day' "$WORK/paper-fit-narrow-day.png" \
     -label 'large' "$WORK/paper-fit-large-current.png" \
     -label 'large alerts' "$WORK/amoled-fit-large-alerts.png" \
     -label 'large places' "$WORK/amoled-fit-large-places.png" \
+    -label 'large day' "$WORK/amoled-fit-large-day.png" \
+    -label 'large licenses' "$WORK/paper-fit-large-licenses.png" \
+    -label 'large 320' "$WORK/amoled-fit-large-narrow.png" \
     -label 'graphite' "$WORK/graphite-fit-spot-current.png" \
     -label 'aura' "$WORK/aura-fit-spot-places.png" \
-    -tile 4x2 -geometry +4+4 -background black \
+    -label 'aura celsius' "$WORK/aura-fit-spot-celsius.png" \
+    -tile 7x2 -geometry +4+4 -background black \
     -fill white -pointsize 28 "$OUTDIR/sheet-fit.png" \
     || fail "montage failed for fit"
 cp "$WORK/"*.png "$OUTDIR/"
