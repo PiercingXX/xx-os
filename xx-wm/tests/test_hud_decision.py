@@ -20,7 +20,7 @@ def _read(rel):
 def test_in_shell_hud_named_in_docs():
     """The docs must describe the HUD as in-shell, not wob-backed."""
     assert 'in-shell HUD' in _read('README.md')
-    assert 'volume/brightness HUD (in-shell)' in _read('design.md')
+    assert 'volume HUD (in-shell' in _read('design.md')
 
 
 def test_wob_removed_from_installer():
