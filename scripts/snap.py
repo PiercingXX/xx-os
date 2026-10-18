@@ -23,7 +23,6 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 
 CHILD = r'''
 import os, runpy, sys
@@ -139,38 +138,30 @@ def main() -> int:
     cmd = a.cmd[1:] if a.cmd[:1] == ['--'] else a.cmd
     if not cmd:
         p.error('give the app after --, e.g. -- -m xx_contacts')
-    broadwayd = shutil.which('gtk4-broadwayd')
-    if broadwayd is None:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    '..', 'common'))
+    from xx_testing import broadway_display
+    if shutil.which('gtk4-broadwayd') is None:
         print('snap: gtk4-broadwayd not installed', file=sys.stderr)
         return 2
     w, h = (int(v) for v in a.size.split('x'))
     # Hermetic Broadway runtime: every other lane's daemons share the
     # machine's runtime dir, where stale sockets pile up and steal display
     # numbers (Gtk then cannot initialize). Run this daemon under a
-    # private XDG_RUNTIME_DIR instead — no contention, nothing shared to
-    # clean, and the child inherits it so client and daemon agree.
+    # private XDG_RUNTIME_DIR instead — nothing shared to clean, and the
+    # child inherits it so client and daemon agree. The display and HTTP
+    # port are probed free (parallel snaps once collided on pid % 50),
+    # and a daemon that exits early is retried on another display.
     import tempfile as _tempfile
     run_dir = _tempfile.mkdtemp(prefix='snap-broadway-')
     os.chmod(run_dir, 0o700)
-    disp = 40 + os.getpid() % 50
-    daemon = subprocess.Popen(
-        [broadwayd, f':{disp}'],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        env=dict(os.environ, XDG_RUNTIME_DIR=run_dir))
-    # Wait until the daemon owns its display: a fixed sleep loses under
-    # load (Gtk then fails to initialize). Poll for the socket.
-    deadline = time.time() + 20.0
-    while time.time() < deadline:
-        if daemon.poll() is not None:
-            break
-        try:
-            if any(name.startswith('broadway')
-                   for name in os.listdir(run_dir)):
-                break
-        except OSError:
-            pass
-        time.sleep(0.2)
-    env = dict(os.environ, GDK_BACKEND='broadway', BROADWAY_DISPLAY=f':{disp}',
+    try:
+        daemon, display = broadway_display.start(run_dir=run_dir)
+    except RuntimeError as error:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        print(f'snap: {error}', file=sys.stderr)
+        return 2
+    env = dict(os.environ, GDK_BACKEND='broadway', BROADWAY_DISPLAY=display,
                GSK_RENDERER='cairo', XDG_RUNTIME_DIR=run_dir,
                SNAP_OUT=os.path.abspath(a.out), SNAP_W=str(w),
                SNAP_H=str(h), SNAP_DELAY=str(a.delay),
@@ -181,8 +172,7 @@ def main() -> int:
     try:
         return subprocess.run([sys.executable, '-c', CHILD, *cmd], env=env).returncode
     finally:
-        daemon.terminate()
-        daemon.wait()
+        broadway_display.stop(daemon)
         shutil.rmtree(run_dir, ignore_errors=True)
 
 

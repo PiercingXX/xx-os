@@ -181,11 +181,10 @@ def _run(driver_code: str, name: str, config: str):
     if config:
         (home / ".config" / "xx-wm").mkdir(parents=True, exist_ok=True)
         (home / ".config" / "xx-wm" / "config.json").write_text(config)
-    display = f":{60 + os.getpid() % 30}"
-    daemon = subprocess.Popen(
-        ["gtk4-broadwayd", display],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    from xx_testing.broadway_display import start as _start_broadway
+
+    # A probed free display (pid % 50 collided between parallel runs).
+    daemon, display = _start_broadway(run_dir=str(workdir))
     driver = workdir / "driver.py"
     try:
         code = driver_code.replace("SRC", repr(SRC)).replace(
@@ -194,6 +193,7 @@ def _run(driver_code: str, name: str, config: str):
         env = dict(os.environ,
                    GDK_BACKEND="broadway",
                    BROADWAY_DISPLAY=display,
+                   XDG_RUNTIME_DIR=str(workdir),
                    HOME=str(home),
                    XDG_CONFIG_HOME=str(home / ".config"),
                    XDG_DATA_HOME=str(home / ".local" / "share"),

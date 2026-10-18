@@ -44,11 +44,10 @@ def test_broadway_window_builds():
     workdir.mkdir(mode=0o700, parents=True, exist_ok=True)
     home = workdir / "home"
     home.mkdir(exist_ok=True)
-    display = f":{40 + os.getpid() % 50}"
-    daemon = subprocess.Popen(
-        ["gtk4-broadwayd", display],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        env=dict(os.environ, XDG_RUNTIME_DIR=str(workdir)))
+    from xx_testing.broadway_display import start as _start_broadway
+
+    # A probed free display (pid % 50 collided between parallel runs).
+    daemon, display = _start_broadway(run_dir=str(workdir))
     bus = subprocess.Popen(
         ["dbus-daemon", "--session", "--print-address", "--nofork"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
