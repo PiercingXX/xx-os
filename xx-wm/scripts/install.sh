@@ -391,10 +391,11 @@ link_squeekboard_layouts() {
         "$HOME/.local/share/squeekboard/keyboards"
 }
 
-# The XX apps live next to xx-wm in the monorepo. xx-find is deliberately
-# absent: Find My Device is built but must not be installed or run until the
-# owner turns it on. One app failing to build never blocks the shell.
-XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-calculator xx-email xx-vitals xx-share xx-captions xx-auto xx-radio xx-audiobook xx-note xx-weather xx-files xx-auth xx-clock"
+# The XX apps live next to xx-wm in the monorepo. xx-find (Find My Device)
+# installs like the rest but runs nothing: its meson install never enables,
+# starts or autostarts the agent; it stays off until the owner enables and
+# pairs it in Settings. One app failing to build never blocks the shell.
+XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-calculator xx-email xx-vitals xx-share xx-captions xx-auto xx-radio xx-audiobook xx-note xx-weather xx-files xx-auth xx-clock xx-find"
 
 install_apps() {
     for app in $XX_APPS; do

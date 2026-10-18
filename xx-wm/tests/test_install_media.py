@@ -77,7 +77,17 @@ def test_xx_apps_includes_media(install_script):
     apps = m.group(1).split()
     assert 'xx-radio' in apps
     assert 'xx-audiobook' in apps
-    assert 'xx-find' not in apps
+    assert 'xx-find' in apps   # installed, never enabled (see below)
+
+
+def test_xx_find_install_never_enables_the_agent():
+    # Owner: install every app, Find My Device included; it must still not
+    # run or report until enabled and paired in Settings.
+    from pathlib import Path
+    meson = (Path(__file__).resolve().parents[2] / 'xx-find' / 'meson.build').read_text()
+    code = '\n'.join(l for l in meson.splitlines() if not l.lstrip().startswith('#'))
+    for forbidden in ('systemctl', 'enable', 'preset', 'autostart', 'install_symlink'):
+        assert forbidden not in code, forbidden
 
 
 def test_install_apps_iterates_xx_apps(install_script):
