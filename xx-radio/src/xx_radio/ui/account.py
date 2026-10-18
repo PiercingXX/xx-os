@@ -104,9 +104,7 @@ class AccountSection:
         if state.brand_user:
             rows.append(("Brand account", state.brand_user))
         for title, sub in rows:
-            row = widgets.setting_row(title, sub)
-            _wrap(row)
-            slot.append(row)
+            slot.append(widgets.setting_row(title, sub))
         out = minimal.outline("Sign out", self.confirm_sign_out)
         common.fit(out, 12)
         out.set_halign(Gtk.Align.START)
@@ -130,18 +128,6 @@ class AccountSection:
             "Your library and likes leave this phone. Downloads stay.",
             [("keep", "Cancel", "outline"), ("out", "Sign out", "danger")],
             answer)
-
-
-def _wrap(row: Gtk.Widget) -> None:
-    middle = row.get_first_child()
-    child = middle.get_first_child() if middle else None
-    while child is not None:
-        if isinstance(child, Gtk.Label) and child.has_css_class(
-                "xx-secondary"):
-            child.set_wrap(True)
-            child.set_lines(3)
-            child.set_max_width_chars(28)
-        child = child.get_next_sibling()
 
 
 def _numbered(index: int, text: str) -> Gtk.Widget:

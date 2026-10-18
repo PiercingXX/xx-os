@@ -73,6 +73,15 @@ def _fit_exact(text_label: Gtk.Label, text: str, chars: int) -> Gtk.Label:
     return text_label
 
 
+def _fit_row_wrap(line: Gtk.Label) -> Gtk.Label:
+    # Row and header text wraps onto more lines instead of losing its end
+    # to an ellipsis at 320 px or large text. The row cap only bounds the
+    # natural width; the label lays out at whatever width the row gives
+    # it, so text that fits stays on one line. Word-char: a word breaks
+    # only when it alone is wider than the row.
+    return _fit_wrap(line, _ROW_CHARS)
+
+
 def fit_text(text_label: Gtk.Label, text: str, chars: int) -> Gtk.Label:
     """Set text with an ellipsis only when it cannot fit ``chars``.
 
@@ -204,7 +213,9 @@ def compact_header(back_cb, title: str, subtitle: str = '',
                    second_icon_name: str = '',
                    second_icon_cb=None) -> Gtk.Box:
     """Sub-page header: 56 px bar, back chevron, caption-style title,
-    up to two trailing symbolic icons. Everything vertically centered."""
+    up to two trailing symbolic icons. Everything vertically centered.
+    A title or subtitle too long for the bar (320 px, large text) wraps
+    onto a second line instead of ellipsizing."""
     root = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
     root.add_css_class('xx-page-body')
     root.add_css_class('xx-compact-header')
@@ -215,10 +226,10 @@ def compact_header(back_cb, title: str, subtitle: str = '',
     middle.set_hexpand(True)
     middle.set_valign(Gtk.Align.CENTER)
     title_label = caption(title)
-    _fit_single(title_label, _ROW_CHARS)
+    _fit_row_wrap(title_label)
     middle.append(title_label)
     sub = label(subtitle, 'xx-secondary')
-    _fit_single(sub, _ROW_CHARS)
+    _fit_row_wrap(sub)
     sub.set_visible(bool(subtitle))
     middle.append(sub)
     root.append(middle)
@@ -263,10 +274,13 @@ def avatar(initials: str, size: int = 40, dashed: bool = False) -> Gtk.Label:
 def list_row(primary: str, secondary: str = '', meta: str = '',
              leading=None, trailing=None, on_activate=None,
              last: bool = False, danger_sub: bool = False,
-             wrap_secondary: bool = False) -> Gtk.Button:
+             wrap_secondary: bool = False,
+             wrap: bool = False) -> Gtk.Button:
     """Activatable 64 px row with hairline (``last`` drops it).
-    ``wrap_secondary`` lets the second line wrap (a forecast summary at
-    large text) instead of ellipsizing."""
+    ``wrap`` lets both lines wrap instead of ellipsizing, for rows that
+    must read whole at 320 px and large text (settings, about, licenses);
+    content lists (mail, tracks) keep the one-line pitch.
+    ``wrap_secondary`` wraps only the second line (a forecast summary)."""
     row = Gtk.Button()
     row.add_css_class('xx-row')
     if last:
@@ -280,11 +294,16 @@ def list_row(primary: str, secondary: str = '', meta: str = '',
     middle.set_hexpand(True)
     middle.set_valign(Gtk.Align.CENTER)
     primary_label = label(primary, 'xx-title')
-    _fit_single(primary_label, _ROW_CHARS)
+    if wrap:
+        _fit_row_wrap(primary_label)
+    else:
+        _fit_single(primary_label, _ROW_CHARS)
     middle.append(primary_label)
     if secondary:
         sub = label(secondary, 'xx-secondary')
-        if wrap_secondary:
+        if wrap:
+            _fit_row_wrap(sub)
+        elif wrap_secondary:
             _fit_wrap(sub)
         else:
             _fit_single(sub, _ROW_CHARS)
@@ -476,7 +495,10 @@ def card() -> Gtk.Box:
 
 
 def setting_row(title: str, subtitle: str = '', trailing=None,
-                last: bool = False) -> Gtk.Box:
+                last: bool = False, wrap: bool = True) -> Gtk.Box:
+    """Title, optional subtitle and an optional trailing control. Both
+    lines wrap rather than ellipsize (a setting must read whole at 320 px
+    and large text); ``wrap=False`` keeps them to one line each."""
     root = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
     root.add_css_class('xx-setting')
     if last:
@@ -485,11 +507,12 @@ def setting_row(title: str, subtitle: str = '', trailing=None,
     middle.set_hexpand(True)
     middle.set_valign(Gtk.Align.CENTER)
     title_label = label(title, 'xx-title')
-    _fit_single(title_label, _ROW_CHARS)
+    fit = _fit_row_wrap if wrap else (lambda line: _fit_single(line, _ROW_CHARS))
+    fit(title_label)
     middle.append(title_label)
     if subtitle:
         sub = label(subtitle, 'xx-secondary')
-        _fit_single(sub, _ROW_CHARS)
+        fit(sub)
         middle.append(sub)
     root.append(middle)
     if trailing is not None:

@@ -32,15 +32,11 @@ LOG_SUB = "Sign-in data hidden"
 def switch_row(title: str, subtitle: str, active: bool, on_change,
                last: bool = False) -> Gtk.Widget:
     if minimal.active():
-        row = widgets.setting_row(title, subtitle, on_off_button(
+        return widgets.setting_row(title, subtitle, on_off_button(
             title, active, on_change), last=last)
-        _wrap_titles(row)
-        return row
     switch = widgets.make_switch(active, on_change)
     switch.update_property([Gtk.AccessibleProperty.LABEL], [title])
-    row = widgets.setting_row(title, subtitle, switch, last=last)
-    _wrap_titles(row)
-    return row
+    return widgets.setting_row(title, subtitle, switch, last=last)
 
 
 def on_off_button(title: str, active: bool, on_change) -> Gtk.Button:
@@ -63,19 +59,6 @@ def on_off_button(title: str, active: bool, on_change) -> Gtk.Button:
     return button
 
 
-def _wrap_titles(row: Gtk.Widget) -> None:
-    """Let a setting row's subtitle wrap to two lines (320 px, 2x text)."""
-    middle = row.get_first_child()
-    child = middle.get_first_child() if middle else None
-    while child is not None:
-        if isinstance(child, Gtk.Label) and child.has_css_class(
-                "xx-secondary"):
-            child.set_wrap(True)
-            child.set_lines(2)
-            child.set_max_width_chars(28)
-        child = child.get_next_sibling()
-
-
 def nav_row(title: str, subtitle: str, callback, last: bool = False,
             trailing: Gtk.Widget | None = None,
             arrow: bool = True) -> Gtk.Button:
@@ -83,32 +66,16 @@ def nav_row(title: str, subtitle: str, callback, last: bool = False,
     trailing chevron (and its Minimal Mode mark): the About block's
     licenses row carries no decorative glyph."""
     if not arrow:
-        row = widgets.list_row(title, subtitle, trailing=trailing,
-                               on_activate=callback, last=last)
-        _wrap_secondary(row)
-        return row
+        return widgets.list_row(title, subtitle, trailing=trailing,
+                                on_activate=callback, last=last, wrap=True)
     if minimal.active() and (trailing is None or isinstance(trailing, str)):
         trailing = minimal.text(trailing or minimal.OPENS,
                                 minimal.Tone.QUIET, 15, chars=6)
     elif isinstance(trailing, str):
         trailing = None
-    row = widgets.list_row(title, subtitle,
-                           trailing=trailing or widgets.chevron(),
-                           on_activate=callback, last=last)
-    _wrap_secondary(row)
-    return row
-
-
-def _wrap_secondary(row: Gtk.Button) -> None:
-    middle = row.get_child().get_first_child()
-    child = middle.get_first_child() if middle else None
-    while child is not None:
-        if isinstance(child, Gtk.Label) and child.has_css_class(
-                "xx-secondary"):
-            child.set_wrap(True)
-            child.set_lines(2)
-            child.set_max_width_chars(26)
-        child = child.get_next_sibling()
+    return widgets.list_row(title, subtitle,
+                            trailing=trailing or widgets.chevron(),
+                            on_activate=callback, last=last, wrap=True)
 
 
 def section(text: str) -> Gtk.Widget:

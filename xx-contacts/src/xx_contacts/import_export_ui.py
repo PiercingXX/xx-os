@@ -30,7 +30,6 @@ from xx_ui import widgets  # noqa: E402
 from xx_contacts import eds as eds_module  # noqa: E402
 from xx_contacts import import_export as import_export_module  # noqa: E402
 from xx_contacts import privacy  # noqa: E402
-from xx_contacts.settings_ui import setting_row  # noqa: E402
 from xx_contacts.store import NotFoundError  # noqa: E402
 
 #: Largest vCard/groups file the pickers will read (a 2,000-contact
@@ -113,7 +112,7 @@ class ImportExportPage(Adw.NavigationPage):
             bool(getattr(config, "publish_to_eds", False)),
             lambda _active: self._on_publish_flipped())
         self._publish_switch.set_sensitive(eds_module.is_available())
-        publish_row = setting_row(
+        publish_row = widgets.setting_row(
             "Publish to GNOME Contacts",
             "One-way copy to GNOME Contacts",
             self._publish_switch, last=True)

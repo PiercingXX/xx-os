@@ -15,29 +15,10 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-gi.require_version("Pango", "1.0")
-
-from gi.repository import Adw, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
 
 from xx_ui import widgets  # noqa: E402
 import xx_contacts  # noqa: E402
-
-
-def setting_row(title: str, subtitle: str = "", trailing=None,
-                last: bool = False) -> Gtk.Box:
-    """``widgets.setting_row`` whose title and subtitle wrap to two lines
-    each (large text, 320 px) instead of ellipsizing at one; past two
-    lines they ellipsize, and they never widen the window."""
-    row = widgets.setting_row(title, subtitle, trailing, last=last)
-    middle = row.get_first_child()
-    line = middle.get_first_child() if middle is not None else None
-    while isinstance(line, Gtk.Label):
-        line.set_wrap(True)
-        line.set_wrap_mode(Pango.WrapMode.WORD)
-        line.set_lines(2)
-        line.set_ellipsize(Pango.EllipsizeMode.END)
-        line = line.get_next_sibling()
-    return row
 
 
 class SettingsPage(Adw.NavigationPage):
@@ -63,12 +44,12 @@ class SettingsPage(Adw.NavigationPage):
         body.append(widgets.section_label("List"))
         self._phone_switch = widgets.make_switch(
             bool(config.has_phone_only), self._on_phone_toggled)
-        body.append(setting_row(
+        body.append(widgets.setting_row(
             "Phone only", "Hide contacts without a number",
             self._phone_switch))
         self._photos_switch = widgets.make_switch(
             bool(config.show_photos), self._on_photos_toggled)
-        body.append(setting_row(
+        body.append(widgets.setting_row(
             "Photos", "Show contact photos in the list",
             self._photos_switch, last=True))
 
@@ -89,7 +70,7 @@ class SettingsPage(Adw.NavigationPage):
     def _nav_row(self, title: str, subtitle: str, callback,
                  last: bool = False) -> Gtk.Widget:
         # No trailing chevron: the row reads as tappable on its own.
-        row = setting_row(title, subtitle, last=last)
+        row = widgets.setting_row(title, subtitle, last=last)
         click = Gtk.GestureClick.new()
         click.connect("pressed",
                       lambda _g, _n, _x, _y: callback())

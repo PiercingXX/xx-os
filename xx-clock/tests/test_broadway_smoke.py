@@ -41,13 +41,16 @@ def _open(a):
         assert entry.has_css_class("error"), "rejected minutes not marked"
         entry.set_text("5")
         assert not entry.has_css_class("error"), "error mark outlived the edit"
-        # Setup lines wrap at 320 px / large text instead of ellipsizing.
+        # Setup lines wrap at 320 px / large text instead of ellipsizing
+        # (section captions are one short word).
         from gi.repository import Gtk, Pango
         stack = [app.window.setup.widget]
         while stack:
             w = stack.pop()
-            if isinstance(w, Gtk.Label):
+            if (isinstance(w, Gtk.Label)
+                    and not w.has_css_class("xx-section-label")):
                 assert w.get_ellipsize() == Pango.EllipsizeMode.NONE, w.get_text()
+                assert w.get_wrap(), w.get_text()
             c = w.get_first_child()
             while c is not None:
                 stack.append(c)
