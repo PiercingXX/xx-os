@@ -21,7 +21,7 @@ import gi  # noqa: E402
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
 
 from xx_testing.broadway_wait import pump_until as _wait_until  # noqa: E402
 
@@ -105,21 +105,25 @@ def main(argv: list) -> None:
         _wait_until(window.get_mapped)
         markers["LIST_VISIBLE"] = str(window.is_visible())
         window._show_overflow()
-        popover = window._overflow
-        _wait_until(popover.is_visible)
+        _wait_until(lambda: window._navigation.get_visible_page()
+                    .get_title() == "Settings")
+        settings = window._navigation.get_visible_page()
         labels: list[str] = []
-        box = popover.get_child()
-        child = box.get_first_child()
-        while child is not None:
-            text_child = child.get_child()
-            get_text = getattr(text_child, "get_text", None)
-            if callable(get_text):
+        stack = [settings]
+        while stack:
+            widget = stack.pop()
+            get_text = getattr(widget, "get_text", None)
+            if isinstance(widget, Gtk.Label) and callable(get_text):
                 labels.append(get_text())
-            child = child.get_next_sibling()
+            child = widget.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
         markers["LIST_HAS_IMPORT_EXPORT"] = str(
-            popover.is_visible() and "Import/export" in labels)
-        popover.popdown()
-        _wait_until(lambda: not popover.is_visible())
+            settings.is_visible() and "Import/export" in labels)
+        window._navigation.pop()
+        _wait_until(lambda: window._navigation.get_visible_page()
+                    is not settings)
 
         page = ImportExportPage(
             window._navigation, window, store, config, config_path,

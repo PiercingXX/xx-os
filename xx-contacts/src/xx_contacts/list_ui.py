@@ -74,6 +74,15 @@ ACTION_LABELS = {
 
 REFRESH_DELAY_MS = 200
 
+def _two_lines(text_label: Gtk.Label) -> None:
+    """A name wraps to a second line (large text, 320 px) before it
+    ellipsizes, and never widens the row."""
+    text_label.set_wrap(True)
+    text_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    text_label.set_lines(2)
+    text_label.set_ellipsize(Pango.EllipsizeMode.END)
+
+
 class RowItem(GObject.Object):
     """One ``Gio.ListStore`` entry: a section header or a contact row."""
 
@@ -289,7 +298,6 @@ class ContactsWindow(Adw.ApplicationWindow):
         self._debounce_id = 0
         self._refresh_id = 0
         self._starred_only = False
-        self._overflow: Gtk.Popover | None = None
         self._watcher = ChangeWatcher(db_path, self._on_external_changed)
         self._photos_dir = os.path.join(
             os.path.dirname(os.path.abspath(db_path)), "photos")
@@ -374,6 +382,7 @@ class ContactsWindow(Adw.ApplicationWindow):
         search_bar.add_css_class("xx-searchbar")
         search_bar.add_css_class("xx-contact-search")
         search_bar.append(self._search)
+        self._search_bar = search_bar
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         root.add_css_class("xx-page")
@@ -462,6 +471,9 @@ class ContactsWindow(Adw.ApplicationWindow):
         self._model.remove_all()
         for entry in flat:
             if isinstance(entry, SectionHeader):
+                # The Starred chip already names the one section it shows.
+                if self._starred_only:
+                    continue
                 self._model.append(RowItem(title=entry.title,
                                            is_header=True))
             else:
@@ -497,6 +509,10 @@ class ContactsWindow(Adw.ApplicationWindow):
         self._scrolled.set_visible(has_rows)
         self._empty_slot.set_visible(searching and not has_rows)
         self._jump.set_visible(has_rows and len(sections) > 1)
+        # An empty address book: no filter chips or search over nothing.
+        book_empty = not has_rows and not searching and not self._starred_only
+        self._chips_slot.set_visible(not book_empty)
+        self._search_bar.set_visible(not book_empty)
         count = f"{len(rows)} CONTACTS" if len(rows) != 1 else "1 CONTACT"
         try:
             self._count_label.set_text(count)
@@ -526,32 +542,9 @@ class ContactsWindow(Adw.ApplicationWindow):
     # ------------------------------------------------------------ overflow
 
     def _show_overflow(self) -> None:
-        popover = Gtk.Popover()
-        self._overflow = popover
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        for title, target in (("Settings", "settings"),
-                              ("Import/export", "import-export"),
-                              ("My card", "me")):
-            row = widgets.menu_row(
-                title, lambda _t=target: self._open_overflow_target(
-                    _t, popover))
-            box.append(row)
-        popover.set_child(box)
-        popover.set_parent(self._header)
-        popover.popup()
-
-    def _open_overflow_target(self, target: str,
-                              popover: Gtk.Popover) -> None:
-        try:
-            popover.popdown()
-        except Exception:
-            pass
-        if target == "settings":
-            self.open_settings()
-        elif target == "import-export":
-            self.open_import_export()
-        elif target == "me":
-            self.open_me_card()
+        # The header's more button opens Settings straight away (as on
+        # Android): My card and Import/export live there, once.
+        self.open_settings()
 
     # ---------------------------------------------------------------- input
 
@@ -697,6 +690,7 @@ class ContactsWindow(Adw.ApplicationWindow):
         name.set_hexpand(True)
         name.add_css_class("xx-title")
         self._fits_single(name, _NAME_CHARS)
+        _two_lines(name)
         detail = Gtk.Label()
         detail.set_xalign(0.0)
         detail.set_hexpand(True)
@@ -705,6 +699,8 @@ class ContactsWindow(Adw.ApplicationWindow):
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         text.set_hexpand(True)
         text.set_halign(Gtk.Align.FILL)
+        # Centered on the avatar, not hung from the row's top edge.
+        text.set_valign(Gtk.Align.CENTER)
         text.append(name)
         text.append(detail)
         star = widgets.icon_image("starred-symbolic", 20)

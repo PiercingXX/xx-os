@@ -22,6 +22,9 @@ THEMES=${THEMES-"amoled paper forest aura"}
 SCREENS=${SCREENS:-"recents missed keypad people menu rules rules_low setup backup logs"}
 FIT320=${FIT320-$SCREENS}
 SCALE15=${SCALE15-$SCREENS}
+FIT320X15=${FIT320X15-$SCREENS}
+# SIZE: the phone size of the per-theme sheets (450x1000 is the FLX1).
+SIZE=${SIZE:-360x720}
 
 if [ -n "${PYTHON:-}" ]; then
     PY="$PYTHON"
@@ -56,12 +59,21 @@ render_set() {
         if [ "$screen" = "rules_low" ]; then
             delay=3.0
         fi
-        HOME="$SEED" XDG_CONFIG_HOME="$SEED/.config" "$PY" \
-            "$ROOT/scripts/snap.py" --out "$out" --size "$size" \
-            --delay "$delay" --path "$APP/src" --path "$ROOT/common" \
-            --script "$TOOLS/snap_nav/${screen}.py" \
-            -- -m xx_dialer > "$shotlog" 2>&1
-        rc=$?
+        # The headless rig is racy starting broadwayd under load: a run
+        # that leaves no PNG retries; a WARNING is real and fails below.
+        attempt=0
+        while [ $attempt -lt 3 ]; do
+            attempt=$((attempt + 1))
+            rm -f "$out"
+            HOME="$SEED" XDG_CONFIG_HOME="$SEED/.config" "$PY" \
+                "$ROOT/scripts/snap.py" --out "$out" --size "$size" \
+                --delay "$delay" --path "$APP/src" --path "$ROOT/common" \
+                --script "$TOOLS/snap_nav/${screen}.py" \
+                -- -m xx_dialer > "$shotlog" 2>&1
+            rc=$?
+            [ $rc -eq 0 ] && [ -s "$out" ] && break
+            sleep 2
+        done
         cat "$shotlog" >> "$LOG"
         if [ $rc -ne 0 ]; then
             echo "snap FAILED ($rc): $sheet $screen (see $shotlog)" >&2
@@ -87,10 +99,11 @@ render_set() {
 }
 
 for theme in $THEMES; do
-    render_set "$theme" "$theme" 1 360x720 "$SCREENS"
+    render_set "$theme" "$theme" 1 "$SIZE" "$SCREENS"
 done
 [ -n "$FIT320" ] && render_set fit320 amoled 1 320x720 "$FIT320"
 [ -n "$SCALE15" ] && render_set scale15 amoled 1.5 360x720 "$SCALE15"
+[ -n "$FIT320X15" ] && render_set fit320x15 amoled 1.5 320x720 "$FIT320X15"
 
 if [ -n "$failed" ]; then
     echo "FAILURES:$failed" >&2

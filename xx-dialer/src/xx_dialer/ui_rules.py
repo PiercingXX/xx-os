@@ -31,6 +31,23 @@ from xx_dialer import importers, masks, policy, rules  # noqa: E402
 from xx_dialer.service import PolicyService  # noqa: E402
 from xx_dialer.store import BLOCKED_GROUP, PatternRow, Store  # noqa: E402
 
+
+def _outline(text: str, callback=None):
+    """An outline button whose label wraps between words (large text,
+    320 px) instead of ellipsizing; it never widens the window."""
+    return widgets.wrap_to_fit(widgets.outline_button(text, callback))
+
+
+def _set_button_text(button, text: str) -> None:
+    """Retitle a wrapped button in place: ``set_label`` would swap in a
+    fresh single-line label that ellipsizes or widens the window."""
+    child = button.get_child()
+    if isinstance(child, Gtk.Label):
+        child.set_text(text)
+    else:
+        button.set_label(text)
+
+
 HIDDEN_OPTIONS = ("Unknown", "Silence", "Block")
 HIDDEN_VALUES = ("unknown", "silence", "block")
 
@@ -133,7 +150,6 @@ class RulesController:
     def set_enforcing(self, enforcing: bool) -> RulesSnapshot:
         config = self._config()
         rules.set_enforcement(config, enforcing)
-        self._notice("Screening on." if enforcing else "Watching only.")
         return self._save(config)
 
     def arm_bypass(self, minutes: int | None = None) -> RulesSnapshot:
@@ -141,14 +157,11 @@ class RulesController:
         if minutes is None:
             minutes = int(config.get("bypass_duration_minutes") or 120)
         rules.set_bypass(config, int(minutes), self._now_ms())
-        self._notice("Expecting a call for %s."
-                     % rules.duration_label(int(minutes)))
         return self._save(config)
 
     def stop_bypass(self) -> RulesSnapshot:
         config = self._config()
         rules.clear_bypass(config)
-        self._notice("Expecting-a-call is off.")
         return self._save(config)
 
     def set_bypass_minutes(self, minutes: int) -> RulesSnapshot:
@@ -201,7 +214,6 @@ class RulesController:
         with Store(self._deps.db_file) as store:
             store.add_pattern(PatternRow(clean, int(wildcards), action,
                                          created_at=self._now_ms()))
-        self._notice("Pattern saved.")
         return self.load()
 
     def delete_pattern(self, row_id: int) -> RulesSnapshot:
@@ -217,7 +229,6 @@ class RulesController:
             if armed:
                 for row in armed:
                     store.delete_pattern(row.row_id)
-                self._notice("Neighbor-spoof rule removed.")
                 return self.load()
             region = policy.region_of(self._config())
             digits = masks.digits_of(
@@ -228,8 +239,6 @@ class RulesController:
             store.add_pattern(PatternRow(
                 draft.prefix, draft.wildcards, "silence",
                 preset=rules.NEIGHBOR_PRESET, created_at=self._now_ms()))
-            self._notice("Neighbor-spoof silencing on (%s)."
-                         % masks.preview(draft))
             return self.load()
 
     def import_blocklist_text(self, text: str) -> RulesSnapshot:
@@ -284,7 +293,6 @@ class RulesController:
     def clear_log(self) -> RulesSnapshot:
         with Store(self._deps.db_file) as store:
             store.clear_screen_log()
-        self._notice("Screening log cleared.")
         return self.load()
 
     def test_number(self, raw: str, now=None) -> tuple[str, str]:
@@ -361,12 +369,12 @@ class RulesView:
         self._mode_caption.set_wrap(True)
         self._mode_caption.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         header.append(self._mode_caption)
-        self._offer_button = widgets.outline_button(
+        self._offer_button = _outline(
             "Start screening now", self._on_offer)
         header.append(self._offer_button)
 
         expect_card = widgets.card()
-        expect_card.append(widgets.label(
+        expect_card.append(widgets.wrap_label(
             "Expecting a call", "xx-title"))
         expect_card.append(widgets.wrap_label(
             "Everyone rings for a while, unknown too"))
@@ -375,7 +383,7 @@ class RulesView:
         self._dur_row.set_halign(Gtk.Align.CENTER)
         self._dur_buttons: list[Gtk.Button] = []
         for label, minutes in BYPASS_OPTIONS:
-            button = widgets.wrap_to_fit(widgets.outline_button(label))
+            button = _outline((label))
             button.connect("clicked", self._on_expect, minutes)
             button.set_hexpand(True)
             self._dur_row.append(button)
@@ -386,7 +394,7 @@ class RulesView:
         self._expect_countdown = widgets.label("", "xx-secondary")
         self._expect_countdown.set_hexpand(True)
         active_row.append(self._expect_countdown)
-        self._stop_button = widgets.outline_button(
+        self._stop_button = _outline(
             "Stop expecting", self._on_stop_expect)
         active_row.append(self._stop_button)
         self._active_row = active_row
@@ -420,6 +428,7 @@ class RulesView:
             (label, False, self._on_hidden_seg(value))
             for label, value in zip(HIDDEN_OPTIONS, HIDDEN_VALUES)
         ])
+        self._hidden_seg.add_css_class("xx-dialer-seg")
         hidden.append(self._hidden_seg)
         silenced = self._section("Silenced calls")
         self._notif_seg = widgets.segmented([
@@ -438,9 +447,9 @@ class RulesView:
             lab.add_css_class("xx-title")
             lab.set_ellipsize(Pango.EllipsizeMode.END)
             lab.set_valign(Gtk.Align.CENTER)
-            pick = widgets.outline_button("Choose")
+            pick = _outline("Choose")
             pick.connect("clicked", self._on_pick_tone, key)
-            clear = widgets.outline_button("Clear")
+            clear = _outline("Clear")
             clear.connect("clicked", self._on_clear_tone, key)
             self._tone_rows[key] = pick
             brow.append(lab)
@@ -452,19 +461,21 @@ class RulesView:
         self._pattern_list = Gtk.ListBox()
         self._pattern_list.set_selection_mode(Gtk.SelectionMode.NONE)
         pat.append(self._pattern_list)
-        prow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # Stacked full-width, like Import blocklist file below: side by
+        # side they outgrow 320 px at large text.
+        prow = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self._add_pattern = widgets.wrap_to_fit(
-            widgets.outline_button("Add pattern"))
+            _outline("Add pattern"))
         self._add_pattern.set_hexpand(True)
         self._add_pattern.connect("clicked", self._on_add_pattern)
         self._neighbor_button = widgets.wrap_to_fit(
-            widgets.outline_button(""))
+            _outline(""))
         self._neighbor_button.set_hexpand(True)
         self._neighbor_button.connect("clicked", self._on_neighbor)
         prow.append(self._add_pattern)
         prow.append(self._neighbor_button)
         pat.append(prow)
-        self._import_button = widgets.outline_button(
+        self._import_button = _outline(
             "Import blocklist file")
         self._import_button.connect("clicked", self._on_import_blocklist)
         pat.append(self._import_button)
@@ -484,7 +495,7 @@ class RulesView:
         click.connect("pressed", self._on_test_entry_click)
         self._test_entry.add_controller(click)
         self._test_entry.connect("activate", self._on_test_go)
-        self._test_go = widgets.outline_button("Check")
+        self._test_go = _outline("Check")
         self._test_go.connect("clicked", self._on_test_go)
         trow.append(self._test_entry)
         trow.append(self._test_go)
@@ -502,7 +513,7 @@ class RulesView:
         self._log_list = Gtk.ListBox()
         self._log_list.set_selection_mode(Gtk.SelectionMode.NONE)
         log.append(self._log_list)
-        self._clear_log = widgets.outline_button("Clear screening log")
+        self._clear_log = _outline("Clear screening log")
         self._clear_log.connect("clicked", self._on_clear_log)
         log.append(self._clear_log)
 
@@ -611,7 +622,8 @@ class RulesView:
         for key, _title in TONE_KEYS:
             current = snap.unknown_tone if key == "unknown_tone" \
                 else snap.default_tone
-            self._tone_rows[key].set_label(
+            _set_button_text(
+                self._tone_rows[key],
                 "Set" if not current else current.split("/")[-1])
         self._render_patterns(snap)
         self._render_blocked(snap)
@@ -667,12 +679,11 @@ class RulesView:
             self._pattern_list.remove(row)
         armed = any(row.preset == rules.NEIGHBOR_PRESET
                     for row in snap.patterns)
-        self._neighbor_button.set_label(
+        _set_button_text(
+            self._neighbor_button,
             "Neighbor-spoof: on" if armed else "Neighbor-spoof: off")
+        self._pattern_list.set_visible(bool(snap.patterns))
         if not snap.patterns:
-            note = Gtk.Label(label="No patterns yet.", xalign=0.0)
-            note.add_css_class("xx-muted")
-            self._pattern_list.append(note)
             return
         for prow in snap.patterns:
             line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
@@ -687,7 +698,7 @@ class RulesView:
             text.add_css_class("xx-title")
             text.set_ellipsize(Pango.EllipsizeMode.END)
             text.set_valign(Gtk.Align.CENTER)
-            delete = widgets.outline_button("Delete")
+            delete = _outline("Delete")
             delete.connect("clicked", self._on_delete_pattern,
                            prow.row_id)
             line.append(text)
@@ -706,10 +717,8 @@ class RulesView:
             if row is None:
                 break
             self._blocked_list.remove(row)
+        self._blocked_list.set_visible(bool(snap.blocked))
         if not snap.blocked:
-            note = Gtk.Label(label="No blocked numbers.", xalign=0.0)
-            note.add_css_class("xx-muted")
-            self._blocked_list.append(note)
             return
         region = self._region()
         for number in sorted(snap.blocked):
@@ -724,7 +733,7 @@ class RulesView:
             text.add_css_class("xx-title")
             text.set_ellipsize(Pango.EllipsizeMode.END)
             text.set_valign(Gtk.Align.CENTER)
-            remove = widgets.outline_button("Unblock")
+            remove = _outline("Unblock")
             remove.connect("clicked", self._on_unblock, number)
             line.append(text)
             line.append(remove)
@@ -750,10 +759,8 @@ class RulesView:
             if row is None:
                 break
             self._log_list.remove(row)
+        self._log_list.set_visible(bool(snap.log))
         if not snap.log:
-            note = Gtk.Label(label="No screenings yet.", xalign=0.0)
-            note.add_css_class("xx-muted")
-            self._log_list.append(note)
             return
         region = self._region()
         for entry in snap.log:

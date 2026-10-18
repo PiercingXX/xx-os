@@ -330,8 +330,6 @@ class RecentsController:
         except Exception:
             self._notice("Could not copy the number.")
             return
-        self._notice("Copied %s" % xx_phone.display(
-            number, xx_phone.display_country(self._region())))
 
     def add_contact(self, call: recents.MergedCall) -> None:
         number = self._dialable(call)
@@ -349,7 +347,6 @@ class RecentsController:
         vcard = contacts_client.new_contact_vcard(number, name)
 
         def _done(_uid: str) -> None:
-            self._notice("Contact saved.")
             self.load()
 
         def _failed(_err) -> None:
@@ -378,8 +375,6 @@ class RecentsController:
                         number, self._region()) or number)
             except Exception:
                 pass
-        self._notice("Blocked %s" % xx_phone.display(
-            number, xx_phone.display_country(self._region())))
         self.load()
 
     def ring_next_time(self, call: recents.MergedCall) -> None:
@@ -535,8 +530,8 @@ class RecentsView:
         scroll.set_child(self._list)
         self._root.append(scroll)
 
-        self._empty = widgets.label("No calls yet.", "xx-empty",
-                                    xalign=0.5)
+        # No calls (or none in a filter) shows an empty list, no line.
+        self._empty = widgets.label("", "xx-empty", xalign=0.5)
         self._empty.set_halign(Gtk.Align.CENTER)
         self._empty.set_valign(Gtk.Align.CENTER)
         self._empty.set_vexpand(True)
@@ -850,14 +845,7 @@ class RecentsView:
                 % xx_phone.display(
                     deeplink, xx_phone.display_country(
                         self.controller._region())))
-        empty = self._store.get_n_items() == 0
-        self._empty.set_visible(empty)
-        if empty:
-            if self.controller.merged:
-                widgets.fit_text(
-                    self._empty, "No calls match this filter.", 32)
-            else:
-                widgets.fit_text(self._empty, "No calls yet.", 32)
+        self._empty.set_visible(self._store.get_n_items() == 0)
 
 
 def build_recents(controller: RecentsController) -> RecentsView:

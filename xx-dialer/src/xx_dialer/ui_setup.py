@@ -29,6 +29,17 @@ from xx_dialer import config as app_config  # noqa: E402
 from xx_dialer import rules, setup as setup_probes  # noqa: E402
 from xx_dialer.store import Store  # noqa: E402
 
+
+def _outline(text: str, callback=None):
+    """An outline button whose label wraps between words (large text,
+    320 px) instead of ellipsizing; it never widens the window."""
+    return widgets.wrap_to_fit(widgets.outline_button(text, callback))
+
+
+def _primary(text: str, callback=None):
+    return widgets.wrap_to_fit(widgets.primary_button(text, callback))
+
+
 GLYPH_OK = "object-select-symbolic"
 GLYPH_WARN = "dialog-warning-symbolic"
 
@@ -118,14 +129,12 @@ class SetupController:
         config = app_config.load(self._deps.home)
         rules.seed_observe_week(config, int(time.time() * 1000))
         app_config.save(config, self._deps.home)
-        self._notice("Watching for a week; screening stays off.")
         return self.probe()
 
     def start_screening(self) -> SetupSnapshot:
         config = app_config.load(self._deps.home)
         rules.set_enforcement(config, True)
         app_config.save(config, self._deps.home)
-        self._notice("Screening on.")
         return self.probe()
 
     def send_test_ring(self, on_done) -> None:
@@ -172,9 +181,8 @@ class SetupView:
                        spacing=8)
         body.add_css_class("xx-page-body")
         intro = widgets.wrap_label(
-            "Each step shows its actual state. Finish starts a week "
-            "of watching; screening is offered after, never switched "
-            "on.")
+            "Finish starts a week of watching. Screening stays off "
+            "until you turn it on.")
         body.append(intro)
         self._rows: dict[str, tuple[Gtk.Image, Gtk.Label]] = {}
         for _key, title in self.ROWS:
@@ -187,7 +195,7 @@ class SetupView:
                            spacing=2)
             text.set_hexpand(True)
             text.set_valign(Gtk.Align.CENTER)
-            head = widgets.label(title, "xx-title")
+            head = widgets.wrap_label(title, "xx-title")
             detail = widgets.wrap_label("Checking...")
             text.append(head)
             text.append(detail)
@@ -196,10 +204,10 @@ class SetupView:
             body.append(box)
             self._rows[_key] = (glyph, detail)
         brow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._recheck_button = widgets.outline_button("Recheck")
+        self._recheck_button = _outline("Recheck")
         self._recheck_button.set_hexpand(True)
         self._recheck_button.connect("clicked", self._on_recheck)
-        self._ring_button = widgets.outline_button("Test ring")
+        self._ring_button = _outline("Test ring")
         self._ring_button.set_hexpand(True)
         self._ring_button.connect("clicked", self._on_test_ring)
         brow.append(self._recheck_button)
@@ -208,11 +216,11 @@ class SetupView:
         self._observe_label = widgets.wrap_label("")
         body.append(self._observe_label)
         frow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._finish_button = widgets.outline_button(
+        self._finish_button = _outline(
             "Finish: watch for a week")
         self._finish_button.set_hexpand(True)
         self._finish_button.connect("clicked", self._on_finish)
-        self._enforce_button = widgets.primary_button(
+        self._enforce_button = _primary(
             "Start screening now")
         self._enforce_button.set_hexpand(True)
         self._enforce_button.connect("clicked", self._on_enforce)

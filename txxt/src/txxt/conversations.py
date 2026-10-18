@@ -33,6 +33,7 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 from txxt import blocking as blocking_mod  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 from txxt import list_presenter as presenter  # noqa: E402
+from txxt.header_fit import shrink_header_title  # noqa: E402
 
 FILTERS = ("all", "unread", "starred")
 
@@ -154,13 +155,16 @@ class ConversationListPage(Adw.NavigationPage):
         except Exception:
             self._names = None
 
+        # Text-first New and one gear straight to Settings (as on
+        # Android): Blocking lives in Settings, so no menu repeats it.
         self._header = widgets.page_header(
             "Inbox", "Threads",
-            icon_name="list-add-symbolic",
-            icon_cb=self._on_compose_clicked,
-            overflow_cb=self._on_overflow_clicked,
+            actions=[("New", self._on_compose_clicked)],
+            icon_name="emblem-system-symbolic",
+            icon_cb=self._on_settings_clicked,
         )
         self._caption = self._header.get_last_child()
+        shrink_header_title(self._header)
 
         chips_box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
         self._chips_wrap = chips_box
@@ -392,32 +396,11 @@ class ConversationListPage(Adw.NavigationPage):
         except Exception:
             pass
 
-    def _on_overflow_clicked(self) -> None:
-        dialog = Adw.AlertDialog.new("Inbox", None)
-        dialog.add_response("settings", "Settings")
-        dialog.add_response("blocking", "Blocking")
-        dialog.add_response("cancel", "Cancel")
-        dialog.set_default_response("cancel")
-        dialog.set_close_response("cancel")
-        dialog.choose(
-            self._window, None, self._on_overflow_chosen,
-        )
-
-    def _on_overflow_chosen(self, dialog, result) -> None:
+    def _on_settings_clicked(self) -> None:
         try:
-            response = dialog.choose_finish(result)
-        except GLib.Error:
-            return
-        if response == "settings":
-            try:
-                self._window.open_settings()
-            except Exception:
-                pass
-        elif response == "blocking":
-            try:
-                self._window.open_blocking()
-            except Exception:
-                pass
+            self._window.open_settings()
+        except Exception:
+            pass
 
     def _on_quarantine_clicked(self, _button) -> None:
         try:
@@ -437,7 +420,9 @@ class ConversationListPage(Adw.NavigationPage):
             self._model.append(ConversationItem(
                 conversation_id=view.conversation_id,
                 title=title,
-                snippet=view.snippet + view.marks,
+                # Each state once: the star rides the title and "muted"
+                # leads the snippet, so only Pinned trails it.
+                snippet=view.snippet + (" · Pinned" if view.pinned else ""),
                 stamp=presenter.format_time(
                     view.timestamp_millis, int(time.time() * 1000),
                 ),
@@ -711,30 +696,28 @@ class ConversationListPage(Adw.NavigationPage):
         GLib.idle_add(self._announce_block, address, done)
 
     def _announce_block(self, address: str, done: bool) -> bool:
+        """A block that worked just refreshes the list (no popup for a
+        direct action); only a failure says so."""
+        if done:
+            self.refresh()
+            return False
         try:
             from txxt import phone_numbers as _phones
 
             shown = _phones.format_display_configured(address) or address
         except Exception:
             shown = address
-        heading = "Blocked" if done else "Could not block"
-        body = (
-            f"New messages from {shown} are blocked."
-            if done else f"No contact holds {shown}; nothing changed."
-        )
-        dialog = Adw.AlertDialog.new(heading, body)
+        dialog = Adw.AlertDialog.new(
+            "Could not block", f"No contact holds {shown}; nothing changed.")
         dialog.add_response("ok", "OK")
         dialog.set_default_response("ok")
         dialog.set_close_response("ok")
         dialog.choose(self._window, None, self._on_dialog_dismissed)
-        if done:
-            self.refresh()
         return False
 
     def _confirm_delete(self, conversation_id: int) -> None:
         dialog = Adw.AlertDialog.new(
-            "Delete conversation?",
-            "Delete this thread and every message in it? This cannot be undone.")
+            "Delete conversation?", "Every message in it goes too.")
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("delete", "Delete")
         dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)

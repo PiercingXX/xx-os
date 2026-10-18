@@ -90,6 +90,13 @@ def test_person_marks():
     assert person_marks(Person("u", "A", ["+1"], True, True, False)) == \
         "* Biz"
     assert person_marks(Person("u", "A", ["+1"])) == ""
+    # A row never repeats its section heading.
+    assert person_marks(Person("u", "A", ["+1"], True, True, False),
+                        "Starred") == "Biz"
+    assert person_marks(Person("u", "A", ["+1"], False, True, False),
+                        "Business") == ""
+    assert person_marks(Person("u", "A", ["+1"], True, False, True),
+                        "Blocked") == "*"
 
 
 def _zed(snapshot):
@@ -143,14 +150,15 @@ def test_stranger_block_lands_in_local_block_table(tmp_path, store):
     controller.block_number("+14155559999")
     with Store(tmp_path / "calls.db") as check:
         assert check.is_blocked("+14155559999")
-    assert any("Blocked" in note for note in notices)
+    # The row moving into Blocked is the answer: no toast.
+    assert notices == []
 
 
 def test_empty_states_name_the_cause(tmp_path, store):
     snapshot = _controller(tmp_path, None).load()
     assert snapshot.empty_reason.startswith("Contacts are unavailable")
     snapshot = _controller(tmp_path, FakeClient()).load()
-    assert snapshot.empty_reason == "No contacts yet."
+    assert snapshot.empty_reason == ""
 
 
 def test_section_people_is_pure_over_store(tmp_path, store):

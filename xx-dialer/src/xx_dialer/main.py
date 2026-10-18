@@ -261,7 +261,9 @@ class DialerView:
             items.append(("", title, name == active,
                           lambda name=name: self.show_page(name)))
         if items:
-            self._tabs.append(widgets.bottom_tabs(items))
+            tabs = widgets.bottom_tabs(items)
+            tabs.add_css_class("xx-dialer-tabs")
+            self._tabs.append(tabs)
 
     def refresh_all(self) -> None:
         try:

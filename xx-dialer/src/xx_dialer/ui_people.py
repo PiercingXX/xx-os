@@ -30,6 +30,12 @@ from xx_dialer import policy, t9  # noqa: E402
 from xx_dialer.store import BLOCKED_GROUP, BIZ_TIER, Store  # noqa: E402
 
 
+def _outline(text: str, callback=None):
+    """An outline button whose label wraps between words (large text,
+    320 px) instead of ellipsizing; it never widens the window."""
+    return widgets.wrap_to_fit(widgets.outline_button(text, callback))
+
+
 @dataclass
 class PeopleDeps:
     db_file: Path
@@ -99,13 +105,15 @@ def section_people(store: Store) -> list[tuple[str, list[Person]]]:
             ("Blocked", blocked), ("Everyone", everyone)]
 
 
-def person_marks(person: Person) -> str:
+def person_marks(person: Person, section: str = "") -> str:
+    """Trailing marks for a People row. The mark its section already
+    names (a star under Starred, Blocked under Blocked) is left off."""
     marks = ""
-    if person.starred:
+    if person.starred and section != "Starred":
         marks += "* "
-    if person.business:
+    if person.business and section != "Business":
         marks += "Biz "
-    if person.blocked:
+    if person.blocked and section != "Blocked":
         marks += "Blocked "
     return marks.strip()
 
@@ -134,9 +142,8 @@ class PeopleController:
         if empty and not present:
             reason = ("Contacts are unavailable: the contacts app is not "
                       "installed or not running.")
-        elif empty:
-            reason = "No contacts yet."
         else:
+            # An empty address book shows nothing; only a cause is news.
             reason = ""
         self._snapshot = PeopleSnapshot(
             sections=sections, contacts_present=present,
@@ -211,10 +218,7 @@ class PeopleController:
         except Exception:
             self._notice("Could not update the block.")
             return
-        shown = person.display_name or xx_phone.display(
-            person.primary, xx_phone.display_country(self._region()))
-        self._notice("Blocked %s" % shown if blocked
-                     else "Unblocked %s" % shown)
+        # The row moving in or out of Blocked is the answer: no toast.
         self.load()
 
     def block_number(self, number: str) -> None:
@@ -234,10 +238,6 @@ class PeopleController:
         if uid is not None and client is not None:
             try:
                 client.set_blocked(uid, True)
-                self._notice("Blocked %s"
-                             % xx_phone.display(
-                                 normalized, xx_phone.display_country(
-                                     self._region())))
                 self.load()
                 return
             except Exception:
@@ -247,8 +247,6 @@ class PeopleController:
                 store.add_blocked(normalized)
         except Exception:
             pass
-        self._notice("Blocked %s" % xx_phone.display(
-            normalized, xx_phone.display_country(self._region())))
         self.load()
 
     def call(self, person: Person, number: str | None = None) -> None:
@@ -353,16 +351,15 @@ class PeopleView:
                     person.primary, xx_phone.display_country(region))
                 item.number = xx_phone.display(
                     person.primary, xx_phone.display_country(region))
-                item.meta = person_marks(person)
+                item.meta = person_marks(person, title)
                 self._store.append(item)
                 total += 1
         self._caption.set_text("%d CONTACT%s"
                                % (total, "" if total == 1 else "S"))
-        self._empty.set_visible(self._store.get_n_items() == 0)
-        if self._store.get_n_items() == 0:
-            widgets.fit_text(
-                self._empty,
-                snapshot.empty_reason or "No contacts yet.", 32)
+        self._empty.set_visible(self._store.get_n_items() == 0
+                                and bool(snapshot.empty_reason))
+        if self._empty.get_visible():
+            widgets.fit_text(self._empty, snapshot.empty_reason, 32)
 
     # ---- factory ----------------------------------------------------------
 
@@ -505,11 +502,11 @@ class PeopleView:
                         person)
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
                           spacing=8)
-        call = widgets.outline_button("Call")
+        call = _outline("Call")
         call.set_hexpand(True)
         call.connect("clicked",
                      lambda _btn: self.controller.call(person))
-        message = widgets.outline_button("Message")
+        message = _outline("Message")
         message.set_hexpand(True)
         message.connect("clicked",
                         lambda _btn: self.controller.message(person))

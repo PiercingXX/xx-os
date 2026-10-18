@@ -483,7 +483,7 @@ def test_controller_block_local_and_via_contacts(tmp_path):
     stranger = [call for call in controller.merged
                 if call.e164 == BO][0]
     controller.block(stranger)
-    assert notices and "Blocked" in notices[-1]
+    assert notices == [], "a direct block pops no toast"
     with Store(db_file) as store:
         assert store.is_blocked(BO) is True
 
@@ -542,7 +542,7 @@ def test_controller_add_contact_and_delete(tmp_path):
     controller.add_contact(call)
     assert len(contacts.created) == 1
     assert "TEL;TYPE=CELL:%s" % ADA in contacts.created[0]
-    assert notices[-1] == "Contact saved."
+    assert notices == [], "a saved contact pops no toast"
     assert controller.delete(call) is True
     assert all(row.key != call.key for row in controller.merged)
 

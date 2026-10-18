@@ -85,7 +85,7 @@ def test_finish_seeds_observe_week_once(tmp_path):
     assert before < first <= before + 7 * 24 * 60 * 60 * 1000 + 5000
     controller.finish()
     assert app_config.load(tmp_path)["observe_week_end"] == first
-    assert any("week" in note for note in notices)
+    assert notices == [], "Finish pops no toast; the page shows the state"
 
 
 def test_offer_then_enforce_flow(tmp_path):
@@ -99,6 +99,7 @@ def test_offer_then_enforce_flow(tmp_path):
     controller.start_screening()
     assert app_config.load(tmp_path)["enforcement_mode"] == "enforcing"
     assert controller.probe().offer is False
+    assert notices == []
 
 
 def test_probe_fetch_failure_degrades_to_absent(tmp_path):

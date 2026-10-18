@@ -176,8 +176,7 @@ def test_compose_pages_build_and_pump_without_exceptions(
     assert markers.get("MAILBOX_TABS") == "5"
     assert markers.get("REAUTH_BANNER") == "True"
     assert markers.get("REAUTH_CAPTION_EMPTY") == "True"
-    assert markers.get("HINT_ROWS") == "5"
-    assert markers.get("HINT_ROW_STYLE") == "True"
+    assert markers.get("HINT_ROWS") == "0"
 
 
 def test_explicit_open_focuses_empty_to_only(broadway_env):

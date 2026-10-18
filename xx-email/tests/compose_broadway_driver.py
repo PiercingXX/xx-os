@@ -309,17 +309,8 @@ def _scenario_smoke() -> None:
                        timeout_s=10.0):
         raise AssertionError("email compose: reauth banner never cleared")
     search = search_page_mod.SearchPage(ACCOUNT, hooks, _toast)
-    hint_buttons = []
-    kid = search._hints.get_first_child()
-    while kid is not None:
-        if isinstance(kid, Gtk.Button):
-            hint_buttons.append(kid)
-        kid = kid.get_next_sibling()
-    print("HINT_ROWS:", len(hint_buttons))
-    print("HINT_ROW_STYLE:", all(
-        "xx-row" in button.get_css_classes()
-        and "xx-menu-row" not in button.get_css_classes()
-        for button in hint_buttons))
+    # No "Try" list: the search field and its placeholder are the prompt.
+    print("HINT_ROWS:", 0 if not hasattr(search, "_hints") else -1)
     mailbox_window.destroy()
     thread_window.destroy()
     reply_page = _build_compose(reply_initial, False, "REPLY_TO")

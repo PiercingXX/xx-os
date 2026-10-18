@@ -28,6 +28,13 @@ from xx_dialer import (  # noqa: E402
 )
 from xx_dialer.store import Store  # noqa: E402
 
+
+def _outline(text: str, callback=None):
+    """An outline button whose label wraps between words (large text,
+    320 px) instead of ellipsizing; it never widens the window."""
+    return widgets.wrap_to_fit(widgets.outline_button(text, callback))
+
+
 POLICY_FILENAME = "ring_policy.json"
 CALLLOG_FILENAME = "calllog.json"
 
@@ -153,10 +160,10 @@ class BackupView:
         self._body.append(widgets.section_label("Export"))
         self._export_status = self._status()
         self._body.append(self._export_status)
-        self._export_policy = widgets.outline_button("Export ring policy")
+        self._export_policy = _outline("Export ring policy")
         self._export_policy.connect("clicked", self._on_export_policy)
         self._body.append(self._export_policy)
-        self._export_calllog = widgets.outline_button("Export call log")
+        self._export_calllog = _outline("Export call log")
         self._export_calllog.connect("clicked", self._on_export_calllog)
         self._body.append(self._export_calllog)
 
@@ -166,10 +173,10 @@ class BackupView:
         self._body.append(note)
         self._import_status = self._status()
         self._body.append(self._import_status)
-        self._import_policy = widgets.outline_button("Import ring policy")
+        self._import_policy = _outline("Import ring policy")
         self._import_policy.connect("clicked", self._on_import_policy)
         self._body.append(self._import_policy)
-        self._import_calllog = widgets.outline_button("Import call log")
+        self._import_calllog = _outline("Import call log")
         self._import_calllog.connect("clicked", self._on_import_calllog)
         self._body.append(self._import_calllog)
 

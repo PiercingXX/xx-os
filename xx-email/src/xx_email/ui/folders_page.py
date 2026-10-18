@@ -57,8 +57,6 @@ class FoldersPage(Gtk.Box):
         self._accounts_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, spacing=0)
         inner.append(self._accounts_box)
-        loading = widgets.label("Loading accounts…", "xx-secondary")
-        self._accounts_box.append(loading)
 
         inner.append(widgets.section_label("Folders"))
         folders = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -75,20 +73,6 @@ class FoldersPage(Gtk.Box):
                 last=index == len(others) - 1)
             folders.append(row)
 
-        inner.append(widgets.section_label("This account"))
-        account_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                              spacing=0)
-        inner.append(account_box)
-        account_box.append(widgets.list_row(
-            "Add account", "Sign in with Google in your browser",
-            on_activate=lambda: hooks.add_account()))
-        account_box.append(widgets.list_row(
-            f"Sign out {account}", "Mail stays on Google's servers",
-            on_activate=lambda: self._confirm_sign_out()))
-        account_box.append(widgets.list_row(
-            "Revoke Google access", "Open your Google permissions",
-            on_activate=lambda: hooks.open_permissions(), last=True))
-
         hooks.load_state(self._on_state)
 
     # ------------------------------------------------------------------ state
@@ -103,8 +87,6 @@ class FoldersPage(Gtk.Box):
             self._accounts_box.remove(child)
             child = next_child
         if not accounts:
-            self._accounts_box.append(widgets.label(
-                "No accounts yet.", "xx-secondary"))
             return
         for index, entry in enumerate(accounts):
             email = entry.get("email", "")
@@ -118,30 +100,6 @@ class FoldersPage(Gtk.Box):
     def _maybe_switch(self, email: str) -> None:
         if email != self.account:
             self._hooks.switch_account(email)
-
-    def _confirm_sign_out(self) -> None:
-        email = self.account
-        dialog = Adw.Dialog()
-        dialog.set_title("Sign out")
-        content = widgets.dialog_box("Sign out")
-        content.append(widgets.label(
-            f"Remove {email} from this phone? Mail stays on "
-            "Google's servers. Sends still waiting in the "
-            "Outbox are discarded.", "xx-body"))
-        cancel = widgets.outline_button("Cancel")
-        cancel.connect("clicked", lambda _b: dialog.close())
-        content.append(cancel)
-        out = widgets.outline_button("Sign out")
-        out.connect("clicked", lambda _b: (
-            dialog.close(), self._hooks.sign_out(email, False)))
-        content.append(out)
-        revoke = widgets.danger_button("Sign out and revoke")
-        revoke.connect("clicked", lambda _b: (
-            dialog.close(), self._hooks.sign_out(email, True)))
-        content.append(revoke)
-        dialog.set_child(content)
-        dialog.present(self.get_root())
-
 
 def folders_navigation_page(page: FoldersPage) -> Adw.NavigationPage:
     navigation = Adw.NavigationPage(title="Folders")

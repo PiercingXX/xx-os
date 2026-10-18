@@ -156,6 +156,19 @@ def _child_main():
         assert not hasattr(page, "_auto_sync_row"), \
             "appearance lives in the shell theme, not in TxxT settings"
         assert "Follow the shell theme" not in _label_texts(page)
+        # A tap moves the selection (in both layouts) and saves it.
+        from txxt import settings as settings_mod
+        privacy = page._privacy_row
+        buttons = privacy.option_buttons()
+        buttons[1].emit("clicked")
+        assert privacy.selected == "content"
+        assert buttons[1].has_css_class("seg-selected")
+        assert not buttons[0].has_css_class("seg-selected")
+        assert settings_mod.load().lock_screen_privacy == "content"
+        # Narrower than the row (320 px, large text): the options stack
+        # rather than widen the window.
+        horizontal = Gtk.Orientation.HORIZONTAL
+        assert privacy.measure(horizontal, -1)[0] < privacy._row_min()
         window._navigation.pop()
         pump_until(lambda: window._navigation.get_visible_page()
                    is window._list_page,

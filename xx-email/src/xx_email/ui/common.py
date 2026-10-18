@@ -19,6 +19,87 @@ from xx_email import mailbox as mailbox_mod  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 
 
+class FitRow(Gtk.Widget):
+    """A row of buttons that stacks them, one per line, only where the
+    page is narrower than the row (320 px at large text) instead of
+    widening the window. ``build`` makes one fresh set of children; it
+    runs twice, once per layout, so each layout owns its widgets."""
+
+    __gtype_name__ = "XXEmailFitRow"
+
+    def __init__(self, build, spacing: int = 8) -> None:
+        super().__init__()
+        self._row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                            spacing=spacing)
+        self._column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                               spacing=spacing)
+        for child in build():
+            self._row.append(child)
+        for child in build():
+            self._column.append(child)
+        self._row.set_parent(self)
+        self._column.set_parent(self)
+        self._column.set_child_visible(False)
+        self._stacked = False
+        self._sync_id = 0
+
+    @property
+    def stacked(self) -> bool:
+        return self._stacked
+
+    def _row_min(self) -> int:
+        return self._row.measure(Gtk.Orientation.HORIZONTAL, -1)[0]
+
+    def do_get_request_mode(self):
+        return Gtk.SizeRequestMode.HEIGHT_FOR_WIDTH
+
+    def do_measure(self, orientation, for_size):
+        if orientation == Gtk.Orientation.HORIZONTAL:
+            row_min, row_nat, _b1, _b2 = self._row.measure(orientation, -1)
+            col_min, _col_nat, _b1, _b2 = self._column.measure(
+                orientation, -1)
+            return (min(row_min, col_min), max(row_nat, col_min), -1, -1)
+        stacked = 0 <= for_size < self._row_min()
+        child = self._column if stacked else self._row
+        minimum, natural, _b1, _b2 = child.measure(orientation, for_size)
+        return (minimum, natural, -1, -1)
+
+    def do_size_allocate(self, width, height, baseline):
+        stacked = width < self._row_min()
+        active, idle = ((self._column, self._row) if stacked
+                        else (self._row, self._column))
+        active.allocate(width, height, -1, None)
+        # The hidden layout gets a size it accepts; it is neither drawn
+        # nor tappable (child-invisible), so no allocation warnings.
+        idle_w = max(width, idle.measure(Gtk.Orientation.HORIZONTAL, -1)[0])
+        idle_h = idle.measure(Gtk.Orientation.VERTICAL, idle_w)[0]
+        idle.allocate(idle_w, idle_h, -1, None)
+        if stacked != self._stacked:
+            self._stacked = stacked
+            if not self._sync_id:
+                self._sync_id = GLib.idle_add(self._sync_visible)
+
+    def _sync_visible(self) -> bool:
+        self._sync_id = 0
+        self._row.set_child_visible(not self._stacked)
+        self._column.set_child_visible(self._stacked)
+        self.queue_draw()
+        return GLib.SOURCE_REMOVE
+
+    def do_snapshot(self, snapshot):
+        self.snapshot_child(
+            self._column if self._stacked else self._row, snapshot)
+
+    def do_dispose(self):
+        if self._sync_id:
+            GLib.source_remove(self._sync_id)
+            self._sync_id = 0
+        for child in (self._row, self._column):
+            if child is not None and child.get_parent() is self:
+                child.unparent()
+        self._row = self._column = None
+
+
 class ThreadItem(GObject.Object):
     """One ListView row's fields (ListStore needs GObject items)."""
 

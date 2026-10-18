@@ -24,7 +24,6 @@ from xx_ui import widgets
 TITLES = {"first-run": "Welcome", "add": "Add account",
           "reauth": "Sign in again"}
 
-INTRO = ("A private Gmail client. No tracking, no ads.")
 
 STEPS = (
     ("Step 1", "Create a Desktop OAuth client with the Gmail API."),
@@ -60,9 +59,7 @@ class SetupPage(Gtk.Box):
         content.set_margin_top(12)
         content.set_margin_bottom(20)
 
-        intro = common_mod.wrapped(Gtk.Label(label=INTRO))
-        intro.add_css_class("xx-body")
-        content.append(intro)
+        # The header caption says what this is; the steps say what to do.
         if self._mode == "reauth" and account:
             who = common_mod.wrapped(Gtk.Label(
                 label=f"Signing in again as {account} — your cached "
@@ -122,12 +119,6 @@ class SetupPage(Gtk.Box):
         guide.connect("clicked", lambda _b: hooks.open_setup_guide())
         content.append(guide)
 
-        revoke = widgets.text_button("Revoke Google access")
-        revoke.set_tooltip_text(
-            "Open your Google permissions page in the browser")
-        revoke.connect("clicked",
-                       lambda _b: hooks.open_permissions())
-        content.append(revoke)
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER,

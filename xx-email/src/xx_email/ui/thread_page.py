@@ -75,19 +75,24 @@ class ThreadPage(Gtk.Box):
         scrolled.set_child(view)
         self.append(scrolled)
 
-        reply_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                            spacing=8)
+        # One line of three where they fit (as on Android); at 320 px and
+        # large text they stack instead of widening the window.
+        def _reply_buttons() -> list:
+            buttons = []
+            for label, mode, greedy in (("Reply", "reply", False),
+                                        ("Reply all", "reply_all", True),
+                                        ("Forward", "forward", False)):
+                button = widgets.outline_button(label)
+                button.set_hexpand(greedy)
+                button.connect("clicked",
+                               lambda _b, m=mode: self._on_reply(m))
+                buttons.append(button)
+            return buttons
+
+        reply_row = common_mod.FitRow(_reply_buttons)
         reply_row.add_css_class("xx-page-body")
         reply_row.set_margin_top(12)
         reply_row.set_margin_bottom(20)
-        for label, mode, greedy in (("Reply", "reply", False),
-                                    ("Reply all", "reply_all", True),
-                                    ("Forward", "forward", False)):
-            button = widgets.outline_button(label)
-            button.set_hexpand(greedy)
-            button.connect("clicked",
-                           lambda _b, m=mode: self._on_reply(m))
-            reply_row.append(button)
         self.append(reply_row)
 
         self._messages: list = []

@@ -42,38 +42,32 @@ class NewConversationPage(Adw.NavigationPage):
         )
         body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 16)
 
+        # One To field: typing a name lists matching contacts under it,
+        # typing a number lets Start open that thread (no second search).
         to_group = Gtk.Box.new(Gtk.Orientation.VERTICAL, 8)
         to_group.append(widgets.section_label("To"))
         self._number_entry = widgets.text_entry("Name or number")
         self._number_entry.set_hexpand(True)
         tap_to_focus(self._number_entry)
+        self._number_entry.connect("changed", self._on_to_changed)
+        self._number_entry.connect("activate",
+                                   lambda _e: self._on_start_clicked())
         to_group.append(self._number_entry)
         self._start_button = widgets.primary_button(
             "Start conversation", self._on_start_clicked)
+        self._start_button.set_sensitive(False)
         to_group.append(self._start_button)
         body.append(to_group)
 
-        results_group = Gtk.Box.new(Gtk.Orientation.VERTICAL, 8)
-        results_group.append(widgets.section_label("Contacts"))
-        search = widgets.search_bar(
-            "Search contacts", boxed=True, on_changed=self._on_query_changed,
-        )
-        self._search = _first_entry(search)
-        tap_to_focus(self._search)
-        results_group.append(search)
+        # Contact hits for what the To field holds; nothing at all
+        # (no "no matches" line) when none match, as when a number is typed.
         self._rows = Gtk.ListBox()
         self._rows.set_selection_mode(Gtk.SelectionMode.NONE)
         self._rows.connect("row-activated", self._on_hit_activated)
-        results_group.append(self._rows)
-        # Only a search that found nothing says so: before one, the
-        # search field's placeholder is the prompt.
-        self._empty = widgets.empty_state("No matches for that search.")
-        self._empty.set_visible(False)
-        results_group.append(self._empty)
-        body.append(results_group)
+        self._rows.set_visible(False)
+        body.append(self._rows)
 
         self.set_child(widgets.page(header, body, None))
-        self._search.set_text("")
 
     # ------------------------------------------------------------ loading
 
@@ -85,6 +79,11 @@ class NewConversationPage(Adw.NavigationPage):
             self._navigation.pop()
         except Exception:
             pass
+
+    def _on_to_changed(self, entry) -> None:
+        text = entry.get_text()
+        self._start_button.set_sensitive(_dialable(text))
+        self._on_query_changed(text)
 
     def _on_query_changed(self, text: str) -> None:
         self._query_seq += 1
@@ -131,10 +130,7 @@ class NewConversationPage(Adw.NavigationPage):
             row.set_child(button)
             row._txxt_number = hit.number
             self._rows.append(row)
-        searching = bool((query or "").strip())
-        has_hits = bool(hits)
-        self._rows.set_visible(has_hits)
-        self._empty.set_visible(searching and not has_hits)
+        self._rows.set_visible(bool(hits))
         return False
 
     # ------------------------------------------------------------ actions
@@ -152,7 +148,7 @@ class NewConversationPage(Adw.NavigationPage):
 
     def _on_start_clicked(self) -> None:
         number = self._number_entry.get_text().strip()
-        if not number:
+        if not _dialable(number):
             return
         self._open_thread_for(number)
 
@@ -168,16 +164,14 @@ class NewConversationPage(Adw.NavigationPage):
                 pass
 
 
+def _dialable(text: str) -> bool:
+    """A typed number or short code (digits, maybe +, spaces, dashes,
+    dots, parentheses): a name has to be picked from its contact row."""
+    text = (text or "").strip()
+    return (any(ch.isdigit() for ch in text)
+            and all(ch.isdigit() or ch in "+-.() " for ch in text))
+
+
 def _initials(display: str) -> str:
     words = [word for word in (display or "").split() if word[:1].isalpha()]
     return "".join(word[0] for word in words[:2]).upper() or "?"
-
-
-def _first_entry(box: Gtk.Box) -> Gtk.Entry:
-    """The text entry inside an ``xx_ui`` search bar."""
-    kid = box.get_first_child()
-    while kid is not None:
-        if isinstance(kid, Gtk.Entry):
-            return kid
-        kid = kid.get_next_sibling()
-    raise AssertionError("search bar has no entry")

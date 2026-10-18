@@ -49,18 +49,6 @@ class SearchPage(Gtk.Box):
         status_pad.append(self._status)
         self.append(status_pad)
 
-        self._hints = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                              spacing=0)
-        self._hints.add_css_class("xx-page-body")
-        self._hints.append(widgets.section_label("Try"))
-        hints = list(mailbox_mod.OPERATOR_HINTS)
-        for index, hint in enumerate(hints):
-            self._hints.append(widgets.list_row(
-                hint, "",
-                on_activate=lambda h=hint: self._run(h),
-                last=index == len(hints) - 1))
-        self.append(self._hints)
-
         search = widgets.search_bar(
             "Search mail (from:, has:…)")
         self._entry = search.get_first_child().get_next_sibling()
@@ -89,7 +77,6 @@ class SearchPage(Gtk.Box):
                 return
             threads, server, offline = result
             self._searched = True
-            self._hints.set_visible(False)
             common_mod.replace_store(self._store, threads)
             self._status.set_label(
                 mailbox_mod.search_status(bool(server), bool(offline),
