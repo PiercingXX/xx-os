@@ -23,6 +23,14 @@ mapping applies instead (config-compat invariant: a bad gestures.json
 never changes device behavior).
 Rebinding restarts lisgd immediately from Settings. If that restart
 fails, the wrapper's session-start bindings still apply at next login.
+
+The bottom edge belongs to the shell's own gesture strip
+(bottom_gesture.py) whenever that strip is up: lisgd cannot see a pause
+and its length classes are fixed thirds of the screen, so the switcher
+was unreachable on the FLX1. The shell then regenerates the bindings with
+``bottom_strip=True``, which drops every bottom-edge (B) binding so a
+swipe never fires twice. The session-start wrapper keeps them as the
+fallback for a shell without a strip (no layer shell).
 """
 from __future__ import annotations
 
@@ -81,6 +89,12 @@ def resolve_verb(gc: GestureConfig, slot: str) -> str:
     if mapped is not None:
         return mapped
     return DEFAULT_VERBS[slot]
+
+
+def is_bottom_edge(geometry: str) -> bool:
+    """True for a lisgd geometry whose start region is the bottom edge."""
+    fields = geometry.split(',')
+    return len(fields) > 2 and fields[2] == 'B'
 
 
 def detect_touch_device(sys_input: Path | None = None) -> str | None:
@@ -148,15 +162,17 @@ def restart_lisgd(
         touch_dev: str | None = None,
         spawn=None,
         kill_fn=None,
-        which=None) -> bool:
-    """Replace the session lisgd with bindings from the current gestures.json."""
+        which=None,
+        bottom_strip: bool = False) -> bool:
+    """Replace the session lisgd with bindings from the current gestures.json
+    (without the bottom edge while the shell's strip owns it)."""
     touch = detect_touch_device() if touch_dev is None else touch_dev
     if not touch:
         return False
     lisgd = (which or shutil.which)('lisgd')
     if not lisgd:
         return False
-    bindings = generate_bindings(bindir, gc)
+    bindings = generate_bindings(bindir, gc, bottom_strip=bottom_strip)
     if not bindings:
         return False
     argv = [lisgd, '-d', touch]
@@ -172,14 +188,18 @@ def restart_lisgd(
     return True
 
 
-def generate_bindings(bindir: str, gc: GestureConfig | None = None) -> list[str]:
-    """One -g value per binding, in canonical order."""
+def generate_bindings(bindir: str, gc: GestureConfig | None = None,
+                      *, bottom_strip: bool = False) -> list[str]:
+    """One -g value per binding, in canonical order. ``bottom_strip``
+    drops the bottom-edge bindings (the shell's strip handles them)."""
     gc = gc if gc is not None else GestureConfig()
     ipc = f'{bindir}/xx-wm-ipc'
     lines: list[str] = []
     for slot, geometries in _LISGD_GEOMETRY.items():
         verb = resolve_verb(gc, slot)
         for geometry in geometries:
+            if bottom_strip and is_bottom_edge(geometry):
+                continue
             lines.append(f'{geometry},{ipc} {verb}')
     return lines
 

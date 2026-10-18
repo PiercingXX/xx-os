@@ -217,6 +217,7 @@ class XXWMApplication(Adw.Application):
         self._shell._back_layer = back
 
         self._start_status_bar()
+        self._start_bottom_gesture()
 
         if self._replay_welcome:
             self._replay_welcome = False
@@ -247,6 +248,56 @@ class XXWMApplication(Adw.Application):
             bar.set_status(snapshot)
         shell._refresh_clock()
         shell._sync_status_bar()
+
+    def _start_bottom_gesture(self) -> None:
+        """Bottom-edge gesture strip (bottom_gesture.py): flick home,
+        swipe-and-pause recents, sideways previous/next app. Built in the
+        same synchronous pass as the shell window, so the window's startup
+        idle that restarts lisgd already sees it and drops lisgd's bottom
+        bindings. No layer shell: no strip, lisgd keeps the bottom edge."""
+        shell = self._shell
+        if shell is None:
+            return
+        try:
+            from bottom_gesture import create_bottom_gesture
+            strip = create_bottom_gesture(on_action=self._on_bottom_gesture)
+        except Exception as exc:
+            _log.warning('bottom gesture strip unavailable: %s', exc)
+            return
+        if strip is None:
+            return
+        strip.set_application(self)
+        shell._bottom_gesture = strip
+        # Mapped by the visibility rule, never under the lock screen.
+        shell._sync_status_bar()
+
+    def _on_bottom_gesture(self, outcome: str) -> None:
+        """Strip outcome -> the same IPC verb lisgd would have fired
+        (gestures.json swipe_up_short / swipe_up_long), through the IPC
+        path so lock and tour silencing apply; sideways switches apps."""
+        shell = self._shell
+        if shell is None:
+            return
+        from bottom_gesture import HOME, NEXT, PREVIOUS, SWITCHER, verb_for
+        if outcome in (PREVIOUS, NEXT):
+            if not shell.is_locked():
+                switched = shell.switch_adjacent_app(outcome)
+                _log.info('bottom gesture: %s -> %s', outcome,
+                          'switched' if switched else 'no neighbour')
+            return
+        switcher = getattr(shell, '_switcher', None)
+        try:
+            in_recents = switcher is not None and switcher.get_visible()
+        except Exception:
+            in_recents = False
+        if in_recents and outcome == SWITCHER:
+            # Android: swiping up inside recents goes home; the switcher
+            # verb would toggle recents shut instead.
+            outcome = HOME
+        verb = verb_for(outcome, shell.gesture_config)
+        if verb:
+            _log.info('bottom gesture: %s -> %s', outcome, verb)
+            self._on_ipc_command(verb)
 
     def _replay_pending_ipc(self) -> None:
         """Run IPC verbs queued before the first present, in arrival order."""

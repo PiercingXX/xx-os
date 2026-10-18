@@ -679,6 +679,35 @@ def emit_scroll(pointer, height_px: int, time_ms: int = 0) -> None:
     pointer.frame()
 
 
+# Linux input event code of the primary button; wl_pointer button states.
+BTN_LEFT = 0x110
+BUTTON_RELEASED = 0
+BUTTON_PRESSED = 1
+# Press-to-release hold of an injected click. GTK drops a press and a
+# release that arrive in the same dispatch (the button never clicks).
+CLICK_HOLD_SECS = 0.05
+
+
+def emit_click(pointer, x: float, y: float, width: int, height: int,
+               time_ms: int = 0, flush=None, sleep=time.sleep) -> None:
+    """Inject one primary click at layout (x, y) of a ``width`` x
+    ``height`` output: absolute motion, press, a short hold, release,
+    each framed and flushed (``flush``) so the app sees them apart."""
+    flush = flush or (lambda: None)
+    stamp = int(time_ms) & 0xFFFFFFFF
+    pointer.motion_absolute(stamp, max(0, int(x)), max(0, int(y)),
+                            max(1, int(width)), max(1, int(height)))
+    pointer.frame()
+    pointer.button(stamp, BTN_LEFT, BUTTON_PRESSED)
+    pointer.frame()
+    flush()
+    sleep(CLICK_HOLD_SECS)
+    hold_ms = int(CLICK_HOLD_SECS * 1000)
+    pointer.button((stamp + hold_ms) & 0xFFFFFFFF, BTN_LEFT, BUTTON_RELEASED)
+    pointer.frame()
+    flush()
+
+
 def _screen_height() -> int:
     try:
         from gi.repository import Gdk
@@ -780,6 +809,20 @@ class VirtualScroller:
             return True
         except Exception as exc:
             log.warning('virtual scroll failed: %s', exc)
+            return False
+
+    def click(self, x: float, y: float, width: int, height: int) -> bool:
+        """One primary click at layout (x, y) (bottom_gesture's tap
+        pass-through). Worker thread only."""
+        if self._pointer is None or self._display is None:
+            return False
+        try:
+            emit_click(self._pointer, x, y, width, height,
+                       int(time.monotonic() * 1000),
+                       flush=self._display.flush)
+            return True
+        except Exception as exc:
+            log.warning('virtual click failed: %s', exc)
             return False
 
     def close(self) -> None:

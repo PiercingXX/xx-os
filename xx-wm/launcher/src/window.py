@@ -1665,14 +1665,21 @@ class ShellWindow(Adw.ApplicationWindow):
         return _calls(self)._reassert_call_ui_above_lock()
 
     def _sync_status_bar(self) -> None:
-        """Hide the top status bar under the lock screen and the welcome
-        wizard, show it over home and apps (status_bar.decide_visible)."""
+        """Hide the top status bar (and the bottom gesture strip) under
+        the lock screen and the welcome wizard, show them over home and
+        apps (status_bar.decide_visible)."""
+        strip = getattr(self, '_bottom_gesture', None)
         bar = getattr(self, '_status_bar', None)
-        if bar is None:
+        if strip is None and bar is None:
             return
         app = self.get_application()
-        bar.sync_visibility(
-            self.is_locked(), bool(getattr(app, '_tour_visible', False)))
+        locked = self.is_locked()
+        tour = bool(getattr(app, '_tour_visible', False))
+        if strip is not None:
+            strip.sync_visibility(locked, tour)
+        if bar is None:
+            return
+        bar.sync_visibility(locked, tour)
         setter = getattr(bar, 'set_home_showing', None)
         if callable(setter):
             setter(self._home_showing())
@@ -1914,6 +1921,26 @@ class ShellWindow(Adw.ApplicationWindow):
             self._raised_for_settings = False
             self.drop_to_background()
 
+    def switch_adjacent_app(self, action: str) -> bool:
+        """Bottom-edge sideways swipe: bring up the open app left
+        ('previous') or right ('next') of the focused one in recents
+        order. Nothing on home or with no app focused."""
+        if self._home_showing():
+            return False
+        manager = getattr(self, '_toplevel_manager', None)
+        if manager is None:
+            return False
+        from bottom_gesture import adjacent_toplevel
+        try:
+            target = adjacent_toplevel(manager.list(), action)
+        except Exception:
+            return False
+        if target is None:
+            return False
+        manager.activate(target.handle)
+        self.drop_to_background()
+        return True
+
     def _ensure_toplevel_manager(self):
         if self._toplevel_manager is None:
             from toplevel_manager import ToplevelManager
@@ -1961,6 +1988,11 @@ class ShellWindow(Adw.ApplicationWindow):
         # it is still visible, instead of polling for it on a timer.
         self._maybe_capture_thumb()
         self._switcher.show_switcher()
+        # Recents is an OVERLAY surface mapped over the bottom strip:
+        # map the strip again so a swipe up from the edge still works.
+        strip = getattr(self, '_bottom_gesture', None)
+        if strip is not None:
+            strip.raise_strip()
         GLib.timeout_add(50, self._refresh_switcher_if_visible)
         GLib.timeout_add(200, self._refresh_switcher_if_visible)
 
@@ -2091,8 +2123,12 @@ class ShellWindow(Adw.ApplicationWindow):
         from gesture_bindings import restart_lisgd
         ipc = shutil.which('xx-wm-ipc') or '/usr/bin/xx-wm-ipc'
         bindir = str(Path(ipc).parent)
+        # The shell's bottom strip owns the bottom edge while it exists:
+        # lisgd then gets no bottom bindings (no double fire).
+        strip = getattr(self, '_bottom_gesture', None) is not None
         try:
-            ok = restart_lisgd(bindir, self.gesture_config)
+            ok = restart_lisgd(bindir, self.gesture_config,
+                               bottom_strip=strip)
         except Exception:
             ok = False
         if notify and getattr(self, 'status_label', None) is not None:

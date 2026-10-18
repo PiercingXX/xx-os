@@ -329,11 +329,23 @@ are dropped at load, so they take the schema-default path, not
 Rebinding restarts lisgd immediately from Settings. If that restart
 fails, it applies at the next session start.
 
+The bottom edge is the shell's own gesture strip (`bottom_gesture.py`),
+not lisgd, whenever the strip is up: an invisible 18 px OVERLAY strip that
+also works over fullscreen apps. A quick flick up runs `swipe_up_short`;
+swiping up past 12% of the screen height and holding still for 250 ms,
+or releasing slowly past 25%, runs `swipe_up_long`; a sideways swipe
+along the edge brings up the neighbouring app in recents (right: the
+card to the left, left: the card to the right). Both slots resolve
+exactly as above. While the strip is up the shell restarts lisgd without
+its bottom-edge bindings, so nothing fires twice; without layer-shell
+support there is no strip and lisgd keeps the bottom edge. A tap on the
+strip is passed through to whatever is under it.
+
 | Gesture | Default | Notes |
 |---|---|---|
 | `swipe_down_top` | `notification_shade` | lisgd → `gesture.shade`. Verb-rebindable. |
-| `swipe_up_short` | `home` | lisgd → `gesture.home`. Verb-rebindable. A short flick up from the bottom goes home from any screen (including recents). Missing/corrupt JSON uses this mapped default, not `gesture.keyboard`. |
-| `swipe_up_long` | `app_switcher` | lisgd → `gesture.switcher`. Verb-rebindable. A long swipe up opens full-screen recents. Swipe down, tap the dim, or back resumes the current app. |
+| `swipe_up_short` | `home` | Bottom strip → `gesture.home`. Verb-rebindable. A quick flick up from the bottom goes home from any screen (including recents). Missing/corrupt JSON uses this mapped default, not `gesture.keyboard`. |
+| `swipe_up_long` | `app_switcher` | Bottom strip → `gesture.switcher`. Verb-rebindable. Swipe up and pause (or release slowly past a quarter of the screen) to open full-screen recents. Swipe down, tap the dim, or back resumes the current app. |
 | `swipe_left_edge` | `back` | lisgd → `gesture.back` on both edges. Verb-rebindable. |
 | `long_press_bottom` | `search` | |
 | `double_tap_home` | `none` | Android "Double Tap to Lock": `lock_screen` or `none` (any older action loads as `none`). The clock keeps its own double-tap-to-lock. |

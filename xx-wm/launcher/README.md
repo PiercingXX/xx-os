@@ -21,6 +21,7 @@ GTK4/libadwaita launcher + shell surfaces for Linux phones. Despite the "WM" nam
 - **IPC server** (`ipc.py`) — Unix socket at `$XDG_RUNTIME_DIR/xx-wm.sock` (`lock`, `shade.*`, `switcher.*`, `gesture.*`, `welcome`, plus page-driving `page.home` / `page.apps` / `page.settings` and `settings.open[:section]` for rigs and scripts — no gesture timing needed; `settings.open` reuses the `open_settings(section)` deep-link).
 - **Modem monitor** (`modem_monitor.py`) — ModemManager DBus watcher for call events.
 - **Back arrow overlay** (`back_gesture.py`) — visual feedback only; gesture detection is lisgd's job, delivered via `gesture.*` IPC commands.
+- **Bottom gesture strip** (`bottom_gesture.py`) — invisible OVERLAY strip on the bottom edge: flick home, swipe-and-pause recents, sideways neighbour app; taps pass through via a virtual pointer. lisgd keeps the top and side edges.
 - **Theming** — every surface derives its CSS from the active theme preset (`theme_css(preset)`); intentional semantic colors (danger red, warning orange, destructive tint) live as named constants in `config.py`.
 - **GDM Colemak OSK** (`data/gnome-osk/us.json`) — Colemak layout in GNOME Shell's osk-layouts JSON schema (derived from the squeekboard YAMLs, which remain the source of truth), installed to `datadir/xx-wm/gnome-osk/` with an install.sh step guarded to GDM hosts (stock `us.json` backed up before overwrite).
 
