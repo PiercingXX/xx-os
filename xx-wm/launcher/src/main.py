@@ -61,6 +61,7 @@ class XXWMApplication(Adw.Application):
         self._replay_welcome = replay_welcome
         self._tour_visible = False
         self._shell: ShellWindow | None = None
+        self._wizard = None
         # IPC verbs that arrive before the shell window is first presented
         # (e.g. the a11y-bus timeout stalls the first present ~25 s) wait
         # here and replay in order once the window is up, instead of being
@@ -79,8 +80,16 @@ class XXWMApplication(Adw.Application):
 
     def do_activate(self) -> None:
         drop_portal_opt_out()
-        if self.props.active_window is not None:
-            self.props.active_window.present()
+        # Re-activation (a second launch, D-Bus activation) must bring the
+        # existing UI forward, never build another one. active_window alone
+        # was not enough: layer-shell windows never become the active
+        # window, so each activation stacked a new first-boot wizard or
+        # shell (the Librem showed ~16 wizards that "wouldn't close").
+        existing = (self._shell or self._wizard
+                    or self.props.active_window)
+        if existing is not None:
+            _log.info('activate: UI already up, presenting it')
+            existing.present()
             return
 
         # The configured font applies launcher-wide, wizard included
@@ -96,13 +105,20 @@ class XXWMApplication(Adw.Application):
         )
 
         if FirstBootWizard.is_needed():
-            wizard = FirstBootWizard(on_complete=self._show_shell)
-            wizard.set_application(self)
-            wizard.present()
+            self._wizard = FirstBootWizard(on_complete=self._wizard_done)
+            self._wizard.set_application(self)
+            self._wizard.present()
         else:
             self._show_shell()
 
+    def _wizard_done(self) -> None:
+        self._wizard = None
+        self._show_shell()
+
     def _show_shell(self) -> None:
+        if self._shell is not None:
+            self._shell.present()
+            return
         self._shell = ShellWindow(self)
         self._shell.present()
         _log.info('shell window presented')

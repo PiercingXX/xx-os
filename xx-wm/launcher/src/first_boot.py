@@ -928,8 +928,15 @@ class FirstBootWizard(Gtk.Window):
             self._finish_tour()
 
     def _finish_tour(self) -> None:
-        self._on_complete()
-        GLib.idle_add(self.close)
+        # Once only: repeated taps on the last page must not complete twice.
+        if getattr(self, '_finished', False):
+            return
+        self._finished = True
+        try:
+            self._on_complete()
+        finally:
+            # Close even if completing raised; never leave the wizard up.
+            GLib.idle_add(self.close)
 
     def _tour_scaffold(self, title_text: str, body_text: str) -> tuple[Gtk.Box, Gtk.Box]:
         page = self._page()
