@@ -34,6 +34,24 @@ def _open(a):
             app.window.show_tab(tab)
         app.window.clock.tick()
         app.window.timers.tick()
+        # A rejected custom value is marked until the next keystroke.
+        entry = app.window.timers._custom
+        entry.set_text("0")
+        app.window.timers._start_custom()
+        assert entry.has_css_class("error"), "rejected minutes not marked"
+        entry.set_text("5")
+        assert not entry.has_css_class("error"), "error mark outlived the edit"
+        # Setup lines wrap at 320 px / large text instead of ellipsizing.
+        from gi.repository import Gtk, Pango
+        stack = [app.window.setup.widget]
+        while stack:
+            w = stack.pop()
+            if isinstance(w, Gtk.Label):
+                assert w.get_ellipsize() == Pango.EllipsizeMode.NONE, w.get_text()
+            c = w.get_first_child()
+            while c is not None:
+                stack.append(c)
+                c = c.get_next_sibling()
         window["ok"] = True
     except Exception:
         failures.append(traceback.format_exc())

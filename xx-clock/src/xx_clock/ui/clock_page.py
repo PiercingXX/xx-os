@@ -17,6 +17,18 @@ APP_CSS_EXTRA = """
 """
 
 
+NBSP = " "
+
+
+def next_alarm_text(upcoming: dict) -> str:
+    """"07:00 · Work · in 8 h 0 m". At large text it wraps between the
+    parts, never inside "in 8 h 0 m" and never with a line starting "·"."""
+    until = upcoming.get("until_text", "")
+    parts = [upcoming.get("fire_text", ""), upcoming.get("label") or "",
+             ("in " + until).replace(" ", NBSP) if until else ""]
+    return f"{NBSP}· ".join(p for p in parts if p)
+
+
 class ClockPage:
     def __init__(self, Gtk, widgets, settings, on_style_changed) -> None:
         self._Gtk = Gtk
@@ -79,9 +91,7 @@ class ClockPage:
             self._card.set_visible(False)
             return
         self._card.set_visible(True)
-        parts = [upcoming.get("fire_text", ""), upcoming.get("label") or "",
-                 f"in {upcoming.get('until_text', '')}"]
-        self._next.set_text(" · ".join(p for p in parts if p))
+        self._next.set_text(next_alarm_text(upcoming))
 
     def _draw_analog(self, area, cairo, width: int, height: int) -> None:
         import math

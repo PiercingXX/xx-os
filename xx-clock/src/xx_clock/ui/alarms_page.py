@@ -5,8 +5,27 @@ from __future__ import annotations
 from .. import alarm_logic
 
 
+# The switch is 40x20: a tap this close to it (and anywhere down the
+# row's height) toggles it instead of opening the editor, so the target
+# is a thumb's width, not the drawn pill.
+SWITCH_SLOP = 16
+
+
 def time_text(hour: int, minute: int) -> str:
     return f"{hour:02d}:{minute:02d}"
+
+
+def tap_zone(x: float, y: float, hit) -> str:
+    """Where a tap at row (x, y) lands, given the switch's allocation
+    ``hit`` (x, y, width, height): "switch" (on the pill: the switch
+    handles it), "near" (toggle the switch for it), or "row" (open the
+    editor)."""
+    if (hit.x <= x <= hit.x + hit.width
+            and hit.y <= y <= hit.y + hit.height):
+        return "switch"
+    if hit.x - SWITCH_SLOP <= x:
+        return "near"
+    return "row"
 
 
 class AlarmsPage:
@@ -85,16 +104,33 @@ class AlarmsPage:
         def _edit(*_args) -> None:
             self._calls.open_editor(dict(item))
 
-        def _pressed(_gesture, _n, x: float, y: float) -> None:
-            hit = switch.get_allocation()
-            if hit.x <= x <= hit.x + hit.width and hit.y <= y <= hit.y + hit.height:
+        # A tap acts on release; a long press deletes and swallows that
+        # release, so holding a row never opens the editor too.
+        held = {"down": False}
+
+        def _pressed(*_args) -> None:
+            held["down"] = False
+
+        def _released(_gesture, _n, x: float, y: float) -> None:
+            if held["down"]:
+                return
+            zone = tap_zone(x, y, switch.get_allocation())
+            if zone == "switch":
+                return
+            if zone == "near":
+                switch.set_active(not switch.get_active())
                 return
             _edit()
 
+        def _held(*_args) -> None:
+            held["down"] = True
+            self._calls.delete_alarm(item["id"])
+
         click = Gtk.GestureClick.new()
         click.connect("pressed", _pressed)
+        click.connect("released", _released)
         row.add_controller(click)
         longpress = Gtk.GestureLongPress.new()
-        longpress.connect("pressed", lambda *_a: self._calls.delete_alarm(item["id"]))
+        longpress.connect("pressed", _held)
         row.add_controller(longpress)
         return row

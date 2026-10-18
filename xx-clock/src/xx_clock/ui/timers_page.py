@@ -18,10 +18,10 @@ MAX_MINUTES = 999
 
 APP_CSS_EXTRA = """
 .xx-clock-timer-time { font-size: 32px; font-weight: 400; font-feature-settings: "tnum"; }
-.xx-clock-presets .xx-chip { padding: 0 4px; min-width: 0; }
-.xx-clock-act { min-height: 40px; padding: 0 10px; }
-.xx-clock-act.first { padding-left: 0; }
+.xx-clock-presets .xx-chip { padding: 0 4px; min-width: 0; min-height: 48px; }
+.xx-clock-act { min-height: 48px; min-width: 48px; padding: 0; }
 .xx-clock-acts > flowboxchild { padding: 0; }
+.xx-clock-minutes.error { border: 1px solid @error_color; color: @error_color; }
 """
 
 
@@ -72,7 +72,10 @@ class TimersPage:
         self._custom.set_input_purpose(Gtk.InputPurpose.DIGITS)
         self._custom.set_max_length(3)
         self._custom.set_hexpand(True)
+        self._custom.add_css_class("xx-clock-minutes")
         self._custom.connect("activate", lambda _e: self._start_custom())
+        # The red outline marks a rejected value until the next keystroke.
+        self._custom.connect("changed", lambda e: e.remove_css_class("error"))
         custom.append(self._custom)
         custom.append(widgets.primary_button("Start", self._start_custom))
         root.append(custom)
@@ -92,7 +95,6 @@ class TimersPage:
         if minutes is None:
             self._custom.add_css_class("error")
             return
-        self._custom.remove_css_class("error")
         self._custom.set_text("")
         self._calls.start_timer(minutes * 60_000, "")
 
@@ -133,14 +135,14 @@ class TimersPage:
                           remaining_ms=item["remaining_ms"], label=item.get("label", ""))
         return timer_math.remaining_ms(timer, now_ms)
 
-    def _action(self, text: str, callback, first: bool = False):
-        """Chromeless caps action: text-first, muted, 40 px target."""
+    def _action(self, text: str, callback):
+        """Chromeless caps action: text-first, muted, 48 px target, no
+        side padding so every action (and a wrapped second line) starts
+        at the card's text edge."""
         Gtk = self._Gtk
         button = Gtk.Button()
         button.add_css_class("xx-btn")
         button.add_css_class("xx-clock-act")
-        if first:
-            button.add_css_class("first")
         # Exactly its natural width inside the button: a plain caption
         # ellipsizes on fractional rounding ("RESE…"), so fit it exactly.
         caption = self._widgets.caption(text)
@@ -186,7 +188,7 @@ class TimersPage:
         actions.set_halign(Gtk.Align.START)
         actions.set_selection_mode(Gtk.SelectionMode.NONE)
         actions.set_homogeneous(False)
-        actions.set_column_spacing(4)
+        actions.set_column_spacing(24)
         actions.set_row_spacing(0)
         actions.set_max_children_per_line(3)
         actions.set_min_children_per_line(1)
@@ -196,7 +198,7 @@ class TimersPage:
             buttons.append(("Reset", lambda: self._calls.reset_timer(timer_id)))
             buttons.append(("+1 min", lambda: self._calls.add_minute_timer(timer_id)))
         buttons.append(("Delete", lambda: self._calls.delete_timer(timer_id)))
-        for index, (text, callback) in enumerate(buttons):
-            actions.append(self._action(text, callback, first=index == 0))
+        for text, callback in buttons:
+            actions.append(self._action(text, callback))
         card.append(actions)
         return card

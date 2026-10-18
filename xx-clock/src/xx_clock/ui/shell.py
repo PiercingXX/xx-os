@@ -14,6 +14,8 @@ APP_CSS = (clock_page.APP_CSS_EXTRA + timers_page.APP_CSS_EXTRA
            + alarm_dialog.APP_CSS) + """
 .xx-clock-alarm-time { font-size: 30px; font-weight: 400; }
 .xx-clock-off { opacity: 0.45; }
+.xx-clock-snooze button { min-width: 48px; min-height: 48px; padding: 0; }
+.xx-clock-snooze text { min-width: 0; padding: 0 8px; }
 """
 
 

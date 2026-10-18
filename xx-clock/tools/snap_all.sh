@@ -3,7 +3,7 @@
 #   xx-clock/tools/snap_all.sh OUTDIR
 # amoled + paper at the FLX1 canvas (450x1000) and 360x800, empty lists,
 # graphite/aura spot checks, and phone-fit probes at 320 px wide and at
-# large text (text_size_scale 1.3). Exits non-zero on any snap WARNING
+# large text (text_size_scale 1.5). Exits non-zero on any snap WARNING
 # (phone-fit breach).
 set -u
 LANE=$(cd "$(dirname "$0")/../.." && pwd)
@@ -28,20 +28,22 @@ fail() {
 
 snap_one() {
     # $1=theme $2=name $3=size $4=tab-or-surface $5=seed(1|0) $6=extra-env
-    # $7=extra-config. Surfaces (dialog, ring-alarm, ring-timer) paint
-    # through tools/nav_surface.py; tabs paint the main window.
+    # $7=extra-config. Surfaces (dialog, edit, analog, timer-error,
+    # ring-alarm, ring-timer) paint through tools/nav_surface.py; tabs
+    # paint the main window.
     theme=$1 name=$2 size=$3 target=$4 seed=$5 extra_env=${6:-} extra=${7:-}
     home="$WORK/home-$theme-$name"
     out="$WORK/$theme-$name.png"
     err="$WORK/$theme-$name.err"
     multi="" script="" tab=$target shot=""
     case $target in
-        dialog) multi=1 script="$ROOT/tools/nav_surface.py" tab=alarms shot=dialog ;;
+        dialog|edit) multi=1 script="$ROOT/tools/nav_surface.py" tab=alarms shot=$target ;;
+        analog|timer-error) multi=1 script="$ROOT/tools/nav_surface.py" tab=clock shot=$target ;;
         ring-*) multi=1 script="$ROOT/tools/nav_surface.py" tab=clock shot=ring
                 extra_env="$extra_env XX_CLOCK_RING=${target#ring-}" ;;
     esac
     attempt=0
-    while [ "$attempt" -lt 3 ]; do
+    while [ "$attempt" -lt 6 ]; do
         attempt=$((attempt + 1))
         rm -f "$out"
         rm -rf "$home"
@@ -73,7 +75,7 @@ snap_one() {
     fail "snap failed: $theme $name ($(tail -n 3 "$err" 2>/dev/null))"
 }
 
-SCREENS="clock alarms timers setup dialog ring-alarm ring-timer"
+SCREENS="clock analog alarms timers timer-error setup dialog edit ring-alarm ring-timer"
 
 for theme in amoled paper; do
     for screen in $SCREENS; do
@@ -92,7 +94,7 @@ snap_one aura "flx1-alarms" 450x1000 alarms 1
 for screen in $SCREENS; do
     snap_one paper "narrow-$screen" 320x640 "$screen" 1
     snap_one paper "large-$screen" 360x800 "$screen" 1 "" \
-        ', "text_size_scale": 1.3'
+        ', "text_size_scale": 1.5'
 done
 
 sheet() {
@@ -111,11 +113,12 @@ sheet() {
 
 for theme in amoled paper; do
     for prefix in flx1 tall; do
-        sheet "sheet-$theme-$prefix.png" 4x2 \
-            "clock=$theme-$prefix-clock" "alarms=$theme-$prefix-alarms" \
-            "timers=$theme-$prefix-timers" "setup=$theme-$prefix-setup" \
-            "edit=$theme-$prefix-dialog" "ring-alarm=$theme-$prefix-ring-alarm" \
-            "ring-timer=$theme-$prefix-ring-timer"
+        sheet "sheet-$theme-$prefix.png" 5x2 \
+            "clock=$theme-$prefix-clock" "analog=$theme-$prefix-analog" \
+            "alarms=$theme-$prefix-alarms" "timers=$theme-$prefix-timers" \
+            "timer-error=$theme-$prefix-timer-error" "setup=$theme-$prefix-setup" \
+            "new=$theme-$prefix-dialog" "edit=$theme-$prefix-edit" \
+            "ring-alarm=$theme-$prefix-ring-alarm" "ring-timer=$theme-$prefix-ring-timer"
     done
 done
 sheet "sheet-empty-spots.png" 3x2 \
@@ -125,11 +128,12 @@ sheet "sheet-empty-spots.png" 3x2 \
     "paper-timers-empty=paper-flx1-timers-empty" \
     "graphite-clock=graphite-flx1-clock" "aura-alarms=aura-flx1-alarms"
 for prefix in narrow large; do
-    sheet "sheet-fit-$prefix.png" 4x2 \
-        "clock=paper-$prefix-clock" "alarms=paper-$prefix-alarms" \
-        "timers=paper-$prefix-timers" "setup=paper-$prefix-setup" \
-        "edit=paper-$prefix-dialog" "ring-alarm=paper-$prefix-ring-alarm" \
-        "ring-timer=paper-$prefix-ring-timer"
+    sheet "sheet-fit-$prefix.png" 5x2 \
+        "clock=paper-$prefix-clock" "analog=paper-$prefix-analog" \
+        "alarms=paper-$prefix-alarms" "timers=paper-$prefix-timers" \
+        "timer-error=paper-$prefix-timer-error" "setup=paper-$prefix-setup" \
+        "new=paper-$prefix-dialog" "edit=paper-$prefix-edit" \
+        "ring-alarm=paper-$prefix-ring-alarm" "ring-timer=paper-$prefix-ring-timer"
 done
 cp "$WORK/"*.png "$OUTDIR/"
 rm -rf "$WORK"

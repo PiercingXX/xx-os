@@ -7,6 +7,10 @@ runs under SNAP_MULTI=1 (see tools/snap_all.sh).
   ticks the frame clock, so the sheet cannot animate open (the window
   paints empty); the editor's content is docked where the bottom sheet
   sits instead, over a scrim, and the main window is painted.
+- "edit": the same dock, for an existing alarm with a picked sound
+  (title "Edit alarm", the "Use default sound" action).
+- "analog": the Clock tab in the analog style.
+- "timer-error": the Timers tab after Start with minutes out of range.
 - "ring": the ring card is its own window (a full-output layer surface
   on the phone). It gets the snap canvas size, and a WARNING (which
   snap_all.sh treats as a phone-fit failure) when its content refuses
@@ -37,7 +41,13 @@ def _retry():
 
 def _shot():
     attempts[0] += 1
-    if target == "dialog":
+    if target in ("analog", "timer-error"):
+        try:
+            snap_render(out)  # noqa: F821 -- provided by snap.py
+        except TypeError:
+            return _retry()
+        os._exit(0)
+    if target in ("dialog", "edit"):
         if cw._editor is None:
             return _retry()
         try:
@@ -77,7 +87,7 @@ def _shot():
     os._exit(0)
 
 
-if target == "dialog":
+if target in ("dialog", "edit"):
     # Headless frame clocks barely tick: with animations on, the dialog's
     # open transition never leaves its first (invisible) frame.
     Gtk.Settings.get_default().set_property(  # noqa: F821
@@ -107,7 +117,19 @@ if target == "dialog":
 
     Adw.Dialog.present = _dock
     cw.show_tab("alarms")
-    cw.open_editor(None)
+    if target == "edit":
+        cw.open_editor({"id": 1, "hour": 7, "minute": 0, "days_mask": 31,
+                        "label": "Work", "enabled": True, "vibrate": True,
+                        "sound_uri": "file:///home/me/Music/Morning%20Bell.ogg"})
+    else:
+        cw.open_editor(None)
+elif target == "analog":
+    cw.toggle_clock_style()
+    cw.show_tab("clock")
+elif target == "timer-error":
+    cw.show_tab("timers")
+    cw.timers._custom.set_text("0")
+    cw.timers._start_custom()
 elif cw._ring is not None:
     # On the phone the layer surface fills the output; give the headless
     # window the snap canvas so the shot shows that layout.

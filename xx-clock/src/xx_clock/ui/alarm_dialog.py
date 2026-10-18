@@ -14,8 +14,9 @@ DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 APP_CSS = """
 .xx-clock-spin { font-size: 40px; }
 .xx-clock-spin text { min-width: 0; }
+.xx-clock-spin button { min-width: 48px; min-height: 48px; }
 .xx-clock-colon { font-size: 40px; }
-.xx-clock-days .xx-chip { padding: 0; min-width: 0; min-height: 40px; }
+.xx-clock-days .xx-chip { padding: 0; min-width: 0; min-height: 48px; letter-spacing: 0; }
 .xx-clock-editor .xx-entry { border-color: @borders; }
 .xx-clock-editor .xx-entry:focus { border-color: @window_fg_color; }
 """
@@ -120,7 +121,6 @@ class AlarmDialog:
         self._sound_reset = Gtk.Button()
         self._sound_reset.add_css_class("xx-btn")
         self._sound_reset.add_css_class("xx-clock-act")
-        self._sound_reset.add_css_class("first")
         reset_text = widgets.caption("Use default sound")
         widgets.fit_text(reset_text, "USE DEFAULT SOUND", 20)
         self._sound_reset.set_child(reset_text)
