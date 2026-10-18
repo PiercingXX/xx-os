@@ -44,6 +44,7 @@ install_data(
     'src/xx_calendar/backup.py',
     'src/xx_calendar/eds_import.py',
     'src/xx_calendar/views.py',
+    'src/xx_calendar/fit.py',
   ],
   install_dir: join_paths(app_datadir, 'xx_calendar'),
 )

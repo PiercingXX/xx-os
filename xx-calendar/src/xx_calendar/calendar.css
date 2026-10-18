@@ -13,3 +13,8 @@
   padding-top: 8px;
   padding-bottom: 4px;
 }
+
+/* Air between the filter chips and the first day separator. */
+.xxc-chips {
+  padding-bottom: 8px;
+}

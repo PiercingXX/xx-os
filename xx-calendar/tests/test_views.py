@@ -289,3 +289,99 @@ def test_build_create_ics_round_trip():
     parsed = ics_module.parse_events(all_day)[0]
     assert parsed.summary() == "(untitled)"
     assert parsed.dtstart()[1] is True
+
+
+# ---------------------------------------------------- UX pass: page copy
+
+
+def test_page_titles_read_as_words_not_caps():
+    assert views.month_title(2026, 10) == "October 2026"
+    assert views.day_title(dt.date(2026, 8, 15)) == "Sat 15 Aug"
+
+
+def test_repeat_label_names_rules_never_raw_rrule():
+    assert views.repeat_label("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR") \
+        == "Weekdays"
+    assert views.repeat_label("byday=MO,TU,WE,TH,FR;FREQ=WEEKLY") \
+        == "Weekdays"
+    assert views.repeat_label("FREQ=DAILY") == "Daily"
+    assert views.repeat_label("FREQ=WEEKLY;BYDAY=MO,WE") == "Custom"
+    assert "FREQ" not in views.repeat_label("FREQ=MONTHLY;COUNT=3")
+
+
+def test_weekly_repeats_on_the_start_weekday():
+    # A bare FREQ=WEEKLY recurs on DTSTART's own weekday; the old preset
+    # pinned every weekly event to Mondays.
+    assert dict(views.REPEAT_CHOICES)["Weekly"] == "FREQ=WEEKLY"
+
+
+def test_untouched_custom_rule_survives_the_editor():
+    rule = "FREQ=WEEKLY;BYDAY=MO,WE"
+    choices = views.repeat_choices(rule)
+    index = views.repeat_index(rule, choices)
+    assert index is not None and choices[index] == ("Custom", rule)
+    assert views.repeat_index("", choices) == 0
+    standup = "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+    assert views.repeat_choices(standup) == list(views.REPEAT_CHOICES)
+    assert views.REPEAT_CHOICES[views.repeat_index(standup)][0] == \
+        "Weekdays"
+
+
+def test_reminder_label_reads_in_words():
+    assert views.reminder_label(10) == "10 min before"
+    assert views.reminder_label(60) == "1 hour before"
+    assert views.reminder_label(120) == "2 hours before"
+    assert views.reminder_label(1440) == "1 day before"
+
+
+def test_when_label_timed_and_all_day_spans():
+    assert views.when_label(dt.datetime(2026, 8, 4, 6, 30),
+                            dt.datetime(2026, 8, 4, 7, 30), False) \
+        == "Tue 4 Aug 2026 · 06:30 – 07:30"
+    # DTEND of an all-day event is exclusive: 5..8 Aug is Wed 5 – Fri 7.
+    assert views.when_label(dt.datetime(2026, 8, 5), dt.datetime(2026, 8, 8),
+                            True) == "Wed 5 – Fri 7 Aug 2026"
+    assert views.when_label(dt.datetime(2026, 8, 21),
+                            dt.datetime(2026, 8, 22), True) \
+        == "Fri 21 Aug 2026"
+
+
+def test_new_event_prefills_a_real_start_and_end():
+    now = dt.datetime(2026, 10, 17, 14, 20)
+    assert views.default_range(now.date(), now, 30) == \
+        ("2026-10-17 15:00", "2026-10-17 15:30")
+    assert views.default_range(dt.date(2026, 10, 20), now, 60) == \
+        ("2026-10-20 09:00", "2026-10-20 10:00")
+    late = dt.datetime(2026, 10, 17, 23, 40)
+    assert views.default_range(late.date(), late, 30)[0].startswith(
+        "2026-10-17")
+
+
+def test_all_day_switch_retimes_entry_text():
+    assert views.retime_text("2026-10-20 09:00", True) == "2026-10-20"
+    assert views.retime_text("2026-10-20", False, 10) == "2026-10-20 10:00"
+    assert views.retime_text("next tuesday", True) == "next tuesday"
+
+
+def test_weekly_event_from_the_editor_recurs_on_its_own_weekday():
+    from xx_calendar import ics as ics_module
+    from xx_calendar import recurrence
+
+    start = int(dt.datetime(2026, 10, 15, 9, tzinfo=UTC).timestamp() * 1000)
+    text = views.build_create_ics("Swim", False, start, start + 1800000,
+                                  rrule=dict(views.REPEAT_CHOICES)["Weekly"])
+    event = ics_module.parse_events(text)[0]
+    days = {dt.datetime.fromtimestamp(i.start_utc / 1000, UTC).strftime("%a")
+            for i in recurrence.expand_vevent(event, start,
+                                              start + 30 * 86400000)}
+    assert days == {"Thu"}
+
+
+def test_week_number_column_labels_rows_by_their_monday():
+    from xx_calendar.month_grid import iso_week
+
+    sunday_start = views.build_weeks(2026, 8, 6)
+    # Row one runs Sun 26 Jul .. Sat 1 Aug: ISO week 31, not 30.
+    assert sunday_start[0][0][0] == dt.date(2026, 7, 26)
+    assert iso_week(sunday_start[0]) == 31
+    assert iso_week(views.build_weeks(2026, 8, 0)[0]) == 31

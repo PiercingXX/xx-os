@@ -1,149 +1,142 @@
 #!/bin/sh
-# Render every xx-calendar screen in four themes and montage one labeled
-# contact sheet per theme into OUTDIR. Exits non-zero on any snap WARNING.
+# Render EVERY xx-calendar screen and montage one labeled contact sheet per
+# set into OUTDIR: each theme at the FLX1 canvas (450x1000) and a 360x800
+# phone, plus fit checks: every screen 320 px wide (sheet-fit320.png) and
+# at large text, text-size scale 1.5 on 360x800 (sheet-scale15.png).
+# Exits non-zero on any snap WARNING (a window wider or taller than its
+# phone screen) or any failed render.
+#
+#   xx-calendar/tools/snap_all.sh OUTDIR
+#   THEMES="amoled paper forest" SIZES="450x1000 360x800" ... OUTDIR
+#   FIT320="schedule month" SCALE15="" ... (screen lists; empty skips)
+#   JOBS=3 renders that many sets at once (each shot has its own display).
+#
+# Each shot runs on its own session bus (the app is single-instance).
+# Navigation scripts live in tools/snaps/nav_<screen>.py.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 LANE=$(cd "$ROOT/.." && pwd)
 OUTDIR=${1:?usage: snap_all.sh OUTDIR}
-mkdir -p "$OUTDIR"
-PY="/media/Working-Storage/GitHub/Phone-Projects/linux/xx-wm/.venv/bin/python"
+THEMES=${THEMES-"amoled paper forest"}
+SIZES=${SIZES-"450x1000 360x800"}
+JOBS=${JOBS:-3}
+PY=${PYTHON:-/media/Working-Storage/GitHub/Phone-Projects/linux/xx-wm/.venv/bin/python}
 [ -x "$PY" ] || PY=python3
-THEMES="amoled paper forest aura"
+
+SCREENS="schedule month month-picked month-weeks day detail detail-repeat
+detail-allday editor-new
+editor-edit editor-repeat editor-error calendars search search-blank
+settings import export empty empty-month"
+SCREENS=$(echo $SCREENS)
+FIT320=${FIT320-$SCREENS}
+SCALE15=${SCALE15-$SCREENS}
+
+mkdir -p "$OUTDIR/logs"
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+trap 'rm -rf "$WORK"' EXIT INT TERM
 SAMPLE_ICS="$WORK/sample.ics"
 printf 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//X//EN\r\nBEGIN:VEVENT\r\nUID:sample-1\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20260820T100000Z\r\nDTEND:20260820T110000Z\r\nSUMMARY:Sample import\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n' > "$SAMPLE_ICS"
 
-snap_one() {
-    home=$1; name=$2; script=$3
-    out="$WORK/$name.png"
-    err="$WORK/$name.err"
-    attempt=0
-    while [ "$attempt" -lt 3 ]; do
-        attempt=$((attempt + 1))
-        rm -f "$out"
-        HOME="$home" XDG_CONFIG_HOME="$home/.config" \
-            "$PY" "$LANE/scripts/snap.py" \
-            --out "$out" --delay 1.2 --path "$ROOT/src" \
-            --path "$LANE/common" \
-            ${script:+--script "$script"} -- -m xx_calendar \
-            2>"$err" || true
-        if grep -q 'snap: WARNING' "$err"; then
-            echo "snap WARNING: $name (attempt $attempt)"
-            cat "$err"
-            return 1
-        fi
-        if [ -f "$out" ]; then
+render_set() {
+    # $1=sheet $2=theme $3=text-size scale $4=size $5=screens
+    sheet=$1 theme=$2 scale=$3 size=$4 screens=$5
+    status="$WORK/status-$sheet"
+    : > "$status"
+    for screen in $screens; do
+        SHOME="$WORK/home-$sheet-$screen"
+        mkdir -p "$SHOME/.config/xx-wm" "$SHOME/.local/share/xx-calendar"
+        case "$screen" in
+            empty | empty-month) ;;
+            *) PYTHONPATH="$ROOT/src" "$PY" "$ROOT/tools/demo_seed.py" \
+                "$SHOME" >/dev/null 2>&1 ;;
+        esac
+        printf '{"theme": "%s", "text_size_scale": %s}\n' "$theme" "$scale" \
+            > "$SHOME/.config/xx-wm/config.json"
+        nav="$ROOT/tools/snaps/nav_$(printf '%s' "$screen" | tr '-' '_').py"
+        out="$WORK/$sheet-$screen.png"
+        log="$WORK/$sheet-$screen.log"
+        attempt=0
+        ok=0
+        while [ $attempt -lt 3 ]; do
+            attempt=$((attempt + 1))
+            rm -f "$out"
+            # Own session bus per shot: the app is single-instance, so a
+            # parallel shot (or a calendar on the user bus) would swallow
+            # the launch and this one would exit drawing nothing.
+            dbus-run-session -- env GDK_DEBUG=no-portals HOME="$SHOME" \
+                XDG_CONFIG_HOME="$SHOME/.config" \
+                XDG_DATA_HOME="$SHOME/.local/share" \
+                SNAP_SAMPLE_ICS="$SAMPLE_ICS" \
+                "$PY" "$LANE/scripts/snap.py" \
+                --out "$out" --size "$size" --delay 1.5 \
+                --path "$ROOT/src" --path "$LANE/common" \
+                --script "$nav" -- -m xx_calendar >"$log" 2>&1
+            if grep -q "snap: WARNING" "$log"; then
+                break
+            fi
+            if [ -s "$out" ] && grep -q "snap: wrote" "$log"; then
+                ok=1
+                break
+            fi
             sleep 1
-            return 0
+        done
+        cp "$log" "$OUTDIR/logs/$sheet-$screen.log"
+        if grep -q "snap: WARNING" "$log"; then
+            echo "FAIL: $sheet/$screen phone-fit WARNING"
+            grep "snap: WARNING" "$log"
+            echo "$screen" >> "$status"
+            [ -s "$out" ] && cp "$out" "$OUTDIR/failed-$sheet-$screen.png"
+            continue
         fi
-        echo "snap retry: $name (attempt $attempt)"
-        sleep 2
+        if [ $ok -ne 1 ]; then
+            echo "FAIL: $sheet/$screen snap failed"
+            grep -E "snap: |Traceback|Error" "$log" | tail -n 5
+            echo "$screen" >> "$status"
+            continue
+        fi
+        echo "ok: $sheet/$screen"
     done
-    echo "snap failed: $name"
-    cat "$err"
-    return 1
+    set --
+    for screen in $screens; do
+        [ -s "$WORK/$sheet-$screen.png" ] || continue
+        set -- "$@" -label "$screen" "$WORK/$sheet-$screen.png"
+    done
+    if [ $# -gt 0 ]; then
+        montage "$@" -tile 7x -geometry +4+4 -background black \
+            -fill white -pointsize 22 "$OUTDIR/sheet-$sheet.png" \
+            && echo "ok: sheet-$sheet" \
+            || echo "montage" >> "$status"
+    fi
 }
 
-for theme in $THEMES; do
-    HOME_DIR="$WORK/home-$theme"
-    mkdir -p "$HOME_DIR/.config/xx-wm"
-    printf '{"theme": "%s"}' "$theme" > "$HOME_DIR/.config/xx-wm/config.json"
-    PYTHONPATH="$ROOT/src" "$PY" "$ROOT/tools/demo_seed.py" "$HOME_DIR" >/dev/null
-    EMPTY_HOME="$WORK/empty-$theme"
-    mkdir -p "$EMPTY_HOME/.config/xx-wm" "$EMPTY_HOME/.local/share/xx-calendar"
-    printf '{"theme": "%s"}' "$theme" > "$EMPTY_HOME/.config/xx-wm/config.json"
-    cat > "$WORK/nav-schedule.py" <<'PY'
-import datetime
-win.jump_to(datetime.date(2026, 8, 15))
-win.show_view("schedule")
-PY
-    cat > "$WORK/nav-month.py" <<'PY'
-import datetime
-win.jump_to(datetime.date(2026, 8, 15))
-win.show_view("month")
-PY
-    cat > "$WORK/nav-day.py" <<'PY'
-import datetime
-win.jump_to(datetime.date(2026, 8, 15))
-win.show_view("day")
-PY
-    cat > "$WORK/nav-detail.py" <<'PY'
-import datetime
-win.jump_to(datetime.date(2026, 8, 15))
-win.show_view("schedule")
-win.open_detail("dentist-1", 0)
-PY
-    cat > "$WORK/nav-editor.py" <<'PY'
-import datetime
-win.jump_to(datetime.date(2026, 8, 15))
-win.show_view("schedule")
-win.open_editor(day=datetime.date(2026, 8, 15))
-PY
-    cat > "$WORK/nav-edit.py" <<'PY'
-import datetime
-win.jump_to(datetime.date(2026, 8, 15))
-win.show_view("schedule")
-win.open_editor(uid="dentist-1")
-PY
-    cat > "$WORK/nav-calendars.py" <<'PY'
-win.show_view("calendars")
-PY
-    cat > "$WORK/nav-search.py" <<'PY'
-import datetime
-win.jump_to(datetime.date(2026, 8, 15))
-win.show_view("search")
-win._search_entry.set_text("standup")
-PY
-    cat > "$WORK/nav-settings.py" <<'PY'
-win.show_view("settings")
-PY
-    cat > "$WORK/nav-import-tmpl.py" <<'PY'
-import datetime
-win.jump_to(datetime.date(2026, 8, 15))
-win.show_view("schedule")
-win.import_ics_uri("SAMPLE_ICS_PLACEHOLDER")
-PY
-    sed "s|SAMPLE_ICS_PLACEHOLDER|$SAMPLE_ICS|" "$WORK/nav-import-tmpl.py" > "$WORK/nav-import.py"
-    cat > "$WORK/nav-export.py" <<'PY'
-win.open_export_dialog()
-PY
-    cat > "$WORK/nav-empty.py" <<'PY'
-win.show_view("schedule")
-PY
-    failed=""
-    snap_one "$HOME_DIR" "$theme-schedule" "$WORK/nav-schedule.py" || failed=1
-    snap_one "$HOME_DIR" "$theme-month" "$WORK/nav-month.py" || failed=1
-    snap_one "$HOME_DIR" "$theme-day" "$WORK/nav-day.py" || failed=1
-    snap_one "$HOME_DIR" "$theme-detail" "$WORK/nav-detail.py" || failed=1
-    snap_one "$HOME_DIR" "$theme-editor" "$WORK/nav-editor.py" || failed=1
-    snap_one "$HOME_DIR" "$theme-edit" "$WORK/nav-edit.py" || failed=1
-    snap_one "$HOME_DIR" "$theme-calendars" "$WORK/nav-calendars.py" || failed=1
-    snap_one "$HOME_DIR" "$theme-search" "$WORK/nav-search.py" || failed=1
-    snap_one "$HOME_DIR" "$theme-settings" "$WORK/nav-settings.py" || failed=1
-    snap_one "$HOME_DIR" "$theme-import" "$WORK/nav-import.py" || failed=1
-    snap_one "$HOME_DIR" "$theme-export" "$WORK/nav-export.py" || failed=1
-    snap_one "$EMPTY_HOME" "$theme-empty" "$WORK/nav-empty.py" || failed=1
-    if [ -n "$failed" ]; then
-        echo "snap_all: $theme failed"
-        exit 1
+running=0
+SETS=""
+launch() {
+    render_set "$@" &
+    SETS="$SETS $1"
+    running=$((running + 1))
+    if [ "$running" -ge "$JOBS" ]; then
+        wait
+        running=0
     fi
-    # shellcheck disable=SC2086
-    montage -label 'schedule' "$WORK/$theme-schedule.png" \
-        -label 'month' "$WORK/$theme-month.png" \
-        -label 'day' "$WORK/$theme-day.png" \
-        -label 'detail' "$WORK/$theme-detail.png" \
-        -label 'editor-new' "$WORK/$theme-editor.png" \
-        -label 'editor-edit' "$WORK/$theme-edit.png" \
-        -label 'calendars' "$WORK/$theme-calendars.png" \
-        -label 'search' "$WORK/$theme-search.png" \
-        -label 'settings' "$WORK/$theme-settings.png" \
-        -label 'import' "$WORK/$theme-import.png" \
-        -label 'export' "$WORK/$theme-export.png" \
-        -label 'empty' "$WORK/$theme-empty.png" \
-        -tile 3x4 -geometry +4+4 -background black \
-        -fill white -pointsize 28 "$OUTDIR/calendar-$theme.png" \
-        || { echo "montage failed: $theme"; exit 1; }
-    echo "wrote $OUTDIR/calendar-$theme.png"
+}
+for theme in $THEMES; do
+    for size in $SIZES; do
+        launch "$theme-${size%%x*}" "$theme" 1 "$size" "$SCREENS"
+    done
 done
-echo "all sheets ok"
+[ -n "$FIT320" ] && launch fit320 amoled 1 320x720 "$FIT320"
+[ -n "$SCALE15" ] && launch scale15 amoled 1.5 360x800 "$SCALE15"
+wait
+
+failed=""
+for sheet in $SETS; do
+    if [ -s "$WORK/status-$sheet" ]; then
+        failed="$failed $sheet($(tr '\n' ' ' < "$WORK/status-$sheet"))"
+    fi
+done
+if [ -n "$failed" ]; then
+    echo "FAILED:$failed"
+    exit 1
+fi
+echo "ALL SHEETS OK in $OUTDIR"
