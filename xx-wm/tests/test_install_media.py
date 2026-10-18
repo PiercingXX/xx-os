@@ -85,7 +85,8 @@ def test_xx_find_install_never_enables_the_agent():
     # run or report until enabled and paired in Settings.
     from pathlib import Path
     meson = (Path(__file__).resolve().parents[2] / 'xx-find' / 'meson.build').read_text()
-    code = '\n'.join(l for l in meson.splitlines() if not l.lstrip().startswith('#'))
+    code = '\n'.join(line for line in meson.splitlines()
+                     if not line.lstrip().startswith('#'))
     for forbidden in ('systemctl', 'enable', 'preset', 'autostart', 'install_symlink'):
         assert forbidden not in code, forbidden
 
