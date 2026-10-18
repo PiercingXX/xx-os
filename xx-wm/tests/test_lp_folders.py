@@ -382,9 +382,7 @@ import sys
 import time
 
 src_dir, run_dir = sys.argv[1], sys.argv[2]
-display = ':84'
 os.environ['GDK_BACKEND'] = 'broadway'
-os.environ['BROADWAY_DISPLAY'] = display
 home = os.path.join(run_dir, 'home')
 os.makedirs(home, exist_ok=True)
 os.environ['HOME'] = home
@@ -392,9 +390,15 @@ os.environ['XDG_CONFIG_HOME'] = os.path.join(home, '.config')
 os.environ['XDG_CACHE_HOME'] = os.path.join(home, '.cache')
 os.environ['XDG_DATA_HOME'] = os.path.join(home, '.local', 'share')
 os.environ['XDG_RUNTIME_DIR'] = run_dir
-daemon = subprocess.Popen(
-    ['gtk4-broadwayd', display],
-    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+# A probed free display (a fixed number collided with parallel runs).
+_common = src_dir
+while _common != os.path.dirname(_common) and not os.path.isdir(
+        os.path.join(_common, 'common', 'xx_testing')):
+    _common = os.path.dirname(_common)
+sys.path.insert(0, os.path.join(_common, 'common'))
+from xx_testing import broadway_display
+daemon, display = broadway_display.start(run_dir=run_dir)
+os.environ['BROADWAY_DISPLAY'] = display
 try:
     for _i in range(200):
         if glob.glob(os.path.join(run_dir, 'broadway*.socket')):

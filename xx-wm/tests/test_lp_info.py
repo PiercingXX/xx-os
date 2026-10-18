@@ -591,10 +591,13 @@ class TestHomeAccessibility:
             'import glob, os, subprocess, sys, time\n'
             'src_dir, run_dir = sys.argv[1], sys.argv[2]\n'
             "os.environ['GDK_BACKEND'] = 'broadway'\n"
-            "os.environ['BROADWAY_DISPLAY'] = ':71'\n"
             "os.environ['XDG_RUNTIME_DIR'] = run_dir\n"
-            "daemon = subprocess.Popen(['gtk4-broadwayd', ':71'], "
-            'stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n'
+            # A probed free display (a fixed :71 collided with parallel
+            # runs).
+            f"sys.path.insert(0, {str(Path(__file__).resolve().parents[2] / 'common')!r})\n"
+            'from xx_testing import broadway_display\n'
+            'daemon, display = broadway_display.start(run_dir=run_dir)\n'
+            "os.environ['BROADWAY_DISPLAY'] = display\n"
             'for _i in range(200):\n'
             "    if glob.glob(os.path.join(run_dir, 'broadway*.socket')):\n"
             '        break\n'
