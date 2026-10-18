@@ -57,6 +57,15 @@ _TAG_TITLES = {
 }
 
 
+def wrap_value(value: Gtk.Widget) -> None:
+    """A field value (an email, a long number) wraps at large text and
+    320 px instead of ellipsizing; it never widens the window."""
+    if isinstance(value, Gtk.Label):
+        value.set_wrap(True)
+        value.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        value.set_ellipsize(Pango.EllipsizeMode.NONE)
+
+
 class ContactDetailPage(Adw.NavigationPage):
     """Detail for one contact ``uid``; pops itself after delete."""
 
@@ -81,9 +90,9 @@ class ContactDetailPage(Adw.NavigationPage):
         self._updating_switches = False
         self._watcher = ChangeWatcher(db_path, self._on_external_changed)
 
+        # One way to edit: the Edit button by Share vCard (as on Android).
         header = widgets.compact_header(
-            self._on_back_clicked, "Details", "",
-            "document-edit-symbolic", self._on_edit_clicked)
+            self._on_back_clicked, "Details", "")
 
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         body.add_css_class("xx-page-body")
@@ -117,6 +126,7 @@ class ContactDetailPage(Adw.NavigationPage):
         actions.append(self._call_button)
         self._message_button = widgets.outline_button(
             "Message", self._on_message_clicked)
+        widgets.wrap_to_fit(self._message_button)
         self._message_button.set_hexpand(True)
         self._message_button.set_sensitive(False)
         actions.append(self._message_button)
@@ -151,10 +161,12 @@ class ContactDetailPage(Adw.NavigationPage):
         share_row.set_homogeneous(True)
         self._share_button = widgets.outline_button(
             "Share vCard", self._on_share_clicked)
+        widgets.wrap_to_fit(self._share_button)
         self._share_button.set_hexpand(True)
         share_row.append(self._share_button)
         self._edit_button = widgets.outline_button(
             "Edit", self._on_edit_clicked)
+        widgets.wrap_to_fit(self._edit_button)
         self._edit_button.set_hexpand(True)
         share_row.append(self._edit_button)
         bottom.append(share_row)
@@ -214,7 +226,7 @@ class ContactDetailPage(Adw.NavigationPage):
             child = following
         tags: list[tuple[str, bool]] = []
         if getattr(record, "starred", False):
-            tags.append(("★ Starred", True))
+            tags.append(("Starred", True))
         for group in (getattr(record, "groups", None) or [])[:2]:
             tags.append((str(group), False))
         if not tags:
@@ -365,6 +377,7 @@ class ContactDetailPage(Adw.NavigationPage):
                     row = Gtk.Box(
                         orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
                     value = widgets.label(item.display, "xx-field-value")
+                    wrap_value(value)
                     value.set_hexpand(True)
                     value.set_valign(Gtk.Align.CENTER)
                     row.append(value)
@@ -397,6 +410,7 @@ class ContactDetailPage(Adw.NavigationPage):
                         self._fields.append(links)
                 else:
                     field_box = widgets.field(caption, item.display)
+                    wrap_value(field_box.get_last_child())
                     field_box.set_spacing(6)
                     self._fields.append(field_box)
                     if rest:

@@ -28,6 +28,7 @@ from xx_contacts import detail as detail_model  # noqa: E402
 from xx_contacts import mecard as mecard_module  # noqa: E402
 from xx_contacts import photos as photos_module  # noqa: E402
 from xx_contacts import vcard as vcard_module  # noqa: E402
+from xx_contacts.detail_ui import wrap_value  # noqa: E402
 from xx_contacts.list_ui import ChangeWatcher, launch_uri  # noqa: E402
 from xx_contacts.store import default_exports_dir  # noqa: E402
 from xx_contacts import privacy  # noqa: E402
@@ -79,8 +80,10 @@ class MeCardPage(Adw.NavigationPage):
         self._name.set_max_width_chars(16)
         body.append(self._name)
 
+        # The same rhythm as a contact's Details: 20 between fields, 6
+        # between a caption and its value.
         self._sections = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                                 spacing=0)
+                                 spacing=20)
         body.append(self._sections)
 
         self._empty = widgets.label("", "xx-secondary")
@@ -91,10 +94,12 @@ class MeCardPage(Adw.NavigationPage):
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         self._share_button = widgets.outline_button(
             "Share vCard", self._on_share_clicked)
+        widgets.wrap_to_fit(self._share_button)
         self._share_button.set_hexpand(True)
         actions.append(self._share_button)
         self._edit_button = widgets.outline_button(
             "Edit", self._on_edit_clicked)
+        widgets.wrap_to_fit(self._edit_button)
         self._edit_button.set_hexpand(True)
         actions.append(self._edit_button)
         body.append(actions)
@@ -135,9 +140,7 @@ class MeCardPage(Adw.NavigationPage):
             avatar_module.set_avatar(
                 self._avatar_image, self._avatar_fallback, "", None,
                 False, ME_PHOTO_PX)
-            self._empty.set_text(
-                "To designate your own card, open a contact and "
-                "choose Set as Me. You can then share it as a vCard.")
+            self._empty.set_text("Open a contact and choose Set as Me.")
             self._empty.set_visible(True)
             self._share_button.set_sensitive(False)
             self._edit_button.set_sensitive(False)
@@ -168,8 +171,10 @@ class MeCardPage(Adw.NavigationPage):
                                                           self._region):
             for item in section.fields:
                 caption = item.label or section.title
-                self._sections.append(
-                    widgets.field(caption, item.display))
+                field_box = widgets.field(caption, item.display)
+                field_box.set_spacing(6)
+                wrap_value(field_box.get_last_child())
+                self._sections.append(field_box)
         self._share_button.set_sensitive(True)
         self._edit_button.set_sensitive(True)
         self._remove_button.set_sensitive(True)

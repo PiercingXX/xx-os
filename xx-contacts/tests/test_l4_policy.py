@@ -19,6 +19,28 @@ def _read(name: str) -> str:
     return (SRC / name).read_text(encoding="utf-8")
 
 
+# ---- UX pass: one way to each thing, no clutter ----
+
+def test_detail_edits_from_one_button_only():
+    src = _read("detail_ui.py")
+    assert "document-edit-symbolic" not in src
+    assert '"Edit", self._on_edit_clicked' in src
+    assert "★" not in src
+
+
+def test_list_more_button_opens_settings_directly():
+    src = _read("list_ui.py")
+    assert "Gtk.Popover()" not in src
+    assert "self.open_settings()" in src
+
+
+def test_editor_shows_no_empty_preview_or_add_glyphs():
+    src = _read("editor_ui.py")
+    assert "(empty)" not in src
+    assert '"+ Add' not in src
+    assert "self._photo_remove.set_visible(has_photo)" in src
+
+
 def test_editor_entries_take_focus_only_on_tap():
     src = _read("editor_ui.py")
     assert "install_tap_to_focus" in src

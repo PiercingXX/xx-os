@@ -94,18 +94,22 @@ class ImportExportPage(Adw.NavigationPage):
         body.append(widgets.section_label("Import"))
         self._import_vcf_button = widgets.outline_button(
             "Import vCard file", self._on_pick_vcard)
+        widgets.wrap_to_fit(self._import_vcf_button)
         body.append(self._import_vcf_button)
         self._import_backup_button = widgets.outline_button(
             "Import Android backup", self._on_pick_backup_vcf)
+        widgets.wrap_to_fit(self._import_backup_button)
         body.append(self._import_backup_button)
         self._import_eds_button = widgets.outline_button(
             "Import from GNOME Contacts", self._on_import_eds)
+        widgets.wrap_to_fit(self._import_eds_button)
         self._import_eds_button.set_sensitive(eds_module.is_available())
         body.append(self._import_eds_button)
 
         body.append(widgets.section_label("Export"))
         self._export_button = widgets.outline_button(
             "Export all contacts", self._on_export)
+        widgets.wrap_to_fit(self._export_button)
         body.append(self._export_button)
 
         body.append(widgets.section_label("GNOME Contacts mirror"))

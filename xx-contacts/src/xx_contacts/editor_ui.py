@@ -269,6 +269,7 @@ class ContactEditorPage(Adw.NavigationPage):
         photo_buttons.append(self._photo_pick)
         self._photo_remove = self._wide_text_button(
             "Remove", self._on_photo_remove)
+        self._photo_remove.set_visible(False)
         photo_buttons.append(self._photo_remove)
         photo_row.append(photo_buttons)
         body.append(photo_row)
@@ -296,14 +297,14 @@ class ContactEditorPage(Adw.NavigationPage):
         self._phone_rows_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, spacing=8)
         body.append(self._phone_rows_box)
-        body.append(self._wide_text_button("+ Add phone",
+        body.append(self._wide_text_button("Add phone",
                                                   self._on_add_phone))
 
         body.append(widgets.section_label("Email"))
         self._email_rows_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, spacing=8)
         body.append(self._email_rows_box)
-        body.append(self._wide_text_button("+ Add email",
+        body.append(self._wide_text_button("Add email",
                                                   self._on_add_email))
 
         body.append(widgets.section_label("Details"))
@@ -319,7 +320,7 @@ class ContactEditorPage(Adw.NavigationPage):
         self._address_rows_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, spacing=8)
         body.append(self._address_rows_box)
-        body.append(self._wide_text_button("+ Add address",
+        body.append(self._wide_text_button("Add address",
                                                   self._on_add_address))
 
         body.append(widgets.section_label("Birthday"))
@@ -358,7 +359,7 @@ class ContactEditorPage(Adw.NavigationPage):
         self._url_rows_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                                      spacing=8)
         body.append(self._url_rows_box)
-        body.append(self._wide_text_button("+ Add website",
+        body.append(self._wide_text_button("Add website",
                                                   self._on_add_url))
 
         body.append(widgets.section_label("Notes"))
@@ -551,8 +552,9 @@ class ContactEditorPage(Adw.NavigationPage):
             preview = editor_model.display_preview(self._read_form())
         except Exception:
             preview = ""
-        self._preview.set_text(f"Shows as: {preview}" if preview
-                               else "Shows as: (empty)")
+        # Nothing to preview yet: no line at all.
+        self._preview.set_text(f"Shows as: {preview}" if preview else "")
+        self._preview.set_visible(bool(preview))
 
     # ------------------------------------------------------------------- dates
 
@@ -616,8 +618,11 @@ class ContactEditorPage(Adw.NavigationPage):
                 self._avatar_image.set_from_pixbuf(pixbuf)
                 self._avatar_image.set_visible(True)
                 self._avatar_fallback.set_visible(False)
+                self._refresh_photo_buttons(True)
                 return
             self._pending_photo = None
+        self._refresh_photo_buttons(
+            bool(self._original_photo_path) and not self._remove_photo)
         avatar_module.set_avatar(
             self._avatar_image, self._avatar_fallback,
             self._entries["given"].get_text() + " "
@@ -626,6 +631,16 @@ class ContactEditorPage(Adw.NavigationPage):
             None if self._remove_photo else (self._original_photo_path
                                              or None),
             True, PHOTO_SIZE_PX)
+
+    def _refresh_photo_buttons(self, has_photo: bool) -> None:
+        """Remove only where there is a photo to remove."""
+        text = "Change photo" if has_photo else "Add photo"
+        child = self._photo_pick.get_child()
+        if isinstance(child, Gtk.Label):
+            child.set_text(text)
+        else:
+            self._photo_pick.set_label(text)
+        self._photo_remove.set_visible(has_photo)
 
     def _on_photo_pick(self) -> None:
         dialog = Gtk.FileDialog()
