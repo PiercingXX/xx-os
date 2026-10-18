@@ -35,7 +35,7 @@ import gi  # noqa: E402
 
 gi.require_version("Gtk", "4.0")  # noqa: E402
 
-from gi.repository import GLib  # noqa: E402
+from gi.repository import GLib, Gtk  # noqa: E402
 
 import xx_ui  # noqa: E402
 from xx_captions import config  # noqa: E402
@@ -46,6 +46,14 @@ from xx_captions.overlay import load_ui_theme  # noqa: E402
 def check(cond: bool, message: str) -> None:
     if not cond:
         raise AssertionError(message)
+
+
+def _walk(widget):
+    yield widget
+    child = widget.get_first_child()
+    while child is not None:
+        yield from _walk(child)
+        child = child.get_next_sibling()
 
 
 def main() -> int:
@@ -60,6 +68,13 @@ def main() -> int:
     check(not bare._caption_box.get_visible(), "captions hidden pre-model")
     check("MB" in bare._model_size.get_text(),
           f"size shown before download, got {bare._model_size.get_text()!r}")
+    check(not bare._toggle.get_visible(),
+          "no Start before a model is installed")
+    bare._on_download_finished("")
+    check(not bare._model_error.get_visible(),
+          "a cancelled download shows no message")
+    bare._on_download_finished("Download failed")
+    check(bare._model_error.get_visible(), "a failed download says so")
 
     model_id = config.DEFAULT_CONFIG["model"]
     entry = config.MODEL_CATALOG[model_id]
@@ -71,6 +86,7 @@ def main() -> int:
     window = CaptionWindow(home=home)
     window.present()
     check(window._caption_box.get_visible(), "caption view with model")
+    check(window._toggle.get_visible(), "Start shown once a model exists")
     check(not window._model_box.get_visible(), "model screen hidden")
 
     window.on_text("hello", False)
@@ -87,15 +103,26 @@ def main() -> int:
     check(texts == ["hello world", "second line", "third"],
           f"older lines scroll up, got {texts!r}")
 
+    window.set_starting()
+    check(not window._toggle.get_sensitive(), "no double Start while starting")
     window.set_active(True, "playback")
+    check(window._toggle.get_sensitive(), "Stop is live once on")
     check("on" in window._status.get_text().lower(), "privacy row shows on")
     check("CAPTIONS" in window._status.get_text(), "status is a caps label")
     check(window._toggle.get_label() == "STOP", "toggle offers Stop")
     check(window._menu is not None, "overflow menu exists")
+    menu_texts = [w.get_text() for w in _walk(window._menu.get_child())
+                  if isinstance(w, Gtk.Label) and w.get_text()]
+    check(menu_texts == ["Settings", "Close"],
+          f"one way to each place, got {menu_texts!r}")
     window.set_active(False, "")
     check(window._toggle.get_label() == "START", "toggle offers Start")
-    window.set_error("boom")
-    check("boom" in window._status.get_text(), "error is user-facing")
+    check("\u25cf" not in window._status.get_text(), "no decorative dot")
+    window.set_error("service unavailable")
+    check("service unavailable" in window._status.get_text().lower(),
+          "error is user-facing")
+    check(window._status.get_lines() == 2 and window._status.get_wrap(),
+          "a long status wraps instead of widening the overlay")
 
     shell_conf = home / ".config" / "xx-wm" / "config.json"
     shell_conf.parent.mkdir(parents=True, exist_ok=True)
