@@ -89,3 +89,12 @@ def test_no_mainloop_blocking_calls():
             if banned.search(line):
                 hits.append(f"{path.name}:{index}:{stripped}")
     assert hits == [], f"main-loop blocking calls: {hits}"
+
+
+def test_minimal_ui_no_trash_confirm_or_popover_menu():
+    """Delete moves to the Trash at once (Restore undoes it), and the
+    overflow is a bottom sheet like every other menu in the app."""
+    text = (SRC / "main.py").read_text()
+    assert "Move to Trash?" not in text
+    assert "Gtk.MenuButton" not in text
+    assert "Original unknown" not in text

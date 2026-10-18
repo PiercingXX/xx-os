@@ -266,6 +266,24 @@ def test_menu_trash_actions():
                                         Action.DELETE_FOREVER]
 
 
+def test_overflow_browse_paste_only_when_staged():
+    labels = [t for t, _k in menu_actions.overflow("browse")]
+    assert labels == ["New folder", "View", "Trash", "Volumes"]
+    labels = [t for t, _k in menu_actions.overflow("browse", has_clip=True)]
+    assert labels == ["New folder", "Paste", "View", "Trash", "Volumes"]
+
+
+def test_overflow_trash_has_no_volumes_entry():
+    # Back leads from the Trash to the Volumes: one way to get there.
+    assert menu_actions.overflow("trash", trash_count=2) == [
+        ("Empty Trash", "empty-trash")]
+    assert menu_actions.overflow("trash", trash_count=0) == []
+
+
+def test_overflow_volumes_lists_trash():
+    assert menu_actions.overflow("volumes") == [("Trash", "trash")]
+
+
 # -- Mime ------------------------------------------------------------
 
 def test_mime_known_types():

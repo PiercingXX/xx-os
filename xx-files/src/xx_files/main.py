@@ -7,8 +7,10 @@ open-with, share via xx-share, properties, progress with cancel.
 Look (Android tree list in the PiercingXX brand): the path IS the
 header (muted ancestors, current folder in text, a faint slash between),
 one overflow, a hairline, then text-first rows. No title, no status
-line, no empty-state copy: an empty folder shows nothing. Row actions,
-dialogs and the View sheet slide up from the bottom over a scrim.
+line, no empty-state copy: an empty folder shows nothing. The overflow,
+row actions, dialogs and the View sheet slide up from the bottom over
+a scrim. Delete moves to the Trash without asking (Restore undoes it);
+only what cannot be undone confirms.
 
 Headless-safe import: Gtk/Adw load lazily so pure tests never need a
 display. Workers own every directory read and file operation; results
@@ -45,6 +47,10 @@ row.xx-files-message { padding: 16px 20px; }
   color: @window_bg_color; border-color: @window_fg_color; }
 .xx-files-grid-cell { padding: 12px 2px; }
 .xx-files-grid-name { color: @window_fg_color; }
+flowboxchild.selected { background-color: @window_fg_color;
+  border-radius: 12px; }
+flowboxchild.selected image,
+flowboxchild.selected .xx-files-grid-name { color: @window_bg_color; }
 .xx-files-selbar { border-top: 1px solid @borders; padding: 4px 4px 8px 20px; }
 .xx-files-scrim { background-color: alpha(@window_bg_color, 0.72); }
 .xx-files-sheet { background-color: @card_bg_color;
@@ -192,12 +198,11 @@ class FilesWindow:
         self.search_btn = self._icon_button("system-search-symbolic",
                                             "Search", self._toggle_search)
         top.append(self.search_btn)
-        self.overflow_btn = Gtk.MenuButton()
-        self.overflow_btn.add_css_class("xx-btn")
-        self.overflow_btn.add_css_class("xx-btn-icon")
-        self.overflow_btn.set_icon_name("view-more-symbolic")
-        self.overflow_btn.set_tooltip_text("More actions")
-        self.overflow_btn.set_valign(Gtk.Align.CENTER)
+        # The overflow slides up as a sheet like every other menu here:
+        # thumb-reachable, 48 px rows.
+        self.overflow_btn = self._icon_button("view-more-symbolic",
+                                              "More actions",
+                                              self._show_overflow)
         top.append(self.overflow_btn)
         root.append(top)
         rule = Gtk.Box()
@@ -275,7 +280,7 @@ class FilesWindow:
                 ("edit-cut-symbolic", "Cut",
                  lambda: self._stage_selection(True)),
                 ("user-trash-symbolic", "Delete",
-                 lambda: self._ask_delete(sorted(self.selection))),
+                 lambda: self._delete(sorted(self.selection))),
                 ("send-to-symbolic", "Share",
                  lambda: self._share_paths(sorted(self.selection)))):
             sel_actions.append(self._icon_button(name, tip, cb))
@@ -377,34 +382,35 @@ class FilesWindow:
     def _register_actions(self) -> None:
         Gio = self._Gio
         app = self.win.get_application()
-        for name, cb in (("new-folder", self._ask_new_folder),
-                         ("paste", self._paste),
-                         ("view", self._show_view_sheet),
-                         ("trash", self.show_trash),
-                         ("volumes", self.show_volumes),
-                         ("empty-trash", self._ask_empty_trash)):
+        self._menu_cbs = {"new-folder": self._ask_new_folder,
+                          "paste": self._paste,
+                          "view": self._show_view_sheet,
+                          "trash": self.show_trash,
+                          "volumes": self.show_volumes,
+                          "empty-trash": self._ask_empty_trash}
+        for name, cb in self._menu_cbs.items():
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", lambda *_a, f=cb: f())
             app.add_action(action)
 
+    def _overflow_entries(self) -> list[tuple[str, str]]:
+        from .menu_actions import overflow
+
+        return overflow(self.mode, bool(self.clip), len(self.trash_rows))
+
     def _rebuild_menu(self) -> None:
-        """Overflow lists only what makes sense here: Paste appears once
-        something is staged, Empty Trash only inside Trash."""
-        menu = self._Gio.Menu()
-        if self.mode == "browse":
-            menu.append("New folder", "app.new-folder")
-            if self.clip:
-                menu.append("Paste", "app.paste")
-            menu.append("View", "app.view")
-            menu.append("Trash", "app.trash")
-            menu.append("Volumes", "app.volumes")
-        elif self.mode == "trash":
-            if self.trash_rows:
-                menu.append("Empty Trash", "app.empty-trash")
-            menu.append("Volumes", "app.volumes")
-        else:
-            menu.append("Trash", "app.trash")
-        self.overflow_btn.set_menu_model(menu)
+        """Overflow lists only what makes sense here (menu_actions.overflow);
+        with nothing to offer the button is gone."""
+        self.overflow_btn.set_visible(bool(self._overflow_entries()))
+
+    def _show_overflow(self) -> None:
+        entries = self._overflow_entries()
+        if not entries:
+            return
+        box = self._open_sheet()
+        for text, name in entries:
+            self._sheet_action(box, text, lambda f=self._menu_cbs[name]: (
+                self._close_sheet(), f()))
 
     def _set_sort(self, key: str) -> None:
         if self.settings.sort != key:
@@ -528,6 +534,8 @@ class FilesWindow:
         self.cwd = path
         self.mode = "browse"
         self._clear_selection()
+        # "Search this folder": a new folder starts unfiltered.
+        self._close_search()
         self._render_chrome()
         self.refresh()
 
@@ -540,6 +548,9 @@ class FilesWindow:
             return
         if self.selecting:
             self._end_selection()
+            return
+        if self.search_revealer.get_reveal_child():
+            self._toggle_search()
             return
         dest = back_dest(self.mode == "volumes", self.mode == "trash",
                          self.cwd, list(self.roots))
@@ -560,9 +571,14 @@ class FilesWindow:
             self._list_job.cancel()
         self._kids = {}
         path, show_hidden = self.cwd, self.settings.show_hidden
+        # Only the newest listing may paint: a superseded one (quick
+        # taps, a folder opened during launch) would otherwise land late
+        # with the old folder's rows, or its Cancelled as an error line.
+        job = jobs.Job()
+        self._list_job = job
 
         def on_done(result: dict) -> None:
-            if not self._alive:
+            if not self._alive or self._list_job is not job:
                 return
             self._list_job = None
             if result.get("status") == "ok":
@@ -580,7 +596,7 @@ class FilesWindow:
                         self._expand_async(row["path"])
 
         def on_error(exc: Exception) -> None:
-            if not self._alive:
+            if not self._alive or self._list_job is not job:
                 return
             self._list_job = None
             from .io_error import message
@@ -591,8 +607,8 @@ class FilesWindow:
             self._render_rows()
 
         self._list_error = {"status": "ok"}
-        self._list_job = jobs.submit(list_dir_sync, path, show_hidden,
-                                     on_done=on_done, on_error=on_error)
+        jobs.submit(list_dir_sync, path, show_hidden,
+                    on_done=on_done, on_error=on_error, job=job)
 
     def refresh_trash(self) -> None:
         from . import jobs
@@ -965,9 +981,10 @@ class FilesWindow:
         is_dir = os.path.isdir(entry.trash_path)
         self._row_icon(box, icon_for_kind(of(entry.display_name,
                                              is_dir).value))
-        origin = entry.original_path or "Original unknown"
+        # The title is the name; the line under it is where it came from.
+        origin = os.path.dirname(entry.original_path or "")
         self._row_texts(box, entry.display_name,
-                        pretty_path(origin, self._home()))
+                        pretty_path(origin, self._home()) if origin else "")
         long_press = self._Gtk.GestureLongPress.new()
         long_press.connect("pressed", self._on_trash_long_press,
                            entry.trash_path)
@@ -1231,24 +1248,19 @@ class FilesWindow:
         self._sheet_buttons(box, [("Cancel", self._close_sheet),
                                   ("Replace", replace, "danger")])
 
-    def _ask_delete(self, paths: list[str]) -> None:
-        n = len(paths)
-        box = self._open_sheet("Move to Trash?")
-        what = os.path.basename(paths[0]) if n == 1 else f"{n} items"
-        self._sheet_body(box, what)
+    def _delete(self, paths: list[str]) -> None:
+        """Delete moves to the Trash at once: Restore undoes it, so no
+        confirmation (only Delete forever and Empty Trash ask)."""
+        from . import jobs
+        from .ops import do_trash
 
-        def delete() -> None:
-            from . import jobs
-            from .ops import do_trash
-
-            self._close_sheet()
-            self._end_selection()
-            jobs.submit(do_trash, paths,
-                        on_done=lambda _r: self.refresh(),
-                        on_error=lambda e: self._op_failed(e))
-
-        self._sheet_buttons(box, [("Cancel", self._close_sheet),
-                                  ("Move to Trash", delete, "primary")])
+        if not paths:
+            return
+        self._close_sheet()
+        self._end_selection()
+        jobs.submit(do_trash, list(paths),
+                    on_done=lambda _r: self.refresh(),
+                    on_error=lambda e: self._op_failed(e))
 
     def _show_properties(self, path: str) -> None:
         from .mime import from_extension
@@ -1315,7 +1327,7 @@ class FilesWindow:
         elif action is Action.RENAME:
             self._ask_rename(path)
         elif action is Action.DELETE:
-            self._ask_delete([path])
+            self._delete([path])
         elif action is Action.PROPERTIES:
             self._show_properties(path)
 
@@ -1549,6 +1561,7 @@ class FilesWindow:
             self.open_path(empty)
             return
         if scenario in ("trash", "trash_empty", "trash_actions",
+                        "trash_menu", "delete_forever", "empty_confirm",
                         "progress"):
             if scenario == "trash_empty":
                 self.trash_rows = []
@@ -1563,12 +1576,24 @@ class FilesWindow:
                 self._progress_label.set_text("45.0 MB of 100.0 MB")
             else:
                 self.show_trash()
-                if scenario == "trash_actions":
-                    from .ops import trash_dirs
+                from .ops import trash_dirs
 
-                    files_dir, _info = trash_dirs()
-                    self._show_trash_actions(
-                        os.path.join(files_dir, "draft.txt"))
+                files_dir, _info = trash_dirs()
+                draft = os.path.join(files_dir, "draft.txt")
+                if scenario == "trash_actions":
+                    self._show_trash_actions(draft)
+                elif scenario == "delete_forever":
+                    self._ask_delete_forever(draft)
+                elif scenario in ("trash_menu", "empty_confirm"):
+                    # The trash lists off-thread: open once it is read.
+                    from .trash_info import list_entries
+
+                    self.trash_rows = list_entries(*trash_dirs())
+                    self._rebuild_menu()
+                    if scenario == "trash_menu":
+                        self._show_overflow()
+                    else:
+                        self._ask_empty_trash()
             return
         self.open_root_home()
         if scenario == "volumes":
@@ -1607,8 +1632,17 @@ class FilesWindow:
             self._open_new_folder_sheet()
         elif scenario == "rename":
             self._open_rename_sheet(os.path.join(docs, "notes.txt"))
-        elif scenario == "delete_confirm":
-            self._ask_delete([os.path.join(docs, "notes.txt")])
+        elif scenario == "menu":
+            self.clip = [(os.path.join(docs, "report.pdf"), False)]
+            self._rebuild_menu()
+            self._show_overflow()
+        elif scenario == "grid_select":
+            self.settings.view = "grid"
+            self.selecting = True
+            self.selection = {os.path.join(home, "Documents"),
+                              os.path.join(home, "Pictures")}
+            self._render_chrome()
+            self._render_rows()
         elif scenario == "actions":
             self._show_file_actions(os.path.join(docs, "notes.txt"), False)
         elif scenario in ("sort_menu", "view"):

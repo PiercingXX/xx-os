@@ -1,7 +1,7 @@
 #!/bin/sh
 # Seeded screenshots of every xx-files screen in amoled + paper on the
 # FLX1 canvas (450x1000), the main screens at 360x800, plus fit probes
-# (320 px wide, text-size-scale 1.3) and graphite/aura spot checks:
+# (320 px wide, text-size-scale 1.5) and graphite/aura spot checks:
 #   xx-files/tools/snap_all.sh OUTDIR
 # Exits non-zero on any snap WARNING (phone-fit breach).
 set -u
@@ -85,7 +85,7 @@ for profile in $THEMES graphite aura large; do
     mkdir -p "$home/.config/xx-wm" "$home/.config/xx-files" \
         "$home/.local/share"
     if [ "$profile" = large ]; then
-        printf '{"theme": "paper", "text_size_scale": 1.3}' \
+        printf '{"theme": "paper", "text_size_scale": 1.5}' \
             > "$home/.config/xx-wm/config.json"
     else
         printf '{"theme": "%s"}' "$profile" > "$home/.config/xx-wm/config.json"
@@ -95,8 +95,8 @@ for profile in $THEMES graphite aura large; do
 done
 
 # Every state on the FLX1 canvas (450x1000), the main ones at 360x800.
-states="volumes files deep tree grid search multiselect actions properties new_folder rename delete_confirm view progress trash trash_actions trash_empty empty_folder blocked"
-phone="volumes files tree actions view trash"
+states="volumes files deep tree grid grid_select search multiselect menu actions properties new_folder rename view progress blocked trash trash_actions trash_menu delete_forever empty_confirm trash_empty empty_folder"
+phone="volumes files tree menu actions view trash"
 
 for theme in $THEMES; do
     for state in $states; do
@@ -107,9 +107,9 @@ for theme in $THEMES; do
     done
 done
 
-# Fit probes: 320 px wide, large text (scale 1.3), two more presets.
+# Fit probes: 320 px wide, large text (scale 1.5), two more presets.
 # (snap_one assigns $name: sh has no locals, so loops use other names.)
-for probe in files actions properties; do
+for probe in files menu actions properties; do
     snap_one paper "narrow-$probe" "320x640" "$probe" ""
     snap_one large "big-$probe" "360x800" "$probe" ""
 done
@@ -132,33 +132,39 @@ sheet() {
 }
 
 for theme in $THEMES; do
-    sheet "sheet-$theme-1.png" 5x1 \
+    sheet "sheet-$theme-1.png" 6x1 \
         "volumes:$theme-flx1-volumes" "files:$theme-flx1-files" \
         "deep:$theme-flx1-deep" "tree:$theme-flx1-tree" \
-        "grid:$theme-flx1-grid"
-    sheet "sheet-$theme-2.png" 5x1 \
+        "grid:$theme-flx1-grid" "grid-select:$theme-flx1-grid_select"
+    sheet "sheet-$theme-2.png" 6x1 \
         "search:$theme-flx1-search" "select:$theme-flx1-multiselect" \
+        "menu:$theme-flx1-menu" \
         "actions:$theme-flx1-actions" "properties:$theme-flx1-properties" \
         "view:$theme-flx1-view"
-    sheet "sheet-$theme-3.png" 5x1 \
+    sheet "sheet-$theme-3.png" 4x1 \
         "new-folder:$theme-flx1-new_folder" "rename:$theme-flx1-rename" \
-        "delete:$theme-flx1-delete_confirm" "progress:$theme-flx1-progress" \
-        "blocked:$theme-flx1-blocked"
-    sheet "sheet-$theme-4.png" 4x1 \
+        "progress:$theme-flx1-progress" "blocked:$theme-flx1-blocked"
+    sheet "sheet-$theme-4.png" 7x1 \
         "trash:$theme-flx1-trash" "trash-row:$theme-flx1-trash_actions" \
+        "trash-menu:$theme-flx1-trash_menu" \
+        "delete-forever:$theme-flx1-delete_forever" \
+        "empty-trash:$theme-flx1-empty_confirm" \
         "trash-empty:$theme-flx1-trash_empty" \
         "empty:$theme-flx1-empty_folder"
-    sheet "sheet-$theme-360.png" 6x1 \
+    sheet "sheet-$theme-360.png" 7x1 \
         "volumes:$theme-phone-volumes" "files:$theme-phone-files" \
-        "tree:$theme-phone-tree" "actions:$theme-phone-actions" \
+        "tree:$theme-phone-tree" "menu:$theme-phone-menu" \
+        "actions:$theme-phone-actions" \
         "view:$theme-phone-view" "trash:$theme-phone-trash"
     cp "$WORK/$theme-"*.png "$OUTDIR/"
 done
-sheet "sheet-fit.png" 5x2 \
-    "320-files:paper-narrow-files" "320-actions:paper-narrow-actions" \
+sheet "sheet-fit.png" 6x2 \
+    "320-files:paper-narrow-files" "320-menu:paper-narrow-menu" \
+    "320-actions:paper-narrow-actions" \
     "320-props:paper-narrow-properties" "graphite:graphite-flx1-files" \
     "aura:aura-flx1-actions" \
-    "large-files:large-big-files" "large-actions:large-big-actions" \
+    "large-files:large-big-files" "large-menu:large-big-menu" \
+    "large-actions:large-big-actions" \
     "large-props:large-big-properties" "large-view:large-big-view"
 cp "$WORK/graphite-"*.png "$WORK/aura-"*.png "$WORK/large-"*.png "$OUTDIR/"
 rm -rf "$WORK"

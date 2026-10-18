@@ -36,3 +36,24 @@ def for_type(is_dir: bool) -> list[Action]:
 
 def for_trash() -> list[Action]:
     return [Action.RESTORE, Action.DELETE_FOREVER]
+
+
+def overflow(mode: str, has_clip: bool = False,
+             trash_count: int = 0) -> list[tuple[str, str]]:
+    """Overflow entries per screen, in order, as (label, action name).
+
+    Paste shows only with something staged, Empty Trash only with
+    something in the Trash. Back already leads from the Trash to the
+    Volumes, so the Trash has no Volumes entry, and an empty Trash has
+    no overflow at all.
+    """
+    if mode == "browse":
+        out = [("New folder", "new-folder")]
+        if has_clip:
+            out.append(("Paste", "paste"))
+        out += [("View", "view"), ("Trash", "trash"),
+                ("Volumes", "volumes")]
+        return out
+    if mode == "trash":
+        return [("Empty Trash", "empty-trash")] if trash_count else []
+    return [("Trash", "trash")]
