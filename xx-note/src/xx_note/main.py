@@ -144,7 +144,7 @@ def sync_once() -> int:
         result = finished["ok"]
         print(
             f"Sync done: {result.pushed} up, {result.pulled} down, "
-            f"{result.forked} forks"
+            f"{result.forked} fork{'' if result.forked == 1 else 's'}"
         )
         for problem in result.errors:
             print(f"note: {problem}")

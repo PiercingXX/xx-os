@@ -266,7 +266,7 @@ class SetupPage:
                 self.status_error or ("Checking the server…"
                                       if self.status_loading else "")))
             return
-        books = f"{status.items:,} books" if status.items is not None else ""
+        books = fmt.books_count(status.items) if status.items is not None else ""
         if status.items_missing:
             books += f" · {status.items_missing} missing"
         head_line = " ".join(p for p in (status.service or "Server",
@@ -275,7 +275,7 @@ class SetupPage:
                                            if p), "xx-ab-b13"))
         rows = []
         for root in status.media_roots:
-            count = (f" · {root.item_count:,} books"
+            count = (f" · {fmt.books_count(root.item_count)}"
                      if root.item_count is not None else "")
             rows.append((root.present, "Media folder",
                          root.path + (count if root.present

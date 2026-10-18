@@ -329,8 +329,8 @@ class PermissionsSection(settings_page._Section):
         entries = list(_entries(win))
         limited = sum(1 for entry in entries if _is_flatpak(entry))
         ui.fill(box, [ui.nav_row(
-            'Choose an app', '%d apps · %d can be limited' % (
-                len(entries), limited),
+            'Choose an app', '%d app%s · %d can be limited' % (
+                len(entries), '' if len(entries) == 1 else 's', limited),
             lambda _r: self._open_app_list(win))])
 
     def _render_app_list(self, win, box) -> None:

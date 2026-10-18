@@ -212,7 +212,8 @@ class PasteBox:
     def summary(self, text: str) -> None:
         """Show that something was pasted without echoing it."""
         lines = len(text.splitlines()) or 1
-        self.hint.set_text(f"Pasted {lines} lines. Tap Sign in.")
+        self.hint.set_text(
+            f"Pasted {lines} line{'' if lines == 1 else 's'}. Tap Sign in.")
 
 
 class SignInPage:

@@ -180,9 +180,12 @@ class BackupView:
             patterns, tiers, calls = self.controller.counts()
         except Exception:
             return
+        def count(n: int, word: str) -> str:
+            return f"{n} {word}{'' if n == 1 else 's'}"
+
         self._export_status.set_text(
-            "%d patterns, %d tiers, %d calls on this phone." % (
-                patterns, tiers, calls))
+            f"{count(patterns, 'pattern')}, {count(tiers, 'tier')}, "
+            f"{count(calls, 'call')} on this phone.")
 
     # ---- portal ---------------------------------------------------------
 

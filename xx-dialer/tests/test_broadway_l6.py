@@ -171,7 +171,7 @@ def test_broadway_builds_all_seven_pages_without_exceptions(broadway_env):
 def test_broadway_backup_round_trip(broadway_env):
     markers = _run_driver(broadway_env)
     assert markers["BACKUP_STATUS"] == \
-        "1 patterns, 1 tiers, 2 calls on this phone."
+        "1 pattern, 1 tier, 2 calls on this phone."
     assert markers["EXPORT_POLICY_OK"] == "True"
     assert markers["EXPORT_CALLLOG_ROWS"] == "2"
     assert markers["IMPORT_POLICY"] == "True"

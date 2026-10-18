@@ -238,13 +238,21 @@ def backup_to_text(cards: list[IncomingCard]) -> str:
                    for card in cards)
 
 
+def _count(count: int, word: str) -> str:
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def exported_line(count: int, path: str) -> str:
+    return f"Exported {_count(count, 'contact')} to {path}."
+
+
 def summarize(plan: ImportPlan, groups_applied: int = 0) -> str:
     """Confirm-dialog body: counts before anything is written."""
     parts = [f"{plan.new_count} new",
-             f"{plan.update_count} updates",
+             _count(plan.update_count, "update"),
              f"{plan.skipped} skipped"]
     if groups_applied:
-        parts.append(f"{groups_applied} group memberships")
+        parts.append(_count(groups_applied, "group membership"))
     return ("This import will write " + ", ".join(parts) + ".")
 
 

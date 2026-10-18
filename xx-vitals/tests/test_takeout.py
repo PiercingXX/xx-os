@@ -69,7 +69,7 @@ def test_import_csv_stores_days_and_queues_them():
 
     db = _db()
     message = profile.import_takeout(db, "Daily activity metrics.csv", CSV, 1_000)
-    assert "1 days" in message and "0 weights" in message
+    assert "1 day and" in message and "0 weights" in message
     assert db.get_daily("takeout", "2026-09-01").steps == 5000
     assert db.pending_count() == 1
 
@@ -84,8 +84,8 @@ def test_import_weight_json_validates_range_like_manual_entry():
     ]}
     message = profile.import_takeout(
         _db(), "raw_com.google.weight_1.json", json.dumps(doc), 1_000)
-    assert "0 days and 1 weights" in message
-    assert "1 rows skipped" in message
+    assert "0 days and 1 weight," in message
+    assert "(1 row skipped)" in message
 
 
 def test_import_rejects_unknown_files():
@@ -189,7 +189,7 @@ def test_import_tcx_stores_activity_and_queues_it():
 
     db = _db()
     message = profile.import_takeout(db, "run.tcx", TCX, 1_000)
-    assert "1 activities" in message
+    assert "1 activity (" in message
     assert db.count_activities() == 1
     assert db.pending_count() == 1
 
@@ -224,7 +224,7 @@ def test_import_zip_reads_csv_tcx_and_weight_members(tmp_path):
     db = _db()
     message = profile.import_takeout_zip(
         db, archive, 1_000, on_progress=lambda done, total: progress.append((done, total)))
-    assert "1 days and 1 weights, 1 activities" in message
+    assert "1 day and 1 weight, 1 activity" in message
     assert db.count_dailies() == 1
     assert db.count_activities() == 1
     assert db.count_weights() == 1

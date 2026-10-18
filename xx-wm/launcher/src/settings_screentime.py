@@ -277,7 +277,8 @@ class ScreenTimeSection(settings_page._Section):
         self._render_week(week)
         if self._counts_label is not None:
             self._counts_label.set_text(
-                f'{unlocks} unlocks · {notifs} notifications')
+                f"{unlocks} unlock{'' if unlocks == 1 else 's'} · "
+                f"{notifs} notification{'' if notifs == 1 else 's'}")
         try:
             win._screen_time_cache = {'day': day, 'totals': dict(totals)}
         except Exception:

@@ -419,8 +419,14 @@ def _build_import_rows(parsed):
 
 
 def _summarize_import(dailies, weights, activities, skipped: int) -> str:
-    return (f"Imported {len(dailies)} days and {len(weights)} weights, "
-            f"{len(activities)} activities ({skipped} rows skipped).")
+    return (f"Imported {_count(len(dailies), 'day')} and "
+            f"{_count(len(weights), 'weight')}, "
+            f"{_count(len(activities), 'activity', 'activities')} "
+            f"({_count(skipped, 'row')} skipped).")
+
+
+def _count(count: int, word: str, plural: str | None = None) -> str:
+    return f"{count} {word if count == 1 else (plural or word + 's')}"
 
 
 def import_takeout(db, filename: str, text: str, now_ms: int, on_progress=None) -> str:
@@ -520,7 +526,7 @@ def _finish_import(dialog, result, db, on_notice, on_done) -> None:
         if total:
             line = f"Importing… {done}/{total} files…"
         else:
-            line = f"Importing… {done} rows…"
+            line = f"Importing… {_count(done, 'row')}…"
         try:
             GLibModule.idle_add(on_notice, line)
         except (AttributeError, TypeError):

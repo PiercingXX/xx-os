@@ -463,7 +463,7 @@ class ImportExportPage(Adw.NavigationPage):
             records = self._store.all_records()
             text = import_export_module.export_text(records)
             privacy.secure_write_text(path, text)
-            outcome = f"Exported {len(records)} contacts to {path}."
+            outcome = import_export_module.exported_line(len(records), path)
         except OSError as exc:
             outcome = f"Export failed: {exc}"
         GLib.idle_add(self._announce_export_outcome, outcome)
@@ -478,7 +478,8 @@ class ImportExportPage(Adw.NavigationPage):
             records = self._store.all_records()
             privacy.secure_write_text(
                 path, import_export_module.export_text(records))
-            self._set_status(f"Exported {len(records)} contacts to {path}.")
+            self._set_status(
+                import_export_module.exported_line(len(records), path))
         except OSError as exc:
             self._announce("Export failed", str(exc))
 

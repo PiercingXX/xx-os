@@ -84,7 +84,7 @@ def percent(fraction: float) -> int:
 
 
 def books_count(count: int) -> str:
-    return f"{count} book" if count == 1 else f"{count} books"
+    return f"{count:,} book" if count == 1 else f"{count:,} books"
 
 
 def sleep_label(remaining_ms: int, end_of_chapter: bool) -> str:

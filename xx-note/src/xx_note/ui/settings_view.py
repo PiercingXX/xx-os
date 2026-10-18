@@ -440,7 +440,9 @@ class SyncPage:
                     f"merged {result.merged}, forks {result.forked}."
                 )
                 if result.errors:
-                    summary += f" {len(result.errors)} notes need attention."
+                    n = len(result.errors)
+                    summary += (" 1 note needs attention." if n == 1
+                                else f" {n} notes need attention.")
                 self._GLib.idle_add(self._synced, summary, on_done)
             except Exception as exc:
                 self._GLib.idle_add(self._synced, f"Failed: {exc}", on_done)

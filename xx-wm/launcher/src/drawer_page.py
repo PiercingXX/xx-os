@@ -573,10 +573,13 @@ class DrawerPage:
         if trimmed:
             GLib.idle_add(win._scroll_apps_to_top)
 
+        n = len(results)
         if trimmed:
-            win.app_count_label.set_text(f'{len(results)} matches')
+            win.app_count_label.set_text(
+                '1 match' if n == 1 else f'{n} matches')
         else:
-            win.app_count_label.set_text(f'{len(results)} apps indexed')
+            win.app_count_label.set_text(
+                '1 app indexed' if n == 1 else f'{n} apps indexed')
 
     def _scroll_apps_to_top(self) -> bool:
         from gi.repository import GLib

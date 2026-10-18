@@ -225,6 +225,15 @@ def test_summarize_lists_counts_before_writing():
     assert "0 new" in body and "0 updates" in body and "1 skipped" in body
 
 
+def test_counts_pluralise_by_count():
+    plan = import_export_module.ImportPlan(updates=[object()])
+    body = import_export_module.summarize(plan, groups_applied=1)
+    assert "1 update," in body and "1 group membership." in body
+    assert (import_export_module.exported_line(1, "/x.vcf")
+            == "Exported 1 contact to /x.vcf.")
+    assert "2 contacts" in import_export_module.exported_line(2, "/x.vcf")
+
+
 # ------------------------------------------------------- backup round trip
 
 

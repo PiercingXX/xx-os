@@ -1277,7 +1277,8 @@ class FilesWindow:
             pass
         if os.path.isdir(path):
             count, _hidden = self._count_now(path)
-            facts.append(("Contents", f"{count} items"))
+            from .row import item_count
+            facts.append(("Contents", item_count(count)))
         else:
             facts.append(("Type", from_extension(path)))
         facts.append(("Where", pretty_path(os.path.dirname(path) or "/",

@@ -197,7 +197,9 @@ class NopeSection(settings_page._Section):
             if reason is not None:
                 try:
                     remaining = state.budget_remaining()
-                    detail = f'{remaining} breaks left · {reason}'
+                    detail = (f"{remaining} break"
+                              f"{'' if remaining == 1 else 's'} left · "
+                              f"{reason}")
                 except Exception:
                     detail = reason
             for minutes in BREAK_CHOICES:

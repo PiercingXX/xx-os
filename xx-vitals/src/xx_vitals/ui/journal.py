@@ -206,9 +206,12 @@ def build_journal_page(db, config, nav, live: dict | None = None) -> object:
             if first is None:
                 break
             header_box.remove(first)
-        caption = f"{len(groups)} days" if groups else "No entries"
+        days = len(groups)
+        caption = ((f"{days} day" if days == 1 else f"{days} days")
+                   if groups else "No entries")
         if total_steps:
-            caption += f" · {total_steps:,} steps"
+            caption += (" · 1 step" if total_steps == 1
+                        else f" · {total_steps:,} steps")
         header_box.append(widgets.page_header(
             "Journal", caption, overflow_cb=menu))
         while True:
