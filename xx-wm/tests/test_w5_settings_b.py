@@ -323,9 +323,26 @@ def _install_fake_gi(monkeypatch):
     return gtk
 
 
+def _sync_bg(work, on_done):
+    try:
+        result = work()
+    except Exception:
+        result = None
+    on_done(result)
+
+
 @pytest.fixture
 def fake_gi(monkeypatch):
-    return _install_fake_gi(monkeypatch)
+    installed = _install_fake_gi(monkeypatch)
+    # Section refreshes run real-system probes (UPower through
+    # system_settings.battery_status) on _run_bg worker threads that
+    # outlive the test; a GLib call on one segfaulted about one run in
+    # four. Stub the probe and run background work inline: no test thread.
+    import settings_page
+    import system_settings
+    monkeypatch.setattr(system_settings, 'battery_status', lambda: None)
+    monkeypatch.setattr(settings_page, '_run_bg', _sync_bg)
+    return installed
 
 
 def _bare_win(**overrides):

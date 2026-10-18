@@ -218,7 +218,8 @@ class _Section:
     """One settings section: layout lives here, behavior on SettingsPage.
 
     Sections live in settings_<feature>.py modules and register in
-    SETTINGS_SECTIONS below (and in one SETTINGS_CATEGORIES entry).
+    the SETTINGS_SECTIONS registry below (and in one SETTINGS_CATEGORIES
+    entry).
     build() returns the widgets to append in order: the caption first
     (deep links scroll to it), then cards and footnotes built with
     settings_ui. refresh() re-queries live state off the main loop.
@@ -947,9 +948,12 @@ class GesturesSection(_Section):
 # placement comes from SETTINGS_CATEGORIES.
 #
 # The feature sections below live in their own settings_<feature>.py
-# modules (plain module imports, not from-imports: those modules read
-# settings_page attributes at call time, so either import order works
-# and the no-circular-imports test stays green).
+# modules (plain module imports, not from-imports). Each subclasses
+# settings_page._Section, so a feature module imported first (a test
+# importing settings_charging alone) loads this module while it is itself
+# half-built: nothing here may read a feature module's attributes at
+# import time. The registry is therefore built on first use
+# (``SETTINGS_SECTIONS`` resolves through the module ``__getattr__``).
 import settings_apps
 import settings_battery_use
 import settings_charging
@@ -968,41 +972,59 @@ import settings_smart_lock
 import settings_standby
 import settings_storage
 
-SETTINGS_SECTIONS: list[tuple[str, type[_Section]]] = [
-    ('system', SystemSection),
-    ('wifi', WifiSection),
-    ('bluetooth', BluetoothSection),
-    ('sound', SoundSection),
-    ('battery', BatterySection),
-    ('charging', settings_charging.ChargingSection),
-    ('batteryuse', settings_battery_use.BatteryUseSection),
-    ('screentime', settings_screentime.ScreenTimeSection),
-    ('backup', BackupSection),
-    ('storage', settings_storage.StorageSection),
-    ('security', settings_security.SecuritySection),
-    ('lock', settings_lock.LockSection),
-    ('mobile', MobileSection),
-    ('services', settings_services.ServicesSection),
-    ('firewall', settings_firewall.FirewallSection),
-    ('apps', settings_apps.AppsSection),
-    ('nope', settings_nope.NopeSection),
-    ('appearance', AppearanceSection),
-    ('display', settings_display.DisplaySection),
-    ('keyboard', settings_keyboard.KeyboardSection),
-    ('launcher', settings_launcher.LauncherSection),
-    ('standby', settings_standby.StandbySection),
-    ('permissions', settings_permissions.PermissionsSection),
-    ('smart_lock', settings_smart_lock.SmartLockSection),
-    ('medical', settings_medical.MedicalSection),
-    ('recording', RecordingSection),
-    ('captions', CaptionsSection),
-    ('nearby', NearbySection),
-    ('findmy', FindMySection),
-    ('about', AboutSection),
-    ('shell', ShellSection),
-    ('developer', DeveloperSection),
-    ('gestures', GesturesSection),
-]
+
+def _settings_sections() -> list[tuple[str, type[_Section]]]:
+    return [
+        ('system', SystemSection),
+        ('wifi', WifiSection),
+        ('bluetooth', BluetoothSection),
+        ('sound', SoundSection),
+        ('battery', BatterySection),
+        ('charging', settings_charging.ChargingSection),
+        ('batteryuse', settings_battery_use.BatteryUseSection),
+        ('screentime', settings_screentime.ScreenTimeSection),
+        ('backup', BackupSection),
+        ('storage', settings_storage.StorageSection),
+        ('security', settings_security.SecuritySection),
+        ('lock', settings_lock.LockSection),
+        ('mobile', MobileSection),
+        ('services', settings_services.ServicesSection),
+        ('firewall', settings_firewall.FirewallSection),
+        ('apps', settings_apps.AppsSection),
+        ('nope', settings_nope.NopeSection),
+        ('appearance', AppearanceSection),
+        ('display', settings_display.DisplaySection),
+        ('keyboard', settings_keyboard.KeyboardSection),
+        ('launcher', settings_launcher.LauncherSection),
+        ('standby', settings_standby.StandbySection),
+        ('permissions', settings_permissions.PermissionsSection),
+        ('smart_lock', settings_smart_lock.SmartLockSection),
+        ('medical', settings_medical.MedicalSection),
+        ('recording', RecordingSection),
+        ('captions', CaptionsSection),
+        ('nearby', NearbySection),
+        ('findmy', FindMySection),
+        ('about', AboutSection),
+        ('shell', ShellSection),
+        ('developer', DeveloperSection),
+        ('gestures', GesturesSection),
+    ]
+
+
+_REGISTRY: list = []
+
+
+def registry() -> list[tuple[str, type[_Section]]]:
+    """(key, section class) in menu order, built once on first use."""
+    if not _REGISTRY:
+        _REGISTRY.extend(_settings_sections())
+    return _REGISTRY
+
+
+def __getattr__(name: str):
+    if name == 'SETTINGS_SECTIONS':
+        return registry()
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
 class SettingsPage:
@@ -1018,7 +1040,7 @@ class SettingsPage:
     def __init__(self, win) -> None:
         self._win = win
         self._sections: dict[str, _Section] = {
-            key: cls() for key, cls in SETTINGS_SECTIONS
+            key: cls() for key, cls in registry()
         }
 
     def section(self, key: str) -> _Section | None:
@@ -1032,7 +1054,7 @@ class SettingsPage:
 
         win = self._win
         built: dict[str, list] = {}
-        for key, _cls in SETTINGS_SECTIONS:
+        for key, _cls in registry():
             built[key] = self._sections[key].build(win) or []
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)

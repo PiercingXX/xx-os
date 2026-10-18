@@ -569,9 +569,19 @@ def fake_gtk():
     saved_widgets = sys.modules.pop('xx_ui.widgets', None)
     saved_widgets_attr = xx_ui.__dict__.pop('widgets', None)
     sys.modules.update(installed)
+    # Section refreshes run real-system probes (UPower through
+    # system_settings.battery_status) on _run_bg worker threads that
+    # outlive the test; a GLib call on one segfaulted about one run in
+    # four. Stub the probe and run background work inline: no test thread.
+    import settings_page as _sp
+    import system_settings as _ss
+    saved_bg, saved_battery = _sp._run_bg, _ss.battery_status
+    _sp._run_bg = _sync_bg
+    _ss.battery_status = lambda: None
     try:
         yield gtk
     finally:
+        _sp._run_bg, _ss.battery_status = saved_bg, saved_battery
         for name, module in saved.items():
             if module is None:
                 sys.modules.pop(name, None)

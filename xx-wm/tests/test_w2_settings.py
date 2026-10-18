@@ -363,12 +363,19 @@ def window():
     # the modules mid-call. No real probes from these page builds.
     saved_slow = _sp.slow_summaries
     _sp.slow_summaries = lambda: {}
+    # Section refreshes probe the real system the same way (UPower's
+    # system_settings.battery_status, pactl, BlueZ) through _run_bg worker
+    # threads: a GLib call on one of them segfaulted about 1 run in 4. No
+    # test thread here at all: background work is dropped.
+    saved_bg = _sp._run_bg
+    _sp._run_bg = lambda _work, _on_done: None
     try:
         import window
         sys.modules.pop('window', None)
         yield window
     finally:
         _sp.slow_summaries = saved_slow
+        _sp._run_bg = saved_bg
         for name, module in saved.items():
             if module is None:
                 sys.modules.pop(name, None)
