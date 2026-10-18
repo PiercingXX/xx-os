@@ -350,7 +350,17 @@ class ContactsWindow(Adw.ApplicationWindow):
         self._jump = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                              spacing=2)
         self._jump.set_valign(Gtk.Align.CENTER)
-        middle.append(self._jump)
+        # The strip scrolls where it is taller than the list (a phone in
+        # landscape, 1000x450) instead of holding the window taller.
+        jump_scroll = Gtk.ScrolledWindow()
+        jump_scroll.set_policy(Gtk.PolicyType.NEVER,
+                               Gtk.PolicyType.AUTOMATIC)
+        jump_scroll.set_propagate_natural_width(True)
+        jump_scroll.set_propagate_natural_height(True)
+        jump_scroll.set_child(self._jump)
+        self._jump.bind_property("visible", jump_scroll, "visible",
+                                 GObject.BindingFlags.SYNC_CREATE)
+        middle.append(jump_scroll)
 
         self._search = Gtk.SearchEntry()
         self._search.set_placeholder_text("Search")
@@ -371,7 +381,9 @@ class ContactsWindow(Adw.ApplicationWindow):
         list_page = Adw.NavigationPage(child=root, title="xx-contacts")
         navigation.push(list_page)
         self.set_content(navigation)
-        self.set_size_request(320, 640)
+        # The suite floor: a phone in landscape (1000x450) is shorter
+        # than any fixed portrait height.
+        self.set_size_request(320, 200)
 
         self._search.connect("search-changed", self._on_search_changed)
         self._list.connect("activate", self._on_row_activated)
@@ -780,7 +792,12 @@ class ContactsWindow(Adw.ApplicationWindow):
         spacer = Gtk.Box()
         spacer.set_vexpand(True)
         box.append(spacer)
-        dialog.set_child(box)
+        # Scrolls where the rows are taller than the screen (landscape).
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_propagate_natural_height(True)
+        scroll.set_child(box)
+        dialog.set_child(scroll)
         dialog.present()
 
     def _on_menu_action(self, _button: Gtk.Button, action: str, uid: str,

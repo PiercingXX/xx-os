@@ -1,7 +1,7 @@
 # TxxT Linux Port — Specification
 
 Target: postmarketOS / Mobian / FuriOS / PureOS phones running phoc
-(XX-WM or Phosh). 360x720 logical px (min 320x640), touch-first, on-screen
+(XX-WM or Phosh). 360x720 logical px (min 320x200), touch-first, on-screen
 keyboard. Stack: Python 3.12+, GTK4 + libadwaita via PyGObject
 (`Adw.Application`, `Adw.NavigationView`), meson install, stdlib + GI only.
 

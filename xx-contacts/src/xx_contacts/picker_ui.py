@@ -1,6 +1,6 @@
 """L6 contact picker page: pick-mode list the D-Bus ``Pick`` serves.
 
-Phone-first 360x720 (min 320x640): a title per kind, a tap-to-focus
+Phone-first 360x720 (min 320x200): a title per kind, a tap-to-focus
 search filter, a single-click ``Gtk.ListView`` over the snapshot rows
 from ``picker`` (one tap picks), and a Cancel button that reports
 ``("", "")``. The page never writes: picks and cancels funnel into the
@@ -228,7 +228,7 @@ def present_pick_dialog(kind: str, rows: list, on_done) -> bool:
         return False
     window.set_decorated(False)
     window.set_default_size(360, 720)
-    window.set_size_request(320, 640)
+    window.set_size_request(320, 200)
     navigation = Adw.NavigationView()
     settled: list[bool] = []
 

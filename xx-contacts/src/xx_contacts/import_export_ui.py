@@ -1,6 +1,6 @@
 """L5 import/export page pushed on the list's ``Adw.NavigationView``.
 
-Phone-first 360x720 (min 320x640): a scrolled stack with an import
+Phone-first 360x720 (min 320x200): a scrolled stack with an import
 group (vCard file, Android backup, one-time GNOME Contacts import),
 an export group (whole address book through the portal file chooser),
 and the optional one-way EDS publish switch (off by default). Every

@@ -66,7 +66,9 @@ class TxxtWindow(Adw.ApplicationWindow):
         self.set_title('TxxT')
         self.set_decorated(False)
         self.set_default_size(360, 720)
-        self.set_size_request(320, 640)
+        # The suite floor: a phone in landscape (1000x450) is shorter
+        # than any fixed portrait height.
+        self.set_size_request(320, 200)
         xx_ui.apply(Gdk.Display.get_default())
         self._store = Store(str(ensure_data_dir() / 'txxt.db'))
         self._client: TxxtClient | None = None
