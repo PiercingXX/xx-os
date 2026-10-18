@@ -89,14 +89,24 @@ def main(argv: list[str]) -> int:
             print("FAIL: a text entry holds focus at startup")
             failed = True
         expected = ["QUICK PICKS", "Playback engine",
-                    "Find songs, albums, artists and playlists.",
                     "Open-source licenses"]
         for line in expected:
             if line not in texts:
                 print(f"FAIL: missing line {line!r}")
                 failed = True
+        # Minimal: an empty list shows nothing, a direct action no toast.
+        clutter = ["Find songs, albums, artists and playlists.",
+                   "Search for a song to start listening.",
+                   "The log is empty.", "Plays next", "Added to the queue"]
+        for line in clutter:
+            if line in texts:
+                print(f"FAIL: clutter line {line!r}")
+                failed = True
         if "Checking…" in texts:
             print("FAIL: engine status never arrived")
+            failed = True
+        for text in _cut_short(window):
+            print(f"FAIL: a short tag or chip lost its end: {text!r}")
             failed = True
         licenses = _row_titled(window, "Open-source licenses")
         if licenses is None or _images_in(licenses):
@@ -144,6 +154,31 @@ def _label_texts(widget) -> list[str]:
         texts.extend(_label_texts(child))
         child = child.get_next_sibling()
     return texts
+
+
+def _cut_short(widget) -> list[str]:
+    """Tag, chip and caps-action labels that fit their budget but show an
+    ellipsis anyway (letter-spaced caps once read "OFFLIN…")."""
+    from gi.repository import Gtk
+
+    found: list[str] = []
+    classes = ("xx-mu-tag", "xx-chip", "xx-mu-act")
+    child = widget.get_first_child()
+    while child is not None:
+        parent = child.get_parent()
+        owner = parent.get_parent() if parent is not None else None
+        tagged = any(w is not None and w.has_css_class(c)
+                     for w in (parent, owner) for c in classes)
+        if (isinstance(child, Gtk.Label) and tagged
+                and child.get_mapped() and child.get_width() > 0):
+            text = child.get_text()
+            budget = child.get_max_width_chars()
+            if (child.get_layout().is_ellipsized()
+                    and (budget < 0 or len(text) <= budget)):
+                found.append(text)
+        found.extend(_cut_short(child))
+        child = child.get_next_sibling()
+    return found
 
 
 def _buttons_in_buttons(widget, inside: bool = False) -> list[str]:

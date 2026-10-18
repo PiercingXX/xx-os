@@ -247,9 +247,11 @@ class NowPlaying:
     def _top_bar(self) -> Gtk.Widget:
         if self.words:
             return self._word_bar()
-        bar = common.hbox(6)
+        # Collapse, cast and the three words fit 320 px: tight spacing,
+        # the words' own 8 px padding.
+        bar = common.hbox(4)
         bar.set_margin_start(8)
-        bar.set_margin_end(14)
+        bar.set_margin_end(10)
         bar.set_margin_top(8)
         bar.set_margin_bottom(4)
         collapse = common.icon_button("go-down-symbolic", "Close the player",
@@ -937,12 +939,6 @@ class NowPlaying:
                 off.set_margin_top(8)
                 off.set_margin_bottom(10)
                 status.append(off)
-            else:
-                line = common.para(
-                    "Off. The music fades out over the last 10 seconds.",
-                    "xx-secondary")
-                line.set_margin_bottom(10)
-                status.append(line)
             mode = (player.sleep or {}).get("mode", SLEEP_OFF)
             grid_slot.append(common.grid_chips([
                 (f"{m}", mode == m * 60, lambda m=m: do(m * 60))

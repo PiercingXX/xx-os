@@ -134,6 +134,7 @@ def volume_row(ui) -> Gtk.Box:
     box = common.hbox(10)
     box.add_css_class("xx-mu-cast-vol")
     glyph = common.label("VOL", "xx-mu-label", chars=4)
+    glyph.set_ellipsize(0)  # letter-spaced caps misfire an ellipsis
     box.append(glyph)
     scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL,
                                      0.0, 1.0, 0.05)
@@ -211,11 +212,9 @@ def open_cast_sheet(ui):
                 "audio-speakers-symbolic", text,
                 lambda d=device: (
                     player.cast_to(str(d.get("id"))),
-                    common.later(400, refresh))))
+                    common.later(400, refresh)), proper=True))
         if cast.get("searching"):
             rows.append(common.muted("Searching…"))
-        elif not devices:
-            rows.append(common.muted("No speakers found on this Wi-Fi."))
         again = minimal.outline(
             "Search again",
             lambda: (player.refresh_cast(), common.later(600, refresh)))

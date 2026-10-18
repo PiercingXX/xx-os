@@ -91,8 +91,7 @@ class AccountSection:
         common.clear(slot)
         if not state.signed_in:
             slot.append(common.para(
-                "Not signed in. Search, radio and lyrics work without an "
-                "account; signing in adds your library and likes.",
+                "Signing in adds your library and likes.",
                 "xx-secondary"))
             button = minimal.primary("Sign in", self.open_sign_in)
             common.fit(button, 12)
@@ -308,8 +307,7 @@ class SignInPage:
         self.loading.set_active(False)
         self.go.set_sensitive(True)
         self.on_signed_in(state)
-        self.ui.shell.pop()
-        common.toast(self.ui, f"Signed in as {state.account_name}")
+        self.ui.shell.pop()  # Account now shows who is signed in
 
     def _failed(self, error) -> None:
         self.loading.set_active(False)
@@ -414,7 +412,6 @@ class OAuthPage:
         self.loading.set_active(False)
         self.on_signed_in(state)
         self.ui.shell.current_nav().pop_to_tag("settings")
-        common.toast(self.ui, "Signed in")
 
     def _failed(self, error) -> None:
         self.loading.set_active(False)
@@ -433,9 +430,8 @@ class OAuthPage:
 
 WELCOME_PITCH = ("YouTube Music on your phone: search, radio, lyrics and "
                  "downloads.")
-WELCOME_NOTE = ("Signing in adds your library, likes and history. It's "
-                "optional, and a spare account is the careful choice. "
-                "You can sign in later in Settings, Account.")
+WELCOME_NOTE = ("Optional: signing in adds your library, likes and "
+                "history. A spare account is the careful choice.")
 
 
 def show_welcome(ui, open_sign_in) -> object:

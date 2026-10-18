@@ -371,14 +371,19 @@ def tag(text: str, icon: str = "", solid: bool = False) -> Gtk.Box:
     if icon:
         box.append(widgets.icon_image(icon, 10))
     text_label = Gtk.Label(label=text.upper())
-    text_label.set_ellipsize(Pango.EllipsizeMode.END)
+    # Letter-spaced caps misfire an ellipsis on a word that fits
+    # ("OFFLIN…"): only text past the budget may ellipsize.
+    text_label.set_ellipsize(Pango.EllipsizeMode.END if len(text) > 14
+                             else Pango.EllipsizeMode.NONE)
     text_label.set_max_width_chars(14)
     box.append(text_label)
     return box
 
 
 def offline_tag() -> Gtk.Box:
-    box = tag("On this phone", "folder-download-symbolic")
+    # "Offline" fits a 120 px tile whole ("ON THIS PH…" did not); the
+    # spoken label keeps the full meaning.
+    box = tag("Offline", "folder-download-symbolic")
     box.update_property([Gtk.AccessibleProperty.LABEL], ["On this phone"])
     return box
 
@@ -905,14 +910,22 @@ def present(dialog, parent: Gtk.Widget):
     return dialog
 
 
-def menu_row(icon: str, text: str, callback) -> Gtk.Button:
+def menu_row(icon: str, text: str, callback,
+             proper: bool = False) -> Gtk.Button:
+    """A 48 px sheet row. ``proper`` text is a name (a speaker's): Minimal
+    Mode keeps its capital ("Living Room", not "living Room")."""
     if minimal.active():
-        return minimal.text_row(minimal.sentence_word(text), callback)
+        return minimal.text_row(
+            text if proper else minimal.sentence_word(text), callback)
     button = Gtk.Button()
     button.add_css_class("xx-mu-menu")
     row = hbox(16)
     row.append(widgets.icon_image(icon, 20))
-    row.append(label(text, "xx-body", chars=24))
+    text_label = label(text, "xx-body", chars=32)
+    # The row's whole width: "This phone · playing here" never loses
+    # its last word to a natural-width allocation.
+    text_label.set_hexpand(True)
+    row.append(text_label)
     button.set_child(row)
     button.connect("clicked", lambda _b: callback())
     return button
@@ -1014,6 +1027,48 @@ def empty_state(text: str, action: str = "", callback=None) -> Gtk.Widget:
         act.set_halign(Gtk.Align.START)
         box.append(act)
     return box
+
+
+def copied(widget: Gtk.Widget, match: str = "", ms: int = 2000) -> None:
+    """The in-place receipt for a copy: the first label under ``widget``
+    (or the one reading ``match``) says "Copied" for two seconds, then
+    its own words come back. No toast for a direct action."""
+    found = None
+    stack = [widget]
+    while stack and found is None:
+        node = stack.pop(0)
+        if isinstance(node, Gtk.Label) and (not match
+                                             or node.get_text() == match):
+            found = node
+            break
+        child = node.get_first_child()
+        while child is not None:
+            stack.append(child)
+            child = child.get_next_sibling()
+    if found is None:
+        return
+    original = getattr(found, "xx_copied_from", None) or found.get_text()
+    found.xx_copied_from = original
+    found.set_text("Copied")
+
+    def restore() -> bool:
+        found.set_text(original)
+        found.xx_copied_from = None
+        return False
+
+    GLib.timeout_add(ms, restore)
+
+
+def retry_button(callback) -> Gtk.Widget:
+    """The one action under an error line: Retry (``[ retry ]`` in
+    Minimal Mode), start-aligned like the line above it."""
+    if minimal.active():
+        button = minimal.bracket_button("retry", callback,
+                                        minimal.Tone.STRONG)
+    else:
+        button = widgets.outline_button("Retry", callback)
+    button.set_halign(Gtk.Align.START)
+    return button
 
 
 def toast(ui, text: str, action_label: str = "",

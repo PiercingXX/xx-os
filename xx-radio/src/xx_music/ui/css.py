@@ -75,6 +75,9 @@ CSS = Template("""
 button.xx-mu-row { padding: 8px 0; border-radius: 0;
   border-bottom: 1px solid alpha(${fg}, 0.10); }
 button.xx-mu-row.last { border-bottom: none; }
+/* a row of text and its own button (Killed artists: name, Unblock) */
+box.xx-mu-row { padding: 8px 0; border-bottom: 1px solid alpha(${fg}, 0.10); }
+box.xx-mu-row.last { border-bottom: none; }
 button.xx-mu-row:active, button.xx-mu-tile:active,
 button.xx-mu-plain:active { background-color: alpha(${fg}, 0.06); }
 button.xx-mu-row.now .xx-title { color: ${fg}; }
@@ -132,7 +135,7 @@ button.xx-mu-key { min-width: 48px; min-height: 48px; padding: 0;
   border-radius: 9999px; color: ${fg}; }
 button.xx-mu-key.dim image { color: alpha(${fg}, 0.42); }
 button.xx-mu-key:active { background-color: alpha(${fg}, 0.08); }
-button.xx-mu-act { min-height: 36px; padding: 0 12px; border-radius: 3px;
+button.xx-mu-act { min-height: 36px; padding: 0 8px; border-radius: 3px;
   border: 1px solid alpha(${fg}, 0.22); font-size: ${label}px;
   letter-spacing: 0.12em; color: ${muted}; }
 button.xx-mu-act image { color: ${muted}; }

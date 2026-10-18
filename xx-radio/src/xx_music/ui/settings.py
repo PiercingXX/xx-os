@@ -22,9 +22,11 @@ from xx_music.ui import common, css, fmt, minimal
 from xx_ui import widgets
 
 MINIMAL_TITLE = "Minimal mode"
-MINIMAL_SUB = "Text only: no art, icons or tiles. Art is never fetched."
+MINIMAL_SUB = "Text only: no art, icons or tiles"
 
 LOG_LINES = 200
+DIAG_SUB = "Versions and recent errors, no sign-in data"
+LOG_SUB = "Sign-in data hidden"
 
 
 def switch_row(title: str, subtitle: str, active: bool, on_change,
@@ -211,17 +213,10 @@ class SettingsPage:
             entries = list(self.ui.blocked.list())
         except Exception:  # noqa: BLE001 - settings never fail
             entries = []
-        box.append(nav_row("Killed artists", blocked_summary(len(entries)),
+        # The heading names the list; the row says what is on it. Thumbs
+        # down songs have one home: Library > Thumbs down.
+        box.append(nav_row("Artists", blocked_summary(len(entries)),
                            self.open_blocked))
-        try:
-            disliked = list(self.ui.store.disliked())
-        except Exception:  # noqa: BLE001 - settings never fail
-            disliked = []
-        count = len(disliked)
-        box.append(nav_row("Thumbs down",
-                           "None" if not count else
-                           "1 song" if count == 1 else f"{count} songs",
-                           self.open_disliked))
         box.append(switch_row(
             "Remove their downloads too",
             "Delete downloads by killed artists instead of hiding them",
@@ -231,9 +226,6 @@ class SettingsPage:
 
     def open_blocked(self) -> None:
         self.ui.shell.push(BlockedView(self.ui).widget, "Killed artists")
-
-    def open_disliked(self) -> None:
-        self.ui.shell.push(DislikedView(self.ui).widget, "Thumbs down")
 
     def _set(self, key: str, value) -> None:
         self.prefs[key] = value
@@ -347,11 +339,11 @@ class SettingsPage:
     def _diagnostics(self) -> Gtk.Widget:
         box = common.vbox(0)
         box.append(section("Diagnostics"))
-        box.append(nav_row("Copy diagnostics",
-                           "Versions and recent errors, no sign-in data",
-                           self.copy_diagnostics,
-                           trailing="copy" if minimal.active() else
-                           widgets.icon_image("edit-copy-symbolic")))
+        self._diag_row = nav_row(
+            "Copy diagnostics", DIAG_SUB, self.copy_diagnostics,
+            trailing="copy" if minimal.active() else
+            widgets.icon_image("edit-copy-symbolic"))
+        box.append(self._diag_row)
         box.append(nav_row("Log", "What the app did recently",
                            self.open_log, last=True))
         return box
@@ -382,7 +374,9 @@ class SettingsPage:
     def copy_diagnostics(self) -> None:
         def done(text: str) -> None:
             self.widget.get_clipboard().set(text)
-            common.toast(self.ui, "Diagnostics copied")
+            row = getattr(self, "_diag_row", None)
+            if row is not None:
+                common.copied(row, DIAG_SUB)
 
         self.ui.io(self.diagnostics_text, done, lambda _e: None)
 
@@ -435,20 +429,15 @@ class BlockedView:
         except Exception:  # noqa: BLE001 - settings never fail
             entries = []
         if not entries:
-            note = common.muted("No killed artists. Their songs will "
-                                "keep showing.")
-            self.body.append(note)
             return
         for index, entry in enumerate(entries):
+            # The name only: an engine id ("ar-north") means nothing here.
             title = entry.name or entry.id or "Artist"
-            sub = entry.id if entry.id and entry.id != title else ""
             row = common.hbox(12)
             texts = common.vbox(2)
             texts.set_hexpand(True)
             texts.set_valign(Gtk.Align.CENTER)
             texts.append(common.label(title, "xx-title", chars=20))
-            if sub:
-                texts.append(common.label(sub, "xx-secondary", chars=24))
             row.append(texts)
             unblock = minimal.outline(
                 "Unblock", lambda e=entry: self.unblock(e))
@@ -468,67 +457,13 @@ class BlockedView:
                                lambda _e: self.paint())
 
 
-class DislikedView:
-    def __init__(self, ui) -> None:
-        self.ui = ui
-        self.body = common.vbox(0)
-        self.body.add_css_class("xx-page-body")
-        self.body.set_margin_bottom(24)
-        root = common.vbox(0)
-        root.add_css_class("xx-mu")
-        root.append(common.header(ui.shell.pop, "Thumbs down",
-                                  "Hidden from suggestions"))
-        root.append(common.scroller(self.body))
-        self.widget = root
-        self.paint()
-
-    def paint(self) -> None:
-        common.clear(self.body)
-        try:
-            tracks = list(self.ui.store.disliked())
-        except Exception:  # noqa: BLE001 - settings never fail
-            tracks = []
-        if not tracks:
-            self.body.append(common.muted(
-                "Nothing thumbed down. Songs you thumb down hide "
-                "from suggestions but stay findable by search."))
-            return
-        for index, track in enumerate(tracks):
-            row = common.hbox(12)
-            texts = common.vbox(2)
-            texts.set_hexpand(True)
-            texts.set_valign(Gtk.Align.CENTER)
-            texts.append(common.label(track.title, "xx-title", chars=20))
-            if track.artist_line:
-                texts.append(common.label(track.artist_line, "xx-secondary",
-                                          chars=24))
-            row.append(texts)
-            clear = widgets.outline_button(
-                "Remove", lambda t=track: self.clear(t))
-            common.fit(clear, 10)
-            clear.set_valign(Gtk.Align.CENTER)
-            common.name(clear, f"Remove thumbs down for {track.title}")
-            row.append(clear)
-            wrap = common.vbox(0)
-            wrap.add_css_class("xx-mu-row")
-            if index == len(tracks) - 1:
-                wrap.add_css_class("last")
-            wrap.append(row)
-            self.body.append(wrap)
-
-    def clear(self, track) -> None:
-        from xx_music.engine import Rating
-
-        self.ui.rate(track, Rating.DISLIKE,
-                     lambda _v: self.paint())
-
-
 class LogView:
     def __init__(self, ui) -> None:
         self.ui = ui
         self.text = ""
         body = common.vbox(0)
         body.add_css_class("xx-page-body")
+        body.set_margin_top(12)
         body.set_margin_bottom(24)
         self.label = Gtk.Label(label="Reading the log…")
         self.label.add_css_class("xx-mu-log")
@@ -541,10 +476,10 @@ class LogView:
         body.append(self.label)
         root = common.vbox(0)
         root.add_css_class("xx-mu")
-        root.append(common.header(ui.shell.pop, "Log",
-                                  "Sign-in data hidden",
+        self.head = common.header(ui.shell.pop, "Log", LOG_SUB,
                                   "edit-copy-symbolic", "Copy the log",
-                                  self.copy))
+                                  self.copy)
+        root.append(self.head)
         root.append(common.scroller(body))
         self.widget = root
         ui.io(self.read, self.show, lambda _e: self.show(""))
@@ -560,9 +495,9 @@ class LogView:
 
     def show(self, text: str) -> None:
         self.text = text
-        self.label.set_text(text or "The log is empty.")
+        self.label.set_text(text)  # an empty log shows nothing
 
     def copy(self) -> None:
         if self.text:
             self.widget.get_clipboard().set(self.text)
-            common.toast(self.ui, "Log copied")
+            common.copied(self.head, LOG_SUB)

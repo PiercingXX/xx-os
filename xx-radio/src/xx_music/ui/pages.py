@@ -224,8 +224,7 @@ def _play_buttons(ui, tracks: list[Track], origin: dict,
                                         Tone.QUIET)]
         if download is not None and ui.supports(STREAM):
             words.append(minimal.bracket_button(
-                "download", lambda: (ui.player.download([download]),
-                                     common.toast(ui, "Downloading")),
+                "download", lambda: ui.player.download([download]),
                 Tone.QUIET))
         return words
 
@@ -238,8 +237,7 @@ def _play_buttons(ui, tracks: list[Track], origin: dict,
     if download is not None and ui.supports(STREAM):
         get = common.icon_button(
             "folder-download-symbolic", "Download",
-            lambda: (ui.player.download([download]),
-                     common.toast(ui, "Downloading")))
+            lambda: ui.player.download([download]))
         get.add_css_class("xx-mu-thumb")
         buttons.append(get)
     return buttons
@@ -447,7 +445,6 @@ class ShelvesView(Page):
         self._title_block()
         shown = [s for s in shelves if s.items]
         if not shown:
-            self.gutter(common.muted("Nothing here right now."))
             return
         for shelf in shown:
             self.section(shelf.title)
@@ -541,7 +538,6 @@ def play_collection(ui, item: Item, shuffle: bool = False,
                   "title": item.title}
         if enqueue:
             ui.player.enqueue(tracks, False)
-            common.toast(ui, "Added to the queue")
         elif shuffle:
             ui.player.play(tracks, random.randrange(len(tracks)), origin)
             ui.player.set_shuffle(True)

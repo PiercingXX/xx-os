@@ -29,11 +29,9 @@ def track_menu(ui, track: Track, queue_index: int | None = None):
     if queue_index is None:
         entries += [
             ("media-skip-forward-symbolic", "Play next",
-             lambda: (player.enqueue([track], True),
-                      common.toast(ui, "Plays next"))),
+             lambda: player.enqueue([track], True)),
             ("list-add-symbolic", "Add to queue",
-             lambda: (player.enqueue([track], False),
-                      common.toast(ui, "Added to the queue"))),
+             lambda: player.enqueue([track], False)),
         ]
     else:
         entries += [
@@ -63,13 +61,11 @@ def track_menu(ui, track: Track, queue_index: int | None = None):
         entries.append(None)
         if track.id in ui.downloaded:
             entries.append(("user-trash-symbolic", "Remove download",
-                            lambda: (player.remove_download(track.id),
-                                     common.toast(ui, "Download removed"))))
+                            lambda: player.remove_download(track.id)))
         else:
             entries.append(("folder-download-symbolic", "Download",
-                            lambda: (player.download([download_payload(
-                                "track", track.id, track.title, track)]),
-                                common.toast(ui, "Downloading"))))
+                            lambda: player.download([download_payload(
+                                "track", track.id, track.title, track)])))
     liked = player.rating(track.id) == Rating.LIKE
     disliked = player.rating(track.id) == Rating.DISLIKE
     entries.append(None)
@@ -112,9 +108,8 @@ def item_menu(ui, item: Item):
         ]
         if ui.supports(STREAM):
             entries.append(("folder-download-symbolic", "Download",
-                            lambda: (ui.player.download([download_payload(
-                                item.kind.value, item.id, item.title)]),
-                                common.toast(ui, "Downloading"))))
+                            lambda: ui.player.download([download_payload(
+                                item.kind.value, item.id, item.title)])))
     elif item.kind == ItemKind.ARTIST:
         entries.append(("avatar-default-symbolic", "Open artist",
                         lambda: shell.open_item(item)))

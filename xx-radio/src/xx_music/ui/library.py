@@ -39,18 +39,6 @@ SIGNED_OUT_SECTIONS = (
     (LibrarySection.HISTORY.value, "History"),
     (DISLIKED, "Thumbs down"),
 )
-EMPTY = {
-    PHONE: "Nothing on this phone yet. Download songs, albums and "
-           "playlists from their menus.",
-    LibrarySection.LIKED.value: "Songs you like show here.",
-    DISLIKED: "Songs you thumb down hide from suggestions. "
-              "Remove one here to see it again.",
-    LibrarySection.HISTORY.value: "Songs you play show here.",
-    LibrarySection.PLAYLISTS.value: "No playlists in your library yet.",
-    LibrarySection.SONGS.value: "No songs in your library yet.",
-    LibrarySection.ALBUMS.value: "No albums in your library yet.",
-    LibrarySection.ARTISTS.value: "No artists in your library yet.",
-}
 STATE_TITLES = {ACTIVE: "Downloading", QUEUED: "Waiting", FAILED: "Failed",
                 DONE: "Downloaded"}
 
@@ -172,8 +160,7 @@ class LibraryPage:
         self._repaint = lambda: self._got_items(items)
         common.clear(self.body)
         if not items:
-            self._gutter(common.muted(EMPTY[self.section]))
-            return
+            return  # an empty section shows nothing
         tracks = [i.track for i in items if i.track is not None]
         if len(tracks) == len(items):
             self._paint_tracks(tracks, self.section)
@@ -200,7 +187,6 @@ class LibraryPage:
         self._repaint = lambda: self._paint_tracks(tracks, key)
         common.clear(self.body)
         if not tracks:
-            self._gutter(common.muted(EMPTY[key]))
             return
         title = dict([*SIGNED_IN_SECTIONS, *SIGNED_OUT_SECTIONS])[key]
         origin = {"type": "library", "title": title}
@@ -225,11 +211,10 @@ class LibraryPage:
         common.clear(self.body)
         rows: list[DownloadRow] = list(self.ui.downloads)
         done = [r for r in rows if r.state == DONE]
+        if not rows:
+            return  # nothing on this phone: no card, no line
         used = sum(r.size_bytes or 0 for r in done)
         self._gutter(self._storage(len(done), used))
-        if not rows:
-            self._gutter(common.muted(EMPTY[PHONE]))
-            return
         for state in (ACTIVE, QUEUED, FAILED, DONE):
             group = [r for r in rows if r.state == state]
             if not group:
@@ -276,14 +261,9 @@ class LibraryPage:
         return box
 
     def _phone_line(self, count: int) -> str:
-        active = sum(1 for r in self.ui.downloads if r.state == ACTIVE)
-        waiting = sum(1 for r in self.ui.downloads if r.state == QUEUED)
-        parts = [fmt.songs(count) + " on this phone"]
-        if active:
-            parts.append(f"downloading {active}")
-        if waiting:
-            parts.append(f"{waiting} waiting for Wi-Fi")
-        return " · ".join(parts)
+        """The storage card's one line; the sections below already
+        count what is downloading and waiting."""
+        return fmt.songs(count) + " on this phone"
 
     def _play_done(self, done: list[DownloadRow]) -> None:
         tracks = [r.track for r in done]
@@ -335,9 +315,8 @@ class LibraryPage:
         if row.state == FAILED:
             trailing = common.icon_button(
                 "view-refresh-symbolic", f"Retry {track.title}",
-                lambda: (ui.player.download([menus.download_payload(
-                    "track", track.id, track.title, track)]),
-                    common.toast(ui, "Trying again")))
+                lambda: ui.player.download([menus.download_payload(
+                    "track", track.id, track.title, track)]))
         elif row.state in (ACTIVE, QUEUED):
             trailing = common.icon_button(
                 "window-close-symbolic", f"Cancel {track.title}",
@@ -359,7 +338,6 @@ class LibraryPage:
     def _retry(self, track: Track) -> None:
         self.ui.player.download([menus.download_payload(
             "track", track.id, track.title, track)])
-        common.toast(self.ui, "Trying again")
 
     def _minimal_download_row(self, row: DownloadRow,
                               done: list[DownloadRow]) -> Gtk.Widget:

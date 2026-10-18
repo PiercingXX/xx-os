@@ -23,6 +23,9 @@ OUTDIR=$(cd "$OUTDIR" && pwd)
 PY=${PYTHON:-python3}
 THEMES=${THEMES:-"amoled paper graphite aura"}
 JOBS=${JOBS:-3}
+# SIZE: the window for the theme renders (default 360x720; the phones
+# are 450x1000 and 360x720 logical).
+SIZE=${SIZE:-360x720}
 MINIMAL=${MINIMAL:-both}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -179,7 +182,7 @@ fi
 for theme in $THEMES; do
     for label in $labels_all; do
         wanted "$label" && add_job "$WORK/$theme-$label.png" "$theme" 1 \
-            360x720 "$label"
+            "$SIZE" "$label"
     done
 done
 for label in $fit_labels; do
@@ -196,7 +199,7 @@ cat > "$WORK/one.sh" <<EOF
 out=\$1 home=\$2 size=\$3 target=\$4 scenario=\$5
 shift 5
 attempt=0
-while [ "\$attempt" -lt 5 ]; do
+while [ "\$attempt" -lt 10 ]; do
     attempt=\$((attempt + 1))
     rm -f "\$out"
     env HOME="\$home" XDG_CONFIG_HOME="\$home/.config" \\
@@ -241,7 +244,7 @@ sheet() {
     done
     [ -n "$labels" ] || return 0
     # shellcheck disable=SC2086
-    montage $labels -tile 9x -geometry 360x720+6+6 -background '#202020' \
+    montage $labels -tile 9x -geometry "$SIZE"+6+6 -background '#202020' \
         -fill white -pointsize 22 "$OUTDIR/$out" \
         || { echo "snap_all: montage failed" >&2; exit 1; }
     echo "$OUTDIR/$out"

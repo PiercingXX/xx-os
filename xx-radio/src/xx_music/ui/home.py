@@ -26,7 +26,6 @@ QUICK_ROWS = 4
 COLUMN_PX = 296
 MOODS_SHELF = "Moods & genres"
 CHARTS_PREFIX = "chart:"
-EMPTY_TEXT = "Search for a song to start listening."
 LOCAL_LISTEN_AGAIN = "Listen again"
 
 
@@ -127,7 +126,10 @@ class HomePage:
     def _failed(self, error) -> None:
         self.loading.set_active(False)
         kind = getattr(error, "kind", ErrorKind.OTHER)
-        self.note = ERROR_TEXT.get(kind, ERROR_TEXT[ErrorKind.OTHER])
+        # Offline already has the shell's banner (with Retry); saying it
+        # again over the cached shelves would be a duplicate line.
+        self.note = "" if kind == ErrorKind.OFFLINE else ERROR_TEXT.get(
+            kind, ERROR_TEXT[ErrorKind.OTHER])
         self._paint()
 
     def _repaint(self) -> None:
@@ -154,14 +156,13 @@ class HomePage:
             body.append(holder)
         ordered = self._ordered()
         if not ordered:
-            empty = common.empty_state(
-                self.note or EMPTY_TEXT,
-                "Search" if not self.note else "Retry",
-                (lambda: self.ui.shell.show("search")) if not self.note
-                else self.reload)
-            empty.add_css_class("xx-page-body")
-            empty.set_margin_top(48)
-            body.append(empty)
+            # Nothing to show is nothing on screen (Search is its own
+            # tab); a failed load has its note above and one Retry.
+            if self.note:
+                retry = common.retry_button(self.reload)
+                retry.add_css_class("xx-page-body")
+                retry.set_margin_top(16)
+                body.append(retry)
             return
         for index, (title, shelf) in enumerate(ordered):
             head = common.section(title, first=index == 0)

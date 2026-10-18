@@ -78,9 +78,9 @@ shelves reuse the same weights (`score_item`, `order_tracks`,
   active thumb clears it.
 - Song menus always show Thumbs up / Thumbs down (with Remove wording
   when active), independent of the engine's `rate` capability.
-- Library has a local "Thumbs down" section (signed in and out) and
-  Settings has a "Thumbs down" row with the same list; both offer
-  Remove to undo.
+- Library has a local "Thumbs down" section (signed in and out) with
+  Remove to undo; it is the list's one home (Settings no longer
+  repeats it).
 - Mini-player: unchanged. Its row (art, title, play/pause, next, cast)
   has no room for a thumb without a redesign, so thumbs live in Now
   Playing and the song menus.

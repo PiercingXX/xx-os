@@ -319,19 +319,17 @@ class EnginePage:
     def _failure(self, error: str) -> Gtk.Widget:
         box = common.vbox(8)
         box.set_margin_top(12)
-        box.append(common.para(
-            "The update stopped. Check the connection and try again; "
-            "Copy details helps when reporting it.", "xx-secondary"))
+        box.append(common.para("The update stopped.", "xx-secondary"))
         copy = minimal.outline("Copy details", lambda: self._copy(
-            error))
+            error, copy))
         common.fit(copy, 14)
         copy.set_halign(Gtk.Align.START)
         box.append(copy)
         return box
 
-    def _copy(self, error: str) -> None:
+    def _copy(self, error: str, button: Gtk.Widget) -> None:
         self.widget.get_clipboard().set(redact_text(error))
-        common.toast(self.ui, "Details copied")
+        common.copied(button)
 
     def _actions(self, snap: es.Snapshot) -> Gtk.Widget:
         box = common.vbox(10)
@@ -375,11 +373,7 @@ class EnginePage:
             row.append(system)
         if row.get_first_child() is not None:
             box.append(row)
-        box.append(common.para(
-            "Updating downloads the newest catalog and stream libraries "
-            "into a private folder and checks them before switching.",
-            "xx-mu-meta"))
-        return box
+        return box  # the steps list explains an update as it runs
 
     # -- actions -----------------------------------------------------------------
     def update(self) -> None:
@@ -402,8 +396,7 @@ class EnginePage:
 
     def _finished(self, ok: bool, error=None) -> None:
         if ok:
-            self.steps.finish()
-            common.toast(self.ui, "Engine updated")
+            self.steps.finish()  # the steps and the new versions say so
         else:
             self.steps.fail(getattr(self, "_failed_step", "") or es.STEPS[0])
         self.running = ""
@@ -418,27 +411,28 @@ class EnginePage:
 
         def done(ok: bool, error=None) -> None:
             self.running = ""
-            common.toast(self.ui, "Token helper ready" if ok else
-                         "The token helper didn't set up. Nothing changed.")
+            if not ok:
+                common.toast(self.ui, "The token helper didn't set up. "
+                             "Nothing changed.")
             self.refresh()
 
         self.ui.io(self.control.setup_token, lambda _r: done(True),
                    lambda e: done(False, e))
 
     def undo(self) -> None:
-        self._simple(self.control.undo, "Previous engine back")
+        self._simple(self.control.undo)
 
     def drop(self) -> None:
-        self._simple(self.control.drop, "Using system versions")
+        self._simple(self.control.drop)
 
-    def _simple(self, fn, done_text: str) -> None:
+    def _simple(self, fn) -> None:
         self.running = "other"
         self.paint()
 
         def done(ok: bool) -> None:
             self.running = ""
-            common.toast(self.ui, done_text if ok else
-                         "That didn't work. Nothing changed.")
+            if not ok:
+                common.toast(self.ui, "That didn't work. Nothing changed.")
             self.refresh()
 
         self.ui.io(fn, lambda _r: done(True), lambda _e: done(False))
@@ -529,10 +523,9 @@ class SetupScreen:
         head.set_margin_top(10)
         body.append(head)
         text = {
-            "idle": "xx-radio streams with two open-source libraries kept "
-                    "in a private folder on this phone. Setting them up "
-                    "downloads about 40 MB and needs no admin password.",
-            "running": "This takes a minute or two. Keep the app open.",
+            "idle": "Two open-source libraries, about 40 MB, in a "
+                    "private folder. No admin password.",
+            "running": "A minute or two. Keep the app open.",
             "done": "The engine works. Search for something to play.",
             "failed": "Nothing on this phone changed. Check the "
                       "connection, then try again.",
@@ -552,8 +545,8 @@ class SetupScreen:
             line.set_margin_top(14)
             line.set_margin_bottom(14)
             line.append(common.busy_square())
-            line.append(common.label("Setting up · keep the app open",
-                                     "xx-mu-meta", chars=34))
+            line.append(common.label("Setting up", "xx-mu-meta",
+                                     chars=34))
             self.actions.append(line)
         elif self.state == "done":
             self._button(minimal.primary("Start listening",
@@ -562,7 +555,8 @@ class SetupScreen:
             self._button(minimal.primary("Try again", self.start))
             row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 10)
             row.set_homogeneous(True)
-            copy = minimal.outline("Copy details", self.copy)
+            copy = minimal.outline("Copy details",
+                                   lambda: self.copy(copy))
             later = minimal.outline("Not now", self.skip)
             for button in (copy, later):
                 common.fit(button, 12)
@@ -599,9 +593,10 @@ class SetupScreen:
         self.steps.fail(self.failed_step)
         self.paint()
 
-    def copy(self) -> None:
+    def copy(self, button: Gtk.Widget | None = None) -> None:
         self.widget.get_clipboard().set(redact_text(self.error))
-        common.toast(self.ui, "Details copied")
+        if button is not None:
+            common.copied(button)
 
     def skip(self) -> None:
         self.ui.io(lambda: self.ui.store.set_pref("first_run_done", True))

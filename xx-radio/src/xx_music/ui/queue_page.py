@@ -32,12 +32,9 @@ class QueueView:
         common.clear(self.body)
         upcoming = player.up_next()
         count = len(upcoming)
-        self.body.append(common.section(
-            f"Up next · {count}" if count else "Up next", first=True))
         if not upcoming:
-            self.body.append(common.muted(
-                "Nothing after this song. Add songs from their menus."))
-            return
+            return  # nothing queued: no heading, no line
+        self.body.append(common.section(f"Up next · {count}", first=True))
         box = common.vbox(0)
         for position, (index, track) in enumerate(upcoming):
             box.append(common.track_row(

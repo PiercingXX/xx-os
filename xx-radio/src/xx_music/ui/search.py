@@ -22,8 +22,6 @@ from xx_music.ui import common, menus, minimal
 from xx_ui import widgets
 
 SUGGEST_DELAY_MS = 260
-EMPTY_TEXT = "Find songs, albums, artists and playlists."
-NOTHING_TEXT = "Nothing matches that. Try fewer words."
 FILTERS = (("All", None), ("Songs", ItemKind.TRACK),
            ("Albums", ItemKind.ALBUM), ("Artists", ItemKind.ARTIST),
            ("Playlists", ItemKind.PLAYLIST))
@@ -243,10 +241,7 @@ class SearchPage:
 
     def _paint_recents(self) -> None:
         if not self.recents:
-            line = common.muted(EMPTY_TEXT)
-            line.set_margin_top(24)
-            self._gutter(line)
-            return
+            return  # no searches yet: the field is the whole page
         self._gutter(common.section("Recent searches", "Clear",
                                     self._clear_recents, first=True))
         self._gutter(common.flow_chips(
@@ -300,8 +295,6 @@ class SearchPage:
         if results is None:
             return
         if results.empty:
-            if not self.note:
-                self._gutter(common.muted(NOTHING_TEXT))
             return
         if self.kind is not None:
             self._paint_kind(results, self.kind, limit=None, head=False)
