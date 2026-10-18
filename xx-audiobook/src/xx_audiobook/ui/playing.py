@@ -30,7 +30,6 @@ from xx_audiobook.ui.library import deferred  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 
 SLEEP_PRESETS = (5, 10, 15, 30, 45, 60)
-EMPTY_LINE = "Nothing playing. Pick a book in the Library."
 COVER_PX = 220
 
 
@@ -91,14 +90,9 @@ class NowPlayingPage:
         self._cover_for = None
         self._skips = _skip_seconds()
         self.stack = Gtk.Stack()
+        # Nothing playing shows nothing: the tab bar is the way out.
         empty = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
         empty.add_css_class("xx-page")
-        line = common.muted(EMPTY_LINE)
-        line.set_margin_start(16)
-        line.set_margin_end(16)
-        line.set_vexpand(True)
-        line.set_valign(Gtk.Align.CENTER)
-        empty.append(line)
         self.stack.add_named(empty, "empty")
         self.stack.add_named(self._build(), "full")
         self.widget = self.stack
@@ -231,8 +225,9 @@ class NowPlayingPage:
         current = player.chapter()
         self.chapter.set_text(current.title if current else "")
         self.chapter.set_visible(current is not None)
-        note = ("Paused where you left off. Press play to continue."
-                if player.restored else "Starting…" if player.busy else "")
+        # A restored book is just paused at its place; only a start that
+        # is still on its way says so.
+        note = "Starting…" if player.busy and not player.restored else ""
         self.note.set_text(note)
         self.note.set_visible(bool(note))
         if not self.scrubber.dragging:
@@ -407,10 +402,6 @@ class NowPlayingPage:
                 common.fit(off, 4)
                 row.append(off)
                 status.append(row)
-            else:
-                status.append(common.para(
-                    "Off. Fades out over the last 10 seconds.",
-                    "xx-ab-b11 xx-ab-muted"))
             minutes = (round(player.sleep_remaining_ms / 60000)
                        if running and not player.sleep_end_of_chapter else 0)
             items = [(f"{m} min", minutes == m,

@@ -57,7 +57,7 @@ def source_line(account) -> str:
         return ""
     via = {"hub": "the xx-apps hub", "login": "this phone",
            "stored": "a saved session"}.get(account.source, account.source)
-    return f"Signed in via {via}. The password is never stored."
+    return f"Signed in via {via}."
 
 
 def host_of(origin: str) -> str:
@@ -218,6 +218,7 @@ class SetupPage:
         licenses = widgets.text_button("Open-source licenses",
                                        self.nav.licenses)
         common.fit(licenses, 24)
+        licenses.add_css_class("xx-ab-flush")  # on the text's left edge
         licenses.set_halign(Gtk.Align.START)
         body.append(licenses)
 

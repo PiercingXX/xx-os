@@ -20,6 +20,9 @@ shift
 mkdir -p "$OUTDIR"
 PY=${PYTHON:-python3}
 THEMES=${THEMES:-"amoled paper graphite aura"}
+# SIZE: the window for the theme renders (default 360x720; the phones
+# are 450x1000 and 360x720 logical).
+SIZE=${SIZE:-360x720}
 M3_TARGETS="library library-grid library-search book book-chapters
 book-damaged conflict playing playing-restored sheet-chapters sheet-speed
 sheet-sleep sheet-bookmark series author narrator collections collection"
@@ -47,7 +50,7 @@ snap_one() {
     # $1=home $2=out $3=target $4=scenario $5=size
     err="$2.err"
     attempt=0
-    while [ "$attempt" -lt 3 ]; do
+    while [ "$attempt" -lt 10 ]; do
         attempt=$((attempt + 1))
         rm -f "$2"
         if env HOME="$1" XDG_CONFIG_HOME="$1/.config" \
@@ -88,23 +91,23 @@ for theme in $THEMES; do
     for target in $TARGETS; do
         out="$WORK/$theme-$target.png"
         snap_one "$(home_for "$theme" seeded 1)" "$out" "$target" seeded \
-            360x720
+            "$SIZE"
         labels="$labels -label $target $out"
     done
     for target in $EMPTY_TARGETS; do
         out="$WORK/$theme-empty-$target.png"
         snap_one "$(home_for "$theme" empty 1)" "$out" "$target" empty \
-            360x720
+            "$SIZE"
         labels="$labels -label empty-$target $out"
     done
     for target in $SIGNEDOUT_TARGETS; do
         out="$WORK/$theme-signedout-$target.png"
         snap_one "$(home_for "$theme" signedout 1)" "$out" "$target" \
-            signedout 360x720
+            signedout "$SIZE"
         labels="$labels -label signedout-$target $out"
     done
     # shellcheck disable=SC2086
-    montage $labels -tile 6x -geometry 360x720+6+6 -background '#202020' \
+    montage $labels -tile 6x -geometry "$SIZE"+6+6 -background '#202020' \
         -fill white -pointsize 22 "$OUTDIR/$SHEET-$theme.png" \
         || fail "montage failed for $theme"
     cp "$WORK/$theme-"*.png "$OUTDIR/"

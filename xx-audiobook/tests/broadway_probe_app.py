@@ -151,6 +151,7 @@ def main(argv: list[str]) -> int:
            "Rocky's first words", "Downloaded", "Mark finished",
            "Ratings & reviews")
     _check_targets(window, failed)
+    _check_whole_words(window, failed)
 
     shell.nav.open_book("hy")
     pump()
@@ -173,7 +174,9 @@ def main(argv: list[str]) -> int:
 
     shell.show("playing")
     pump()
-    expect("Paused where you left off.", "Project Hail Mary", "NOW PLAYING",
+    # A restored book is simply paused: no "Paused where you left off".
+    absent("Paused where you left off. Press play to continue.")
+    expect("Project Hail Mary", "NOW PLAYING",
            "Play on…")
     _check_targets(window, failed)
 
@@ -209,7 +212,9 @@ def main(argv: list[str]) -> int:
     pump()
     expect("Setup", "Account", "Sam Reader", "Listening stats", "Playback",
            "Skip back", "Sign out")
+    absent("Signed in via a saved session. The password is never stored.")
     _check_targets(window, failed)
+    _check_whole_words(window, failed)
 
     shell.nav.stats()
     pump()
@@ -268,6 +273,27 @@ def _check_targets(window, failed: list) -> None:
         if low_w < 48 or low_h < 48:
             failed.append(f"small target {widget.get_tooltip_text()!r} "
                           f"{low_w}x{low_h}")
+
+
+def _check_whole_words(window, failed: list) -> None:
+    """At 1x a button label that fits its budget is never cut to an
+    ellipsis ("Write a revie…", "Mark finishe…"). Larger text may."""
+    from gi.repository import Gtk
+
+    from xx_audiobook.ui import style
+
+    if style.scale > 1.0:
+        return
+    for widget in _walk(window):
+        if not isinstance(widget, Gtk.Button) or not widget.get_mapped():
+            continue
+        child = widget.get_child()
+        if not isinstance(child, Gtk.Label) or child.get_width() <= 0:
+            continue
+        budget = child.get_max_width_chars()
+        text = child.get_text()
+        if child.get_layout().is_ellipsized() and 0 < len(text) <= budget:
+            failed.append(f"button label cut short: {text!r}")
 
 
 def _label_texts(widget) -> list[str]:

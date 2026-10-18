@@ -255,12 +255,6 @@ class LibraryPage:
         common.clear(body)
         if self.status:
             body.append(common.muted(self.status))
-        if not rows and not self.status:
-            body.append(common.muted(
-                "No downloaded books. Download one from its page."
-                if self.show == DOWNLOADED else
-                "No books match." if self.filtered else
-                "No books yet."))
         for shelf in shelves:
             self._shelf(body, shelf)
         if shelves and rows:

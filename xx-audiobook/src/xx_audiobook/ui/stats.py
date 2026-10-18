@@ -199,10 +199,14 @@ class StatsPage:
         for index, tiles in enumerate(rows):
             grid = Gtk.Box.new(Gtk.Orientation.VERTICAL if style.large_text()
                                else Gtk.Orientation.HORIZONTAL, 8)
-            grid.set_homogeneous(True)
-            grid.set_margin_top(8 if index == 0 else 8)
+            # The first row sizes by content: "459 h 16 min" keeps one
+            # line beside two short counts instead of wrapping its unit.
+            grid.set_homogeneous(index > 0 or style.large_text())
+            grid.set_margin_top(8)
             for caption, value in tiles:
-                grid.append(common.figure(value, caption))
+                tile = common.figure(value, caption)
+                tile.set_hexpand(True)
+                grid.append(tile)
             body.append(grid)
 
     def _days(self, body: Gtk.Box, stats) -> None:
@@ -233,10 +237,8 @@ class StatsPage:
         body.append(names)
 
     def _tops(self, body: Gtk.Box, stats) -> None:
-        body.append(common.section("Top books"))
-        if not stats.top_items:
-            body.append(common.muted(f"Nothing played in {stats.year}."))
-        else:
+        if stats.top_items:
+            body.append(common.section("Top books"))
             best = stats.top_items[0].listened_s
             for index, top in enumerate(stats.top_items[:5]):
                 body.append(self._top_row(
@@ -274,13 +276,14 @@ class StatsPage:
 
     def _sessions(self, body: Gtk.Box) -> None:
         history = self.state.history()
+        if not (history.sessions or history.error or history.loading):
+            return  # no sessions: no heading, no line
         body.append(common.section("Recent sessions"))
         if history.error:
             body.append(common.muted(history.error))
         if not history.sessions:
-            body.append(common.muted(
-                "Loading…" if history.loading and not history.error
-                else "No listening sessions yet."))
+            if history.loading and not history.error:
+                body.append(common.muted("Loading…"))
             return
         for index, session in enumerate(history.sessions):
             body.append(self._session_row(

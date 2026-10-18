@@ -20,8 +20,6 @@ from xx_audiobook import fmt
 from xx_audiobook.ui import common
 from xx_ui import widgets
 
-EMPTY_LINE = ("No downloads yet. Download a book from its page to listen "
-              "offline.")
 ACTIVE = ("Queued", "Running")
 STOPPED = ("Failed", "Cancelled")
 
@@ -185,8 +183,6 @@ class DownloadsPage:
         if view.low:
             body.append(common.muted(
                 "Storage is low. Free some space before downloading more."))
-        if view.empty:
-            body.append(common.muted(EMPTY_LINE))
         for caption, rows in (("Active", view.active),
                               ("On this phone", view.done),
                               ("Failed or cancelled", view.stopped)):

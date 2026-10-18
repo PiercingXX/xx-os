@@ -60,9 +60,6 @@ class BrowsePage:
         line = error_line(result.error) if result.error else None
         if line and result.error is not None:
             body.append(common.muted(line))
-        if not books and not self.loading:
-            body.append(common.muted(
-                f"No books on this phone for {self.name} yet."))
         if result.series:
             body.append(common.caps_section("Series"))
             for series in result.series:
@@ -145,10 +142,6 @@ class CollectionsPage:
         collections, playlists, api_error = result
         if api_error is not None:
             body.append(common.muted(error_line(api_error)))
-        if not collections and not playlists and api_error is None:
-            body.append(common.muted(
-                "No collections yet. An admin makes them in the web "
-                "studio."))
         for caption, rows in (("Collections", collections),
                               ("Your playlists", playlists)):
             if not rows:
@@ -190,8 +183,6 @@ class CollectionPage:
             body.append(common.muted(error_line(error)))
         elif loading:
             body.append(common.muted("Loading…"))
-        elif not books:
-            body.append(common.muted("Nothing in here yet."))
         for index, item in enumerate(books):
             body.append(common.book_row(self.ctx, item, self.nav.open_item,
                                         last=index == len(books) - 1))

@@ -78,11 +78,17 @@ def name(widget: Gtk.Widget, text: str) -> Gtk.Widget:
 
 def fit(button: Gtk.Button, chars: int) -> Gtk.Button:
     """A text button whose label ellipsizes instead of widening the
-    window (large text sizes); its allocation always exceeds the natural
-    width at 1x, so the ellipsis never misfires there."""
+    window (large text sizes). At 1x a label that fits ``chars`` never
+    ellipsizes: a button held to its natural width (start-aligned, or
+    beside another) would otherwise lose its last letter to rounding
+    ("Write a revie…")."""
+    from xx_audiobook.ui import style
+
     child = button.get_child()
     child.set_max_width_chars(chars)
-    child.set_ellipsize(Pango.EllipsizeMode.END)
+    fits = len(child.get_text()) <= chars and style.scale <= 1.0
+    child.set_ellipsize(Pango.EllipsizeMode.NONE if fits
+                        else Pango.EllipsizeMode.END)
     return button
 
 
@@ -845,7 +851,7 @@ def figure(value: str, caption: str) -> Gtk.Box:
     box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
     box.add_css_class("xx-ab-tile-box")
     box.append(label(caption.upper(), "xx-ab-label", chars=10))
-    box.append(label(value, "xx-ab-t16 xx-ab-num", lines=2, chars=10))
+    box.append(label(value, "xx-ab-t16 xx-ab-num", lines=2, chars=14))
     box.update_property([Gtk.AccessibleProperty.LABEL],
                         [f"{caption}: {value}"])
     return box

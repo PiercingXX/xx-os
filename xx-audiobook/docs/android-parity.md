@@ -147,9 +147,11 @@ the storage footer are gone; a queued row's line says why it waits.
 Source: `ui/zones/ZonesScreen.kt`. Title + refresh; "Playing on …" with
 the phone or speaker glyph; the active zone in a hairline square panel
 (name, location · state, position, plain transport icons, "Volume 35%",
-the slider, Quieter / Louder, Bring back to phone); Locations as chips;
-Players as rows with the cast glyph. Kept from Linux: the explanatory
-line under Bring back to phone and the "Now" tag on the active player.
+the slider, Bring back to phone); Locations as chips; Players as rows
+with the cast glyph. Linux drops Quieter / Louder (the slider is the
+one volume control; arrow keys step it), the line under Bring back to
+phone and the "Play there?" ask: a tap on a speaker casts. Kept from
+Linux: the "Now" tag on the active player.
 
 ## Setup
 

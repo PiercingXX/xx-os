@@ -177,9 +177,9 @@ def _m45(target: str) -> None:
             snap = ctx.zones.snapshot()
             kitchen = snap.targets[snap.selected][0]
             if target == "zones-cast":
-                from xx_audiobook.ui.zones import ask_cast
+                from xx_audiobook.ui.zones import play_on
 
-                ask_cast(ctx, win, kitchen)  # noqa: F821
+                play_on(ctx, kitchen)
             elif target == "zones-active":
                 ctx.zones.play_on(kitchen, ctx.player.item_id,
                                   ctx.player.position_ms / 1000)

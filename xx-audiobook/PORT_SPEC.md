@@ -53,7 +53,7 @@ the player; cold start restores playback (`playback.restore()`, §1.5).
 | Book (`ui/detail/BookScreen.kt`, `BookViewModel.kt`) | Order: actions, ratings + reviews, description (`\n` → paragraphs), chapters (first 5 + "All N"), bookmarks; damaged (`not_playable`) book: Play/Download disabled + one muted line; conflict dialog "Where were you?" (other device / this phone) | Same order and rules; conflict prompt when local and server progress differ by > 60 s and neither side finished (`ProgressMerge.PROMPT_THRESHOLD_S = 60.0` in `data/repo/ProgressRepository.kt`) |
 | Now Playing (`ui/player/NowPlayingScreen.kt`, `NowPlayingViewModel.kt`, `SeekBar.kt`) | Transport + book-level seek bar (played part bright, live follow) + 5-cell sheet grid → Chapters / Speed / Sleep / Bookmark / PlayOn (cast zones) sheets; bookmark dialog + delete confirm; sleep follows playhead × speed, 10 s fade, pause-aware (`playback/SleepTimer.kt`) | Same sheets as `Adw.Dialog` pages; GStreamer playbin behind a book timeline (§2.6); speed via scaletempo; MPRIS exposes the same transport (§2.7) |
 | Downloads (`ui/downloads/DownloadsScreen.kt`, `DownloadsViewModel.kt`) | One row per book: downloading → Cancel; done → Delete (confirm); failed → Retry + Delete | Same rows; constraints from §2.9 |
-| Zones (`ui/zones/ZonesScreen.kt`, `ZonesViewModel.kt`) | Zone cards with transport (play/pause/stop, ±30 s), volume slider + Quieter/Louder, "Bring back to phone", location chips, cast-target rows, refresh | Same; Home Assistant only (§2.10) |
+| Zones (`ui/zones/ZonesScreen.kt`, `ZonesViewModel.kt`) | Zone cards with transport (play/pause/stop, ±30 s), volume slider (Linux: no Quieter/Louder), "Bring back to phone", location chips, cast-target rows, refresh | Same; Home Assistant only (§2.10) |
 | Setup (`ui/setup/SetupScreen.kt`, `SetupViewModel.kt`) | Session block (origin, source, preview/API-base lines), Listening-stats button, server status rows (●/○ + Refresh, admin `GET /api/status`), skip-back/forward + default-speed + rewind-on-resume chips (`SKIP_CHOICES` 10/15/30), Wi-Fi-only checkbox, storage used, theme line ("follows launcher/xx-apps"), Share logs, Sign out (confirm), version lines | Same; theme line becomes "follows the shell theme" (live, §2.13); skip/speed/rewind sync to `PUT /api/me/settings` (§2.5); storage used walks `books/` + `covers/` |
 | Stats (`ui/stats/StatsScreen.kt`) | Year-bounded `GET /api/me/stats?year=`, last-30-days zero-filled chart ending today, listening-history pages + load-more + delete (failed delete keeps the row + reason); switching books closes the old session with real listened seconds | Same; chart drawn with plain GTK drawing on theme tokens (no new deps) |
 
@@ -651,7 +651,8 @@ cleared from the entry once the request is built; full-screen No
 access on 403 `not_granted` with Retry / Sign out), `ui/zones.py`
 (Phone vs Zone indicator, the zone card with play/pause from the
 zone state, stop, ±30 s, volume, Bring back to phone after the
-confirmed stop; casting asks first; Now Playing's "Play on…" sheet),
+confirmed stop; a tap on a speaker casts; Now Playing's "Play on…"
+sheet),
 `ui/stats.py` (year switcher, figures, 30-day bars, monthly hairline
 bars, top books/authors, paged sessions with delete-asks-first) and
 `ui/reviews.py` (summary, Your review with the not-started gate,

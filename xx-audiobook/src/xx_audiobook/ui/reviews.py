@@ -192,11 +192,6 @@ class ReviewsBlock:
             common.fit(more, 16)
             more.set_halign(Gtk.Align.START)
             box.append(more)
-        if page is not None and not others and ui.mine is None:
-            line = common.para("No reviews yet. Be the first.",
-                               "xx-ab-b13 xx-ab-muted")
-            line.set_margin_top(8)
-            box.append(line)
 
     def _summary(self, average: float, count: int) -> Gtk.Label:
         """'★ 4.4 (7)' at the headline size, read as one phrase."""

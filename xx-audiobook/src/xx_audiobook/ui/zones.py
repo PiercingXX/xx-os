@@ -2,10 +2,10 @@
 
 Where the audio goes (this phone or a zone) sits on top. While a zone
 plays, its card carries play/pause from the zone's own state, stop,
-±30 s, the volume (Quieter / Louder and a drag bar) and "Bring back to
-phone", which resumes here only after the zone confirmed the stop.
-Below: the locations as chips and their players; casting asks first.
-The "Play on…" sheet in Now Playing reuses the same rows and ask.
+±30 s, the volume (one drag bar; arrow keys step it) and "Bring back
+to phone", which resumes here only after the zone confirmed the stop.
+Below: the locations as chips and their players; a tap casts.
+The "Play on…" sheet in Now Playing reuses the same rows and tap.
 
 Everything talks to ctx.zones (ZonesState) on workers; HA errors show
 verbatim in one muted line.
@@ -44,27 +44,14 @@ def on_zone(snapshot) -> bool:
     return isinstance(snapshot.output, zones_module.ZoneOutput)
 
 
-def ask_cast(ctx, parent, target, done=None):
-    """Casting asks first: the book, from where, onto which speaker."""
-    player = ctx.player
-    name = target.name or target.entity_id
-    if not player.has_book:
-        return common.confirm(
-            parent, f"Play on {name}?",
-            "Pick a book first: start one in the Library, then send it "
-            "here.", [("ok", "OK", "outline")], lambda _r: None)
-    where = fmt.format_ms(player.position_ms)
-    body = (f"{player.title} continues on {name} from {where}, and this "
-            "phone pauses.")
-
-    def _answer(response: str) -> None:
-        if response == "cast":
-            cast(ctx, target, done)
-
-    return common.confirm(
-        parent, f"Play on {name}?", body,
-        [("cancel", "Cancel", "outline"), ("cast", "Play there", "primary")],
-        _answer)
+def play_on(ctx, target, done=None) -> bool:
+    """Tapping a speaker sends the book there at once (no "Play there?"
+    ask; Bring back to phone undoes it). Without a book the speakers
+    are dimmed and a tap does nothing."""
+    if not ctx.player.has_book:
+        return False
+    cast(ctx, target, done)
+    return True
 
 
 def cast(ctx, target, done=None) -> None:
@@ -237,11 +224,6 @@ class ZonesPage:
         self.ctx.run(lambda: self.ctx.zones.set_volume(value),
                      lambda _r, _e: self._render())
 
-    def step_volume(self, louder: bool) -> None:
-        zones = self.ctx.zones
-        self.ctx.run(zones.louder if louder else zones.quieter,
-                     lambda _r, _e: self._render())
-
     def bring_back(self) -> None:
         """Stop the zone; the phone resumes only once that stop landed."""
         self.busy_line = "Stopping the zone…"
@@ -285,22 +267,21 @@ class ZonesPage:
         body.append(chips)
         if snap.message:
             body.append(common.muted(snap.message))
-        body.append(common.section("Players"))
         targets = snap.targets.get(snap.selected or "", None)
+        if not targets and targets is not None:
+            return  # no players here: no Players heading either
+        body.append(common.section("Players"))
         if targets is None:
             body.append(common.muted("Looking for players…"))
-            return
-        if not targets:
-            body.append(common.muted("No media players found here."))
             return
         output = snap.output
         for index, target in enumerate(targets):
             active = (on_zone(snap)
                       and output.entity_id == target.entity_id)
             body.append(player_row(
-                target, active,
-                lambda t=target: ask_cast(ctx, self._window(), t),
-                last=index == len(targets) - 1))
+                target, active, lambda t=target: play_on(ctx, t),
+                last=index == len(targets) - 1,
+                usable=self.ctx.player.has_book))
 
     def _indicator(self, snap) -> Gtk.Box:
         """Phone vs Zone: where the audio is going right now."""
@@ -389,23 +370,12 @@ class ZonesPage:
             bar = VolumeBar(volume)
             bar.connect("changed", lambda _b, v: self.set_volume(v))
             card.append(bar)
-            steps = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
-            quieter = widgets.text_button("Quieter",
-                                          lambda: self.step_volume(False))
-            louder = widgets.text_button("Louder",
-                                         lambda: self.step_volume(True))
-            steps.append(common.fit(quieter, 8))
-            steps.append(common.fit(louder, 8))
-            card.append(steps)
         back = widgets.primary_button(
             "Stopping the zone…" if self.busy_line else
             "Bring back to phone", self.bring_back)
         common.fit(back, 22)
         back.set_sensitive(not self.busy_line)
         card.append(back)
-        card.append(common.para(
-            "The phone picks up after the zone has stopped.",
-            "xx-ab-b11 xx-ab-muted"))
         return card
 
     def _zone_title(self, output, target) -> str:
@@ -427,8 +397,10 @@ def _key(child: Gtk.Widget, spoken: str, callback) -> Gtk.Button:
     return common.name(button, spoken)
 
 
-def player_row(target, active: bool, on_tap, last: bool = False):
-    """A cast target: the cast glyph, the name, 'state · volume'."""
+def player_row(target, active: bool, on_tap, last: bool = False,
+               usable: bool = True):
+    """A cast target: the cast glyph, the name, 'state · volume';
+    dimmed (insensitive) while there is no book to send."""
     box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
     box.append(common.glyph("xx-ab-cast-symbolic", 24,
                             on=active or target.state == "playing"))
@@ -445,14 +417,16 @@ def player_row(target, active: bool, on_tap, last: bool = False):
                              lines=2, chars=30))
     box.append(text)
     name = target.name or target.entity_id
-    return common.tap_row(
+    row = common.tap_row(
         box, f"Play the current book on {name}. {target_line(target)}",
         on_tap, last)
+    row.set_sensitive(usable)
+    return row
 
 
 def play_on_sheet(ctx, parent):
     """Now Playing's "Play on…": this phone, then each location's
-    players; picking one closes the sheet and asks first."""
+    players; picking one closes the sheet and plays the book there."""
     dialog, box = common.sheet("Play on…")
     content = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     box.append(content)
@@ -491,14 +465,13 @@ def play_on_sheet(ctx, parent):
         if targets is None:
             content.append(common.muted("Looking for players…"))
             return
-        if not targets:
-            content.append(common.muted("No players found."))
         output = snap.output
         for index, target in enumerate(targets):
             active = on_zone(snap) and output.entity_id == target.entity_id
             content.append(player_row(
                 target, active, lambda t=target: _pick(t),
-                last=index == len(targets) - 1))
+                last=index == len(targets) - 1,
+                usable=ctx.player.has_book))
 
     def _select(location_id: str) -> None:
         ctx.run(lambda: ctx.zones.select(location_id),
@@ -506,7 +479,7 @@ def play_on_sheet(ctx, parent):
 
     def _pick(target) -> None:
         dialog.close()
-        ask_cast(ctx, parent, target)
+        play_on(ctx, target)
 
     _render()
     if ctx.signed_in and not ctx.zones.snapshot().locations:

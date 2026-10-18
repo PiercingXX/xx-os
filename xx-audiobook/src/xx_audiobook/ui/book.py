@@ -351,10 +351,9 @@ class BookPage:
         self._render()
 
     def _bookmarks(self, body: Gtk.Box) -> None:
-        body.append(common.section("Bookmarks"))
         if not self.marks:
-            body.append(common.muted("No bookmarks. Add one from Now Playing."))
             return
+        body.append(common.section("Bookmarks"))
         for index, mark in enumerate(self.marks):
             body.append(bookmark_row(
                 mark, lambda m=mark: self.play_from(int(m.position_s * 1000)),
