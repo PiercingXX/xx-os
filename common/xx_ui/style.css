@@ -793,6 +793,15 @@ button.xx-gtile.toggle.working:checked {
   color: ${foreground};
 }
 
+/* button_pair slots: the FlowBox child is layout only. */
+flowboxchild.xx-pair-slot,
+flowboxchild.xx-pair-slot:hover,
+flowboxchild.xx-pair-slot:focus {
+  padding: 0;
+  background: none;
+  outline: none;
+}
+
 .xx-menu-row {
   min-height: 48px;
   font-size: ${body_px}px;

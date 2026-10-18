@@ -79,6 +79,18 @@ def main() -> None:
     card.append(widgets.segmented([(LONG, True, None), (LONG, False, None)]))
     rows.append(card)
     rows.append(widgets.setting_row(LONG, LONG, widgets.make_switch(True)))
+    rows.append(widgets.setting_row(LONG, LONG, widgets.text_button(LONG)))
+    rows.append(widgets.setting_row(LONG, LONG, wrap=False))
+    rows.append(widgets.list_row(LONG, LONG, LONG, wrap=True,
+                                 trailing=widgets.make_switch(True)))
+    rows.append(widgets.compact_header(
+        None, LONG, LONG, 'call-start-symbolic', None,
+        second_icon_name='system-search-symbolic'))
+    rows.append(widgets.button_pair(widgets.primary_button(LONG),
+                                    widgets.outline_button(LONG)))
+    rows.append(widgets.glyph_tile('xx-none-symbolic', 'AIRPLANE', LONG))
+    rows.append(widgets.shrink_to_fit(widgets.label('Contacts',
+                                                    'xx-display')))
     rows.append(widgets.setting_row(LONG, LONG, widgets.make_switch(False),
                                     last=True))
     rows.append(widgets.list_row(LONG, LONG, trailing=widgets.chevron(),

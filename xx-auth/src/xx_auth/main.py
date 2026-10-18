@@ -30,9 +30,6 @@ _APP_CSS = """
 .xx-auth-ring.warn {{ color: {danger}; }}
 .xx-auth-danger {{ color: {danger}; border-color: alpha({danger}, 0.6); }}
 .xx-auth-counter {{ font-size: {time}px; color: {muted}; }}
-flowboxchild.xx-auth-slot,
-flowboxchild.xx-auth-slot:hover,
-flowboxchild.xx-auth-slot:focus {{ padding: 0; background: none; outline: none; }}
 """
 
 
@@ -54,7 +51,8 @@ def app_css(theme) -> str:  # type: ignore[no-untyped-def]
     return _APP_CSS.format(
         code=min(px(32), CODE_MAX_PX), hero=min(px(40), CODE_MAX_PX),
         title=px(16), time=px(13),
-        fg=theme.foreground, muted=theme.muted, danger=theme_mod.DANGER_RED)
+        fg=theme.foreground, muted=theme.muted,
+        danger=getattr(theme, "danger", "") or theme_mod.DANGER_RED)
 
 
 def _require_gtk():

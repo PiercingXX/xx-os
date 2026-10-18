@@ -11,7 +11,7 @@ import gi
 
 gi.require_version('Gtk', '4.0')
 
-from gi.repository import GLib, Gtk
+from gi.repository import GLib, Gtk, Pango
 
 import xx_ui
 from xx_ui import widgets
@@ -131,6 +131,32 @@ def main() -> None:
     tile.add_css_class('attention')
     assert widgets.glyph_tile_state(tile).get_text() == 'Sign in'
     rows.append(tile)
+    airplane = widgets.glyph_tile('airplane-mode-symbolic', 'Airplane')
+    holder = airplane.get_child().get_last_child().get_first_child()
+    name = holder.get_first_child()
+    assert isinstance(name, Gtk.Label) and name.get_text() == 'AIRPLANE'
+    assert name.has_css_class('long'), 'an 8-char tile label tracks tighter'
+    assert name.get_ellipsize() == Pango.EllipsizeMode.NONE, \
+        'a tile word scales down instead of ellipsizing'
+    rows.append(airplane)
+    copy = widgets.primary_button('Copy code')
+    nxt = widgets.outline_button('Next code')
+    pair = widgets.button_pair(copy, nxt)
+    assert isinstance(pair, Gtk.FlowBox)
+    assert pair.get_max_children_per_line() == 2
+    widgets.set_slot_visible(nxt, False)
+    assert not nxt.get_parent().get_visible()
+    assert pair.get_max_children_per_line() == 1, \
+        'a hidden pair member left its column behind'
+    widgets.set_slot_visible(nxt, True)
+    assert pair.get_max_children_per_line() == 2
+    rows.append(pair)
+    setting = widgets.setting_row('Open-source licenses', '9 components')
+    for line in (setting.get_first_child().get_first_child(),
+                 setting.get_first_child().get_last_child()):
+        assert line.get_wrap(), 'setting rows wrap by default'
+        assert line.get_ellipsize() == Pango.EllipsizeMode.NONE
+    rows.append(setting)
     rows.append(widgets.end_call_button())
     rows.append(widgets.bubble('yeah. 9 at the laundromat', outgoing=True))
     rows.append(widgets.bubble('still on for tonight?', outgoing=False))

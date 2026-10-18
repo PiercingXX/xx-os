@@ -829,6 +829,50 @@ def menu_row(text: str, callback=None) -> Gtk.Button:
     return _button(text, ['xx-menu-row'], callback, _WIDE_BUTTON_CHARS)
 
 
+def button_pair(*buttons: Gtk.Button) -> Gtk.FlowBox:
+    """Buttons side by side, equal width, while every label fits whole;
+    stacked full width when they don't (320 px, large text). A label is
+    never cut: a stacked button too narrow for its label wraps it between
+    words. Hide a member with ``set_slot_visible``."""
+    flow = Gtk.FlowBox()
+    flow.add_css_class('xx-button-pair')
+    flow.set_selection_mode(Gtk.SelectionMode.NONE)
+    flow.set_homogeneous(True)
+    flow.set_min_children_per_line(1)
+    flow.set_max_children_per_line(max(1, len(buttons)))
+    flow.set_column_spacing(8)
+    flow.set_row_spacing(8)
+    for button in buttons:
+        # The FlowBox flows at the children's natural width: the label
+        # reports its whole text there (no ellipsis, no cap).
+        wrap_to_fit(button)
+        button.set_hexpand(True)
+        flow.append(button)
+        slot = button.get_parent()
+        slot.set_focusable(False)
+        slot.add_css_class('xx-pair-slot')
+    return flow
+
+
+def set_slot_visible(button: Gtk.Button, visible: bool) -> None:
+    """Show or hide a ``button_pair`` member: its FlowBox slot, not just
+    the button, or a hidden button leaves an empty half; the buttons
+    still shown take the whole width."""
+    slot = button.get_parent()
+    if not isinstance(slot, Gtk.FlowBoxChild):
+        button.set_visible(visible)
+        return
+    slot.set_visible(visible)
+    flow = slot.get_parent()
+    if flow is None:
+        return
+    shown, child = 0, flow.get_first_child()
+    while child is not None:
+        shown += 1 if child.get_visible() else 0
+        child = child.get_next_sibling()
+    flow.set_max_children_per_line(max(1, shown))
+
+
 def text_entry(placeholder: str = '') -> Gtk.Entry:
     entry = Gtk.Entry()
     entry.add_css_class('xx-entry')
