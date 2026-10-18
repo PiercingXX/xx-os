@@ -56,19 +56,14 @@ class HomePage:
 
         self._init_weather()
 
-        # Equal spacers above and below clock_inner → vertically centered in top pane
+        # Widget block at the top of the screen.
         top_pane = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top_pane.set_hexpand(True)
-        top_pane.set_vexpand(True)
-        sp_top = Gtk.Box()
-        sp_top.set_vexpand(True)
-        sp_bot = Gtk.Box()
-        sp_bot.set_vexpand(True)
-        top_pane.append(sp_top)
+        top_pane.set_margin_top(32)
+        top_pane.set_margin_bottom(16)
         top_pane.append(clock_inner)
-        top_pane.append(sp_bot)
 
-        # --- Bottom 2/3: launcher — vertically centered ---
+        # --- Launcher: centered on the whole screen ---
         def _get_home_slots() -> list[dict]:
             # Android "Home Slot Count": the first N slots show; the rest
             # stay stored. Edit mode works on the same visible prefix.
@@ -113,7 +108,6 @@ class HomePage:
         bot_pane = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         bot_pane.set_hexpand(True)
         bot_pane.set_vexpand(True)
-        bot_pane.set_margin_bottom(24)
         bot_pane.append(launcher_scroll)
 
         # Background gestures dispatch gestures.json: double-tap runs
@@ -142,16 +136,25 @@ class HomePage:
             lambda _g, n, _x, _y: win._on_home_background_tap(n))
         bot_pane.add_controller(bot_tap)
 
-        # --- 1/3 widgets / 2/3 launcher — a homogeneous grid, so there is
-        # no Paned divider bar and no realize-time ratio hack. The widget
-        # block centers in the top third; the slot list centers in the rest.
-        grid = Gtk.Grid()
-        grid.set_row_homogeneous(True)
-        grid.set_hexpand(True)
-        grid.set_vexpand(True)
-        grid.attach(top_pane, 0, 0, 1, 1)
-        grid.attach(bot_pane, 0, 1, 1, 2)
-        return grid
+        # The slot list is centered on the SCREEN, not on the space under
+        # the widget block (owner: home sat in the bottom third). A spacer
+        # below, sized like the widget block by a SizeGroup, balances the
+        # block above, so the launcher's middle is the screen's middle; a
+        # list taller than the room left still scrolls.
+        spacer = Gtk.Box()
+        spacer.set_margin_top(16)
+        spacer.set_margin_bottom(32)
+        balance = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.VERTICAL)
+        balance.add_widget(top_pane)
+        balance.add_widget(spacer)
+        self._home_balance = balance  # SizeGroups need a live reference
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.set_hexpand(True)
+        page.set_vexpand(True)
+        page.append(top_pane)
+        page.append(bot_pane)
+        page.append(spacer)
+        return page
 
     def _launch_slot(self, slot: dict) -> None:
         """Launch an app or command from a home slot."""
