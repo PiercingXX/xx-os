@@ -536,11 +536,28 @@ build_install() {
     setup_greeter
     add_input_group
     _build_status=$?
+    refresh_icon_caches
     # Resident suite processes still run the old code until they restart;
     # refresh them now so the new code shows without a reboot. Best
     # effort: never fail the install when there is no session to refresh.
     refresh_running_apps || true
     return $_build_status
+}
+
+# GTK trusts hicolor's icon-theme.cache over the directory, so icons
+# installed after the cache was last built show as "?" (owner saw every
+# app as a question mark on the FLX1 and Librem). Rebuild it, and the
+# desktop database, after every install. Best effort.
+refresh_icon_caches() {
+    for _cache_tool in gtk-update-icon-cache gtk4-update-icon-cache; do
+        if command -v "$_cache_tool" >/dev/null 2>&1; then
+            $SUDO "$_cache_tool" -q -t -f /usr/share/icons/hicolor 2>/dev/null && break
+        fi
+    done
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        $SUDO update-desktop-database -q /usr/share/applications 2>/dev/null || true
+    fi
+    return 0
 }
 
 # --- per-device phoc.ini scale (20.5) --------------------------------------

@@ -298,3 +298,11 @@ def test_destdir_install_audiobook_files(tmp_path):
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def test_install_refreshes_icon_caches(install_script):
+    # A stale hicolor icon-theme.cache made every app icon a "?".
+    body = _function_body(install_script, 'build_install')
+    assert 'refresh_icon_caches' in body
+    fn = _function_body(install_script, 'refresh_icon_caches')
+    assert 'gtk-update-icon-cache' in fn and '/usr/share/icons/hicolor' in fn
