@@ -80,10 +80,46 @@ def _check_select():
     if need > 320:
         failures.append("selection bar needs %d px at 320" % need)
     return False
+def _check_back():
+    # Escape / a back key steps back one level: selection, then search,
+    # then a pushed page; at a tab root it lets the key through.
+    w = holder["win"]
+    steps = []
+    steps.append(w.back() and not w._selecting)
+    w.toggle_search()
+    steps.append(w.back() and not w._search_open)
+    w.show_page("settings")
+    steps.append(w.back() and w._page == "notes")
+    w.show_page("sync")
+    steps.append(w.back() and w._page == "notes")
+    steps.append(not w.back())
+    if not all(steps):
+        failures.append("back steps: " + repr(steps))
+    return False
+def _trash_from_editor():
+    # The editor's Trash icon leaves at once and moves the note.
+    w = holder["win"]
+    loft = next(n for n in w._notes if n.title == "Loft")
+    holder["loft"] = loft.path
+    w.open_note(loft.id)
+    w.editor_page.trash_button.emit("clicked")
+    if w._page != "notes":
+        failures.append("trash left the editor on " + repr(w._page))
+    return False
+def _check_trashed():
+    names = [n.path for n in vault.scan_trash()]
+    if holder.get("loft") not in names:
+        failures.append("Loft not in trash: " + repr(names))
+    if any(n.path == holder.get("loft") for n in vault.scan()):
+        failures.append("Loft still in notes")
+    return False
 app.connect("activate", _activate)
 GLib.timeout_add(500, _select)
 GLib.timeout_add(1000, _check_select)
-GLib.timeout_add(1200, lambda: (app.quit(), False)[1])
+GLib.timeout_add(1100, _check_back)
+GLib.timeout_add(1200, _trash_from_editor)
+GLib.timeout_add(2200, _check_trashed)
+GLib.timeout_add(2400, lambda: (app.quit(), False)[1])
 code = app.run([])
 print("FAILURES:" + str(len(failures)))
 for item in failures:

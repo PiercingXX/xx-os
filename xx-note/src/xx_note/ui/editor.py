@@ -92,7 +92,7 @@ def _tool_button(Gtk, kind: str, face: str):  # type: ignore[no-untyped-def]
 
 
 class EditorPage:
-    def __init__(self, Gtk, Pango, GLib, on_saved=None) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, Gtk, Pango, GLib, on_saved=None, on_trashed=None) -> None:  # type: ignore[no-untyped-def]
         self._Gtk = Gtk
         self._Pango = Pango
         self._GLib = GLib
@@ -111,10 +111,11 @@ class EditorPage:
 
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        # Compact bar: back, then read/edit, pin and archive as icons.
+        # Compact bar: back, then read/edit, pin, archive and trash icons.
         top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         top.add_css_class("xx-page-body")
         top.add_css_class("xx-compact-header")
+        top.add_css_class("xx-note-bar")
         self.back_button = _icon_button(Gtk, "go-previous-symbolic")
         top.append(self.back_button)
         spacer = Gtk.Box()
@@ -134,6 +135,12 @@ class EditorPage:
             "clicked", lambda _b: self._toggle_key("archived")
         )
         top.append(self.archive_button)
+        # Android keeps Delete in the editor's overflow; here it is the
+        # last icon. A trash move is reversible, so nothing confirms it.
+        self.trash_button = _icon_button(Gtk, "user-trash-symbolic")
+        self.trash_button.set_tooltip_text("Trash")
+        self.trash_button.connect("clicked", lambda _b: self.trash(on_trashed))
+        top.append(self.trash_button)
         self.box.append(top)
 
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -359,36 +366,74 @@ class EditorPage:
         self._do_save()
         return False
 
+    def _pending(self) -> tuple[str, str]:
+        """(title, body) as they will be written; the body keeps the file's
+        blank lead after the frontmatter."""
+        body = self.current_body()
+        self._history.push(body)
+        return self.title_entry.get_text(), (self._lead + body if body else body)
+
+    @staticmethod
+    def _write(vault, file_name: str, title: str, body: str) -> bool:  # type: ignore[no-untyped-def]
+        """Worker side: rewrite the note's title and body. False when the
+        file is gone."""
+        text = vault.read(file_name)
+        if text is None:
+            return False
+        doc = _fm.parse(text)
+        if doc.note_type == "checklist":
+            body = _checklist.sort_body(body)
+
+        def _mutate(keys: _fm.OwnedKeys) -> None:
+            keys.title = title
+
+        updated = doc.rewritten(_mutate)
+        head = updated[: len(updated) - len(doc.body_text)]
+        vault.write(file_name, head + body)
+        return True
+
     def _do_save(self) -> None:
         vault = self._vault
-        if vault is None or self._file_name is None:
+        file_name = self._file_name
+        if vault is None or file_name is None:
             return
-        body = self.current_body()
-        title = self.title_entry.get_text()
-        self._history.push(body)
-        body = self._lead + body if body else body
+        title, body = self._pending()
 
         def work() -> None:
             try:
-                text = vault.read(self._file_name)
-                if text is None:
+                if not self._write(vault, file_name, title, body):
                     return
-                doc = _fm.parse(text)
-                if doc.note_type == "checklist":
-                    body_sorted = _checklist.sort_body(body)
-                else:
-                    body_sorted = body
-
-                def _mutate(keys: _fm.OwnedKeys) -> None:
-                    keys.title = title
-
-                updated = doc.rewritten(_mutate)
-                head = updated[: len(updated) - len(doc.body_text)]
-                vault.write(self._file_name, head + body_sorted)
             except OSError:
                 return
             if self._on_saved is not None:
                 self._GLib.idle_add(self._on_saved)
+
+        thread = threading.Thread(target=work, daemon=True)
+        thread.start()
+
+    def trash(self, on_trashed=None) -> None:  # type: ignore[no-untyped-def]
+        """Move the open note to Trash, unsaved edits included, then hand
+        back to the shell (``on_trashed`` runs on the main loop)."""
+        vault = self._vault
+        file_name = self._file_name
+        if vault is None or file_name is None:
+            return
+        pending = bool(self._save_timer)
+        if self._save_timer:
+            self._GLib.source_remove(self._save_timer)
+            self._save_timer = 0
+        title, body = self._pending() if pending else ("", "")
+        self._file_name = None
+
+        def work() -> None:
+            try:
+                if pending:
+                    self._write(vault, file_name, title, body)
+                vault.trash_note(file_name)
+            except OSError:
+                pass
+            if on_trashed is not None:
+                self._GLib.idle_add(on_trashed)
 
         thread = threading.Thread(target=work, daemon=True)
         thread.start()

@@ -49,7 +49,7 @@ button.xx-note-filter-chip image { color: ${bg}; }
 
 /* -- list rows: archive, trash, labels -------------------------------- */
 button.xx-note-action {
-  min-height: 44px; padding: 0 8px; font-size: ${t11}px;
+  min-height: 48px; padding: 0 8px; font-size: ${t11}px;
   letter-spacing: 0.12em; color: ${fg}; }
 .xx-note-meta { font-size: ${t13}px; color: ${muted}; }
 
@@ -69,6 +69,12 @@ textview.xx-note-body, textview.xx-note-body text {
 .xx-note-read-done { color: ${muted}; }
 .xx-note-toolbar { border-top: 1px solid ${border}; }
 .xx-note-select { padding: 0 4px; }
+/* Sub-page bars (editor, Settings, Sync): an 8 px edge and flush 48 px
+   targets, so the back glyph lines up with the 20 px gutter text and
+   five editor icons fit 320 px at any text size. */
+box.xx-note-bar { padding-left: 8px; padding-right: 8px; }
+.xx-note-bar button.xx-btn-icon {
+  padding: 0; min-width: 48px; min-height: 48px; }
 .xx-note-select button.xx-btn-icon { padding: 0; min-width: 44px; }
 button.xx-note-tool {
   min-width: 44px; min-height: 48px; padding: 0; border-radius: 12px;
@@ -86,7 +92,9 @@ button.xx-btn-icon.xx-note-on image { color: ${bg}; }
 .xx-note-field { margin-top: 20px; }
 .xx-note-field .xx-caption { margin-bottom: 8px; }
 .xx-note-status { font-size: ${t13}px; color: ${muted}; margin-top: 12px; }
-.xx-note-seg button { padding: 0 6px; }
+/* Tight caps so "CREATED" keeps three equal segments inside 320 px at
+   1.5x text; the homogeneous row hides the padding at normal sizes. */
+.xx-note-seg button { padding: 0 2px; letter-spacing: 0.04em; }
 .xx-note-actions { margin-top: 20px; }
 """)
 

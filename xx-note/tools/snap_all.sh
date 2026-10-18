@@ -1,7 +1,8 @@
 #!/bin/sh
 # Seeded screenshots of every xx-note screen in amoled + paper at the
-# FLX1 canvas (450x1000) and a 360x800 phone, plus graphite/aura spot
-# checks and phone-fit probes (320x640, text size 1.3 at 360x800):
+# FLX1 canvas (450x1000) and a 360x800 phone, plus graphite (450x1000)
+# and aura (360x800) spot checks and phone-fit probes (320x640, and
+# text size 1.5 at 360x800):
 #   xx-note/tools/snap_all.sh OUTDIR
 # Exits non-zero on any snap WARNING (phone-fit breach).
 set -u
@@ -44,6 +45,8 @@ archive|full|archive||
 trash|full|trash||
 settings|full|settings||
 sync|full|sync||$SYNC_ON
+sync-off|full|sync||
+error|full|settings|p = w.settings_page; p.folder_entry.set_text('/proc/xx-note'); p._apply_folder(None)|
 empty|empty|notes||"
 
 snap_one() {
@@ -63,7 +66,7 @@ snap_one() {
         [ -n "$navline" ] && printf '%s\n' "$navline"
     } > "$nav"
     attempt=0
-    while [ "$attempt" -lt 3 ]; do
+    while [ "$attempt" -lt 8 ]; do
         attempt=$((attempt + 1))
         rm -f "$out"
         rm -rf "$home"
@@ -87,7 +90,8 @@ snap_one() {
                 return 0
             fi
         fi
-        sleep 1
+        # Parallel snaps can draw the same Broadway display: retry.
+        sleep "$attempt"
     done
     fail "snap failed: $theme $name $size ($(tail -n 3 "$err" 2>/dev/null))"
 }
@@ -107,19 +111,20 @@ for theme in $THEMES; do
 done
 
 # Theme spot checks beyond the two sheet themes.
-for theme in graphite aura; do
-    for name in notes editor sync; do
-        snap_one "$theme" "$name" "450x1000" "$(state "$name")"
-    done
+SPOTS="notes editor settings sync"
+for name in $SPOTS; do
+    snap_one graphite "$name" "450x1000" "$(state "$name")"
+    snap_one aura "$name" "360x800" "$(state "$name")"
 done
 
 # Phone-fit probes: narrowest canvas and large text.
-for name in notes editor select settings sync trash; do
+FITS="notes editor read select search labels archive trash settings sync"
+for name in $FITS; do
     snap_one "paper" "$name" "320x640" "$(state "$name")"
 done
-for name in notes editor select settings sync trash; do
+for name in $FITS; do
     snap_one "amoled" "$name-large" "360x800" "$(state "$name")" \
-        ', "text_size_scale": 1.3'
+        ', "text_size_scale": 1.5'
 done
 
 if command -v montage >/dev/null 2>&1; then
@@ -130,30 +135,31 @@ if command -v montage >/dev/null 2>&1; then
                 labels="$labels -label $name $WORK/$theme-$name-$size.png"
             done
             # shellcheck disable=SC2086
-            montage $labels -tile 6x2 -geometry +4+24 -background black \
+            montage $labels -tile 8x2 -geometry +4+24 -background black \
                 -fill white -pointsize 22 "$OUTDIR/sheet-$theme-$size.png" \
                 || fail "montage failed for $theme $size"
         done
     done
     labels=""
-    for theme in graphite aura; do
-        for name in notes editor sync; do
-            labels="$labels -label $theme-$name $WORK/$theme-$name-450x1000.png"
-        done
+    for name in $SPOTS; do
+        labels="$labels -label graphite-$name $WORK/graphite-$name-450x1000.png"
+    done
+    for name in $SPOTS; do
+        labels="$labels -label aura-$name $WORK/aura-$name-360x800.png"
     done
     # shellcheck disable=SC2086
-    montage $labels -tile 6x1 -geometry +4+24 -background black \
+    montage $labels -tile 4x2 -geometry +4+24 -background black \
         -fill white -pointsize 22 "$OUTDIR/sheet-spots.png" \
         || fail "montage failed for spots"
     labels=""
-    for name in notes editor select settings sync trash; do
+    for name in $FITS; do
         labels="$labels -label 320-$name $WORK/paper-$name-320x640.png"
     done
-    for name in notes editor select settings sync trash; do
+    for name in $FITS; do
         labels="$labels -label large-$name $WORK/amoled-$name-large-360x800.png"
     done
     # shellcheck disable=SC2086
-    montage $labels -tile 6x2 -geometry +4+24 -background black \
+    montage $labels -tile 10x2 -geometry +4+24 -background black \
         -fill white -pointsize 22 "$OUTDIR/sheet-fit.png" \
         || fail "montage failed for fit"
 fi

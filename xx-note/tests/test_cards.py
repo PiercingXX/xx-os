@@ -77,3 +77,23 @@ def test_app_css_renders_for_every_preset():
         assert "${" not in css
         assert "xx-note-keep-banana" in css
         assert "font-size: 21px" in css  # 16 px title at text scale 1.3
+        # Sub-page bars keep flush 48 px targets (five editor icons at 320).
+        assert "min-width: 48px; min-height: 48px" in css
+
+
+def test_folder_problem_reads_plainly():
+    from xx_note.ui.settings_view import folder_problem
+
+    assert folder_problem(FileNotFoundError(2, "No such file or directory")) == (
+        "Can't use that folder: no such file or directory.")
+    assert folder_problem(OSError()) == "Can't use that folder."
+
+
+def test_notes_folder_shows_home_as_tilde(monkeypatch, tmp_path):
+    from xx_note.ui.settings_view import home_short
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert home_short(tmp_path / "Documents" / "Notes") == "~/Documents/Notes"
+    assert home_short(tmp_path) == "~"
+    assert home_short("/srv/notes") == "/srv/notes"
+    assert home_short("~/x") == "~/x"

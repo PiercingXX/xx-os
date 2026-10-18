@@ -26,6 +26,7 @@ def compact_bar(Gtk, title: str):  # type: ignore[no-untyped-def]
     bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     bar.add_css_class("xx-page-body")
     bar.add_css_class("xx-compact-header")
+    bar.add_css_class("xx-note-bar")
     back = xw.icon_button("go-previous-symbolic")
     back.set_can_focus(False)
     back.set_valign(Gtk.Align.CENTER)
@@ -101,6 +102,26 @@ def _status_label(Gtk, Pango):  # type: ignore[no-untyped-def]
     return label
 
 
+def home_short(path) -> str:  # type: ignore[no-untyped-def]
+    """``~/Documents/Notes`` rather than ``/home/me/Documents/Notes``: the
+    part a phone-width field can show is the part that differs."""
+    from pathlib import Path
+
+    full = Path(path).expanduser()
+    try:
+        rest = full.relative_to(Path.home())
+    except ValueError:
+        return full.as_posix()
+    return "~" if rest == Path(".") else f"~/{rest.as_posix()}"
+
+
+def folder_problem(exc: OSError) -> str:
+    """One plain line for a notes folder the app cannot use (no errno
+    codes or repeated paths)."""
+    reason = (exc.strerror or "").strip().rstrip(".")
+    return f"Can't use that folder: {reason.lower()}." if reason else "Can't use that folder."
+
+
 def _say(label, text: str) -> None:  # type: ignore[no-untyped-def]
     label.set_text(text)
     label.set_visible(bool(text))
@@ -118,7 +139,7 @@ class SettingsPage:
         body.set_margin_bottom(24)
 
         folder_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.folder_entry = _entry(Gtk, settings.resolved_notes_dir().as_posix())
+        self.folder_entry = _entry(Gtk, home_short(settings.resolved_notes_dir()))
         self.folder_entry.connect("activate", self._apply_folder)
         folder_row.append(self.folder_entry)
         pick = xw.icon_button("folder-open-symbolic", None)
@@ -160,8 +181,8 @@ class SettingsPage:
             dialog.select_folder(
                 None, None, lambda dlg, res: self._picked(dlg, res)
             )
-        except Exception as exc:
-            _say(self.status, f"Picker unavailable: {exc}")
+        except Exception:
+            _say(self.status, "No folder picker here. Type the path.")
 
     def _picked(self, dialog: object, res: object) -> None:
         try:
@@ -170,7 +191,7 @@ class SettingsPage:
         except Exception:
             return
         if path:
-            self.folder_entry.set_text(path)
+            self.folder_entry.set_text(home_short(path))
             self._apply_folder(None)
 
     def _apply_folder(self, _widget: object) -> None:
@@ -181,12 +202,12 @@ class SettingsPage:
 
         target = self.folder_entry.get_text().strip()
         if not target:
-            _say(self.status, "Folder is empty.")
+            _say(self.status, "Type a folder first.")
             return
         try:
             paths_mod.ensure_notes_tree(Path(target).expanduser())
         except OSError as exc:
-            _say(self.status, f"Cannot use that folder: {exc}")
+            _say(self.status, folder_problem(exc))
             return
         _say(self.status, "")
         self._settings.notes_dir = target
@@ -283,6 +304,27 @@ class SyncPage:
         if not self._settings.last_sync:
             return "Never synced"
         return f"Last sync {self._settings.last_sync}"
+
+    def check_saved(self) -> None:
+        """On open: say in the empty password box whether the keyring
+        already holds one, so nobody retypes it (a worker asks libsecret)."""
+        host, user = self._host_of(), self._settings.webdav_user
+        if not self._settings.webdav_enabled or host is None:
+            return
+
+        def work() -> None:
+            try:
+                saved = bool(self._secrets.get_password(host, user))
+            except Exception:
+                saved = False
+            self._GLib.idle_add(self._show_saved, saved)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_saved(self, saved: bool) -> bool:
+        if not self.pass_entry.get_text():
+            self.pass_entry.set_placeholder_text("Saved in keyring" if saved else "")
+        return False
 
     def _persist_fields(self) -> None:
         from xx_note import prefs as prefs_mod

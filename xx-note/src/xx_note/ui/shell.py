@@ -6,9 +6,10 @@ search, Sync and Settings; Settings, Sync and the editor push on top with
 their own back bar. Notes is the Android grid: a two-column staggered
 card grid with Pinned/Others, and a capture bar instead of a FAB (type a
 title and press Enter, or tap the checklist box). Long-press selects;
-the header turns into the selection bar. Empty lists show nothing. The
-search and capture entries stay unfocusable until tapped so the on-screen
-keyboard never pops on launch. All disk reads ride a worker thread.
+the header turns into the selection bar. Escape (or a back key) steps
+back: selection, then search, then a pushed page. Empty lists show
+nothing. The search and capture entries stay unfocusable until tapped so
+the on-screen keyboard never pops on launch. All disk reads ride a worker thread.
 """
 
 from __future__ import annotations
@@ -178,10 +179,12 @@ class NoteWindow:
         self.stack.add_named(self.sync_page.box, "sync")
 
         self.editor_page = _editor.EditorPage(
-            Gtk, Pango, GLib, on_saved=self._on_editor_saved
+            Gtk, Pango, GLib, on_saved=self._on_editor_saved,
+            on_trashed=self._after_bulk,
         )
         self.editor_page.bind(vault)
         self.editor_page.back_button.connect("clicked", lambda _b: self.go_back())
+        self.editor_page.trash_button.connect("clicked", lambda _b: self.go_back())
         self.stack.add_named(self.editor_page.box, "editor")
 
         # Capture bar: Android's answer to a FAB. Enter makes the note
@@ -213,6 +216,9 @@ class NoteWindow:
             self.tabs.append(button)
             self._tab_buttons[key] = button
         root.append(self.tabs)
+        keys = Gtk.EventControllerKey.new()
+        keys.connect("key-pressed", self._on_key)
+        self.win.add_controller(keys)
         self.show_page("notes")
 
     # ---- building blocks -------------------------------------------------
@@ -268,6 +274,8 @@ class NoteWindow:
         )
         self.search_button.set_visible(notes)
         self.stack.set_visible_child_name(name)
+        if name == "sync":
+            self.sync_page.check_saved()
         if tab_page:
             self.title_label.set_text(TAB_TITLES[name])
             self._update_caption()
@@ -279,6 +287,27 @@ class NoteWindow:
 
     def go_back(self) -> None:
         self.show_page(self._tab)
+
+    def back(self) -> bool:
+        """One step back, as Escape (or a phone's back key) expects:
+        selection, then search, then a pushed page. False at a tab root."""
+        if self._page == "notes" and self._selecting:
+            self._bulk("clear")
+            return True
+        if self._page == "notes" and self._search_open:
+            self.toggle_search()
+            return True
+        if self._page not in TABS:
+            self.go_back()
+            return True
+        return False
+
+    def _on_key(self, _ctrl, keyval: int, _code: int, _state) -> bool:  # type: ignore[no-untyped-def]
+        from gi.repository import Gdk
+
+        if keyval in (Gdk.KEY_Escape, Gdk.KEY_Back):
+            return self.back()
+        return False
 
     def open_sheet(self, name: str) -> None:
         self.show_page(name)
@@ -293,6 +322,9 @@ class NoteWindow:
             self.search.set_text("")
             self.search.set_can_focus(False)
             self.search_box.set_visible(False)
+            if self._query:
+                self._query = ""
+                self._render(self._notes, self._trash_notes)
 
     def _update_caption(self) -> None:
         live = [n for n in self._notes if not n.archived]
