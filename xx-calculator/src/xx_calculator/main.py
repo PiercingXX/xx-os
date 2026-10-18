@@ -176,17 +176,12 @@ BACK_TARGETS = {"history": "calc", "licenses": "calc", "license": "licenses"}
 
 
 def license_entries() -> list:
-    """The suite's shared licenses table, minus what this app does not
-    ship (phone numbers), with the app's own GPL-3.0-only line."""
+    """The suite's shared licenses table (the app's own GPL-3.0-only line
+    first), minus what this app does not ship (phone numbers)."""
     import xx_ui
 
-    widgets = xx_ui.widgets
-    entries = [entry for entry in widgets.standard_license_entries(APP_NAME)
-               if entry.name != "phonenumbers"]
-    if entries and entries[0].name == APP_NAME:
-        entries[0] = widgets.LicenseEntry(
-            APP_NAME, "GPL-3.0-only", entries[0].url, entries[0].packages)
-    return entries
+    return [entry for entry in xx_ui.widgets.standard_license_entries(APP_NAME)
+            if entry.name != "phonenumbers"]
 
 
 RAW_INSERT_TAIL_CHARS = frozenset("+{m}{t}*/{d}^(.".format(m=MINUS, t=TIMES, d=DIVIDE))

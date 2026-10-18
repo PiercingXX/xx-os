@@ -51,3 +51,11 @@ def test_missing_system_copy_shows_spdx_and_url(tmp_path):
         "Apache-2.0\n"
         "https://github.com/daviddrysdale/python-phonenumbers"
     )
+
+
+def test_app_license_matches_metainfo_and_can_be_overridden():
+    # The apps' AppStream metainfo says GPL-3.0-only.
+    assert widgets.standard_license_entries("X")[0].spdx == "GPL-3.0-only"
+    entries = widgets.standard_license_entries("X", spdx="MIT")
+    assert entries[0].spdx == "MIT"
+    assert entries[1:] == widgets.standard_license_entries("X")[1:]

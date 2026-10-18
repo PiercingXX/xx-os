@@ -948,13 +948,18 @@ class LicenseEntry:
     packages: tuple = ()
 
 
-def standard_license_entries(app_name: str) -> list:
-    """The app's own license plus the third-party components every XX
-    app uses at runtime: GTK/libadwaita/PyGObject, the ``phonenumbers``
-    display engine, the xx_ui fonts and icons. One data table per app;
-    each app passes its own name."""
+#: The suite's own license, as the apps' AppStream metainfo states it.
+APP_SPDX = 'GPL-3.0-only'
+
+
+def standard_license_entries(app_name: str, spdx: str = APP_SPDX) -> list:
+    """The app's own license (``spdx``, default the suite's GPL-3.0-only)
+    plus the third-party components every XX app uses at runtime:
+    GTK/libadwaita/PyGObject, the ``phonenumbers`` display engine, the
+    xx_ui fonts and icons. One data table per app; each app passes its
+    own name."""
     return [
-        LicenseEntry(app_name, 'GPL-3.0-or-later',
+        LicenseEntry(app_name, spdx,
                      'See LICENSE in the source tree'),
         LicenseEntry('GTK 4', 'LGPL-2.1-or-later',
                      'https://www.gtk.org/',
@@ -1042,12 +1047,13 @@ def licenses_page(navigation, app_name: str,
     chevrons: the rows read as tappable on their own."""
     body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 8)
     for entry in entries:
-        row = list_row(entry.name, entry.spdx,
+        row = list_row(entry.name, entry.spdx, wrap=True,
                        on_activate=(lambda item=entry: navigation.push(
                            _license_text_page(item, licenses_root))))
         body.append(row)
-    header = compact_header(navigation.pop, 'Open-source licenses',
-                            app_name)
+    # Title only, like every other pushed page: the app is the one the
+    # user is in (``app_name`` titles the dialog variant).
+    header = compact_header(navigation.pop, 'Open-source licenses')
     sheet = _adw().NavigationPage.new(page(header, body),
                                    'Open-source licenses')
     return sheet
@@ -1068,7 +1074,7 @@ def about_content(app_name: str, version: str, entries: list,
     # suite carries no decorative glyphs.
     root.append(list_row('Open-source licenses',
                          '%d components' % len(entries),
-                         on_activate=on_licenses, last=True))
+                         on_activate=on_licenses, last=True, wrap=True))
     return root
 
 
@@ -1095,7 +1101,7 @@ def show_licenses_dialog(parent: Gtk.Window, app_name: str,
         sheet = _license_text_page(entry, licenses_root)
         stack.add_named(sheet.get_child(), entry.name)
         listing.append(list_row(
-            entry.name, entry.spdx,
+            entry.name, entry.spdx, wrap=True,
             on_activate=(lambda name=entry.name:
                          stack.set_visible_child_name(name))))
     back = Gtk.Button.new_with_label('Back')
