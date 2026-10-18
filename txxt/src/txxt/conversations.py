@@ -28,7 +28,7 @@ gi.require_version("Gdk", "4.0")
 import threading  # noqa: E402
 import time  # noqa: E402
 
-from gi.repository import Adw, Gio, GLib, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from txxt import blocking as blocking_mod  # noqa: E402
 from xx_ui import widgets  # noqa: E402
@@ -176,10 +176,13 @@ class ConversationListPage(Adw.NavigationPage):
         self._banner_label = widgets.label("Held for review", "xx-title")
         self._banner_label.set_hexpand(True)
         self._banner_label.set_valign(Gtk.Align.CENTER)
+        # Large text: wrap to a second line rather than "1 held for revi…".
+        self._banner_label.set_wrap(True)
+        self._banner_label.set_wrap_mode(Pango.WrapMode.WORD)
+        self._banner_label.set_lines(2)
         banner_row.append(self._banner_label)
-        chevron = widgets.icon_image("go-next-symbolic")
-        chevron.set_valign(Gtk.Align.CENTER)
-        banner_row.append(chevron)
+        # A whole card under the header: it reads as tappable without
+        # a chevron (as the suite's navigation rows do).
         self._quarantine_banner.set_child(banner_row)
         self._quarantine_banner.set_visible(False)
         self._quarantine_banner.connect("clicked", self._on_quarantine_clicked)
