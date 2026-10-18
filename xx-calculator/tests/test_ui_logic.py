@@ -1,11 +1,56 @@
 """Headless UI-logic tests: paste sanitizer, error strings, grouping hook."""
 from xx_calculator.engine import DIVIDE, MINUS, TIMES, ErrorKind
 from xx_calculator.main import (
+    BACK_TARGETS,
     _mix,
     error_text,
     format_number,
+    pick_fit,
     sanitize_paste,
+    shrink_to_fit,
 )
+
+
+def test_pick_fit_takes_the_largest_step_that_fits():
+    assert pick_fit([400, 320, 280, 240], 300) == 2
+    assert pick_fit([200, 180], 300) == 0
+
+
+def test_pick_fit_falls_back_to_the_smallest_step():
+    assert pick_fit([900, 800, 700], 300) == 2
+    assert pick_fit([], 300) == 0
+
+
+def test_shrink_to_fit_leaves_a_fitting_line_alone():
+    assert shrink_to_fit(24, 200, 300, 12) is None
+    assert shrink_to_fit(24, 200, 0, 12) is None
+
+
+def test_shrink_to_fit_scales_a_long_number_down_whole():
+    assert shrink_to_fit(36, 410, 272, 12) == 23
+    assert shrink_to_fit(36, 4000, 272, 12) == 12
+
+
+def test_back_closes_each_sub_page_to_its_parent():
+    assert BACK_TARGETS == {"history": "calc", "licenses": "calc",
+                            "license": "licenses"}
+    assert "calc" not in BACK_TARGETS
+
+
+def test_license_entries_list_what_the_calculator_ships():
+    import pytest
+
+    try:
+        from xx_calculator.main import license_entries
+
+        entries = license_entries()
+    except Exception:
+        pytest.skip("GTK is missing")
+    names = [entry.name for entry in entries]
+    assert names[0] == "xx-calculator"
+    assert entries[0].spdx == "GPL-3.0-only"
+    assert "phonenumbers" not in names
+    assert "GTK 4" in names
 
 
 def test_error_strings_match_the_play_edition():

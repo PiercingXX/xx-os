@@ -96,6 +96,46 @@ def _flows():
         w._on_copy()
         w._on_paste_text("6*7")
         check("paste", w.builder.expression == "6×7", w.builder.expression)
+        # The phone's back gesture is Escape: it never wipes the display,
+        # and it closes a sub-page instead.
+        from gi.repository import Gdk
+        esc = Gdk.keyval_from_name("Escape")
+        w._on_key(None, esc, 0, Gdk.ModifierType(0))
+        check("back-keeps-expression", w.builder.expression == "6×7", w.builder.expression)
+        w.show("history")
+        check("back-closes-history", w._on_key(None, esc, 0, Gdk.ModifierType(0))
+              and w.stack.get_visible_child_name() == "calc")
+        w._on_licenses()
+        check("licenses-page", w.stack.get_visible_child_name() == "licenses")
+        from xx_calculator.main import license_entries
+        w._open_license(license_entries()[0])
+        check("license-text", w.stack.get_visible_child_name() == "license"
+              and w._license_text.get_text() != "")
+        w.back()
+        check("license-back-to-list", w.stack.get_visible_child_name() == "licenses")
+        w.back()
+        check("licenses-back-to-calc", w.stack.get_visible_child_name() == "calc")
+        check("back-at-root-is-noop", w.back() is False)
+        # Menu entries that cannot act show disabled.
+        w.builder.clear(); w._on_edited(); w.store.clear()
+        state = w.menu_state()
+        check("menu-disabled-when-empty", not state["copy"] and not state["clear-history"])
+        w.builder.raw("2"); w._on_edited(); w.store.add("1+1", "2", 4000)
+        state = w.menu_state()
+        check("menu-enabled", state["copy"] and state["clear-history"])
+        w._on_menu(w.menu_btn)
+        w._menu_popover.popdown()
+        # The menu's "calc.*" names resolve from the window (they once
+        # pointed at app actions that no menu could reach).
+        check("menu-actions-resolve",
+              w.menu_btn.activate_action("calc.clear-history", None)
+              and w.store.list() == [])
+        # A long result is never cut short: no ellipsis on the line.
+        w.builder.clear(); w.builder.raw("2^100"); w._on_edited(); w._on_equals()
+        check("big-result-text", w.expr_label.get_text() == "1.26765060022823E30",
+              w.expr_label.get_text())
+        check("expr-never-ellipsized",
+              w.expr_label.get_ellipsize() == 0)
     except Exception:
         failures.append(traceback.format_exc())
     return False

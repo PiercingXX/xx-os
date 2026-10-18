@@ -47,7 +47,7 @@ button.xx-calc-key:active {{ background-color: @theme_selected_bg_color;
   color: @theme_selected_fg_color; }}
 button.xx-calc-key.xx-calc-equals {{ font-size: {equals}px; }}
 button.xx-calc-chip {{
-  min-height: 40px; min-width: 0; padding: 0 18px;
+  min-height: 48px; min-width: 0; padding: 0 18px;
   border-radius: 9999px; font-size: {chip}px; font-weight: 400;
   background-color: @card_bg_color; color: @theme_fg_color;
   border: none; box-shadow: none;
@@ -170,13 +170,24 @@ def _keypad_class():
     _KEYPAD_CLASS = KeyPad
     return KeyPad
 
-LICENSES_TEXT = """xx-calculator uses:
+APP_NAME = "xx-calculator"
+# Sub-pages and where Back (the phone's back gesture, Escape) returns.
+BACK_TARGETS = {"history": "calc", "licenses": "calc", "license": "licenses"}
 
-- Python 3 standard library (PSF License)
-- GTK 4 and libadwaita (LGPL-2.1-or-later)
-- JetBrains Mono / Space Mono (SIL OFL 1.1)
 
-No network code ships in this app; history stays on this phone."""
+def license_entries() -> list:
+    """The suite's shared licenses table, minus what this app does not
+    ship (phone numbers), with the app's own GPL-3.0-only line."""
+    import xx_ui
+
+    widgets = xx_ui.widgets
+    entries = [entry for entry in widgets.standard_license_entries(APP_NAME)
+               if entry.name != "phonenumbers"]
+    if entries and entries[0].name == APP_NAME:
+        entries[0] = widgets.LicenseEntry(
+            APP_NAME, "GPL-3.0-only", entries[0].url, entries[0].packages)
+    return entries
+
 
 RAW_INSERT_TAIL_CHARS = frozenset("+{m}{t}*/{d}^(.".format(m=MINUS, t=TIMES, d=DIVIDE))
 
@@ -188,6 +199,38 @@ _EXPR_SIZE_CLASSES = (
     (24, "xx-calc-expr-s4"),
     (10**9, "xx-calc-expr-s5"),
 )
+
+
+# Expression font steps, largest first: (css class, key in _APP_CSS_PX).
+_EXPR_STEPS = (
+    (None, "expr"), ("xx-calc-expr-s1", "s1"), ("xx-calc-expr-s2", "s2"),
+    ("xx-calc-expr-s3", "s3"), ("xx-calc-expr-s4", "s4"),
+    ("xx-calc-expr-s5", "s5"),
+)
+# A shown number shrinks this far (px at scale 1.0) before it may scroll.
+FIT_FLOOR_PX = 12
+
+
+def pick_fit(widths: list[int], available: int) -> int:
+    """Index of the first (largest) font step whose text width fits
+    ``available`` px; the last step when none does (Android's
+    autoShrinkExpression). Pure."""
+    for index, width in enumerate(widths):
+        if width <= available:
+            return index
+    return max(len(widths) - 1, 0)
+
+
+def shrink_to_fit(px: float, width: float, available: float,
+                  floor: float) -> float | None:
+    """Font px that makes a ``width``-px text at ``px`` fit ``available``,
+    never under ``floor``; None when it already fits. Pure.
+
+    A number on screen is never cut short: "1.2676…" would read as a
+    different value than 1.26765060022823E30."""
+    if available <= 0 or width <= available:
+        return None
+    return max(floor, int(px * available / width))
 
 
 def _require_gtk():
@@ -310,6 +353,7 @@ class CalcWindow:
             scale = float(getattr(theme, "scale", 1.0) or 1.0)
         except Exception:
             scale = 1.0
+        self._scale = scale
         try:
             Gtk, Gdk = self._Gtk, self._Gdk
             if getattr(self, "_app_provider", None) is None:
@@ -354,6 +398,8 @@ class CalcWindow:
     def _on_suite_theme(self, _theme) -> None:
         self._load_app_css(_theme)
         self._install_key_colors(_theme)
+        if getattr(self, "expr_label", None) is not None:
+            self._queue_fit()
         try:
             from xx_ui import theme as theme_mod
 
@@ -402,22 +448,26 @@ class CalcWindow:
         filler.set_vexpand(True)
         self.display.append(filler)
         self.expr_scroll = Gtk.ScrolledWindow()
-        self.expr_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
+        # Android's HorizontalScrollView: a long expression scrolls
+        # (no scrollbar) and stays scrolled to its end, where you type,
+        # instead of ellipsizing the digits just entered.
+        self.expr_scroll.set_policy(Gtk.PolicyType.EXTERNAL,
                                    Gtk.PolicyType.NEVER)
         self.expr_scroll.set_propagate_natural_height(True)
         self.expr_label = Gtk.Label(label="")
         self.expr_label.add_css_class("xx-calc-expr")
         self.expr_label.set_xalign(1.0)
-        self.expr_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.expr_label.set_max_width_chars(14)
         self.expr_label.set_hexpand(True)
         self.expr_scroll.set_child(self.expr_label)
+        self.expr_scroll.get_hadjustment().connect(
+            "changed", lambda *_: self._queue_fit())
         self.display.append(self.expr_scroll)
         self.result_label = Gtk.Label(label="")
         self.result_label.add_css_class("xx-calc-result")
         self.result_label.set_xalign(1.0)
+        # Only a floor for the window width: _fit_result_line shrinks the
+        # text to fit, so the ellipsis never shows on a number.
         self.result_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.result_label.set_max_width_chars(14)
         self.result_label.set_margin_top(2)
         self.display.append(self.result_label)
         try:
@@ -482,6 +532,7 @@ class CalcWindow:
         self.side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.side.set_vexpand(True)
         self._build_history_page()
+        self._licenses_built = False
 
         self.win.set_content(root)
         key = Gtk.EventControllerKey()
@@ -617,10 +668,8 @@ class CalcWindow:
                     btn.add_css_class("xx-calc-equals")
                 self.pad.attach(btn, col, row, 1, 1)
 
-    def _build_history_page(self) -> None:
-        # Android's history sheet: a Space Mono "History" title over the
-        # entries, hairlines between them. Clearing lives in the overflow
-        # menu (one entry point); an empty history is just empty.
+    def _sub_header(self, title: str, back_to: str):
+        """Android's sheet title: back, then a Space Mono title."""
         Gtk = self._Gtk
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         bar.set_margin_start(8)
@@ -628,16 +677,22 @@ class CalcWindow:
         bar.set_margin_top(8)
         back = self._bar_button(self._icon("go-previous-symbolic", 24),
                                 "Back")
-        back.connect("clicked", lambda *_: self.show("calc"))
+        back.connect("clicked", lambda *_: self.show(back_to))
         bar.append(back)
-        title = Gtk.Label(label="History")
-        title.add_css_class("xx-calc-hist-title")
-        title.add_css_class("xx-display-face")
-        title.set_hexpand(True)
-        title.set_xalign(0.0)
-        title.set_valign(Gtk.Align.CENTER)
-        bar.append(title)
-        self.side.append(bar)
+        label = Gtk.Label(label=title)
+        label.add_css_class("xx-calc-hist-title")
+        label.add_css_class("xx-display-face")
+        label.set_hexpand(True)
+        label.set_xalign(0.0)
+        label.set_valign(Gtk.Align.CENTER)
+        # Large text on a narrow phone wraps the title, never cuts it.
+        label.set_wrap(True)
+        label.set_wrap_mode(self._Pango.WrapMode.WORD_CHAR)
+        bar.append(label)
+        return bar, label
+
+    def _sub_scroll(self, child):
+        Gtk = self._Gtk
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_vexpand(True)
@@ -645,14 +700,62 @@ class CalcWindow:
         scroll.set_margin_start(24)
         scroll.set_margin_end(24)
         scroll.set_margin_top(8)
+        scroll.set_child(child)
+        return scroll
+
+    def _build_history_page(self) -> None:
+        # Android's history sheet: a Space Mono "History" title over the
+        # entries, hairlines between them. Clearing lives in the overflow
+        # menu (one entry point); an empty history is just empty.
+        Gtk = self._Gtk
+        self.side.append(self._sub_header("History", "calc")[0])
         self.hist_list = Gtk.ListBox()
         self.hist_list.add_css_class("xx-calc-hist")
         self.hist_list.set_selection_mode(Gtk.SelectionMode.NONE)
         self.hist_list.set_valign(Gtk.Align.START)
         self.hist_list.connect("row-activated", self._on_history_row)
-        scroll.set_child(self.hist_list)
-        self.side.append(scroll)
+        self.side.append(self._sub_scroll(self.hist_list))
         self.stack.add_named(self.side, "history")
+
+    def _build_licenses_pages(self) -> None:
+        # The suite's licenses page, in the History page's dress: one
+        # row per component (name over its SPDX id); a tap shows the
+        # license text. No dialog, no explanatory paragraph.
+        Gtk = self._Gtk
+        import xx_ui
+
+        widgets = xx_ui.widgets
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.append(self._sub_header("Open-source licenses", "calc")[0])
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        entries = license_entries()
+        for index, entry in enumerate(entries):
+            body.append(widgets.list_row(
+                entry.name, entry.spdx, last=index == len(entries) - 1,
+                on_activate=lambda item=entry: self._open_license(item)))
+        page.append(self._sub_scroll(body))
+        self.stack.add_named(page, "licenses")
+
+        text_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        bar, self._license_title = self._sub_header("", "licenses")
+        text_page.append(bar)
+        self._license_text = Gtk.Label(label="")
+        self._license_text.add_css_class("xx-secondary")
+        self._license_text.set_xalign(0.0)
+        self._license_text.set_yalign(0.0)
+        self._license_text.set_wrap(True)
+        self._license_text.set_wrap_mode(self._Pango.WrapMode.WORD_CHAR)
+        self._license_text.set_selectable(True)
+        self._license_text.set_margin_bottom(24)
+        text_page.append(self._sub_scroll(self._license_text))
+        self.stack.add_named(text_page, "license")
+
+    def _open_license(self, entry) -> None:
+        import xx_ui
+
+        self._license_title.set_text(entry.name)
+        self._license_text.set_text(xx_ui.widgets.license_text(entry))
+        self.show("license")
 
     # -- keys -------------------------------------------------------
     def _digit(self, char: str):
@@ -786,17 +889,109 @@ class CalcWindow:
             text = format_number(self._bright_text)
         try:
             self.expr_label.set_text(text)
-            for limit, cls in _EXPR_SIZE_CLASSES:
-                if len(text) <= limit:
-                    picked = cls
-                    break
-            for _limit, cls in _EXPR_SIZE_CLASSES:
-                if cls is not None:
-                    self.expr_label.remove_css_class(cls)
-            if picked is not None:
-                self.expr_label.add_css_class(picked)
         except Exception:
             pass
+        self._fit_display()
+
+    def _queue_fit(self) -> None:
+        # The width is known (or changed) only after allocation: refit on
+        # the next main-loop turn, once per burst.
+        if getattr(self, "_fit_pending", False):
+            return
+        self._fit_pending = True
+
+        def run() -> bool:
+            self._fit_pending = False
+            self._fit_display()
+            return False
+
+        try:
+            self._GLib.idle_add(run)
+        except Exception:
+            self._fit_pending = False
+
+    def _text_width(self, label, text: str, px: float) -> int:
+        """Pixel width of ``text`` in the label's font at ``px``."""
+        Pango = self._Pango
+        layout = label.create_pango_layout(text)
+        desc = label.get_pango_context().get_font_description()
+        desc = desc.copy() if desc is not None else Pango.FontDescription()
+        desc.set_absolute_size(px * Pango.SCALE)
+        layout.set_font_description(desc)
+        return layout.get_pixel_size()[0]
+
+    def _set_px(self, label, px: float | None) -> None:
+        """Override the label's CSS font size (None restores it)."""
+        Pango = self._Pango
+        if getattr(label, "_fit_px", None) == px:
+            return
+        label._fit_px = px
+        if px is None:
+            label.set_attributes(None)
+            return
+        attrs = Pango.AttrList()
+        attrs.insert(Pango.attr_size_new_absolute(int(px * Pango.SCALE)))
+        label.set_attributes(attrs)
+
+    def _fit_display(self) -> None:
+        """Size the display lines to the display width, as Android does:
+        the expression steps down its font sizes, then scrolls to its end;
+        a committed result, the preview and an error shrink until they
+        fit whole, so no number is ever shown cut short."""
+        label = getattr(self, "expr_label", None)
+        if label is None:
+            return
+        text = label.get_text()
+        scale = getattr(self, "_scale", 1.0)
+        steps = [(cls, _APP_CSS_PX[key] * scale) for cls, key in _EXPR_STEPS]
+        if self._landscape:
+            steps = [(None, _APP_CSS_PX["land_expr"] * scale)]
+        try:
+            available = self.expr_scroll.get_width()
+        except Exception:
+            available = 0
+        if available > 0 and text:
+            widths = [self._text_width(label, text, px) for _c, px in steps]
+            index = pick_fit(widths, available)
+        else:
+            # Not allocated yet: guess from the length; the refit after
+            # allocation measures for real.
+            index = 0
+            for limit, cls in _EXPR_SIZE_CLASSES:
+                if len(text) <= limit:
+                    index = [c for c, _p in _EXPR_STEPS].index(cls)
+                    break
+            index = min(index, len(steps) - 1)
+            widths = []
+        picked = steps[index][0]
+        try:
+            for cls, _key in _EXPR_STEPS:
+                if cls is not None and cls != picked:
+                    label.remove_css_class(cls)
+            if picked is not None:
+                label.add_css_class(picked)
+            px = None
+            if self._bright and widths:
+                px = shrink_to_fit(steps[index][1], widths[index], available,
+                                   FIT_FLOOR_PX * scale)
+            self._set_px(label, px)
+            self._fit_result_line(available)
+            hadj = self.expr_scroll.get_hadjustment()
+            hadj.set_value(hadj.get_upper() - hadj.get_page_size())
+        except Exception:
+            pass
+
+    def _fit_result_line(self, available: int) -> None:
+        label = self.result_label
+        text = label.get_text()
+        scale = getattr(self, "_scale", 1.0)
+        key = "land_result" if self._landscape else "result"
+        px = _APP_CSS_PX[key] * scale
+        fit = None
+        if available > 0 and text:
+            fit = shrink_to_fit(px, self._text_width(label, text, px),
+                                available, FIT_FLOOR_PX * scale)
+        self._set_px(label, fit)
 
     def _refresh_preview(self) -> None:
         if self._bright or self._error_shown:
@@ -827,6 +1022,7 @@ class CalcWindow:
             self.result_label.set_visible(True)
         except Exception:
             pass
+        self._queue_fit()
 
     def _show_committed(self) -> None:
         # After "=" the expression line already reads the result (the
@@ -860,6 +1056,7 @@ class CalcWindow:
         except Exception:
             pass
         self._error_shown = True
+        self._queue_fit()
 
     def _on_equals(self, *_args) -> None:
         if self._bright or not self.builder.expression:
@@ -908,7 +1105,19 @@ class CalcWindow:
     def show(self, name: str) -> None:
         if name == "history":
             self._render_history()
+        if name in ("licenses", "license") and not self._licenses_built:
+            self._licenses_built = True
+            self._build_licenses_pages()
         self.stack.set_visible_child_name(name)
+
+    def back(self) -> bool:
+        """The phone's back: a sub-page closes; the calculator itself
+        keeps its expression (returns False, nothing to go back to)."""
+        target = BACK_TARGETS.get(self.stack.get_visible_child_name() or "")
+        if target is None:
+            return False
+        self.show(target)
+        return True
 
     def open_sheet(self, name: str) -> None:
         self.show(name)
@@ -952,6 +1161,7 @@ class CalcWindow:
                 self._root.remove_css_class("xx-calc-landscape")
         except Exception:
             pass
+        self._queue_fit()
         if not self._science_known:
             self._apply_science_expanded(on)
 
@@ -971,14 +1181,19 @@ class CalcWindow:
                 expr = Gtk.Label(label=entry.expression)
                 expr.add_css_class("xx-secondary")
                 expr.add_css_class("xx-calc-hist-expr")
+                # Android keeps the tail of a long expression (ellipsize
+                # start); the result wraps instead, so it is never shown
+                # as a shorter, different number.
                 expr.set_xalign(1.0)
-                expr.set_ellipsize(Pango.EllipsizeMode.END)
+                expr.set_ellipsize(Pango.EllipsizeMode.START)
                 expr.set_max_width_chars(24)
                 box.append(expr)
                 result = Gtk.Label(label=format_number(entry.result))
                 result.add_css_class("xx-calc-hist-result")
                 result.set_xalign(1.0)
-                result.set_ellipsize(Pango.EllipsizeMode.END)
+                result.set_justify(Gtk.Justification.RIGHT)
+                result.set_wrap(True)
+                result.set_wrap_mode(Pango.WrapMode.CHAR)
                 result.set_max_width_chars(24)
                 box.append(result)
                 row = Gtk.ListBoxRow()
@@ -1006,42 +1221,43 @@ class CalcWindow:
         self._render_history()
 
     # -- menu / licenses ----------------------------------------------
+    def menu_state(self) -> dict[str, bool]:
+        """Which overflow entries can act right now (pure read)."""
+        return {"copy": bool(self._copied_text()),
+                "clear-history": bool(self.store.list()),
+                "licenses": True}
+
     def _on_menu(self, button) -> None:
         Gtk, Gio = self._Gtk, self._Gio
         try:
-            menu = Gio.Menu()
-            menu.append("Copy result", "calc.copy")
-            menu.append("Clear history", "calc.clear-history")
-            menu.append("Open-source licenses", "calc.licenses")
-            app = self.win.get_application()
-            if app is not None:
+            if getattr(self, "_menu_popover", None) is None:
+                menu = Gio.Menu()
+                menu.append("Copy", "calc.copy")
+                menu.append("Clear history", "calc.clear-history")
+                menu.append("Open-source licenses", "calc.licenses")
+                group = Gio.SimpleActionGroup()
+                self._menu_actions = {}
                 for name, callback in (
                         ("copy", lambda *_: self._on_copy()),
                         ("clear-history", lambda *_: self._on_clear_history()),
                         ("licenses", lambda *_: self._on_licenses())):
-                    action = Gio.SimpleAction.new(f"calc.{name}", None)
+                    action = Gio.SimpleAction.new(name, None)
                     action.connect("activate", callback)
-                    try:
-                        app.add_action(action)
-                    except Exception:
-                        pass
-            popover = Gtk.PopoverMenu.new_from_model(menu)
-            popover.set_parent(button)
-            popover.popup()
+                    group.add_action(action)
+                    self._menu_actions[name] = action
+                self.win.insert_action_group("calc", group)
+                self._menu_popover = Gtk.PopoverMenu.new_from_model(menu)
+                self._menu_popover.set_parent(button)
+            # Nothing to copy, or no history: the entry shows disabled
+            # rather than doing nothing.
+            for name, enabled in self.menu_state().items():
+                self._menu_actions[name].set_enabled(enabled)
+            self._menu_popover.popup()
         except Exception:
             pass
 
     def _on_licenses(self, *_args) -> None:
-        Adw = self._Adw
-        try:
-            dialog = Adw.AlertDialog(
-                heading="Open-source licenses", body=LICENSES_TEXT)
-            dialog.add_response("done", "Done")
-            dialog.set_default_response("done")
-            dialog.set_close_response("done")
-            dialog.present(self.win)
-        except Exception:
-            pass
+        self.show("licenses")
 
     # -- copy / paste ---------------------------------------------------
     def _copied_text(self) -> str:
@@ -1089,6 +1305,15 @@ class CalcWindow:
 
         name = Gdk.keyval_name(keyval) or ""
         ctrl = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        if self.stack.get_visible_child_name() != "calc":
+            # The phone's back gesture arrives as Escape: it closes the
+            # sub-page. Keys typed here do not edit the hidden display.
+            if name in ("Escape", "BackSpace", "Back"):
+                return self.back()
+            return False
+        if name in ("Escape", "Back"):
+            # Back on the calculator never wipes the expression.
+            return False
         if ctrl and name.lower() == "c":
             self._on_copy()
             return True
@@ -1140,9 +1365,10 @@ class CalcWindow:
             self.builder.backspace()
             self._on_edited()
             return True
-        if name in ("Escape", "Delete"):
+        if name == "Delete":
             self._on_ac()
             return True
+        return False
 
     # -- present / seed ---------------------------------------------------
     def present(self) -> None:
@@ -1177,6 +1403,17 @@ class CalcWindow:
         elif scenario == "error":
             self.builder.clear()
             self.builder.raw("5÷0")
+            self._on_edited()
+            self._on_equals()
+        elif scenario == "long":
+            # Typing past the screen width: the caret end stays in view.
+            self.builder.clear()
+            self.builder.raw("123456789×987654321+5555÷7−42×3")
+            self._on_edited()
+        elif scenario == "big":
+            # A committed result with an exponent must show whole.
+            self.builder.clear()
+            self.builder.raw("2^100")
             self._on_edited()
             self._on_equals()
         elif scenario == "science":
