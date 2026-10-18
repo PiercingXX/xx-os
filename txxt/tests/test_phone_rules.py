@@ -177,3 +177,47 @@ def test_shared_theme_applied_once_at_startup():
     assert "xx_ui.on_change(" not in src
     assert "xx_ui.install(" not in src
     assert "manual_theme" not in src
+
+
+# ---- one way to do each thing ----
+
+def test_new_message_has_one_to_field():
+    src = read("new_conversation_page.py")
+    assert src.count("text_entry(") == 1
+    assert "search_bar(" not in src
+    assert "empty_state(" not in src
+
+
+def test_start_needs_a_number_not_a_name():
+    from txxt.new_conversation_page import _dialable
+
+    assert _dialable("+1 (614) 555-0101")
+    assert _dialable("72975")
+    assert not _dialable("")
+    assert not _dialable("Mara")
+    assert not _dialable("Mara 2")
+
+
+def test_inbox_header_is_new_and_settings_no_menu():
+    src = read("conversations.py")
+    assert '("New", self._on_compose_clicked)' in src
+    assert "overflow_cb" not in src
+    assert "_on_overflow" not in src
+
+
+def test_row_states_read_once():
+    # The star rides the title and "muted" leads the snippet, so the
+    # row never trails " · Starred" or " · Muted" as well.
+    src = read("conversations.py")
+    assert "view.snippet + view.marks" not in src
+    assert "shrink_header_title(self._header)" in src
+
+
+def test_a_photo_shows_without_its_placeholder_line():
+    assert "COLLAPSED_PHOTO_PLACEHOLDER" in read("thread_page.py")
+
+
+def test_a_block_that_worked_pops_nothing():
+    src = read("conversations.py")
+    assert '"Blocked"' not in src
+    assert "Could not block" in src

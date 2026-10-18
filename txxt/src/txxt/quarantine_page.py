@@ -262,7 +262,7 @@ class QuarantinePage(Adw.NavigationPage):
         except Exception:
             sender = ''
         title = self._display_name(sender) if sender else 'Held thread'
-        dialog = Adw.AlertDialog.new(title, 'Release, block, or delete this thread?')
+        dialog = Adw.AlertDialog.new(title, None)
         dialog.add_response('cancel', 'Cancel')
         dialog.add_response('deliver', 'Deliver')
         dialog.add_response('block', 'Block')

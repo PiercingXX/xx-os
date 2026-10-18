@@ -34,6 +34,7 @@ from xx_ui import widgets  # noqa: E402
 from txxt import compose as compose_mod  # noqa: E402
 from txxt import list_presenter as presenter  # noqa: E402
 from txxt.conversations import launch_uri, tap_to_focus  # noqa: E402
+from txxt.conversations_core import COLLAPSED_PHOTO_PLACEHOLDER  # noqa: E402
 
 #: Staged-photo cache lifetime (mirrors Android ``PhotoStaging`` TTL).
 STAGED_TTL_MILLIS = 24 * 60 * 60 * 1000
@@ -215,7 +216,9 @@ class ThreadPage(Adw.NavigationPage):
             "go-up-symbolic", lambda: self._step_match(-1))
         self._next_button = widgets.icon_button(
             "go-down-symbolic", lambda: self._step_match(1))
+        # "2/5", whole: the short form fits 320 px at large text.
         self._count = widgets.label("", "xx-time", xalign=1.0)
+        self._count.set_ellipsize(Pango.EllipsizeMode.NONE)
         search_box.append(self._search_entry)
         search_box.append(self._prev_button)
         search_box.append(self._next_button)
@@ -244,6 +247,11 @@ class ThreadPage(Adw.NavigationPage):
         self._staged_thumb.set_size_request(96, 72)
         self._staged_label = widgets.label("", "xx-secondary")
         self._staged_label.set_hexpand(True)
+        # Two lines before an ellipsis: "Photo · 1.2 MB" reads whole.
+        self._staged_label.set_wrap(True)
+        self._staged_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self._staged_label.set_lines(2)
+        self._staged_label.set_ellipsize(Pango.EllipsizeMode.END)
         self._staged_clear = widgets.icon_button(
             "window-close-symbolic", self._on_staged_clear)
         self._staged_row.append(self._staged_thumb)
@@ -492,7 +500,7 @@ class ThreadPage(Adw.NavigationPage):
             self._cursor = 0 if self._matches else -1
             total = len(self._matches)
             self._count.set_text(
-                f"1 of {total}" if total else "No matches")
+                f"1/{total}" if total else "0/0")
         else:
             self._cursor = -1
             self._count.set_text("")
@@ -573,6 +581,11 @@ class ThreadPage(Adw.NavigationPage):
             list_item.incoming.set_text(text)
             list_item.stamp.set_xalign(0.0)
             list_item.stamp.set_halign(Gtk.Align.START)
+        # A photo with no caption shows the photo (or Load photo), not
+        # the "[Photo]" placeholder line above it as well.
+        if item.is_photo and text.strip() in ("", COLLAPSED_PHOTO_PLACEHOLDER):
+            list_item.incoming.set_visible(False)
+            list_item.outgoing.set_visible(False)
         meta = item.stamp + (f" · {item.state}" if item.state else "")
         list_item.stamp.set_text(meta)
         show_photo = bool(item.is_photo and item.media_path)
@@ -723,7 +736,7 @@ class ThreadPage(Adw.NavigationPage):
         if not total:
             return
         self._cursor = presenter.step_match(self._cursor, direction, total)
-        self._count.set_text(f"{self._cursor + 1} of {total}")
+        self._count.set_text(f"{self._cursor + 1}/{total}")
         self._list.scroll_to(self._cursor, Gtk.ListScrollFlags.NONE, None)
 
     # --------------------------------------------------------------- actions
@@ -811,7 +824,7 @@ class ThreadPage(Adw.NavigationPage):
     # -------------------------------------------------- photo attach (L5)
 
     def _on_attach_clicked(self) -> None:
-        dialog = Adw.AlertDialog.new("Attach photo", "Choose a photo to send")
+        dialog = Adw.AlertDialog.new("Attach photo", None)
         dialog.add_response("files", "Files")
         dialog.add_response("roll", "Camera roll")
         dialog.add_response("cancel", "Cancel")
@@ -922,7 +935,7 @@ class ThreadPage(Adw.NavigationPage):
             except Exception:
                 pass
         self._staged_label.set_text(
-            f"Photo staged · {format_size(size)}")
+            f"Photo · {format_size(size)}")
         self._staged_row.set_visible(True)
 
     def _on_staged_clear(self) -> None:

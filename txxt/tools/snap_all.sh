@@ -17,10 +17,13 @@ PY=${PYTHON:-python3}
 export PYTHONPATH="$TX/src$([ -n "${PYTHONPATH:-}" ] && printf ':%s' "$PYTHONPATH")"
 
 SCREENS="list thread mms search new settings blocking quarantine rowmenu
-overflow attach staged"
+attach staged"
 THEMES=${THEMES-"amoled paper forest aura"}
 FIT320=${FIT320-$SCREENS}
 SCALE15=${SCALE15-$SCREENS}
+FIT320X15=${FIT320X15-$SCREENS}
+# SIZE: the phone size of the per-theme sheets (450x1000 is the FLX1).
+SIZE=${SIZE:-360x720}
 mkdir -p "$OUTDIR"
 failed=""
 
@@ -60,9 +63,6 @@ EOF
 import json, os
 _ids = json.load(open(os.path.join(os.environ['SEED_HOME'], 'ids.json')))
 win._list_page._show_row_menu(_ids['mara'])
-EOF
-    cat > "$1/overflow.py" <<'EOF'
-win._list_page._on_overflow_clicked()
 EOF
     cat > "$1/attach.py" <<'EOF'
 import json, os
@@ -141,10 +141,11 @@ render_set() {
 }
 
 for theme in $THEMES; do
-    render_set "$theme" "$theme" 1 360x720 "$SCREENS"
+    render_set "$theme" "$theme" 1 "$SIZE" "$SCREENS"
 done
 [ -n "$FIT320" ] && render_set fit320 amoled 1 320x720 "$FIT320"
 [ -n "$SCALE15" ] && render_set scale15 amoled 1.5 360x720 "$SCALE15"
+[ -n "$FIT320X15" ] && render_set fit320x15 amoled 1.5 320x720 "$FIT320X15"
 
 if [ -n "$failed" ]; then
     echo "FAILED:$failed" >&2
