@@ -17,6 +17,16 @@ import os
 
 PROFILES = ('power-saver', 'balanced', 'performance')
 
+# What Settings shows for each profile (the raw names stay the config
+# and D-Bus values).
+PROFILE_LABELS = {'power-saver': 'Power saver', 'balanced': 'Balanced',
+                  'performance': 'Performance'}
+
+
+def profile_label(name: str) -> str:
+    """Display text for a profile name; anything else passes through."""
+    return PROFILE_LABELS.get(str(name), str(name))
+
 CPUFREQ_ROOT = '/sys/devices/system/cpu/cpufreq'
 
 _DRIVER_KEYS = ('Driver', 'CpuDriver', 'PlatformDriver')

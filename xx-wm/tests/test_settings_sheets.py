@@ -69,7 +69,7 @@ class TestParityContract:
             'Fahrenheit', 'Celsius']
         assert [label for _v, label in sl._SORT_CHOICES] == [
             'Default (pinned first)', 'Alphabetical',
-            'Alphabetical (no priority)', 'Install date', 'APK size']
+            'Alphabetical (no priority)', 'Install date', 'App size']
         assert [label for _v, label in sl._SWIPE_DOWN_CHOICES] == [
             'Expand notifications', 'Web search', 'Disabled']
         assert sl.WIDGETS_SUMMARY == 'Enable, reorder, and set tap actions'

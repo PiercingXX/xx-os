@@ -58,8 +58,20 @@ def schedule_summary(sched: dict) -> str:
     return f'{start} → {end} · {when}{wrap}'
 
 
+_DAY_NAMES = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
+
+
+def _day_number(token: str) -> int:
+    """'Mon'/'monday' → 0 … 'Sun' → 6, or a bare 0-6; ValueError else."""
+    token = token.strip().lower()
+    if token[:3] in _DAY_NAMES and token.isalpha():
+        return _DAY_NAMES.index(token[:3])
+    return int(token)
+
+
 def parse_days(raw: str) -> list[int] | None:
-    """'0,1,2,3,4,5,6' (Monday-first) or '0-6' ranges, else None."""
+    """Day names or Monday-first numbers, lists and ranges ('Mon-Fri',
+    'Mon,Wed', '0,1,2', '0-6'), else None."""
     try:
         text = str(raw or '').strip()
     except Exception:
@@ -74,7 +86,7 @@ def parse_days(raw: str) -> list[int] | None:
         if '-' in part:
             try:
                 first, last = part.split('-', 1)
-                first_n, last_n = int(first), int(last)
+                first_n, last_n = _day_number(first), _day_number(last)
             except (TypeError, ValueError):
                 return None
             if not (0 <= first_n <= 6 and 0 <= last_n <= 6) \
@@ -83,7 +95,7 @@ def parse_days(raw: str) -> list[int] | None:
             days.update(range(first_n, last_n + 1))
         else:
             try:
-                num = int(part)
+                num = _day_number(part)
             except (TypeError, ValueError):
                 return None
             if not 0 <= num <= 6:
@@ -107,12 +119,21 @@ def parse_schedule_form(values: dict) -> tuple[dict | None, str | None]:
     """Validate the Add-schedule sheet; (schedule, None) or (None, error)."""
     days = parse_days(values.get('days', ''))
     if days is None:
-        return None, 'Days: 0-6 Monday-first, e.g. 0,1,2,3,4,5,6.'
+        return None, 'Days: e.g. Mon-Fri or Mon,Wed,Sat.'
     start = str(values.get('start', '') or '').strip()
     end = str(values.get('end', '') or '').strip()
     if not _valid_hhmm(start) or not _valid_hhmm(end):
         return None, 'Times: HH:MM, e.g. 20:00 and 08:00.'
     return {'days': days, 'start': start, 'end': end}, None
+
+
+def blocked_summary(names: list[str]) -> str:
+    """Blocked apps row subtitle: 'None', up to two names, else a count."""
+    if not names:
+        return 'None'
+    if len(names) <= 2:
+        return ', '.join(names)
+    return '%d apps' % len(names)
 
 
 def app_choices(win) -> list[tuple[str, str, bool]]:
@@ -156,20 +177,19 @@ class NopeSection(settings_page._Section):
         self._updating = False
 
     def build(self, win) -> list:
-        top = ui.group('Nope-Mode', note='Chosen apps go silent and won\'t '
-                       'open. Calls still ring through DnD as usual.')
+        # One card: the switch, the blocked-apps row (a sheet lists the
+        # apps) and, only while Nope-Mode runs, the breaks.
+        top = ui.group('Nope-Mode',
+                       note='Blocked apps go silent and won\'t open.')
         self._status_card = top[1]
-        apps = ui.group('Blocked apps', note='Pick the apps that go silent.')
-        self._apps_card = apps[1]
-        sched = ui.group('Schedules', note='Days are Monday-first: 0 is '
-                         'Monday, 6 is Sunday. Overnight ranges wrap.')
+        self._apps_card = top[1]
+        sched = ui.group('Schedules')
         self._sched_card = sched[1]
         self.refresh(win)
-        return top + apps + sched
+        return top + sched
 
     def refresh(self, win) -> None:
         self._render_status(win)
-        self._render_apps(win)
         self._render_schedules(win)
 
     def _state(self, win):
@@ -187,8 +207,15 @@ class NopeSection(settings_page._Section):
         master = ui.switch_row(
             'Nope-Mode', status_text(state) if state is not None else '',
             active, on_toggle=lambda on: self._set_enabled(win, on))
-        rows = [master]
-        if state is not None:
+        rows = [master, self._apps_row(win)]
+        try:
+            running = bool(state is not None and (
+                state.is_active() or state.on_break()))
+        except Exception:
+            running = False
+        # Breaks only exist while Nope-Mode runs: no rows explaining that
+        # there is nothing to take a break from.
+        if running:
             try:
                 reason = state.break_blocked_reason()
             except Exception:
@@ -209,19 +236,45 @@ class NopeSection(settings_page._Section):
                     subtitle=detail))
         ui.fill(self._status_card, rows)
 
+    def _apps_row(self, win):
+        blocked = [name for _a, name, on in app_choices(win) if on]
+        return ui.nav_row('Blocked apps', blocked_summary(blocked),
+                          lambda r: self._open_apps(win, r))
+
     def _render_apps(self, win) -> None:
-        if self._apps_card is None:
-            return
-        choices = app_choices(win)
-        if not choices:
-            ui.fill(self._apps_card, [ui.note_row('No apps indexed yet.')])
-            return
-        rows = []
-        for app_id, name, blocked in choices:
-            rows.append(ui.switch_row(
-                name, 'Blocked' if blocked else '', blocked,
-                on_toggle=lambda on, a=app_id: self._set_blocked(win, a, on)))
-        ui.fill(self._apps_card, rows)
+        self._render_status(win)
+
+    def _open_apps(self, win, anchor):
+        """The blocked-app picker: every app with a switch, in a sheet
+        (the Android checkbox list), so the page lists no app twice."""
+        actions = getattr(win, 'item_actions', None)
+        if actions is None:
+            return None
+        from gi.repository import Gtk
+        from xx_ui import widgets
+
+        box = widgets.dialog_box('Blocked apps')
+        box.add_css_class('xx-set-sheet')
+        rows = [ui.switch_row(
+            name, '', blocked,
+            on_toggle=lambda on, a=app_id: self._set_blocked(win, a, on))
+            for app_id, name, blocked in app_choices(win)]
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_propagate_natural_height(True)
+        scroller.set_max_content_height(440)
+        scroller.set_child(ui.card(rows))
+        box.append(scroller)
+        shown: dict = {}
+
+        def _ok() -> None:
+            popover = shown.pop('popover', None)
+            if popover is not None:
+                popover.popdown()
+
+        box.append(widgets.primary_button('OK', _ok))
+        shown['popover'] = actions._show_popover(anchor, box)
+        return box
 
     def _render_schedules(self, win) -> None:
         if self._sched_card is None:
@@ -236,7 +289,7 @@ class NopeSection(settings_page._Section):
             rows.append(ui.action_row(
                 schedule_summary(sched), 'Remove',
                 lambda _r, i=index: self._remove_schedule(win, i)))
-        rows.append(ui.nav_row('Add schedule', 'Days + start/end',
+        rows.append(ui.nav_row('Add schedule', 'Days and hours',
                                lambda r: self._add_schedule(win, r)))
         ui.fill(self._sched_card, rows)
 
@@ -298,11 +351,11 @@ class NopeSection(settings_page._Section):
 
         ui.form_sheet(
             win, anchor, 'Add schedule',
-            [('days', 'DAYS (0=Monday … 6=Sunday)', '0,1,2,3,4,5,6', 'text'),
-             ('start', 'START (HH:MM)', '20:00', 'text'),
-             ('end', 'END (HH:MM)', '08:00', 'text')],
+            [('days', 'DAYS', 'Mon-Sun', 'text'),
+             ('start', 'START', '20:00', 'text'),
+             ('end', 'END', '08:00', 'text')],
             'Add', _commit,
-            note='Overnight ranges like 20:00 → 08:00 wrap past midnight.')
+            note='An end before the start runs overnight.')
 
     def _start_break(self, win, minutes: int) -> None:
         state = self._state(win)

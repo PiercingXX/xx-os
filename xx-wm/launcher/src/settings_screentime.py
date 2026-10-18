@@ -347,16 +347,21 @@ class ScreenTimeSection(settings_page._Section):
 
     def _app_menu(self, win, anchor, app_id: str, current: int,
                   is_over: bool) -> None:
-        choices = [('Limit: %s%s' % (label, ' ✓' if minutes == current
-                                     else ''),
+        choices = [('Limit: %s' % label,
                     lambda m=minutes: self._set_limit(win, app_id, m))
                    for minutes, label in LIMIT_CHOICES]
+        # The menu's own check marks the current limit (one look for
+        # every picker), not a glyph glued to the label.
+        checked = next((index for index, (minutes, _label)
+                        in enumerate(LIMIT_CHOICES) if minutes == current),
+                       None)
         if is_over:
             choices.append(('Ignore for today',
                             lambda: self._ignore(win, app_id)))
         choices.append(('Last 7 days', lambda: self._select(win, app_id)))
         win.item_actions._show_action_menu(
-            anchor, self._display_name(win, app_id), choices)
+            anchor, self._display_name(win, app_id), choices,
+            checked=checked)
 
     def _set_limit(self, win, app_id: str, minutes: int) -> None:
         try:

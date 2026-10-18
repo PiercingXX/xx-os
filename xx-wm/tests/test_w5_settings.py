@@ -871,7 +871,7 @@ class TestPermissionsSection:
         # Nothing used: the Recently used card hides, no empty-state line.
         assert win._perm_recent_box.children == []
         assert win._perm_recent_box.get_visible() is False
-        assert any('Native apps reach camera' in (w.label_text() or '')
+        assert any('Only Flatpak apps can be limited' in (w.label_text() or '')
                    for w in widgets if 'xx-set-footnote' in w.classes)
 
     def test_indicator_flip(self, fake_gtk):

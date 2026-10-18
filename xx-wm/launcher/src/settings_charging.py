@@ -20,8 +20,7 @@ CHARGE_MAX = 100
 CHARGE_PRESETS: tuple = (('Off', None), ('80%', 80), ('85%', 85),
                          ('90%', 90))
 
-NO_KNOB_TEXT = ("This phone's battery driver "
-                "doesn't support a charge limit.")
+NO_KNOB_TEXT = 'Not supported on this phone'
 
 # Sysfs knobs that cap the charge level, read-only probed: the standard
 # power_supply threshold plus the vendor names seen in the wild.
@@ -173,7 +172,13 @@ class ChargingSection(settings_page._Section):
         choices = [(label, lambda v=value: self._apply(win, v))
                    for label, value in CHARGE_PRESETS]
         choices.append(('Custom…', lambda: self._open_custom(win, anchor)))
-        win.item_actions._show_action_menu(anchor, 'Charge limit', choices)
+        current = getattr(win.config, 'charge_limit', None)
+        values = [value for _label, value in CHARGE_PRESETS]
+        # A custom limit marks Custom…; a preset marks itself.
+        checked = (values.index(current) if current in values
+                   else len(values))
+        win.item_actions._show_action_menu(anchor, 'Charge limit', choices,
+                                           checked=checked)
 
     def _open_custom(self, win, anchor):
         current = getattr(win.config, 'charge_limit', None)

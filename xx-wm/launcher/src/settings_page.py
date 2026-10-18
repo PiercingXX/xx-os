@@ -428,8 +428,8 @@ class BatterySection(_Section):
             import settings_standby
             active = (power or {}).get('active')
             saver = settings_standby.saver_is_on(win)
-            label = power_profiles.current_label(
-                active, win.config, saver)
+            label = power_profiles.profile_label(power_profiles.current_label(
+                active, win.config, saver))
         except Exception:
             return status
         if not status or label in ('Unknown', ''):
@@ -467,7 +467,7 @@ class BackupSection(_Section):
             # Android keeps "Reset home layout" under Backup & Restore.
             ui.nav_row(settings_launcher.RESET_TITLE,
                        settings_launcher.RESET_SUMMARY,
-                       lambda _r: settings_launcher.confirm_reset_home(win))])
+                       lambda r: settings_launcher.confirm_reset_home(win, r))])
         if not self._source:
             sources = filebackup.backup_sources()
             self._source = sources[0] if sources else ''
@@ -833,9 +833,7 @@ class ShellSection(_Section):
     def build(self, _win) -> list:
         # Shell preferences live in ~/.config/xx-wm/ (design.md "Settings
         # scope"); the System page ends by saying so.
-        return [ui.footnote(
-            'Every other shell preference lives in ~/.config/xx-wm/ and '
-            'reloads live when edited.')]
+        return [ui.footnote('More in ~/.config/xx-wm/, reloaded live.')]
 
 
 class RecordingSection(_Section):
@@ -850,8 +848,7 @@ class RecordingSection(_Section):
     def build(self, win) -> list:
         self._row = ui.row(self.title, 'Not recording')
         return ui.group(self.title, [self._row],
-                        note='Start and stop it from the Record tile. '
-                             'Recordings save to ~/Videos/Screenrecordings.')
+                        note='Record tile · ~/Videos/Screenrecordings')
 
     def refresh(self, win) -> None:
         def _state():
@@ -918,7 +915,7 @@ class FindMySection(_Section):
 
     def build(self, win) -> list:
         return ui.group(self.title, [ui.row(
-            self.title, 'Off · this device cannot be located remotely')])
+            self.title, 'Off')])
 
 
 class DeveloperSection(_Section):
@@ -940,8 +937,7 @@ class GesturesSection(_Section):
         # The gestures block stays the last section by contract. These
         # are the phone's own navigation swipes (Android keeps them in
         # system settings, not in the launcher).
-        return [ui.caption(self.title), win._build_gestures_card(),
-                ui.footnote('Up, down and edge swipes work over any app.')]
+        return [ui.caption(self.title), win._build_gestures_card()]
 
     def refresh(self, win) -> None:
         win._refresh_gesture_labels()

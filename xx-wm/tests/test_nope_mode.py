@@ -518,9 +518,21 @@ class TestSettingsHelpers:
         assert sched == {'days': [0, 1, 2, 3, 4, 5, 6], 'start': '20:00',
                          'end': '08:00'}
         assert parse_schedule_form(
-            {'days': 'monday', 'start': '20:00', 'end': '08:00'})[1]
+            {'days': 'funday', 'start': '20:00', 'end': '08:00'})[1]
         assert parse_schedule_form(
             {'days': '0', 'start': '8pm', 'end': '08:00'})[1]
+        named, error = parse_schedule_form(
+            {'days': 'Mon-Fri', 'start': '20:00', 'end': '08:00'})
+        assert error is None and named['days'] == [0, 1, 2, 3, 4]
+        assert parse_schedule_form(
+            {'days': 'monday, Sat', 'start': '20:00',
+             'end': '08:00'})[0]['days'] == [0, 5]
+
+    def test_blocked_summary(self):
+        from settings_nope import blocked_summary
+        assert blocked_summary([]) == 'None'
+        assert blocked_summary(['Game', 'Zebra']) == 'Game, Zebra'
+        assert blocked_summary(['a', 'b', 'c']) == '3 apps'
 
     def test_app_choices_sorted_and_flagged(self, nope):
         from settings_nope import app_choices

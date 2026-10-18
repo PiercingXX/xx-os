@@ -570,15 +570,15 @@ class DisplaySection(settings_page._Section):
     def _show_profiles(self, win) -> None:
         choices = power_profiles.available_choices(
             self._backend, self._profiles)
-        actions = [(profile, lambda profile=profile: self._on_profile(
-            win, profile)) for profile in choices]
-        actions.append(('Cancel', lambda: None))
+        actions = [(power_profiles.profile_label(profile),
+                    lambda profile=profile: self._on_profile(win, profile))
+                   for profile in choices]
         win.item_actions._show_action_menu(
             self._profile_row, 'Power profile', actions)
 
     def _current_profile(self, win) -> str:
-        return power_profiles.current_label(
-            self._active_profile, win.config, self._saver_on(win))
+        return power_profiles.profile_label(power_profiles.current_label(
+            self._active_profile, win.config, self._saver_on(win)))
 
     def _coords(self, win):
         try:

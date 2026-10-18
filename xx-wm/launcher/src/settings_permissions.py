@@ -179,9 +179,7 @@ class PermissionsSection(settings_page._Section):
         kinds = ui.group('By permission')
         win._perm_nav_box = kinds[1]
         apps = ui.group(
-            'By app', note='Only Flatpak apps can be limited here. Native '
-            'apps reach camera, mic and location directly; the indicators '
-            'show when they do.')
+            'By app', note='Only Flatpak apps can be limited.')
         win._perm_apps_box = apps[1]
         self._render_recent(win, getattr(win, '_perm_recent', None),
                             getattr(win, '_perm_recent_at', None) or time.time())
@@ -343,7 +341,7 @@ class PermissionsSection(settings_page._Section):
                 lambda _r, e=entry: self._open_app_view(win, e.app_id)))
         rows.append(ui.nav_row('Close the app list', '',
                                lambda _r: self._close_views(win)))
-        ui.fill(box, rows if len(rows) > 1 else [ui.note_row('No apps.')])
+        ui.fill(box, rows)
 
     def _close_views(self, win) -> None:
         win._perm_view = None
@@ -370,8 +368,7 @@ class PermissionsSection(settings_page._Section):
                     rows.append(ui.row(app_id, '%s · %s' % (label, text)))
             elif maps is None:
                 rows.append(ui.note_row('Permission store unavailable.'))
-        if not rows:
-            rows = [ui.note_row('No app has %s access.' % label.lower())]
+        # No app with this access lists nothing but Done (no empty line).
         ui.fill(box, rows + [ui.nav_row(
             'Done', '', lambda _r: self._close_views(win))])
 

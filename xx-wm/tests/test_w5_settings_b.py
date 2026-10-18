@@ -438,8 +438,7 @@ class TestChargeProbe:
 
     def test_no_knob_text_exact(self):
         import settings_charging as charging
-        assert charging.NO_KNOB_TEXT == (
-            "This phone's battery driver doesn't support a charge limit.")
+        assert charging.NO_KNOB_TEXT == 'Not supported on this phone'
 
     def test_custom_parsing(self):
         import settings_charging as charging
@@ -462,8 +461,8 @@ class TestChargingSection:
     def _menus(self, win):
         menus = []
         win.item_actions = SimpleNamespace(
-            _show_action_menu=lambda anchor, title, choices: menus.append(
-                (title, dict(choices))))
+            _show_action_menu=lambda anchor, title, choices, checked=None:
+            menus.append((title, dict(choices), checked)))
         return menus
 
     def test_build_starts_with_caps_caption(self, fake_gi):
@@ -492,9 +491,22 @@ class TestChargingSection:
         section._on_state(win, (True, '87% — discharging'))
         assert 'Off · charges to 100%' in _built_texts(built)
         section._pick(win, section._row)
-        title, choices = menus[-1]
+        title, choices, checked = menus[-1]
         assert title == 'Charge limit'
         assert list(choices) == ['Off', '80%', '85%', '90%', 'Custom…']
+        assert checked == 0  # no limit set: Off is the current value
+
+    def test_custom_limit_marks_custom(self, fake_gi):
+        import settings_charging as charging
+        win = _bare_win()
+        win.config.charge_limit = 72
+        menus = self._menus(win)
+        section = charging.ChargingSection()
+        section.build(win)
+        section._on_state(win, (True, '87% — discharging'))
+        section._pick(win, section._row)
+        _title, choices, checked = menus[-1]
+        assert list(choices)[checked] == 'Custom…'
 
     def test_apply_success_saves_config(self, fake_gi, monkeypatch):
         import settings_charging as charging
@@ -660,7 +672,9 @@ class TestBatteryUseSection:
         section = battery_use.BatteryUseSection()
         section.build(win)
         section._render(win, ({}, {}))
-        assert 'No usage yet.' in _texts(section._list_box)
+        # Nothing to show hides the section: no "No usage yet." line.
+        assert _texts(section._list_box) == []
+        assert not section._list_box.get_visible()
 
 
 # --- screen-time model ---------------------------------------------------
@@ -781,15 +795,16 @@ class TestScreenTimeSection:
             label_for=lambda a, n: n,
             set_app_time_limit=lambda a, m: limits.update({a: m}))
         win = _bare_win(config=config)
+        checks = []
         win.item_actions = SimpleNamespace(
-            _show_action_menu=lambda anchor, title, choices: menus.append(
-                dict(choices)))
+            _show_action_menu=lambda anchor, title, choices, checked=None: (
+                menus.append(dict(choices)), checks.append(checked)))
         section = screen_time.ScreenTimeSection()
         section.build(win)
         section._render(win, ({'a.desktop': 120}, [], 0, 0))
         assert '2m today' in _texts(section._apps_box)
         section._app_menu(win, None, 'a.desktop', 0, False)
-        assert 'Limit: Off ✓' in menus[-1]
+        assert list(menus[-1])[checks[-1]] == 'Limit: Off'
         assert 'Last 7 days' in menus[-1]
         menus[-1]['Limit: 1 hour']()
         assert limits == {'a.desktop': 60}

@@ -267,8 +267,7 @@ class SecuritySection(settings_page._Section):
             ui.nav_row('Scan Downloads', 'ClamAV, on demand',
                        lambda _r: self._on_scan_downloads(win)),
             self._scan_btn]
-        scan = ui.group('Malware scan', list(self._scan_rows),
-                        note='Opt-in. Nothing runs until you start it.')
+        scan = ui.group('Malware scan', list(self._scan_rows), note='')
         self._results_box = scan[1]
         self._status = scan[2]
         self._check_row = ui.nav_row(

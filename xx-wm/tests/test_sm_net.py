@@ -526,10 +526,20 @@ sshd.service loaded failed failed OpenSSH daemon
 class TestFailedUnits:
     def test_systemd_failed(self):
         run = _run_fn({('systemctl', ('--failed', '--no-pager',
-                                      '--no-legend')):
+                                      '--no-legend', '--plain')):
                        _completed([], stdout=FAILED_SYSTEMCTL)})
         assert system_settings.list_failed_units(
             'systemd', run=run) == ['NetworkManager.service', 'sshd.service']
+
+    def test_systemd_status_glyph_is_not_the_unit(self):
+        # systemd marks failed rows with "●"; the Failed list showed that
+        # glyph as the unit's name.
+        out = '● NetworkManager-wait-online.service loaded failed failed X\n'
+        run = _run_fn({('systemctl', ('--failed', '--no-pager',
+                                      '--no-legend', '--plain')):
+                       _completed([], stdout=out)})
+        assert system_settings.list_failed_units('systemd', run=run) == [
+            'NetworkManager-wait-online.service']
 
     def test_openrc_crashed(self):
         out = 'bluetooth [ started ]\nsshd [ crashed ]\n'

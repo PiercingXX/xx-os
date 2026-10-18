@@ -335,6 +335,11 @@ class TestPersistence:
             power_profiles.PROFILES)
         assert power_profiles.available_choices('none', []) == []
 
+    def test_profile_label(self):
+        assert power_profiles.profile_label('power-saver') == 'Power saver'
+        assert power_profiles.profile_label('balanced') == 'Balanced'
+        assert power_profiles.profile_label('Unknown') == 'Unknown'
+
     def test_current_label(self):
         assert power_profiles.current_label(
             'performance', FakeConfig({'power_profile': 'balanced'}),
@@ -382,12 +387,12 @@ class TestTileAndRowState:
             config=FakeConfig({'power_profile': 'balanced'}),
             standby=app_standby.StandbyController(config=None))
         section._active_profile = 'performance'
-        assert section._current_profile(win) == 'performance'
+        assert section._current_profile(win) == 'Performance'
         win.standby.set_saver(True)
-        assert section._current_profile(win) == 'power-saver'
+        assert section._current_profile(win) == 'Power saver'
         win.standby.set_saver(False)
         section._active_profile = None
-        assert section._current_profile(win) == 'balanced'
+        assert section._current_profile(win) == 'Balanced'
 
     def test_on_profile_persists_and_routes_to_helper(self, monkeypatch):
         section = settings_display.DisplaySection()
@@ -428,10 +433,10 @@ class TestTileAndRowState:
             standby=None)
         text = settings_page.BatterySection._with_profile(
             win, '87% — discharging', {'active': 'performance'})
-        assert text == '87% — discharging · performance'
+        assert text == '87% — discharging · Performance'
         assert settings_page.BatterySection._with_profile(
             win, '87% — discharging', {'active': None}) == \
-            '87% — discharging · balanced'
+            '87% — discharging · Balanced'
         assert settings_page.BatterySection._with_profile(
             win, None, {'active': 'balanced'}) is None
 

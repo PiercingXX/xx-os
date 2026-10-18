@@ -156,9 +156,7 @@ class ServicesSection(settings_page._Section):
         self._user_info: dict = {}
 
     def build(self, win) -> list:
-        services = ui.group(self.title, [ui.note_row('Checking…')],
-                            note='Tap a service to start, stop, restart, '
-                                 'enable or disable it.')
+        services = ui.group(self.title, [ui.note_row('Checking…')])
         self._rows_box = services[1]
         failed = ui.group('Failed units')
         self._failed_box = failed[1]

@@ -125,7 +125,7 @@ def subtitle_for_allowed(allowed, *, enabled: bool = True,
                          backend: str = 'nftables') -> str:
     """The Firewall row's one-line subtitle: what is allowed in."""
     if backend == 'none':
-        return 'Off · no inbound firewall, all incoming allowed'
+        return 'Off · no inbound firewall'
     if not enabled:
         return 'Off'
     titles = allowed_titles(allowed)

@@ -288,8 +288,7 @@ class AppsSection(settings_page._Section):
         self._looking = False
 
     def build(self, win) -> list:
-        built = ui.group(self.title, note='Tap an app to review and '
-                         'uninstall it. System packages are protected.')
+        built = ui.group(self.title, note='System packages are protected.')
         self._list_box = built[1]
         self._render(win)
         return built

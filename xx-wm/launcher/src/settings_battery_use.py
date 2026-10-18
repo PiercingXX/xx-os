@@ -216,12 +216,13 @@ class BatteryUseSection(settings_page._Section):
         except (TypeError, ValueError):
             return
         rows = estimate_shares(screen, cpu)
+        # No usage yet hides the section (owner: no empty-state lines).
+        ui.say(self._note, '' if not rows else
+               'Estimated from screen and CPU time.' if cpu else
+               'Estimated from screen time.')
         ui.fill(self._list_box, [
             ui.row(self._display_name(win, row[0]), format_share(row))
-            for row in rows] or [ui.note_row('No usage yet.')])
-        ui.say(self._note, 'Estimated from screen time today plus CPU time.'
-               if cpu else 'Estimated from screen time today (CPU time is '
-               'not attributable here).')
+            for row in rows], hide_empty=True)
 
     def _display_name(self, win, app_id: str) -> str:
         return friendly_app_name(win, app_id)

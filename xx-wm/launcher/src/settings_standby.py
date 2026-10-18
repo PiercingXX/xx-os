@@ -105,9 +105,7 @@ class StandbySection(settings_page._Section):
         self._render_threshold(win)
         saver_group = ui.group(
             self.title, [saver, auto, self._threshold_box],
-            note='Saver freezes unused apps sooner and 30 s after the screen '
-                 'blanks (not 2 min), and pauses auto weather and update '
-                 'checks.')
+            note='Freezes apps sooner and pauses weather and update checks.')
 
         self._timeout_box = ui.nav_row(
             'Freeze unused apps', '',

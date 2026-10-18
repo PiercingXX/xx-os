@@ -36,13 +36,13 @@ _SORT_CHOICES = (('default', 'Default (pinned first)'),
                  ('alphabetical', 'Alphabetical'),
                  ('alphabetical_no_priority', 'Alphabetical (no priority)'),
                  ('install_date', 'Install date'),
-                 ('apk_size', 'APK size'))
+                 ('apk_size', 'App size'))
 _SWIPE_DOWN_CHOICES = (('notifications', 'Expand notifications'),
                        ('web_search', 'Web search'),
                        ('disabled', 'Disabled'))
 # Linux only: Android follows the system 12/24 h setting.
 _CLOCK_CHOICES = ((None, 'System'), (False, '12 h'), (True, '24 h'))
-_MODE_CHOICES = (('theme', 'Theme'), ('light', 'Light'), ('dark', 'Dark'),
+_MODE_CHOICES = (('theme', 'Follow theme'), ('light', 'Light'), ('dark', 'Dark'),
                  ('system', 'System'))
 _FONT_ORDER = ('system-light', 'monospace', 'space-mono', 'jetbrains-mono',
                'jetbrains-mono-nerd', 'custom')
@@ -59,8 +59,8 @@ _FONT_LABELS = {
 WIDGETS_SUMMARY = 'Enable, reorder, and set tap actions'
 GESTURES_SUMMARY = 'What every swipe, tap, and long-press does'
 RESET_TITLE = 'Reset home layout'
-RESET_SUMMARY = ('Clear the home screen and folders and seed the suite '
-                 'defaults again')
+RESET_SUMMARY = 'Default slots, folders and swipe apps'
+RESET_PROMPT = 'Replace the home screen, folders and swipe apps with the defaults.'
 # The Android help text (gestures_help_text); the two lines that work
 # differently here say it the Linux way: long-press edits home, and a
 # slot is changed from edit mode.
@@ -369,10 +369,18 @@ def _scale_row(title: str, value_text: str, slider):
     from xx_ui import widgets
 
     head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    from gi.repository import Pango
+
     name = widgets.label(title, 'xx-title')
     name.set_hexpand(True)
+    # At large text the title wraps beside its value instead of being
+    # cut to "Color tempe…".
+    name.set_ellipsize(Pango.EllipsizeMode.NONE)
+    name.set_wrap(True)
+    name.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
     value = Gtk.Label(label=value_text, xalign=1.0)
     value.add_css_class('xx-secondary')
+    value.set_valign(Gtk.Align.START)
     head.append(name)
     head.append(value)
     column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -442,22 +450,24 @@ def _swipe_app_text(win, key: str) -> str:
         action, action.replace('_', ' ').title())
 
 
-def confirm_reset_home(win) -> None:
-    """Android "Reset home layout" (Backup & Restore): confirm, then wipe
-    slots, renames and swipe apps and seed the defaults again."""
-    from gi.repository import Adw
+def confirm_reset_home(win, anchor=None):
+    """Android "Reset home layout" (Backup & Restore): an in-window sheet
+    (one look with every other Settings prompt) whose one danger action
+    wipes slots, renames and swipe apps and seeds the defaults again."""
+    actions = getattr(win, 'item_actions', None)
+    if actions is None:
+        return None
+    from xx_ui import widgets
 
-    dialog = Adw.AlertDialog(heading=RESET_TITLE, body=RESET_SUMMARY + '?')
-    dialog.add_response('cancel', 'Cancel')
-    dialog.add_response('reset', 'Reset')
-    dialog.set_response_appearance('reset', Adw.ResponseAppearance.DESTRUCTIVE)
-    dialog.set_default_response('cancel')
-    dialog.set_close_response('cancel')
+    box = widgets.dialog_box(RESET_TITLE)
+    box.add_css_class('xx-set-sheet')
+    box.append(widgets.wrap_label(RESET_PROMPT))
+    shown: dict = {}
 
-    def _on_response(_dialog, response: str) -> None:
-        win._launcher_dialog = None
-        if response != 'reset':
-            return
+    def _reset() -> None:
+        popover = shown.pop('popover', None)
+        if popover is not None:
+            popover.popdown()
         try:
             reset_home_layout(win.config, win.gesture_config)
         except Exception:
@@ -466,14 +476,11 @@ def confirm_reset_home(win) -> None:
             win._refresh_after_item_action()
         except Exception:
             pass
-        _status(win, 'Home layout reset.')
 
-    dialog.connect('response', _on_response)
-    win._launcher_dialog = dialog
-    try:
-        dialog.present(win)
-    except Exception:
-        win._launcher_dialog = None
+    box.append(widgets.danger_button('Reset', _reset))
+    shown['popover'] = actions._show_popover(
+        anchor if anchor is not None else win, box)
+    return box
 
 
 def build_appearance_group(win) -> list:
@@ -930,8 +937,6 @@ class LauncherSection(settings_page._Section):
         ui.set_subtitle(self._row(win, 'location'), location_text(win))
         try:
             win._refresh_weather(force=True)
-            win._show_status('Location saved.' if lat is not None
-                             else 'Location cleared.')
         except Exception:
             pass
         return None
@@ -992,7 +997,6 @@ class LauncherSection(settings_page._Section):
             win.config.set_hidden_apps(hidden)
         except Exception:
             return
-        _status(win, 'Shown')
         try:
             win._populate_apps(win.apps_search.get_text())
         except Exception:

@@ -1027,11 +1027,17 @@ def list_failed_units(init: str, run: _RunFn = _run,
     try:
         if init == 'systemd':
             result = run(['systemctl', '--failed', '--no-pager',
-                          '--no-legend'], timeout=15)
+                          '--no-legend', '--plain'], timeout=15)
             if result.returncode != 0:
                 return []
-            return [line.split()[0] for line in result.stdout.splitlines()
-                    if line.split()]
+            # systemd leads each failed row with a "●" status glyph
+            # unless --plain is honored: the unit is the first other word.
+            units = []
+            for line in result.stdout.splitlines():
+                words = [w for w in line.split() if w not in ('●', '*')]
+                if words:
+                    units.append(words[0])
+            return units
         if init == 'openrc':
             result = run(['rc-status', 'default'], timeout=15)
             if result.returncode != 0:
