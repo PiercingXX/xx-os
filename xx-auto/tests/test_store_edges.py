@@ -67,6 +67,11 @@ def test_mpris_sort_and_metadata():
     assert ordered[0] is suite
     assert is_suite(suite) and not is_suite(other)
     assert display_name(suite) == "Audiobook"
+    # Suite ids spell the prefix in caps; the card caption reads it the
+    # way the suite writes app names.
+    radio = Track("org.mpris.MediaPlayer2.xx_radio",
+                  desktop_entry="io.piercingxx.XXRadio")
+    assert display_name(radio) == "xx-radio"
     title, artist, _art, length = parse_metadata(
         {"xesam:title": "T", "xesam:artist": ["A", "B"],
          "mpris:length": 1000})

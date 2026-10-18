@@ -7,6 +7,8 @@ from .maps_resolve import Target
 XX_MAPS_DESKTOP_ID = "io.piercingxx.XXMaps.desktop"
 GNOME_MAPS_DESKTOP_ID = "org.gnome.Maps.desktop"
 GEO_TYPE = "x-scheme-handler/geo"
+# Tile subtitle with no maps app, the same words the media tiles use.
+NOT_INSTALLED = "not installed"
 
 
 def _lookup(desktop, desktop_id: str):
@@ -47,9 +49,10 @@ def resolve_maps_app(desktop=None) -> tuple[Target, str | None]:
 
 def tile_subtitle(target: Target, desktop_id: str | None,
                   desktop=None) -> str:
-    """The Maps tile subtitle: the app the tile opens, or the store hint."""
+    """The Maps tile subtitle: the app the tile opens, or "not installed"
+    (like the Radio and Audiobook tiles; a tap opens the store)."""
     if target is Target.NOT_INSTALLED or not desktop_id:
-        return "Get xx-maps"
+        return NOT_INSTALLED
     try:
         if desktop is None:
             import gi

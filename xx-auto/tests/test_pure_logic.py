@@ -96,7 +96,8 @@ def test_maps_tile_subtitle_names_the_app_it_opens():
                 raise TypeError("constructor returned NULL")  # PyGObject 3.52
             return Info()
 
-    assert tile_subtitle(Target.NOT_INSTALLED, None, Desktop) == "Get xx-maps"
+    # Same words as the Radio and Audiobook tiles (PORT_SPEC M2).
+    assert tile_subtitle(Target.NOT_INSTALLED, None, Desktop) == "not installed"
     assert tile_subtitle(Target.LAUNCHER, "org.gnome.Maps.desktop",
                          Desktop) == "GNOME Maps"
     assert tile_subtitle(Target.LAUNCHER, "gone.desktop", Desktop) == "Maps"

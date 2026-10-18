@@ -12,6 +12,10 @@ import threading
 from pathlib import Path
 
 ICON_DIR = Path(__file__).with_name("icons")
+# How long a failure line ("Could not place call.") stays under the card.
+NOTE_SECONDS = 6
+# Window height from which the now-playing title gets a third line.
+TALL_MIN_PX = 900
 
 # Drive-screen sizes on top of xx_ui: 72 px targets, light weight, and
 # theme colors by xx_ui's named colors so every preset (and always_ink)
@@ -23,7 +27,6 @@ APP_CSS = """
 .xx-auto-landscape .xx-auto-title.xx-auto-idle { font-size: 28px; }
 .xx-auto-sub { font-size: 24px; font-weight: 300; }
 .xx-auto-landscape .xx-auto-sub { font-size: 20px; }
-.xx-auto-sub.xx-auto-idle { font-size: 17px; }
 .xx-auto-time { font-size: 17px; font-feature-settings: "tnum"; }
 progressbar.xx-auto-progress trough,
 progressbar.xx-auto-progress progress { min-height: 2px; border-radius: 0; }
@@ -57,6 +60,10 @@ button.xx-auto-tile:disabled { border-color: @borders; filter: none; }
 button.xx-auto-tile:disabled .xx-auto-tile-name,
 button.xx-auto-tile:disabled image { color: @insensitive_fg_color; }
 button.xx-auto-tile:disabled .xx-secondary { color: @destructive_color; }
+/* Maps with no maps app: reads like a disabled tile, still opens the store. */
+button.xx-auto-tile.missing { border-color: @borders; }
+button.xx-auto-tile.missing .xx-auto-tile-name { color: @insensitive_fg_color; }
+button.xx-auto-tile.missing .xx-secondary { color: @destructive_color; }
 .xx-auto-tile-name { font-size: 22px; font-weight: 300; }
 button.xx-auto-gear {
   min-width: 72px; min-height: 56px; padding: 0;
@@ -126,6 +133,80 @@ def _texts(Gtk, Pango, title, subtitle, title_cls="xx-auto-row-title"):
     return box
 
 
+# A shrunk label never goes under this share of its full size.
+SHRINK_MIN_SCALE = 0.5
+_SHRINK_CLASS = None
+
+
+def _shrink_class():
+    """Gtk.Widget subclass holding one label whole: natural size where it
+    fits, scaled down (to SHRINK_MIN_SCALE) where its slot is narrower,
+    so "Favourites" at large text or "Audiobook" on a 320 px tile reads
+    whole instead of "Favourit…", and never widens the window. Built
+    lazily: this module imports without Gtk."""
+    global _SHRINK_CLASS
+    if _SHRINK_CLASS is not None:
+        return _SHRINK_CLASS
+    import gi
+
+    gi.require_version("Gsk", "4.0")
+    gi.require_version("Graphene", "1.0")
+    from gi.repository import Graphene, Gsk, Gtk
+
+    class ShrinkToFit(Gtk.Widget):
+        __gtype_name__ = "XXAutoShrinkToFit"
+
+        def __init__(self, child, xalign=0.0):
+            super().__init__()
+            self._child = child
+            self._xalign = xalign
+            child.set_parent(self)
+
+        def _natural(self):
+            _lo, width, _b1, _b2 = self._child.measure(
+                Gtk.Orientation.HORIZONTAL, -1)
+            _lo, height, _b1, _b2 = self._child.measure(
+                Gtk.Orientation.VERTICAL, width)
+            return width, height
+
+        def do_measure(self, orientation, for_size):
+            width, height = self._natural()
+            nat = width if orientation == Gtk.Orientation.HORIZONTAL \
+                else height
+            return (int(nat * SHRINK_MIN_SCALE), nat, -1, -1)
+
+        def do_size_allocate(self, width, height, baseline):
+            nat_w, nat_h = self._natural()
+            scale = min(1.0, width / nat_w) if nat_w > 0 else 1.0
+            offset = Graphene.Point()
+            offset.init(max(0.0, (width - nat_w * scale) * self._xalign),
+                        max(0.0, (height - nat_h * scale) / 2))
+            transform = Gsk.Transform.new().translate(offset).scale(
+                scale, scale)
+            self._child.allocate(nat_w, nat_h, -1, transform)
+
+        def do_snapshot(self, snapshot):
+            self.snapshot_child(self._child, snapshot)
+
+        def do_dispose(self):
+            if self._child is not None:
+                self._child.unparent()
+                self._child = None
+
+    _SHRINK_CLASS = ShrinkToFit
+    return ShrinkToFit
+
+
+def _whole(Pango, label):
+    """``label`` kept whole: no ellipsis, scaled down to fit its slot."""
+    label.set_ellipsize(Pango.EllipsizeMode.NONE)
+    label.set_max_width_chars(-1)
+    label.set_hexpand(False)
+    holder = _shrink_class()(label)
+    holder.set_hexpand(True)
+    return holder
+
+
 def _icon(Gtk, name, px):
     img = Gtk.Image.new_from_icon_name(name)
     img.set_pixel_size(px)
@@ -169,6 +250,9 @@ class AutoWindow:
         self._car_devices: list = []
         self._inhibit_cookie = 0
         self._poll_timer = 0
+        self._note_timer = 0
+        self._switches: dict = {}
+        self._syncing = False
         self._landscape = False
 
         import xx_ui
@@ -197,6 +281,8 @@ class AutoWindow:
         self._build_sheet_car()
         self._build_sheet_licenses()
         self.win.set_content(self.stack)
+        self._tall = False
+        self._add_tall_breakpoint()
         self.show("drive")
         use_landscape = not settings.follow_rotation
         self.set_landscape(use_landscape)
@@ -211,6 +297,10 @@ class AutoWindow:
             import xx_ui
             from xx_ui import theme as theme_mod
 
+            # Always through apply(): it arms the suite config watch, so
+            # a font or text-size change reaches the screen live even
+            # while Always black pins the colors (Ink goes on top).
+            xx_ui.apply(self.win)
             if self.settings.always_ink:
                 suite = theme_mod.read_config()
                 preset = theme_mod.THEME_PRESETS["amoled"]
@@ -222,8 +312,6 @@ class AutoWindow:
                     font_family=theme_mod.resolve_font_family(suite),
                     scale=theme_mod.resolve_scale(suite), dark=True)
                 xx_ui.css.install(active)
-            else:
-                xx_ui.apply(self.win)
         except Exception:
             pass
 
@@ -264,11 +352,33 @@ class AutoWindow:
                 self.drive_page.remove_css_class("xx-auto-landscape")
             for tile in self._tiles.values():
                 tile._icon.set_visible(on)
-            self.title_label.set_lines(1 if on else 2)
             self._landscape = on
+            self._sync_title_lines()
             self.refresh()
         except Exception:
             pass
+
+    def _add_tall_breakpoint(self) -> None:
+        """A tall portrait screen (the FLX1's 1000 px) gives the title a
+        third line, so a long chapter reads whole; 720-800 px keeps two so
+        the card and tiles still fit."""
+        try:
+            Adw = self._Adw
+            point = Adw.Breakpoint.new(
+                Adw.BreakpointCondition.parse(f"min-height: {TALL_MIN_PX}px"))
+            point.connect("apply", lambda *_: self._set_tall(True))
+            point.connect("unapply", lambda *_: self._set_tall(False))
+            self.win.add_breakpoint(point)
+        except Exception:
+            pass
+
+    def _set_tall(self, tall: bool) -> None:
+        self._tall = tall
+        self._sync_title_lines()
+
+    def _sync_title_lines(self) -> None:
+        self.title_label.set_lines(
+            1 if self._landscape else (3 if self._tall else 2))
 
     # -- drive page ----------------------------------------------------
     def _build_drive(self) -> None:
@@ -407,9 +517,14 @@ class AutoWindow:
                     action.icon_name):
             child = action.icon_name
         else:
-            child = _label(Gtk, self._Pango, action.label,
-                           "xx-auto-key-text", chars=9)
+            # Two short lines ("Forward / 30s") rather than "Forward …".
+            child = _wrap(Gtk, self._Pango, action.label,
+                          "xx-auto-key-text", chars=8)
+            child.set_wrap_mode(self._Pango.WrapMode.WORD)
+            child.set_lines(2)
+            child.set_ellipsize(self._Pango.EllipsizeMode.END)
             child.set_xalign(0.5)
+            child.set_justify(Gtk.Justification.CENTER)
         btn = self._key(child, self._on_custom_action, bus_name,
                         action.action_id)
         btn.set_tooltip_text(action.label)
@@ -428,15 +543,19 @@ class AutoWindow:
         btn._icon.set_valign(Gtk.Align.START)
         btn._icon.set_vexpand(True)
         btn._icon.set_visible(False)
-        name = _label(Gtk, Pango, "", "xx-auto-tile-name", chars=9)
-        name.set_valign(Gtk.Align.END)
-        name.set_vexpand(True)
-        sub = _label(Gtk, Pango, "", "xx-secondary", chars=12)
-        sub.set_valign(Gtk.Align.START)
-        sub.set_vexpand(True)
+        name = _label(Gtk, Pango, "", "xx-auto-tile-name")
+        name_box = _whole(Pango, name)
+        name_box.set_valign(Gtk.Align.END)
+        name_box.set_vexpand(True)
+        # "not installed" and "Favourites" read whole at large text or on
+        # a 320 px screen: scaled down, never ellipsized or widening.
+        sub = _label(Gtk, Pango, "", "xx-secondary")
+        sub_box = _whole(Pango, sub)
+        sub_box.set_valign(Gtk.Align.START)
+        sub_box.set_vexpand(True)
         box.append(btn._icon)
-        box.append(name)
-        box.append(sub)
+        box.append(name_box)
+        box.append(sub_box)
         btn.set_child(box)
         btn.connect("clicked", callback)
         btn._title_label = name
@@ -445,21 +564,26 @@ class AutoWindow:
 
     def _set_tile(self, btn, title, subtitle, enabled=True,
                   active=False) -> None:
+        from .maps_launch import NOT_INSTALLED
+
         btn._title_label.set_text(title)
         btn._sub_label.set_text(subtitle)
         btn.set_sensitive(enabled)
+        if enabled and subtitle == NOT_INSTALLED:
+            btn.add_css_class("missing")
+        else:
+            btn.remove_css_class("missing")
         if active and enabled:
             btn.add_css_class("active")
         else:
             btn.remove_css_class("active")
 
     def _set_idle(self, idle: bool) -> None:
-        for widget in (self.title_label, self.sub_label):
-            if idle:
-                widget.add_css_class("xx-auto-idle")
-            else:
-                widget.remove_css_class("xx-auto-idle")
-        self.sub_label.set_lines(4 if idle else (1 if self._landscape else 2))
+        if idle:
+            self.title_label.add_css_class("xx-auto-idle")
+        else:
+            self.title_label.remove_css_class("xx-auto-idle")
+        self.sub_label.set_lines(1 if self._landscape else 2)
 
     # -- drive refresh -------------------------------------------------
     def refresh(self) -> None:
@@ -513,18 +637,11 @@ class AutoWindow:
             self.actions_row.set_visible(False)
             self.progress.set_visible(False)
             self.time_row.set_visible(False)
+            # "Nothing playing" and the tiles below are the whole story:
+            # no hint line under it.
             self.title_label.set_text("Nothing playing" if show_card else "")
-            # With neither player installed, the tiles below already say
-            # "not installed": the card says nothing more.
-            hint = ""
-            if show_card and not snap.tracks and (
-                    snap.installed.get("radio")
-                    or snap.installed.get("audiobook")):
-                hint = ("Start something in the radio or "
-                        "xx-audiobook, or press Radio.")
-            # Word joiners keep "xx-audiobook" whole across line breaks.
-            self.sub_label.set_text(hint.replace("-", "-\u2060"))
-            self.sub_label.set_visible(bool(hint))
+            self.sub_label.set_text("")
+            self.sub_label.set_visible(False)
         self.title_label.set_visible(show_card)
         self.note_label.set_text(snap.note or "")
         self.note_label.set_visible(bool(snap.note) and not self._landscape)
@@ -636,8 +753,21 @@ class AutoWindow:
         self._run_worker(_work)
 
     def _set_note(self, text) -> bool:
+        """Show a failure line under the card; it clears itself, so a
+        stale error never outlives the moment it described."""
         self.snapshot.note = text
         self.refresh()
+        if self._note_timer:
+            self._GLib.source_remove(self._note_timer)
+        self._note_timer = self._GLib.timeout_add_seconds(
+            NOTE_SECONDS, self._clear_note, text)
+        return False
+
+    def _clear_note(self, text) -> bool:
+        self._note_timer = 0
+        if self.snapshot.note == text:
+            self.snapshot.note = None
+            self.refresh()
         return False
 
     # -- tile actions ------------------------------------------------------
@@ -668,10 +798,10 @@ class AutoWindow:
 
             if tile is Tile.RADIO:
                 ok = media_mod.launch_radio()
-                note = "Radio is not installed."
+                note = "Could not open Radio."
             else:
                 ok = media_mod.launch_audiobook()
-                note = "Audiobook is not installed."
+                note = "Could not open Audiobook."
             if not ok:
                 self._GLib.idle_add(self._set_note, note)
 
@@ -684,8 +814,9 @@ class AutoWindow:
             target, desktop_id = maps_mod.resolve_maps_app()
             ok = maps_mod.launch_target(target, desktop_id)
             if not ok:
+                # The tile already reads "not installed": the store
+                # listing opening is the whole answer.
                 maps_mod.open_store_listing()
-                self._GLib.idle_add(self._set_note, "Maps is not installed.")
 
         self._run_worker(_work)
 
@@ -720,32 +851,31 @@ class AutoWindow:
             body.append(caption)
 
         _section("Car", first=True)
-        self._setting_row(body, "Open when the car connects",
-                          "Pick a Bluetooth device", "auto_launch")
-        self._car_sub = _label(Gtk, Pango, "Pick a device", "xx-secondary")
-        car_texts = _texts(Gtk, Pango, "Car", "", "xx-title")
+        self._setting_row(body, "Open when the car connects", "",
+                          "auto_launch")
+        # The device row belongs to auto-launch: shown only while it is on
+        # (Android AU2), its subtitle the current pick.
+        self._car_sub = _label(Gtk, Pango, "None", "xx-secondary")
+        car_texts = _texts(Gtk, Pango, "Bluetooth device", "", "xx-title")
         car_texts.append(self._car_sub)
-        body.append(self._nav_row(car_texts, self._open_car_sheet))
+        self._car_row = self._nav_row(car_texts, self._open_car_sheet)
+        body.append(self._car_row)
         _section("On the drive screen")
         self._setting_row(body, "Now playing", "", "surface_now_playing")
         self._setting_row(body, "Radio and audiobook tiles", "",
                           "surface_quick_pick")
-        self._setting_row(body, "Maps tile", "Opens xx-maps in drive mode",
-                          "surface_nav")
-        self._setting_row(body, "Calls tile", "Your starred contacts.",
+        self._setting_row(body, "Maps tile", "", "surface_nav")
+        self._setting_row(body, "Calls tile", "Starred contacts",
                           "surface_calls")
         _section("Screen")
-        self._setting_row(body, "Keep the screen on",
-                          "Only while this screen is in front",
-                          "keep_screen_on")
+        self._setting_row(body, "Keep the screen on", "", "keep_screen_on")
         self._setting_row(body, "Rotate with the phone", "Off = landscape",
                           "follow_rotation")
         self._setting_row(body, "Always black",
                           "Off = follow the suite theme", "always_ink")
         _section("About")
         body.append(self._nav_row(
-            _texts(Gtk, Pango, "Open-source licenses",
-                   "Libraries and fonts in xx-auto", "xx-title"),
+            _texts(Gtk, Pango, "Open-source licenses", "", "xx-title"),
             lambda: self.show("licenses")))
         from . import licenses as lic_mod
 
@@ -776,12 +906,26 @@ class AutoWindow:
         switch.set_active(bool(getattr(self.settings, key)))
         switch.connect("notify::active",
                        lambda sw, _ps, k=key: self._on_toggle(k, sw))
+        self._switches[key] = switch
         row.append(switch)
         body.append(row)
+
+    def _sync_switches(self) -> None:
+        """Point every switch at the current settings without acting on
+        it (no save, no watch unit, no theme)."""
+        self._syncing = True
+        try:
+            for key, switch in self._switches.items():
+                switch.set_active(bool(getattr(self.settings, key)))
+        finally:
+            self._syncing = False
+        self._sync_car_sub()
 
     def _on_toggle(self, key, switch) -> None:
         from .settings_store import save_settings
 
+        if self._syncing:
+            return
         value = bool(switch.get_active())
         if key == "surface_calls" and value:
             value = True
@@ -803,8 +947,11 @@ class AutoWindow:
 
     def _sync_car_sub(self) -> None:
         try:
-            device = self.settings.auto_launch_device or "Pick a device"
+            address = self.settings.auto_launch_device
+            names = {dev.address: dev.name for dev in self._car_devices}
+            device = names.get(address) or address or "None"
             _fit(self._car_sub, self._Pango, device, 20)
+            self._car_row.set_visible(self.settings.auto_launch)
         except Exception:
             pass
 
@@ -841,7 +988,10 @@ class AutoWindow:
         back.set_child(back_img)
         back.connect("clicked", lambda *_: self.show(back_to))
         header.append(back)
-        header.append(_label(Gtk, Pango, heading, "xx-display", chars=16))
+        title = _label(Gtk, Pango, heading, "xx-display")
+        holder = _whole(Pango, title)
+        holder.set_valign(Gtk.Align.CENTER)
+        header.append(holder)
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         body.set_margin_bottom(16)
         column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -869,19 +1019,24 @@ class AutoWindow:
         texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         texts.set_hexpand(True)
         texts.set_valign(Gtk.Align.CENTER)
-        texts.append(_label(Gtk, Pango, title, "xx-title",
-                            "xx-auto-row-title"))
-        if subtitle:
-            texts.append(_label(Gtk, Pango, subtitle, "xx-secondary",
-                                chars=28))
+        # Two lines each before an ellipsis: a long chapter title or a
+        # contact name reads whole at large text.
+        for text, cls, size_cls in ((title, "xx-title", "xx-auto-row-title"),
+                                    (subtitle, "xx-secondary", None)):
+            if not text:
+                continue
+            line = _wrap(Gtk, Pango, text, cls, size_cls, chars=28)
+            line.set_lines(2)
+            line.set_ellipsize(Pango.EllipsizeMode.END)
+            texts.append(line)
         row.append(texts)
         btn.set_child(row)
         btn.connect("clicked", callback, *args)
         return btn
 
-    def _empty(self, body, title, detail="") -> None:
+    def _empty(self, body, title) -> None:
         Gtk, Pango = self._Gtk, self._Pango
-        box = _texts(Gtk, Pango, title, detail)
+        box = _texts(Gtk, Pango, title, "")
         box.set_margin_top(16)
         body.append(box)
 
@@ -895,10 +1050,7 @@ class AutoWindow:
     def _render_players_sheet(self) -> None:
         body = self._players_body
         self._clear(body)
-        if not self._players_rows:
-            self._empty(body, "No players",
-                        "Start the radio or xx-audiobook.")
-            return
+        # No players: the sheet stays empty (no empty-state line).
         for item in self._players_rows:
             body.append(self._list_row(item["title"], item["sub"],
                                        "media-playback-start-symbolic",
@@ -951,14 +1103,10 @@ class AutoWindow:
         body = self._fav_body
         self._clear(body)
         self._favourites = favourites
+        # A failed lookup is an error worth one line; no starred contacts
+        # is an empty list, which shows nothing.
         if error and not favourites:
-            self._empty(body, "Contacts are not available",
-                        "xx-auto reads only your starred contacts, "
-                        "and only to show them here.")
-            return False
-        if not favourites:
-            self._empty(body, "No starred contacts",
-                        "Star someone in xx-contacts and they show up here.")
+            self._empty(body, "Contacts are not available")
             return False
         for fav in favourites:
             body.append(self._list_row(fav.name, fav.number,
@@ -997,13 +1145,16 @@ class AutoWindow:
     def _render_car_sheet(self) -> None:
         body = self._car_body
         self._clear(body)
-        if not self._car_devices:
-            self._empty(body, "Bluetooth is off", "Turn it on to see your car.")
-            return
+        # No paired devices (or Bluetooth off): the list shows nothing.
+        picked = self.settings.auto_launch_device
         for dev in self._car_devices:
-            body.append(self._list_row(dev.name or dev.address, dev.address,
-                                       "bluetooth-active-symbolic",
-                                       self._on_pick_car, dev.address))
+            row = self._list_row(dev.name or dev.address, dev.address, None,
+                                 self._on_pick_car, dev.address)
+            if dev.address == picked:
+                row.add_css_class("selected")
+                row._check = _icon(self._Gtk, "object-select-symbolic", 24)
+                row.get_child().append(row._check)
+            body.append(row)
 
     def _load_car_devices(self) -> None:
         def _work():
@@ -1024,11 +1175,11 @@ class AutoWindow:
         from .settings_store import save_settings
 
         self.settings.auto_launch_device = address
-        self.settings.auto_launch = True
         try:
             save_settings(self.settings)
         except OSError:
             pass
+        self._render_car_sheet()
         self._sync_car_sub()
         self.show("settings")
 
@@ -1069,6 +1220,10 @@ class AutoWindow:
         return False
 
     def _poll_tick(self) -> bool:
+        if self._demo:
+            # Seeded screens (snaps, smoke tests) never read the real bus.
+            return True
+
         def _work():
             try:
                 from gi.repository import Gio
@@ -1150,16 +1305,19 @@ class AutoWindow:
         from . import demo
 
         self._demo = True
-        self.settings = demo.demo_settings()
+        seeded = demo.demo_settings()
+        # The screen options stay as loaded: the theme and orientation
+        # were already applied from them.
+        seeded.always_ink = self.settings.always_ink
+        seeded.follow_rotation = self.settings.follow_rotation
+        self.settings = seeded
         self.snapshot = demo.snapshot_for(scenario)
+        self._car_devices = demo.demo_car_devices()
+        self._render_car_sheet()
         if scenario == "favourites":
             self._favourites = demo.demo_favourites()
             self._render_favourites(self._favourites, "")
-        if scenario == "car":
-            self._car_devices = demo.demo_car_devices()
-            self._render_car_sheet()
-        if scenario in ("settings", "licenses"):
-            pass
+        self._sync_switches()
         self.refresh()
 
     def open_sheet(self, name: str) -> None:
@@ -1189,6 +1347,7 @@ class AutoApp:
             app._auto_window = self.window
         else:
             self.window.settings = settings
+            self.window._sync_switches()
             app._auto_window = self.window
         scenario = os.environ.get("XX_AUTO_SCENARIO", "")
         sheet = os.environ.get("XX_AUTO_SHEET", "")
