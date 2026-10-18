@@ -210,6 +210,18 @@ elif TARGET == "settings-lower":
 elif TARGET == "settings-end":
     shell.show("settings")
     skip(lambda: settings.body, 4)
+elif TARGET == "settings-about":
+    # The About block alone: every box above the last one is hidden.
+    shell.show("settings")
+
+    def _above_about():
+        count, child = 0, settings.body.get_first_child()
+        while child is not None and child.get_next_sibling() is not None:
+            count += 1
+            child = child.get_next_sibling()
+        return count
+
+    later(500, lambda: skip(lambda: settings.body, _above_about(), 0))
 elif TARGET == "sheet-cap":
     shell.show("settings")
     later(300, settings.open_cap)

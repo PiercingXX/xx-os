@@ -62,6 +62,7 @@ settings settings seeded
 settings-signedout settings signed-out
 settings-lower settings-lower seeded
 settings-end settings-end seeded
+settings-about settings-about seeded
 sheet-cap sheet-cap seeded
 engine-ready engine seeded
 engine-token engine seeded SNAP_ENGINE=token-missing
