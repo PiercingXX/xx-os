@@ -10,4 +10,5 @@ present_pick_dialog(_kind, _rows, lambda uid, value: None)
 win.set_visible(False)
 for _top in Gtk.Window.list_toplevels():
     if _top is not win and _top.get_visible():
-        _top.set_default_size(360, 720)
+        _top.set_default_size(int(os.environ.get("SNAP_W", "360")),
+                                  int(os.environ.get("SNAP_H", "720")))
