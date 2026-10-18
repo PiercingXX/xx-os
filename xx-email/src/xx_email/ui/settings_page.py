@@ -51,8 +51,8 @@ class SettingsPage(Gtk.Box):
         self._stored = config_mod.load()
         self._ready = False
 
-        self.append(widgets.page_header(
-            "Settings", "ACCOUNTS, SYNC AND PRIVACY"))
+        self.append(widgets.compact_header(
+            lambda: hooks.go_back(), "Settings"))
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER,
@@ -68,8 +68,7 @@ class SettingsPage(Gtk.Box):
         self._accounts_box = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL, spacing=0)
         inner.append(self._accounts_box)
-        self._accounts_empty = widgets.label(
-            "Loading accounts…", "xx-secondary")
+        self._accounts_empty = widgets.label("", "xx-secondary")
         self._accounts_box.append(self._accounts_empty)
         inner.append(widgets.list_row(
             "Add account", "Sign in with Google in your browser",
@@ -122,10 +121,6 @@ class SettingsPage(Gtk.Box):
             "Last-used account", self._stored.last_account or "None yet"))
 
         inner.append(widgets.section_label("Privacy and data"))
-        inner.append(widgets.setting_row(
-            "On this device only",
-            "No analytics or trackers. Tokens stay in the keyring; "
-            "mail cache and credentials never leave in a backup."))
         inner.append(widgets.list_row(
             "Revoke Google access", "Open your Google permissions",
             on_activate=lambda: self._hooks.open_permissions()))
@@ -212,8 +207,6 @@ class SettingsPage(Gtk.Box):
             self._accounts_box.remove(child)
             child = next_child
         if not accounts:
-            self._accounts_box.append(widgets.label(
-                "No accounts yet — add one below.", "xx-secondary"))
             return
         for index, entry in enumerate(accounts):
             self._accounts_box.append(self._account_row(

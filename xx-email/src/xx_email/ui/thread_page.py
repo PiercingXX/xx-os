@@ -75,19 +75,28 @@ class ThreadPage(Gtk.Box):
         scrolled.set_child(view)
         self.append(scrolled)
 
-        reply_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                            spacing=8)
+        # One line of three where they fit; at 320 px and large text
+        # Forward drops to a second line instead of widening the window.
+        reply_row = Gtk.FlowBox()
+        reply_row.set_selection_mode(Gtk.SelectionMode.NONE)
+        reply_row.set_max_children_per_line(3)
+        reply_row.set_min_children_per_line(1)
+        reply_row.set_column_spacing(8)
+        reply_row.set_row_spacing(8)
         reply_row.add_css_class("xx-page-body")
         reply_row.set_margin_top(12)
         reply_row.set_margin_bottom(20)
-        for label, mode, greedy in (("Reply", "reply", False),
-                                    ("Reply all", "reply_all", True),
-                                    ("Forward", "forward", False)):
+        for label, mode in (("Reply", "reply"),
+                            ("Reply all", "reply_all"),
+                            ("Forward", "forward")):
             button = widgets.outline_button(label)
-            button.set_hexpand(greedy)
+            button.set_hexpand(True)
             button.connect("clicked",
                            lambda _b, m=mode: self._on_reply(m))
             reply_row.append(button)
+            child = button.get_parent()
+            if child is not None:
+                child.set_focusable(False)
         self.append(reply_row)
 
         self._messages: list = []

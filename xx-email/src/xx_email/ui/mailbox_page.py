@@ -40,18 +40,12 @@ class MailboxPage(Gtk.Box):
         self._folder: MailboxFolder | None = None
         self._selection = mailbox_mod.Selection()
 
-        self.append(common_mod.header_with_menu(
-            "Inbox", account, [
-                ("Refresh", lambda: self.refresh()),
-                ("Folders", lambda: hooks.open_folders()),
-                ("Switch account",
-                 lambda: hooks.open_folders()),
-                ("Add account", lambda: hooks.add_account()),
-                ("Sign out", lambda: self._confirm_sign_out()),
-                ("Revoke Google access",
-                 lambda: hooks.open_permissions()),
-                ("Settings", lambda: hooks.open_settings()),
-            ]))
+        # One refresh glyph, no menu: Folders and Options are tabs, and
+        # accounts (switch, add, sign out, revoke) live in Folders and
+        # Settings once each.
+        self.append(widgets.page_header(
+            "Inbox", account, icon_name="view-refresh-symbolic",
+            icon_cb=lambda: self.refresh()))
 
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         body.set_vexpand(True)
@@ -130,13 +124,15 @@ class MailboxPage(Gtk.Box):
         body.append(more_pad)
 
         bottom = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        bottom.append(widgets.bottom_tabs([
+        tabs = widgets.bottom_tabs([
             ("", "Inbox", True, None),
             ("", "Folders", False, lambda: hooks.open_folders()),
             ("", "Search", False, lambda: hooks.open_search()),
             ("", "Options", False,
              lambda: hooks.open_settings()),
-        ]))
+        ])
+        tabs.add_css_class("email-tabs")
+        bottom.append(tabs)
         self.append(body)
         self.append(bottom)
 
@@ -270,9 +266,10 @@ class MailboxPage(Gtk.Box):
                     {"ok": False, "error": "couldn't reach it"}).upper())
             self._toast("Sync failed", None)
             return
-        if not outcome.get("ok", False):
-            self._toast(outcome.get("error") or "Sync failed", None)
         reauth = bool(outcome.get("reauth", False))
+        # A lost grant shows the sign-in banner; a toast would say it twice.
+        if not outcome.get("ok", False) and not reauth:
+            self._toast(outcome.get("error") or "Sync failed", None)
         self.set_reauth(reauth)
         # The reauth banner card carries the sign-in message; the caption
         # under it stays empty so it never reads twice.
@@ -346,14 +343,16 @@ class MailboxPage(Gtk.Box):
 
     def _banner(self, parent, label_text: str, action_label: str,
                 on_action):
+        # The message reads whole on its own line(s) with the action under
+        # it: side by side, large text squeezed it to a word per line.
         box = widgets.card()
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        row.set_valign(Gtk.Align.CENTER)
+        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         label = common_mod.wrapped(Gtk.Label(label=label_text))
         label.add_css_class("xx-title")
-        label.set_hexpand(True)
+        label.set_xalign(0.0)
         row.append(label)
-        action = widgets.outline_button(action_label)
+        action = widgets.wrap_to_fit(widgets.outline_button(action_label))
+        action.set_halign(Gtk.Align.START)
         action.connect("clicked", on_action)
         row.append(action)
         box.append(row)
@@ -365,29 +364,6 @@ class MailboxPage(Gtk.Box):
         if action_label == "Retry":
             self._failed_label = label
         return pad
-
-    def _confirm_sign_out(self) -> None:
-        email = self.account
-        dialog = Adw.Dialog()
-        dialog.set_title("Sign out")
-        content = widgets.dialog_box("Sign out")
-        content.append(widgets.label(
-            f"Remove {email} from this phone? Mail stays on "
-            "Google's servers. Sends still waiting in the "
-            "Outbox are discarded.", "xx-body"))
-        cancel = widgets.outline_button("Cancel")
-        cancel.connect("clicked", lambda _b: dialog.close())
-        content.append(cancel)
-        out = widgets.outline_button("Sign out")
-        out.connect("clicked", lambda _b: (
-            dialog.close(), self._hooks.sign_out(email, False)))
-        content.append(out)
-        revoke = widgets.danger_button("Sign out and revoke")
-        revoke.connect("clicked", lambda _b: (
-            dialog.close(), self._hooks.sign_out(email, True)))
-        content.append(revoke)
-        dialog.set_child(content)
-        dialog.present(self.get_root())
 
     def _open_snooze(self, ids: list[str]) -> None:
         now = datetime.now().astimezone()

@@ -909,6 +909,9 @@ class _SettingsHooks:
         common_mod.run_in_background(self._app._executor, blocking,
                                      done)
 
+    def go_back(self) -> None:
+        self._app._nav.pop()
+
     def load_state(self, done) -> None:
         def _blocking():
             conn = _open_db()
@@ -1103,6 +1106,13 @@ class _ThreadHooks:
                     raise LookupError(f"No thread {thread_id}")
                 messages = db_mod.messages_for_thread(conn, account,
                                                       thread_id)
+                if all(message.body_fetched for message in messages):
+                    # Every body is cached: open at once, with no token
+                    # refresh (a network round-trip, or a long wait
+                    # offline) standing between the tap and the thread.
+                    entries = [_full_entry(conn, account, None, message)
+                               for message in messages]
+                    return (thread, messages, entries)
                 try:
                     client, worker = _gmail_client(account)
                 except Exception:

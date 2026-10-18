@@ -66,13 +66,14 @@ def test_no_programmed_focus_at_startup():
 def test_phone_chrome_has_no_title_buttons():
     main = (SRC / "main.py").read_text(encoding="utf-8")
     assert "set_decorated(False)" in main
-    for name in ("mailbox_page.py", "setup_page.py",
-                 "settings_page.py"):
+    for name in ("mailbox_page.py", "setup_page.py"):
         text = (UI / name).read_text(encoding="utf-8")
         assert "page_header" in text or \
             "header_with_menu" in text, name
+    # Pushed pages (Settings too) carry the back chevron.
     for name in ("thread_page.py", "search_page.py", "compose_page.py",
-                 "folders_page.py", "logs_page.py", "setup_page.py"):
+                 "folders_page.py", "logs_page.py", "setup_page.py",
+                 "settings_page.py"):
         text = (UI / name).read_text(encoding="utf-8")
         assert "compact_header" in text or \
             "xx-compact-header" in text, name
@@ -123,7 +124,10 @@ def test_filters_and_bottom_nav_use_design_builders():
     mailbox = (UI / "mailbox_page.py").read_text(encoding="utf-8")
     assert "chip_bar" in mailbox
     assert "bottom_tabs" in mailbox
-    assert "header_with_menu" in mailbox
+    # No inbox menu: Folders and Options are tabs, accounts live in
+    # Folders and Settings once each.
+    assert "header_with_menu" not in mailbox
+    assert "view-refresh-symbolic" in mailbox
     assert "Adw.ViewStack" not in mailbox
     assert "Adw.ViewSwitcherBar" not in mailbox
     assert "Gtk.GestureSwipe" in (UI / "common.py").read_text(
@@ -159,3 +163,19 @@ def test_design_system_paints_list_backgrounds():
                active.accent, theme_mod.DANGER_RED,
                theme_mod.ON_DANGER_FG}
     assert found and found <= allowed, found - allowed
+
+
+def test_no_try_list_or_loading_lines():
+    search = (UI / "search_page.py").read_text(encoding="utf-8")
+    assert "OPERATOR_HINTS" not in search
+    for name in ("folders_page.py", "settings_page.py"):
+        text = (UI / name).read_text(encoding="utf-8")
+        assert "Loading accounts" not in text, name
+        assert "No accounts yet" not in text, name
+    setup = (UI / "setup_page.py").read_text(encoding="utf-8")
+    assert "Revoke Google access" not in setup
+
+
+def test_lost_grant_says_it_once():
+    mailbox = (UI / "mailbox_page.py").read_text(encoding="utf-8")
+    assert 'if not outcome.get("ok", False) and not reauth:' in mailbox
