@@ -21,11 +21,15 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("Pango", "1.0")
+gi.require_version("Gsk", "4.0")
+gi.require_version("Graphene", "1.0")
 
 import os  # noqa: E402
 import threading  # noqa: E402
 
-from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
+from gi.repository import (  # noqa: E402
+    Adw, Gio, GLib, GObject, Graphene, Gsk, Gtk, Pango,
+)
 
 from xx_ui import widgets  # noqa: E402
 import xx_phone  # noqa: E402
@@ -71,6 +75,69 @@ ACTION_LABELS = {
 }
 
 REFRESH_DELAY_MS = 200
+
+#: The header title never shrinks below this share of its full size.
+TITLE_MIN_SCALE = 0.5
+
+
+class ShrinkToFit(Gtk.Widget):
+    """Holds one label whole: at its natural size where that fits, scaled
+    down (to ``TITLE_MIN_SCALE``) where the row is narrower, so a big
+    title at large text reads "Contacts", not "Conta…", and never widens
+    the window."""
+
+    __gtype_name__ = "XXContactsShrinkToFit"
+
+    def __init__(self, child: Gtk.Widget) -> None:
+        super().__init__()
+        self._child = child
+        child.set_parent(self)
+
+    def _natural(self) -> tuple[int, int]:
+        _lo, width, _b1, _b2 = self._child.measure(
+            Gtk.Orientation.HORIZONTAL, -1)
+        _lo, height, _b1, _b2 = self._child.measure(
+            Gtk.Orientation.VERTICAL, width)
+        return width, height
+
+    def do_measure(self, orientation, for_size):
+        width, height = self._natural()
+        if orientation == Gtk.Orientation.HORIZONTAL:
+            return (int(width * TITLE_MIN_SCALE), width, -1, -1)
+        return (int(height * TITLE_MIN_SCALE), height, -1, -1)
+
+    def do_size_allocate(self, width, height, baseline):
+        nat_w, nat_h = self._natural()
+        scale = min(1.0, width / nat_w) if nat_w > 0 else 1.0
+        offset = Graphene.Point()
+        offset.init(0, max(0.0, (height - nat_h * scale) / 2))
+        transform = Gsk.Transform.new().translate(offset).scale(scale, scale)
+        self._child.allocate(nat_w, nat_h, -1, transform)
+
+    def do_snapshot(self, snapshot):
+        self.snapshot_child(self._child, snapshot)
+
+    def do_dispose(self):
+        if self._child is not None:
+            self._child.unparent()
+            self._child = None
+
+
+def _shrink_header_title(header: Gtk.Widget) -> None:
+    """Swap a ``page_header``'s ellipsizing title for a whole one that
+    scales down to fit (large text, 320 px)."""
+    top = header.get_first_child()
+    title = top.get_first_child() if top is not None else None
+    if not isinstance(title, Gtk.Label):
+        return
+    top.remove(title)
+    title.set_ellipsize(Pango.EllipsizeMode.NONE)
+    title.set_max_width_chars(-1)
+    title.set_hexpand(False)
+    holder = ShrinkToFit(title)
+    holder.set_hexpand(True)
+    holder.set_valign(Gtk.Align.CENTER)
+    top.prepend(holder)
 
 
 class RowItem(GObject.Object):
@@ -304,6 +371,7 @@ class ContactsWindow(Adw.ApplicationWindow):
             actions=[("New", self._on_new_clicked)],
             overflow_cb=self._show_overflow)
         self._count_label = self._header.get_last_child()
+        _shrink_header_title(self._header)
 
         self._chips_slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                                    spacing=0)
