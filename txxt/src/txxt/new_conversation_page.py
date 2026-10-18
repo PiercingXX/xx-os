@@ -65,7 +65,10 @@ class NewConversationPage(Adw.NavigationPage):
         self._rows.set_selection_mode(Gtk.SelectionMode.NONE)
         self._rows.connect("row-activated", self._on_hit_activated)
         results_group.append(self._rows)
-        self._empty = widgets.empty_state("Type a name or number to search.")
+        # Only a search that found nothing says so: before one, the
+        # search field's placeholder is the prompt.
+        self._empty = widgets.empty_state("No matches for that search.")
+        self._empty.set_visible(False)
         results_group.append(self._empty)
         body.append(results_group)
 
@@ -131,12 +134,7 @@ class NewConversationPage(Adw.NavigationPage):
         searching = bool((query or "").strip())
         has_hits = bool(hits)
         self._rows.set_visible(has_hits)
-        self._empty.set_visible(not has_hits)
-        if not has_hits:
-            self._empty.get_first_child().set_text(
-                "No matches for that search." if searching
-                else "Type a name or number to search.",
-            )
+        self._empty.set_visible(searching and not has_hits)
         return False
 
     # ------------------------------------------------------------ actions
