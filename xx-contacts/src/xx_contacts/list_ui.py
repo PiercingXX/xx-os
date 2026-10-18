@@ -436,15 +436,6 @@ class ContactsWindow(Adw.ApplicationWindow):
         text_label.set_ellipsize(Pango.EllipsizeMode.END)
         text_label.set_max_width_chars(chars)
 
-    def _widen_action(self, empty: Gtk.Widget) -> None:
-        box_child = empty.get_first_child()
-        while box_child is not None:
-            if isinstance(box_child, Gtk.Button):
-                text_child = box_child.get_child()
-                if isinstance(text_child, Gtk.Label):
-                    text_child.set_max_width_chars(16)
-            box_child = box_child.get_next_sibling()
-
     def _apply_rows(self, seq: int, rows: list[ListRow] | None,
                     revision: int | None) -> bool:
         if seq != self._query_seq or rows is None:
@@ -477,28 +468,24 @@ class ContactsWindow(Adw.ApplicationWindow):
                                            photo=entry.photo_path,
                                            starred=entry.starred))
         self._rebuild_jump_strip(sections, flat)
+        # An empty address book shows nothing but the header's New (as on
+        # Android); only a search that finds nothing says so.
         searching = bool(self._search.get_text().strip())
-        if searching:
-            empty = widgets.empty_state(
-                "No matches. Try a different search.")
-        else:
-            empty = widgets.empty_state(
-                "Your address book is empty.", "Import contacts",
-                self._on_import_clicked)
         child = self._empty_slot.get_first_child()
         while child is not None:
             following = child.get_next_sibling()
             self._empty_slot.remove(child)
             child = following
-        self._widen_action(empty)
-        self._empty_slot.append(empty)
+        if searching:
+            self._empty_slot.append(widgets.empty_state("No matches."))
         has_rows = len(rows) > 0
         self._scrolled.set_visible(has_rows)
-        self._empty_slot.set_visible(not has_rows)
+        self._empty_slot.set_visible(searching and not has_rows)
         self._jump.set_visible(has_rows and len(sections) > 1)
         count = f"{len(rows)} CONTACTS" if len(rows) != 1 else "1 CONTACT"
         try:
             self._count_label.set_text(count)
+            self._count_label.set_visible(has_rows)
         except Exception:
             pass
         return False
@@ -922,9 +909,6 @@ class ContactsWindow(Adw.ApplicationWindow):
         except (NotFoundError, RuntimeError, GLib.Error):
             pass
         GLib.idle_add(self._reload_from_idle)
-
-    def _on_import_clicked(self, _button: Gtk.Button) -> None:
-        self.open_import_export()
 
     def _on_import_export_clicked(self, _button: Gtk.Button) -> None:
         self.open_import_export()
