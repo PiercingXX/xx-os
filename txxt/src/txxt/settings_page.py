@@ -20,9 +20,8 @@ import gi
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-gi.require_version('Pango', '1.0')
 
-from gi.repository import Adw, GLib, Gtk, Pango  # noqa: E402
+from gi.repository import Adw, Gtk  # noqa: E402
 
 from xx_ui import widgets  # noqa: E402
 import txxt  # noqa: E402
@@ -41,155 +40,6 @@ ALERT_STYLE_OPTIONS = (
     ('vibrate', 'Vibrate'),
     ('sound', 'Sound'),
 )
-
-def setting_row(title: str, subtitle: str = '', trailing=None,
-                last: bool = False) -> Gtk.Box:
-    """``widgets.setting_row`` whose title and subtitle wrap to two lines
-    each (large text, 320 px) instead of ellipsizing at one; past two
-    lines they ellipsize, and they never widen the window."""
-    row = widgets.setting_row(title, subtitle, trailing, last=last)
-    middle = row.get_first_child()
-    line = middle.get_first_child() if middle is not None else None
-    while isinstance(line, Gtk.Label):
-        line.set_wrap(True)
-        line.set_wrap_mode(Pango.WrapMode.WORD)
-        line.set_lines(2)
-        line.set_ellipsize(Pango.EllipsizeMode.END)
-        line = line.get_next_sibling()
-    return row
-
-
-def _buttons(box: Gtk.Widget) -> list:
-    out = []
-    child = box.get_first_child()
-    while child is not None:
-        if isinstance(child, Gtk.Button):
-            out.append(child)
-        child = child.get_next_sibling()
-    return out
-
-
-class FitSegmented(Gtk.Widget):
-    """A ``widgets.segmented`` row of options that stacks them, one per
-    line, where the page is narrower than the row (320 px at large
-    text) instead of widening the window. A tap selects the option in
-    both layouts and calls ``on_pick(value)``."""
-
-    __gtype_name__ = 'TxxtFitSegmented'
-
-    def __init__(self, options, selected: str, on_pick=None) -> None:
-        super().__init__()
-        self._values = [value for value, _label in options]
-        self._on_pick = on_pick
-        self._selected = selected
-
-        def items():
-            return [(label, value == selected, self._picker(value))
-                    for value, label in options]
-
-        self._row = widgets.segmented(items())
-        self._column = widgets.segmented(items())
-        self._column.set_orientation(Gtk.Orientation.VERTICAL)
-        # Stacked: theme hairlines between the options, not the row's
-        # left borders.
-        for index, button in enumerate(_buttons(self._column)):
-            button.remove_css_class('seg-mid')
-            button.remove_css_class('seg-last')
-            if index:
-                self._column.insert_child_after(
-                    Gtk.Separator.new(Gtk.Orientation.HORIZONTAL),
-                    button.get_prev_sibling())
-        self._row.set_parent(self)
-        self._column.set_parent(self)
-        self._column.set_child_visible(False)
-        self._stacked = False
-        self._sync_id = 0
-
-    # ------------------------------------------------------------ state
-
-    @property
-    def selected(self) -> str:
-        return self._selected
-
-    @property
-    def stacked(self) -> bool:
-        return self._stacked
-
-    def option_buttons(self) -> list:
-        """The buttons of the layout on screen."""
-        return _buttons(self._column if self._stacked else self._row)
-
-    def select(self, value: str) -> None:
-        self._selected = value
-        for box in (self._row, self._column):
-            for option, button in zip(self._values, _buttons(box)):
-                if option == value:
-                    button.add_css_class('seg-selected')
-                else:
-                    button.remove_css_class('seg-selected')
-
-    def _picker(self, value: str):
-        def _picked() -> None:
-            self.select(value)
-            if self._on_pick is not None:
-                self._on_pick(value)
-
-        return _picked
-
-    # ------------------------------------------------------------ layout
-
-    def _row_min(self) -> int:
-        return self._row.measure(Gtk.Orientation.HORIZONTAL, -1)[0]
-
-    def do_get_request_mode(self):
-        return Gtk.SizeRequestMode.HEIGHT_FOR_WIDTH
-
-    def do_measure(self, orientation, for_size):
-        if orientation == Gtk.Orientation.HORIZONTAL:
-            row_min, row_nat, _b1, _b2 = self._row.measure(orientation, -1)
-            col_min, _col_nat, _b1, _b2 = self._column.measure(
-                orientation, -1)
-            return (min(row_min, col_min), max(row_nat, col_min), -1, -1)
-        stacked = 0 <= for_size < self._row_min()
-        child = self._column if stacked else self._row
-        minimum, natural, _b1, _b2 = child.measure(orientation, for_size)
-        return (minimum, natural, -1, -1)
-
-    def do_size_allocate(self, width, height, baseline):
-        stacked = width < self._row_min()
-        active, idle = ((self._column, self._row) if stacked
-                        else (self._row, self._column))
-        active.allocate(width, height, -1, None)
-        # The hidden layout still gets a size it accepts (it is neither
-        # drawn nor tappable): no allocation warnings either way.
-        idle_w = max(width, idle.measure(Gtk.Orientation.HORIZONTAL, -1)[0])
-        idle_h = idle.measure(Gtk.Orientation.VERTICAL, idle_w)[0]
-        idle.allocate(idle_w, idle_h, -1, None)
-        if stacked != self._stacked:
-            self._stacked = stacked
-            if not self._sync_id:
-                self._sync_id = GLib.idle_add(self._sync_visible)
-
-    def _sync_visible(self) -> bool:
-        self._sync_id = 0
-        self._row.set_child_visible(not self._stacked)
-        self._column.set_child_visible(self._stacked)
-        self.queue_draw()
-        return GLib.SOURCE_REMOVE
-
-    def do_snapshot(self, snapshot):
-        self.snapshot_child(
-            self._column if self._stacked else self._row, snapshot)
-
-    def do_dispose(self):
-        if self._sync_id:
-            GLib.source_remove(self._sync_id)
-            self._sync_id = 0
-        for child in (self._row, self._column):
-            if child is not None and child.get_parent() is self:
-                child.unparent()
-        self._row = self._column = None
-
 
 class SettingsPage(Adw.NavigationPage):
     """Settings page over the txxt JSON config + rule-table counts."""
@@ -218,12 +68,12 @@ class SettingsPage(Adw.NavigationPage):
         notifications = Gtk.Box.new(Gtk.Orientation.VERTICAL, 8)
         notifications.append(widgets.section_label('Notifications'))
         notifications.append(widgets.caption('Lock-screen privacy'))
-        self._privacy_row = FitSegmented(
+        self._privacy_row = widgets.fit_segmented(
             LOCK_PRIVACY_OPTIONS, self._settings.lock_screen_privacy,
             self._on_privacy_picked)
         notifications.append(self._privacy_row)
         notifications.append(widgets.caption('Alert style'))
-        self._alert_row = FitSegmented(
+        self._alert_row = widgets.fit_segmented(
             ALERT_STYLE_OPTIONS, self._settings.alert_style,
             self._on_alert_picked)
         notifications.append(self._alert_row)
@@ -239,12 +89,12 @@ class SettingsPage(Adw.NavigationPage):
         messages.append(self._region_row)
         self._auto_download_row = widgets.make_switch(
             self._settings.mms_auto_download, self._on_auto_download_changed)
-        messages.append(setting_row(
+        messages.append(widgets.setting_row(
             'Auto-download MMS', 'Off keeps tap-to-fetch',
             self._auto_download_row))
         self._auto_reply_row = widgets.make_switch(
             self._settings.mms_auto_reply, self._on_auto_reply_changed)
-        messages.append(setting_row(
+        messages.append(widgets.setting_row(
             'Auto-reply to voice MMS', '',
             self._auto_reply_row, last=True))
         body.append(messages)

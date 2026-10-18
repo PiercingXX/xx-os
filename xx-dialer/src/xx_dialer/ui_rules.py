@@ -38,16 +38,6 @@ def _outline(text: str, callback=None):
     return widgets.wrap_to_fit(widgets.outline_button(text, callback))
 
 
-def _set_button_text(button, text: str) -> None:
-    """Retitle a wrapped button in place: ``set_label`` would swap in a
-    fresh single-line label that ellipsizes or widens the window."""
-    child = button.get_child()
-    if isinstance(child, Gtk.Label):
-        child.set_text(text)
-    else:
-        button.set_label(text)
-
-
 HIDDEN_OPTIONS = ("Unknown", "Silence", "Block")
 HIDDEN_VALUES = ("unknown", "silence", "block")
 
@@ -622,7 +612,7 @@ class RulesView:
         for key, _title in TONE_KEYS:
             current = snap.unknown_tone if key == "unknown_tone" \
                 else snap.default_tone
-            _set_button_text(
+            widgets.set_button_text(
                 self._tone_rows[key],
                 "Set" if not current else current.split("/")[-1])
         self._render_patterns(snap)
@@ -679,7 +669,7 @@ class RulesView:
             self._pattern_list.remove(row)
         armed = any(row.preset == rules.NEIGHBOR_PRESET
                     for row in snap.patterns)
-        _set_button_text(
+        widgets.set_button_text(
             self._neighbor_button,
             "Neighbor-spoof: on" if armed else "Neighbor-spoof: off")
         self._pattern_list.set_visible(bool(snap.patterns))

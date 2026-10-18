@@ -52,19 +52,23 @@ avatars circle, outgoing bubbles 4 px.
 
 `PageHeader` (display title + caption + chromeless text actions, no
 HeaderBar; `shrink_title` scales a long title down instead of cutting it)
-and a compact 56 px back-chevron variant whose caps title wraps rather
-than ellipsizes; `ListRow` (40 px avatar or glyph, title + secondary,
-muted meta, pressed state; both lines wrap, a dense mailbox keeps one); `Avatar` (32/40/64/88); `ChipBar`
-(32 px chips, inverted selected, scrollable); `Segmented`; `BottomTabs`
+and a compact 56 px back-chevron variant whose caps title wraps to two
+lines before it ellipsizes; `ListRow` (40 px avatar or glyph, title +
+secondary, muted meta, pressed state; each line wraps to two before an
+ellipsis, a dense mailbox keeps one); `Avatar` (32/40/64/88); `ChipBar`
+(32 px chips, inverted selected, scrollable, the cut edge fades);
+`Segmented` (`fit_segmented` stacks the options where the row does not
+fit; `fit_row` does the same for any controls); `BottomTabs`
 (4 equal tabs, 2 px top indicator on active, top hairline, `background`
-fill; a label wider than its tab scales down); `SearchBar` (flat glyph + muted placeholder at list bottoms;
+fill; 0.04em caps, and a label wider than its tab scales down); `SearchBar` (flat glyph + muted placeholder at list bottoms;
 filled `surface` box only where a box is needed); outline/primary/
-danger/text/caps buttons (44 px) and icon buttons (48 × 48 px targets),
-disabled at 40% opacity; `ButtonPair` (two buttons side by side, stacked
+danger/text/caps buttons (44 px; labels wrap between words rather than
+cut, `set_button_text` retitles them keeping that) and icon buttons
+(48 × 48 px targets), disabled at 40% opacity; `ButtonPair` (two buttons side by side, stacked
 full width when a label would not fit); 56 px inverted `FAB`
 bottom-right above tabs; `Field` (caption over title value, muted
 placeholder); `SectionLabel`; borderless `Card`; `SettingRow` with
-hairlines (title and subtitle wrap, never ellipsize); inverted `Switch`
+hairlines (title and subtitle wrap to two lines before an ellipsis); inverted `Switch`
 (never Adwaita blue) answering to a 48 px tap area around the drawn
 pill;
 one-sentence `EmptyState`; 72×64 `surface` keypad keys; `surface`

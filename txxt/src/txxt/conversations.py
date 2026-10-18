@@ -33,7 +33,6 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 from txxt import blocking as blocking_mod  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 from txxt import list_presenter as presenter  # noqa: E402
-from txxt.header_fit import shrink_header_title  # noqa: E402
 
 FILTERS = ("all", "unread", "starred")
 
@@ -162,9 +161,10 @@ class ConversationListPage(Adw.NavigationPage):
             actions=[("New", self._on_compose_clicked)],
             icon_name="emblem-system-symbolic",
             icon_cb=self._on_settings_clicked,
+            # "Inbox" scales down rather than "Inb…" at 320 px, 1.5x.
+            shrink_title=True,
         )
         self._caption = self._header.get_last_child()
-        shrink_header_title(self._header)
 
         chips_box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
         self._chips_wrap = chips_box

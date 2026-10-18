@@ -89,7 +89,7 @@ class ThreadPage(Gtk.Box):
                 buttons.append(button)
             return buttons
 
-        reply_row = common_mod.FitRow(_reply_buttons)
+        reply_row = widgets.fit_row(_reply_buttons)
         reply_row.add_css_class("xx-page-body")
         reply_row.set_margin_top(12)
         reply_row.set_margin_bottom(20)

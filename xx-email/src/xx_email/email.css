@@ -29,10 +29,3 @@
   background-color: @theme_selected_fg_color;
 }
 
-/* Bottom tabs: four caps labels (FOLDERS, OPTIONS) must fit 320 px at
-   large text, so tighten the shared tab letter-spacing a little. */
-.email-tabs .xx-tab {
-  padding-left: 2px;
-  padding-right: 2px;
-  letter-spacing: 0.04em;
-}

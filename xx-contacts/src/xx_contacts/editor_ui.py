@@ -635,11 +635,7 @@ class ContactEditorPage(Adw.NavigationPage):
     def _refresh_photo_buttons(self, has_photo: bool) -> None:
         """Remove only where there is a photo to remove."""
         text = "Change photo" if has_photo else "Add photo"
-        child = self._photo_pick.get_child()
-        if isinstance(child, Gtk.Label):
-            child.set_text(text)
-        else:
-            self._photo_pick.set_label(text)
+        widgets.set_button_text(self._photo_pick, text)
         self._photo_remove.set_visible(has_photo)
 
     def _on_photo_pick(self) -> None:

@@ -30,14 +30,6 @@
   min-width: 48px;
 }
 
-/* Bottom tabs: four caps labels (RECENTS the longest) must fit 320 px at
-   large text, so tighten the shared tab letter-spacing a little here. */
-.xx-dialer-tabs .xx-tab {
-  padding-left: 2px;
-  padding-right: 2px;
-  letter-spacing: 0.04em;
-}
-
 /* Hidden callers: UNKNOWN / SILENCE / BLOCK must fit 320 px at large
    text, so trim the shared segment side padding on this one control. */
 .xx-segmented.xx-dialer-seg button {

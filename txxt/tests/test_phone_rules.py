@@ -210,7 +210,7 @@ def test_row_states_read_once():
     # row never trails " · Starred" or " · Muted" as well.
     src = read("conversations.py")
     assert "view.snippet + view.marks" not in src
-    assert "shrink_header_title(self._header)" in src
+    assert "shrink_title=True" in src
 
 
 def test_a_photo_shows_without_its_placeholder_line():

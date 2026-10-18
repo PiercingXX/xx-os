@@ -81,13 +81,20 @@ def _fit_exact(text_label: Gtk.Label, text: str, chars: int) -> Gtk.Label:
     return text_label
 
 
+_ROW_LINES = 2
+
+
 def _fit_row_wrap(line: Gtk.Label) -> Gtk.Label:
-    # Row and header text wraps onto more lines instead of losing its end
-    # to an ellipsis at 320 px or large text. The row cap only bounds the
-    # natural width; the label lays out at whatever width the row gives
-    # it, so text that fits stays on one line. Word-char: a word breaks
-    # only when it alone is wider than the row.
-    return _fit_wrap(line, _ROW_CHARS)
+    # Row and header text wraps onto a second line instead of losing its
+    # end to an ellipsis at 320 px or large text, and ellipsizes only past
+    # that. The row cap only bounds the natural width; the label lays out
+    # at whatever width the row gives it, so text that fits stays on one
+    # line. Word-char: a word breaks only when it alone is wider than the
+    # row.
+    _fit_wrap(line, _ROW_CHARS)
+    line.set_lines(_ROW_LINES)
+    line.set_ellipsize(Pango.EllipsizeMode.END)
+    return line
 
 
 def fit_text(text_label: Gtk.Label, text: str, chars: int) -> Gtk.Label:
@@ -310,7 +317,7 @@ def compact_header(back_cb, title: str, subtitle: str = '',
     """Sub-page header: 56 px bar, back chevron, caption-style title,
     up to two trailing symbolic icons. Everything vertically centered.
     A title too long for the bar (320 px, large text) wraps onto a
-    second line instead of ellipsizing."""
+    second line before it ellipsizes."""
     root = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
     root.add_css_class('xx-page-body')
     root.add_css_class('xx-compact-header')
@@ -373,9 +380,9 @@ def list_row(primary: str, secondary: str = '', meta: str = '',
              last: bool = False, danger_sub: bool = False,
              wrap_secondary: bool = False,
              wrap: bool = True) -> Gtk.Button:
-    """Activatable 64 px row with hairline (``last`` drops it). Both
-    lines wrap rather than ellipsize, so a row reads whole at 320 px and
-    large text; ``wrap=False`` keeps one line each for a dense content
+    """Activatable 64 px row with hairline (``last`` drops it). Each
+    line wraps to two before it ellipsizes, so a row reads whole at 320 px
+    and large text; ``wrap=False`` keeps one line each for a dense content
     list with a fixed pitch (a mailbox), where ``wrap_secondary`` can
     still let the second line wrap."""
     row = Gtk.Button()
@@ -435,7 +442,11 @@ def chip_bar(items: list, spacing: int = 8) -> Gtk.ScrolledWindow:
             chip.connect('clicked', lambda _b, cb=callback: cb())
         box.append(chip)
     scrolled = Gtk.ScrolledWindow()
+    scrolled.add_css_class('xx-chip-bar')
     scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+    # No scrollbar strip: a chip cut at the edge fades out (the undershoot
+    # rule in style.css), which reads as "more to the side".
+    scrolled.set_overlay_scrolling(True)
     scrolled.set_child(box)
     return scrolled
 
@@ -461,6 +472,187 @@ def segmented(items: list) -> Gtk.Box:
         button.set_hexpand(True)
         root.append(button)
     return root
+
+
+_FIT_CLASSES = {}
+
+
+def _fit_classes():
+    """(FitRow, FitSegmented), defined on first use: headless tests
+    import this module against stub Gtk modules."""
+    if _FIT_CLASSES:
+        return _FIT_CLASSES['row'], _FIT_CLASSES['segmented']
+    from gi.repository import GLib
+
+    class FitRow(Gtk.Widget):
+        """Two layouts of the same controls, a row and a column: the row
+        while it fits, the column (one per line) where the page is
+        narrower than the row (320 px, large text), never widening the
+        window. Each layout owns its own widgets; only the one on screen
+        is drawn and tappable."""
+
+        __gtype_name__ = 'XXUiFitRow'
+
+        def __init__(self, row: Gtk.Widget, column: Gtk.Widget) -> None:
+            super().__init__()
+            self._row = row
+            self._column = column
+            row.set_parent(self)
+            column.set_parent(self)
+            column.set_child_visible(False)
+            self._stacked = False
+            self._sync_id = 0
+
+        @property
+        def stacked(self) -> bool:
+            return self._stacked
+
+        @property
+        def layouts(self) -> tuple:
+            """(row, column)."""
+            return self._row, self._column
+
+        def _row_min(self) -> int:
+            return self._row.measure(Gtk.Orientation.HORIZONTAL, -1)[0]
+
+        def do_get_request_mode(self):
+            return Gtk.SizeRequestMode.HEIGHT_FOR_WIDTH
+
+        def do_measure(self, orientation, for_size):
+            if orientation == Gtk.Orientation.HORIZONTAL:
+                row_min, row_nat, _b1, _b2 = self._row.measure(
+                    orientation, -1)
+                col_min, _col_nat, _b1, _b2 = self._column.measure(
+                    orientation, -1)
+                return (min(row_min, col_min), max(row_nat, col_min), -1, -1)
+            stacked = 0 <= for_size < self._row_min()
+            child = self._column if stacked else self._row
+            minimum, natural, _b1, _b2 = child.measure(orientation, for_size)
+            return (minimum, natural, -1, -1)
+
+        def do_size_allocate(self, width, height, baseline):
+            stacked = width < self._row_min()
+            active, idle = ((self._column, self._row) if stacked
+                            else (self._row, self._column))
+            active.allocate(width, height, -1, None)
+            # The hidden layout still gets a size it accepts (neither drawn
+            # nor tappable): no allocation warnings either way.
+            idle_w = max(width,
+                         idle.measure(Gtk.Orientation.HORIZONTAL, -1)[0])
+            idle_h = idle.measure(Gtk.Orientation.VERTICAL, idle_w)[0]
+            idle.allocate(idle_w, idle_h, -1, None)
+            if stacked != self._stacked:
+                self._stacked = stacked
+                if not self._sync_id:
+                    self._sync_id = GLib.idle_add(self._sync_visible)
+
+        def _sync_visible(self) -> bool:
+            self._sync_id = 0
+            self._row.set_child_visible(not self._stacked)
+            self._column.set_child_visible(self._stacked)
+            self.queue_draw()
+            return GLib.SOURCE_REMOVE
+
+        def do_snapshot(self, snapshot):
+            self.snapshot_child(
+                self._column if self._stacked else self._row, snapshot)
+
+        def do_dispose(self):
+            if self._sync_id:
+                GLib.source_remove(self._sync_id)
+                self._sync_id = 0
+            for child in (self._row, self._column):
+                if child is not None and child.get_parent() is self:
+                    child.unparent()
+            self._row = self._column = None
+
+    class FitSegmented(FitRow):
+        """``segmented`` options that stack, one per line between theme
+        hairlines, where the row does not fit. A tap selects the option in
+        both layouts and calls ``on_pick(value)``."""
+
+        __gtype_name__ = 'XXUiFitSegmented'
+
+        def __init__(self, options, selected: str, on_pick=None) -> None:
+            self._values = [value for value, _label in options]
+            self._on_pick = on_pick
+            self._selected = selected
+
+            def items():
+                return [(text, value == selected, self._picker(value))
+                        for value, text in options]
+
+            row = segmented(items())
+            column = segmented(items())
+            column.set_orientation(Gtk.Orientation.VERTICAL)
+            for index, button in enumerate(_child_buttons(column)):
+                button.remove_css_class('seg-mid')
+                button.remove_css_class('seg-last')
+                if index:
+                    column.insert_child_after(
+                        Gtk.Separator.new(Gtk.Orientation.HORIZONTAL),
+                        button.get_prev_sibling())
+            super().__init__(row, column)
+
+        @property
+        def selected(self) -> str:
+            return self._selected
+
+        def option_buttons(self) -> list:
+            """The buttons of the layout on screen."""
+            row, column = self.layouts
+            return _child_buttons(column if self.stacked else row)
+
+        def select(self, value: str) -> None:
+            self._selected = value
+            for box in self.layouts:
+                for option, button in zip(self._values, _child_buttons(box)):
+                    if option == value:
+                        button.add_css_class('seg-selected')
+                    else:
+                        button.remove_css_class('seg-selected')
+
+        def _picker(self, value: str):
+            def _picked() -> None:
+                self.select(value)
+                if self._on_pick is not None:
+                    self._on_pick(value)
+            return _picked
+
+    _FIT_CLASSES['row'] = FitRow
+    _FIT_CLASSES['segmented'] = FitSegmented
+    return FitRow, FitSegmented
+
+
+def _child_buttons(box: Gtk.Widget) -> list:
+    out = []
+    child = box.get_first_child()
+    while child is not None:
+        if isinstance(child, Gtk.Button):
+            out.append(child)
+        child = child.get_next_sibling()
+    return out
+
+
+def fit_row(build, spacing: int = 8) -> Gtk.Widget:
+    """Controls side by side while they fit, stacked one per line where
+    the page is narrower (320 px, large text); never widens the window.
+    ``build()`` returns one fresh list of widgets and runs twice, once per
+    layout (row and column), so each layout owns its widgets."""
+    row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, spacing)
+    column = Gtk.Box.new(Gtk.Orientation.VERTICAL, spacing)
+    for widget in build():
+        row.append(widget)
+    for widget in build():
+        column.append(widget)
+    return _fit_classes()[0](row, column)
+
+
+def fit_segmented(options, selected: str, on_pick=None) -> Gtk.Widget:
+    """``segmented`` over ``options`` ((value, label) pairs) that stacks
+    the options where the row does not fit. The widget has ``selected``,
+    ``select(value)``, ``stacked`` and ``option_buttons()``."""
+    return _fit_classes()[1](options, selected, on_pick)
 
 
 def bottom_tabs(items: list) -> Gtk.Box:
@@ -509,11 +701,14 @@ def search_bar(placeholder: str = 'Search', boxed: bool = False,
 
 
 def _button(text: str, classes: list, callback=None,
-            chars: int = _BUTTON_CHARS) -> Gtk.Button:
+            chars: int = _BUTTON_CHARS, wrap: bool = False) -> Gtk.Button:
     button = Gtk.Button.new_with_label(text)
     for cls in classes:
         button.add_css_class(cls)
-    _fit_button_text(button, chars)
+    if wrap:
+        wrap_to_fit(button)
+    else:
+        _fit_button_text(button, chars)
     if callback is not None:
         button.connect('clicked', lambda _b: callback())
     return button
@@ -538,19 +733,32 @@ def _icon_text_button(icon_name: str, text: str, classes: list,
 
 
 def outline_button(text: str, callback=None) -> Gtk.Button:
-    return _button(text, ['xx-btn', 'xx-btn-outline'], callback)
+    return _button(text, ['xx-btn', 'xx-btn-outline'], callback, wrap=True)
 
 
 def primary_button(text: str, callback=None) -> Gtk.Button:
-    return _button(text, ['xx-btn', 'xx-btn-primary'], callback)
+    return _button(text, ['xx-btn', 'xx-btn-primary'], callback, wrap=True)
 
 
 def danger_button(text: str, callback=None) -> Gtk.Button:
-    return _button(text, ['xx-btn', 'xx-btn-danger'], callback)
+    return _button(text, ['xx-btn', 'xx-btn-danger'], callback, wrap=True)
 
 
 def text_button(text: str, callback=None) -> Gtk.Button:
-    return _button(text, ['xx-btn', 'xx-btn-text'], callback)
+    return _button(text, ['xx-btn', 'xx-btn-text'], callback, wrap=True)
+
+
+def set_button_text(button: Gtk.Button, text: str) -> Gtk.Button:
+    """Retitle a button and keep its fit: ``Gtk.Button.set_label`` swaps
+    in a fresh single-line label, losing the wrap (or ellipsis cap) the
+    helpers set, so a long new title ellipsizes or widens the window."""
+    child = button.get_child()
+    if isinstance(child, Gtk.Label):
+        child.set_text(text)
+    else:
+        button.set_label(text)
+        wrap_to_fit(button)
+    return button
 
 
 def caps_button(text: str, callback=None) -> Gtk.Button:
@@ -602,9 +810,9 @@ def card() -> Gtk.Box:
 
 def setting_row(title: str, subtitle: str = '', trailing=None,
                 last: bool = False, wrap: bool = True) -> Gtk.Box:
-    """Title, optional subtitle and an optional trailing control. Both
-    lines wrap rather than ellipsize (a setting must read whole at 320 px
-    and large text); ``wrap=False`` keeps them to one line each."""
+    """Title, optional subtitle and an optional trailing control. Each
+    line wraps to two before it ellipsizes (a setting must read whole at
+    320 px and large text); ``wrap=False`` keeps them to one line each."""
     root = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
     root.add_css_class('xx-setting')
     if last:

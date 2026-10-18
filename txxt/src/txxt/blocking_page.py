@@ -31,7 +31,6 @@ from xx_ui import widgets  # noqa: E402
 from txxt import blocking as blocking_mod  # noqa: E402
 from txxt.conversations import tap_to_focus  # noqa: E402
 from txxt.list_presenter import count_label  # noqa: E402
-from txxt.settings_page import setting_row  # noqa: E402
 
 DIALER_BLOCK_ENV = 'TXXT_DIALER_BLOCKS'
 DIALER_BLOCK_NAMES = ('blocked.json', 'blocklist.json')
@@ -147,7 +146,7 @@ class BlockingPage(Adw.NavigationPage):
         )
         body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 16)
 
-        hold = setting_row(
+        hold = widgets.setting_row(
             'Hold unknown senders',
             'Off delivers all but blocked',
             widgets.make_switch(False),

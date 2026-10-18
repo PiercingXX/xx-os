@@ -157,7 +157,27 @@ def main() -> None:
     for line in (setting.get_first_child().get_first_child(),
                  setting.get_first_child().get_last_child()):
         assert line.get_wrap(), 'setting rows wrap by default'
-        assert line.get_ellipsize() == Pango.EllipsizeMode.NONE
+        assert line.get_lines() == 2, 'two lines before an ellipsis'
+    # fit_segmented: both layouts select together; fit_row builds twice.
+    picked = []
+    seg = widgets.fit_segmented((('a', 'Sender only'), ('b', 'Content'),
+                                 ('c', 'Nothing')), 'a', picked.append)
+    assert seg.selected == 'a' and not seg.stacked
+    seg.option_buttons()[2].emit('clicked')
+    assert picked == ['c'] and seg.selected == 'c'
+    for layout in seg.layouts:
+        flags = [b.has_css_class('seg-selected') for b in
+                 widgets._child_buttons(layout)]
+        assert flags == [False, False, True], flags
+    rows.append(seg)
+    rows.append(widgets.fit_row(lambda: [widgets.outline_button('Reply'),
+                                         widgets.outline_button('Forward')]))
+    retitled = widgets.outline_button('Add photo')
+    widgets.set_button_text(retitled, 'Change photo')
+    label = retitled.get_child()
+    assert label.get_text() == 'Change photo' and label.get_wrap(), \
+        'set_button_text lost the wrap'
+    rows.append(retitled)
     rows.append(setting)
     target = widgets.make_switch(True)
     assert isinstance(target, Gtk.Switch)
