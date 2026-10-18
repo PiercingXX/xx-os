@@ -179,3 +179,9 @@ def test_no_try_list_or_loading_lines():
 def test_lost_grant_says_it_once():
     mailbox = (UI / "mailbox_page.py").read_text(encoding="utf-8")
     assert 'if not outcome.get("ok", False) and not reauth:' in mailbox
+
+
+def test_reply_row_stacks_only_when_narrow():
+    thread = (UI / "thread_page.py").read_text(encoding="utf-8")
+    assert "common_mod.FitRow(" in thread
+    assert "Gtk.FlowBox" not in thread
