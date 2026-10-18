@@ -755,8 +755,13 @@ button.xx-gtile.toggle.working:checked {
 .xx-gtile-label {
   font-size: ${tiny_px}px;
   font-weight: 500;
-  /* 0.08em keeps an 8-char caps label (AIRPLANE) inside a 76 px tile. */
   letter-spacing: 0.08em;
+}
+
+/* An 8-char caps label (AIRPLANE) tracks tighter; past what a tile can
+   hold (320 px, large text) the label scales down (widgets.glyph_tile). */
+.xx-gtile-label.long {
+  letter-spacing: 0.04em;
 }
 
 .xx-gtile-state {

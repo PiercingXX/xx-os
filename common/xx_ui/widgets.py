@@ -20,8 +20,10 @@ import os
 import gi
 
 gi.require_version('Gtk', '4.0')
+gi.require_version('Gsk', '4.0')
+gi.require_version('Graphene', '1.0')
 
-from gi.repository import Gtk, Pango
+from gi.repository import Graphene, Gsk, Gtk, Pango
 
 BAR_ICON_PX = 20
 BUTTON_ICON_PX = 24
@@ -112,6 +114,76 @@ def wrap_to_fit(widget: Gtk.Widget) -> Gtk.Widget:
     text_label.set_natural_wrap_mode(Gtk.NaturalWrapMode.NONE)
     text_label.set_justify(Gtk.Justification.CENTER)
     return widget
+
+
+_SHRINK_CLASS = []
+
+
+def _shrink_class():
+    # Defined on first use, not at import: headless tests import this
+    # module against stub Gtk modules that have no Widget to subclass.
+    if _SHRINK_CLASS:
+        return _SHRINK_CLASS[0]
+
+    class _ShrinkToFit(Gtk.Widget):
+        """Holds one widget whole: at its natural size where that fits,
+        scaled down (to ``min_scale``) where its slot is narrower, aligned
+        start and centered vertically. It never widens its parent past
+        ``min_scale`` of the natural width."""
+
+        __gtype_name__ = 'XXUiShrinkToFit'
+
+        def __init__(self, child: Gtk.Widget, min_scale: float) -> None:
+            super().__init__()
+            self._child = child
+            self._min_scale = min_scale
+            child.set_parent(self)
+
+        def _natural(self) -> tuple:
+            _lo, width, _b1, _b2 = self._child.measure(
+                Gtk.Orientation.HORIZONTAL, -1)
+            _lo, height, _b1, _b2 = self._child.measure(
+                Gtk.Orientation.VERTICAL, width)
+            return width, height
+
+        def do_measure(self, orientation, for_size):
+            width, height = self._natural()
+            if orientation == Gtk.Orientation.HORIZONTAL:
+                return (int(width * self._min_scale + 0.999), width, -1, -1)
+            return (int(height * self._min_scale + 0.999), height, -1, -1)
+
+        def do_size_allocate(self, width, height, baseline):
+            nat_w, nat_h = self._natural()
+            scale = min(1.0, width / nat_w) if nat_w > 0 else 1.0
+            offset = Graphene.Point()
+            offset.init(0, max(0.0, (height - nat_h * scale) / 2))
+            transform = Gsk.Transform.new().translate(offset).scale(scale, scale)
+            self._child.allocate(nat_w, nat_h, -1, transform)
+
+        def do_snapshot(self, snapshot):
+            self.snapshot_child(self._child, snapshot)
+
+        def do_dispose(self):
+            if self._child is not None:
+                self._child.unparent()
+                self._child = None
+
+    _SHRINK_CLASS.append(_ShrinkToFit)
+    return _ShrinkToFit
+
+
+def shrink_to_fit(widget: Gtk.Widget, min_scale: float = 0.5) -> Gtk.Widget:
+    """Wrap ``widget`` (a label that must read whole: a big title, a caps
+    tile label) so it scales down instead of ellipsizing or widening the
+    window when its slot is narrower than its text (320 px, large text).
+    A label passed in drops its ellipsis and width cap. Returns the
+    holder to pack in its place; ``holder.get_first_child()`` is the
+    widget."""
+    if isinstance(widget, Gtk.Label):
+        widget.set_ellipsize(Pango.EllipsizeMode.NONE)
+        widget.set_max_width_chars(-1)
+        widget.set_hexpand(False)
+    return _shrink_class()(widget, min_scale)
 
 
 def _fit_button_text(button: Gtk.Button,
@@ -634,9 +706,14 @@ def status_tile_state(button: Gtk.ToggleButton) -> Gtk.Label:
     return button.get_child().get_last_child()
 
 
-# Glyph tiles sit 4-up across 360 px: 8 caps chars is the label budget
-# (AIRPLANE, LOCATION); a longer state line (SSID) ellipsizes.
-_GLYPH_TILE_LABEL_CHARS = 8
+# Glyph tiles sit 4-up across 360 px: 8 caps chars (AIRPLANE, LOCATION)
+# fit at the base text size. A label that long gets tighter tracking, and
+# any label too wide for its tile (320 px, large text) scales down to fit
+# rather than losing its end; a longer state line (SSID) ellipsizes.
+_GLYPH_TILE_LONG_LABEL = 8
+_GLYPH_TILE_LABEL_MIN_SCALE = 0.55
+# Beyond this a label is not a tile word: it ellipsizes at the cap.
+_GLYPH_TILE_LABEL_CHARS = 12
 _GLYPH_TILE_STATE_CHARS = 10
 GLYPH_TILE_ICON_PX = 20
 
@@ -677,8 +754,12 @@ def glyph_tile(icon_name: str, label_text: str, state: str = '',
     shown = label_text.upper()
     name = Gtk.Label(label=shown, xalign=0.0)
     name.add_css_class('xx-gtile-label')
-    _fit_single(name, _GLYPH_TILE_LABEL_CHARS)
-    text.append(name)
+    if len(shown) >= _GLYPH_TILE_LONG_LABEL:
+        name.add_css_class('long')
+    if len(shown) <= _GLYPH_TILE_LABEL_CHARS:
+        text.append(shrink_to_fit(name, _GLYPH_TILE_LABEL_MIN_SCALE))
+    else:
+        text.append(_fit_single(name, _GLYPH_TILE_LABEL_CHARS))
     sub = Gtk.Label(label=state, xalign=0.0)
     sub.add_css_class('xx-gtile-state')
     _fit_single(sub, _GLYPH_TILE_STATE_CHARS)
