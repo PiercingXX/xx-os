@@ -73,8 +73,6 @@ textview.xx-note-body, textview.xx-note-body text {
    targets, so the back glyph lines up with the 20 px gutter text and
    five editor icons fit 320 px at any text size. */
 box.xx-note-bar { padding-left: 8px; padding-right: 8px; }
-.xx-note-bar button.xx-btn-icon {
-  padding: 0; min-width: 48px; min-height: 48px; }
 .xx-note-select button.xx-btn-icon { padding: 0; min-width: 44px; }
 button.xx-note-tool {
   min-width: 44px; min-height: 48px; padding: 0; border-radius: 12px;

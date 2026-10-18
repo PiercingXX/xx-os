@@ -33,7 +33,8 @@ def test_every_preset_renders_listview_and_danger(
     assert "listview" in out
     assert active.background in out
     assert active.foreground in out
-    assert xx_theme.DANGER_RED in out
+    # Light presets take the darker, readable danger red.
+    assert active.danger in out
     assert "white" not in out.lower()
 
 

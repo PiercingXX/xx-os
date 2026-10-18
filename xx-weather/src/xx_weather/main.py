@@ -27,7 +27,6 @@ def app_css(scale: float = 1.0) -> str:
 .xx-weather-hour {{ min-height: {px(44)}; }}
 .xx-weather-hours-strip {{ padding-bottom: 4px; }}
 .xx-setting.xx-weather-last, .xx-row.xx-weather-last {{ border-bottom: none; }}
-.xx-weather-busy:disabled {{ opacity: 0.4; }}
 """
 
 
@@ -228,7 +227,6 @@ class WeatherWindow:
         self.forecast_header_box = header
         self.forecast_title = header.get_first_child().get_first_child()
         self.refresh_button = self.forecast_title.get_next_sibling()
-        self.refresh_button.add_css_class("xx-weather-busy")
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         body.set_margin_top(12)
         body.set_margin_bottom(28)
@@ -516,7 +514,6 @@ class WeatherWindow:
         add_row.append(self.zip_entry)
         add_btn = W.text_button("ADD", self._on_add_zip)
         add_btn.set_valign(Gtk.Align.CENTER)
-        add_btn.add_css_class("xx-weather-busy")
         self.add_button = add_btn
         add_row.append(add_btn)
         body.append(add_row)

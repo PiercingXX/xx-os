@@ -27,8 +27,7 @@ CSS = Template("""
   font-size: ${l13}px; letter-spacing: 0.01em; }
 .xx-ab button.xx-btn-text { padding: 0 8px; }
 .xx-ab button.xx-btn-text.xx-ab-flush { padding: 0; }
-.xx-ab button.xx-btn-icon {
-  min-width: 48px; min-height: 48px; padding: 0; border-radius: 0; }
+.xx-ab button.xx-btn-icon { border-radius: 0; }
 .xx-ab button:disabled { opacity: 0.38; filter: none; }
 .xx-ab button.xx-btn-outline { border-color: @borders; }
 .xx-ab .xx-page-body { padding-left: 16px; padding-right: 16px; }

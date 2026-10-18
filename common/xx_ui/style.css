@@ -90,9 +90,16 @@ button.destructive-action {
   color: ${on_danger};
 }
 
+/* The drawn pill keeps its size; a transparent border around it makes
+   the tap target 48 px tall and wide (the border box is the input area,
+   the background stops at the padding box). */
 switch {
   background-color: ${surface_alt};
-  border: none;
+  background-clip: padding-box;
+  border: 11px solid transparent;
+  border-left-width: 1px;
+  border-right-width: 1px;
+  padding: 3px;
   box-shadow: none;
 }
 
@@ -121,6 +128,12 @@ entry,
 textview {
   background-color: ${background};
   color: ${foreground};
+}
+
+/* Spin buttons follow the text size (a bare GtkSpinButton keeps the
+   unscaled base font). */
+spinbutton {
+  font-size: ${title_px}px;
 }
 
 entry selection,
@@ -213,9 +226,9 @@ scale slider {
   border: none;
 }
 
-/* Title row of PageHeader: trailing action buttons measure 54 px tall
-   (44 px target plus button chrome), so the row keeps that height with
-   or without them and every header aligns. */
+/* Title row of PageHeader: trailing text buttons measure 54 px tall
+   (44 px plus button chrome), so the row keeps that height with or
+   without them and every header aligns. */
 
 .xx-page-top {
   min-height: 54px;
@@ -458,6 +471,11 @@ button.xx-danger-text {
   font-weight: 400;
 }
 
+/* Disabled reads as unavailable in every theme, fill and label alike. */
+.xx-btn:disabled {
+  opacity: 0.4;
+}
+
 .xx-btn-outline {
   border: 1px solid ${border};
   border-radius: 12px;
@@ -494,9 +512,11 @@ button.xx-danger-text {
   color: ${foreground};
 }
 
+/* A 48 px square target, chrome included (no theme padding on top). */
 .xx-btn-icon {
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0;
   font-size: ${title_px}px;
   color: ${foreground};
 }
@@ -779,9 +799,11 @@ button.xx-gtile.toggle.working:checked {
   background-color: ${surface_alt};
 }
 
+/* A visible hairline by default: on a surface card the fill alone
+   disappears. */
 .xx-entry {
   background-color: ${surface};
-  border: 1px solid transparent;
+  border: 1px solid ${border};
   border-radius: 12px;
   padding: 10px 14px;
   font-size: ${body_px}px;
@@ -789,12 +811,22 @@ button.xx-gtile.toggle.working:checked {
   caret-color: ${foreground};
 }
 
-.xx-entry:focus {
+/* GtkEntry hands focus to its inner text node: the entry itself only
+   gets :focus-within. */
+.xx-entry:focus,
+.xx-entry:focus-within {
   border-color: ${foreground};
 }
 
 .xx-entry placeholder {
   color: ${muted};
+}
+
+/* A rejected value: danger outline and text until the next edit. */
+entry.xx-entry.error,
+entry.xx-entry.error:focus-within {
+  border-color: ${danger};
+  color: ${danger};
 }
 
 /* ---- Message bubbles ---- */

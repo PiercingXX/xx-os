@@ -69,7 +69,7 @@ def render(active: _theme.Theme) -> str:
         'foreground': active.foreground,
         'muted': active.muted,
         'accent': active.accent,
-        'danger': _theme.DANGER_RED,
+        'danger': active.danger,
         'on_danger': _theme.ON_DANGER_FG,
         'font_family': sanitize_font_family(active.font_family),
         'display_family': display_family(active.font_family),

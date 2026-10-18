@@ -21,7 +21,6 @@ APP_CSS_EXTRA = """
 .xx-clock-presets .xx-chip { padding: 0 4px; min-width: 0; min-height: 48px; }
 .xx-clock-act { min-height: 48px; min-width: 48px; padding: 0; }
 .xx-clock-acts > flowboxchild { padding: 0; }
-.xx-clock-minutes.error { border: 1px solid @error_color; color: @error_color; }
 """
 
 
@@ -72,9 +71,9 @@ class TimersPage:
         self._custom.set_input_purpose(Gtk.InputPurpose.DIGITS)
         self._custom.set_max_length(3)
         self._custom.set_hexpand(True)
-        self._custom.add_css_class("xx-clock-minutes")
         self._custom.connect("activate", lambda _e: self._start_custom())
-        # The red outline marks a rejected value until the next keystroke.
+        # The shared entry.xx-entry.error outline marks a rejected value
+        # until the next keystroke.
         self._custom.connect("changed", lambda e: e.remove_css_class("error"))
         custom.append(self._custom)
         custom.append(widgets.primary_button("Start", self._start_custom))

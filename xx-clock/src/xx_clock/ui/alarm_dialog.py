@@ -17,8 +17,6 @@ APP_CSS = """
 .xx-clock-spin button { min-width: 48px; min-height: 48px; }
 .xx-clock-colon { font-size: 40px; }
 .xx-clock-days .xx-chip { padding: 0; min-width: 0; min-height: 48px; letter-spacing: 0; }
-.xx-clock-editor .xx-entry { border-color: @borders; }
-.xx-clock-editor .xx-entry:focus { border-color: @window_fg_color; }
 """
 
 

@@ -373,3 +373,63 @@ def test_glyph_tile_rules_use_the_foreground_ramp():
     assert '.xx-gtile.attention .xx-gtile-dot' in out
     assert '#00FF00' not in out.split('.xx-gtile')[1]
     assert '.xx-display-face' in out
+
+
+def test_danger_reads_on_every_preset(isolated_home):
+    # #ff6b6b is ~2.4:1 on paper: light themes take a darker red that
+    # reads at WCAG AA on their background (and on the surface cards).
+    for key, preset in THEME_PRESETS.items():
+        write_config(isolated_home, {'theme': key})
+        active = load()
+        assert theme.contrast(active.danger, preset.background) >= 4.5, key
+        if active.dark:
+            assert active.danger == DANGER_RED, key
+        else:
+            assert active.danger == theme.DANGER_RED_LIGHT, key
+            assert theme.contrast(active.danger, preset.surface) >= 4.5, key
+        out = css.render(active)
+        assert f'@define-color error_color {active.danger};' in out, key
+
+
+def test_custom_light_danger_darkens_until_it_reads(isolated_home):
+    write_config(isolated_home, {'theme': 'custom',
+                                 'custom_background': '#8080ff'})
+    active = load()
+    assert not active.dark
+    assert theme.contrast(active.danger, active.background) >= 4.5
+
+
+def test_manual_theme_derives_danger():
+    preset = THEME_PRESETS['paper']
+    manual = theme.Theme(
+        key=preset.key, background=preset.background,
+        surface=preset.surface, surface_alt=preset.surface_alt,
+        border=preset.border, foreground=preset.foreground,
+        muted=preset.muted, accent=preset.accent,
+        font_family='Monospace', scale=1.0, dark=False)
+    assert manual.danger == theme.DANGER_RED_LIGHT
+
+
+def _rule(out: str, selector: str) -> str:
+    match = re.search(r'(?:^|\n)' + re.escape(selector) + r'[ ,\n][^{]*\{(.*?)\n\}',
+                      out, re.S)
+    assert match, f'no rule for {selector}'
+    return match.group(1)
+
+
+def test_shared_control_rules(isolated_home):
+    write_config(isolated_home, {'theme': 'paper', 'text_size_scale': 1.5})
+    active = load()
+    out = css.render(active)
+    icon = _rule(out, '.xx-btn-icon')
+    assert 'min-width: 48px' in icon and 'min-height: 48px' in icon
+    assert 'opacity: 0.4' in _rule(out, '.xx-btn:disabled')
+    entry = _rule(out, '.xx-entry')
+    assert f'border: 1px solid {active.border}' in entry
+    error = _rule(out, 'entry.xx-entry.error')
+    assert f'border-color: {active.danger}' in error
+    assert f'color: {active.danger}' in error
+    assert 'font-size: 24px' in _rule(out, 'spinbutton')
+    switch = _rule(out, 'switch')
+    assert 'background-clip: padding-box' in switch
+    assert 'solid transparent' in switch

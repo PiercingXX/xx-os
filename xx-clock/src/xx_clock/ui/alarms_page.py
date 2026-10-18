@@ -5,26 +5,17 @@ from __future__ import annotations
 from .. import alarm_logic
 
 
-# The switch is 40x20: a tap this close to it (and anywhere down the
-# row's height) toggles it instead of opening the editor, so the target
-# is a thumb's width, not the drawn pill.
-SWITCH_SLOP = 16
-
-
 def time_text(hour: int, minute: int) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
 def tap_zone(x: float, y: float, hit) -> str:
     """Where a tap at row (x, y) lands, given the switch's allocation
-    ``hit`` (x, y, width, height): "switch" (on the pill: the switch
-    handles it), "near" (toggle the switch for it), or "row" (open the
-    editor)."""
+    ``hit`` (x, y, width, height): "switch" (the shared switch's 48 px
+    target handles it) or "row" (open the editor)."""
     if (hit.x <= x <= hit.x + hit.width
             and hit.y <= y <= hit.y + hit.height):
         return "switch"
-    if hit.x - SWITCH_SLOP <= x:
-        return "near"
     return "row"
 
 
@@ -114,11 +105,7 @@ class AlarmsPage:
         def _released(_gesture, _n, x: float, y: float) -> None:
             if held["down"]:
                 return
-            zone = tap_zone(x, y, switch.get_allocation())
-            if zone == "switch":
-                return
-            if zone == "near":
-                switch.set_active(not switch.get_active())
+            if tap_zone(x, y, switch.get_allocation()) == "switch":
                 return
             _edit()
 

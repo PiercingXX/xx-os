@@ -499,6 +499,9 @@ def setting_row(title: str, subtitle: str = '', trailing=None,
 
 
 def make_switch(active: bool = False, callback=None) -> Gtk.Switch:
+    """Themed switch. The shared ``switch`` rule pads the drawn pill with a
+    transparent border, so the tap target is 48 px tall and wide while
+    the pill stays its usual size."""
     switch = Gtk.Switch()
     switch.add_css_class('xx-switch')
     switch.set_active(active)

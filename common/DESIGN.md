@@ -5,8 +5,11 @@ Phone canvas: 360 px logical width. Gutter 20 px. Spacing scale 4/8/12/16/20/24/
 ## Color
 
 Flat, monochrome per theme. Theme tokens only, never hard-coded colors —
-except danger `#ff6b6b` (fill for End call / destructive confirm, text
-`#ffffff`; red text for Missed/Rejected).
+except danger (fill for End call / destructive confirm, text `#ffffff`;
+red text for Missed/Rejected, rejected input): `#ff6b6b` on dark themes,
+`#a61b1b` on light ones (paper, mist; darker still on a light custom
+color), so danger text reads at 4.5:1 or better on the background. Use
+the `danger` token (`Theme.danger`), never a literal.
 
 | Token | Use |
 |---|---|
@@ -48,26 +51,34 @@ avatars circle, outgoing bubbles 4 px.
 ## Components
 
 `PageHeader` (display title + caption + chromeless text actions, no
-HeaderBar) and a compact back-chevron variant; `ListRow` (40 px avatar or
-glyph, title + secondary, muted meta, pressed state); `Avatar`
-(32/40/64/88); `ChipBar` (32 px chips, inverted selected, scrollable);
-`Segmented`; `BottomTabs` (4 equal tabs, 2 px top indicator on active,
-top hairline, `background` fill); `SearchBar` (flat glyph + muted
-placeholder at list bottoms; filled `surface` box only where a box is
-needed); outline/primary/danger/text/caps/icon buttons (44 px targets);
-56 px inverted `FAB` bottom-right above tabs; `Field` (caption over
-title value, muted placeholder); `SectionLabel`; borderless `Card`;
-`SettingRow` with hairlines; inverted `Switch` (never Adwaita blue);
+HeaderBar) and a compact 56 px back-chevron variant whose caps title
+wraps rather than ellipsizes; `ListRow` (40 px avatar or glyph, title +
+secondary, muted meta, pressed state); `Avatar` (32/40/64/88); `ChipBar`
+(32 px chips, inverted selected, scrollable); `Segmented`; `BottomTabs`
+(4 equal tabs, 2 px top indicator on active, top hairline, `background`
+fill); `SearchBar` (flat glyph + muted placeholder at list bottoms;
+filled `surface` box only where a box is needed); outline/primary/
+danger/text/caps buttons (44 px) and icon buttons (48 × 48 px targets),
+disabled at 40% opacity; `ButtonPair` (two buttons side by side, stacked
+full width when a label would not fit); 56 px inverted `FAB`
+bottom-right above tabs; `Field` (caption over title value, muted
+placeholder); `SectionLabel`; borderless `Card`; `SettingRow` with
+hairlines (title and subtitle wrap, never ellipsize); inverted `Switch`
+(never Adwaita blue) with a 48 px tap area around the drawn pill;
 one-sentence `EmptyState`; 72×64 `surface` keypad keys; `surface`
-dialogs/popovers/menus (48 px menu rows, focused entry gets a 1 px
-`foreground` outline); outgoing inverted bubbles, incoming plain text,
-10 px muted timestamps, caption day separators between hairlines.
+dialogs/popovers/menus (48 px menu rows); entries with a 1 px `border`
+hairline, `foreground` while focused, danger outline and text while
+rejected (`error`); spin buttons at the title size; outgoing inverted
+bubbles, incoming plain text, 10 px muted timestamps, caption day
+separators between hairlines.
 
 `GlyphTile` (quick settings, 4-up at 360 px, 80 px tall, radius 14): a
-20 px symbolic glyph over an 8-char caps label and a state line. Off is
-the foreground ramp (3.5% fill, 10% hairline); on inverts; `working`
-dashes the border at 40% while a toggle runs off-thread; `attention`
-adds a 6 px foreground dot and lifts the state line to text weight.
+20 px symbolic glyph over a caps label and a state line. An 8-char
+label tracks tighter; one too wide for its tile (320 px, large text)
+scales down to fit, never cut. Off is the foreground ramp (3.5% fill,
+10% hairline); on inverts; `working` dashes the border at 40% while a
+toggle runs off-thread; `attention` adds a 6 px foreground dot and lifts
+the state line to text weight.
 `.xx-display-face` sets the brand display face (Space Mono) on clocks
 while the UI font is a house mono.
 

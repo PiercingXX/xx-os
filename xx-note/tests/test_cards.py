@@ -77,8 +77,14 @@ def test_app_css_renders_for_every_preset():
         assert "${" not in css
         assert "xx-note-keep-banana" in css
         assert "font-size: 21px" in css  # 16 px title at text scale 1.3
-        # Sub-page bars keep flush 48 px targets (five editor icons at 320).
-        assert "min-width: 48px; min-height: 48px" in css
+        # Sub-page bars keep flush 48 px targets (five editor icons at
+        # 320): the shared icon-button rule, no app-local copy.
+        assert ".xx-note-bar button.xx-btn-icon" not in css
+        from xx_ui import css as xx_css
+        shared = xx_css.render(active)
+        rule = shared.split(".xx-btn-icon {", 1)[1].split("}", 1)[0]
+        assert "min-width: 48px" in rule and "min-height: 48px" in rule
+        assert "padding: 0" in rule
 
 
 def test_folder_problem_reads_plainly():

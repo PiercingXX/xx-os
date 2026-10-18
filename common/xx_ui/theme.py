@@ -51,7 +51,13 @@ DEFAULT_PRESET = 'amoled'
 DEFAULT_FONT = 'jetbrains-mono-nerd'
 
 DANGER_RED = '#ff6b6b'
+#: Danger on light themes: #ff6b6b is ~2.4:1 on paper, unreadable as
+#: text. This one reads at >= 4.5:1 on the light presets' background and
+#: surface, and white on it stays legible for danger buttons.
+DANGER_RED_LIGHT = '#a61b1b'
 ON_DANGER_FG = '#ffffff'
+#: WCAG AA for body text.
+MIN_TEXT_CONTRAST = 4.5
 
 _CUSTOM_HEX_RE = re.compile(r'#[0-9a-fA-F]{6}')
 
@@ -69,6 +75,13 @@ class Theme:
     font_family: str
     scale: float
     dark: bool
+    #: Derived from background/dark when left empty (see danger_for).
+    danger: str = ''
+
+    def __post_init__(self) -> None:
+        if not self.danger:
+            object.__setattr__(self, 'danger',
+                               danger_for(self.background, self.dark))
 
 
 def _derive_shades(bg: str) -> tuple[str, str, str]:
@@ -94,6 +107,40 @@ def _luminance(bg: str) -> float:
         return 0.0
     r, g, b = (int(match.group(i), 16) for i in (1, 2, 3))
     return (0.299 * r + 0.587 * g + 0.114 * b) / 255
+
+
+def _relative_luminance(color: str) -> float:
+    match = re.match(r'#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})', color or '')
+    if not match:
+        return 0.0
+    channels = []
+    for index in (1, 2, 3):
+        value = int(match.group(index), 16) / 255
+        channels.append(value / 12.92 if value <= 0.03928
+                        else ((value + 0.055) / 1.055) ** 2.4)
+    red, green, blue = channels
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def contrast(first: str, second: str) -> float:
+    """WCAG contrast ratio of two ``#rrggbb`` colors (1.0 .. 21.0)."""
+    high, low = sorted((_relative_luminance(first),
+                        _relative_luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+def danger_for(background: str, dark: bool) -> str:
+    """The danger color for a theme: the bright red on dark themes, a
+    darker red on light ones, darkened further until it reads at
+    ``MIN_TEXT_CONTRAST`` on ``background`` (custom light colors)."""
+    if dark:
+        return DANGER_RED
+    red, green, blue = (int(DANGER_RED_LIGHT[i:i + 2], 16) for i in (1, 3, 5))
+    color = DANGER_RED_LIGHT
+    while contrast(color, background) < MIN_TEXT_CONTRAST and red > 0x40:
+        red, green, blue = (int(v * 0.9) for v in (red, green, blue))
+        color = f'#{red:02x}{green:02x}{blue:02x}'
+    return color
 
 
 def _resolve(data: dict) -> ThemePreset | None:
@@ -158,6 +205,7 @@ def load(path: Path | str | None = None) -> Theme:
         preset = _resolve(data) or THEME_PRESETS[DEFAULT_PRESET]
     else:
         preset = THEME_PRESETS.get(key, THEME_PRESETS[DEFAULT_PRESET])
+    dark = _luminance(preset.background) < 0.5
     return Theme(
         key=preset.key,
         background=preset.background,
@@ -169,7 +217,7 @@ def load(path: Path | str | None = None) -> Theme:
         accent=preset.accent,
         font_family=resolve_font_family(data),
         scale=resolve_scale(data),
-        dark=_luminance(preset.background) < 0.5,
+        dark=dark,
     )
 
 

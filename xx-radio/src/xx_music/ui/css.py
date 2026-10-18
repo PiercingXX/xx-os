@@ -14,7 +14,7 @@ from string import Template
 CSS = Template("""
 .xx-mu button, .xx-mu-sheet button { font-weight: 400; }
 .xx-mu button.xx-btn-icon, .xx-mu-sheet button.xx-btn-icon {
-  min-width: 48px; min-height: 48px; padding: 0; border-radius: 9999px; }
+  border-radius: 9999px; }
 .xx-mu button.xx-btn-icon:active, .xx-mu-sheet button.xx-btn-icon:active {
   background-color: alpha(${fg}, 0.08); }
 .xx-mu button.xx-btn-primary, .xx-mu button.xx-btn-outline,

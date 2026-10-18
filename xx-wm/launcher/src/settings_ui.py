@@ -65,15 +65,7 @@ def css(theme, scale: float) -> str:
 .xx-set-primary {{ margin-top: 24px; }}
 .xx-set-sheet {{ min-width: 280px; }}
 .xx-set-sheet .xx-caption {{ margin-top: 8px; }}
-.xx-set-sheet entry.xx-entry {{
-    background-color: {bg};
-    border: 1px solid {border};
-    border-radius: 12px;
-    min-height: 46px;
-    padding: 0 14px;
-    font-size: {body};
-}}
-.xx-set-sheet entry.xx-entry:focus-within {{ border-color: {fg}; }}
+.xx-set-sheet entry.xx-entry {{ background-color: {bg}; }}
 .xx-settings .xx-dialog-title {{ font-size: {dialog}; }}
 .xx-settings .xx-menu-row {{
     font-size: {body};

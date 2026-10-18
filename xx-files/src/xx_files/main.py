@@ -63,9 +63,7 @@ button.xx-files-action:active { background-color: @insensitive_bg_color; }
 .xx-files-buttons { padding: 12px 12px 0 20px; }
 .xx-files-prop { padding-top: 6px; padding-bottom: 6px; }
 .xx-files-sheet switch { border: 1px solid @borders; }
-.xx-files-sheet entry.xx-entry { background-color: @window_bg_color;
-  border: 1px solid @borders; }
-.xx-files-sheet entry.xx-entry:focus { border-color: @window_fg_color; }
+.xx-files-sheet entry.xx-entry { background-color: @window_bg_color; }
 .xx-files-sheet .xx-segmented { margin-top: 8px; }
 .xx-files-sheet progressbar trough { min-height: 4px; border-radius: 2px; }
 .xx-files-sheet progressbar progress { min-height: 4px; border-radius: 2px; }
