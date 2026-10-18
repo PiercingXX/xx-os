@@ -135,74 +135,16 @@ def _texts(Gtk, Pango, title, subtitle, title_cls="xx-auto-row-title"):
 
 # A shrunk label never goes under this share of its full size.
 SHRINK_MIN_SCALE = 0.5
-_SHRINK_CLASS = None
-
-
-def _shrink_class():
-    """Gtk.Widget subclass holding one label whole: natural size where it
-    fits, scaled down (to SHRINK_MIN_SCALE) where its slot is narrower,
-    so "Favourites" at large text or "Audiobook" on a 320 px tile reads
-    whole instead of "Favourit…", and never widens the window. Built
-    lazily: this module imports without Gtk."""
-    global _SHRINK_CLASS
-    if _SHRINK_CLASS is not None:
-        return _SHRINK_CLASS
-    import gi
-
-    gi.require_version("Gsk", "4.0")
-    gi.require_version("Graphene", "1.0")
-    from gi.repository import Graphene, Gsk, Gtk
-
-    class ShrinkToFit(Gtk.Widget):
-        __gtype_name__ = "XXAutoShrinkToFit"
-
-        def __init__(self, child, xalign=0.0):
-            super().__init__()
-            self._child = child
-            self._xalign = xalign
-            child.set_parent(self)
-
-        def _natural(self):
-            _lo, width, _b1, _b2 = self._child.measure(
-                Gtk.Orientation.HORIZONTAL, -1)
-            _lo, height, _b1, _b2 = self._child.measure(
-                Gtk.Orientation.VERTICAL, width)
-            return width, height
-
-        def do_measure(self, orientation, for_size):
-            width, height = self._natural()
-            nat = width if orientation == Gtk.Orientation.HORIZONTAL \
-                else height
-            return (int(nat * SHRINK_MIN_SCALE), nat, -1, -1)
-
-        def do_size_allocate(self, width, height, baseline):
-            nat_w, nat_h = self._natural()
-            scale = min(1.0, width / nat_w) if nat_w > 0 else 1.0
-            offset = Graphene.Point()
-            offset.init(max(0.0, (width - nat_w * scale) * self._xalign),
-                        max(0.0, (height - nat_h * scale) / 2))
-            transform = Gsk.Transform.new().translate(offset).scale(
-                scale, scale)
-            self._child.allocate(nat_w, nat_h, -1, transform)
-
-        def do_snapshot(self, snapshot):
-            self.snapshot_child(self._child, snapshot)
-
-        def do_dispose(self):
-            if self._child is not None:
-                self._child.unparent()
-                self._child = None
-
-    _SHRINK_CLASS = ShrinkToFit
-    return ShrinkToFit
 
 
 def _whole(Pango, label):
-    """``label`` kept whole: no ellipsis, scaled down to fit its slot."""
-    label.set_ellipsize(Pango.EllipsizeMode.NONE)
-    label.set_max_width_chars(-1)
-    label.set_hexpand(False)
-    holder = _shrink_class()(label)
+    """``label`` kept whole (xx_ui shrink_to_fit): natural size where it
+    fits, scaled down to SHRINK_MIN_SCALE where its slot is narrower, so
+    "Favourites" at large text or "Audiobook" on a 320 px tile reads
+    whole instead of "Favourit…", and never widens the window."""
+    from xx_ui import widgets
+
+    holder = widgets.shrink_to_fit(label, SHRINK_MIN_SCALE)
     holder.set_hexpand(True)
     return holder
 

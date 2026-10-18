@@ -29,7 +29,6 @@ import xx_ui  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 from xx_calendar import views  # noqa: E402
 from xx_calendar.app_config import load_settings, save_settings  # noqa: E402
-from xx_calendar.fit import shrink_header_title  # noqa: E402
 from xx_calendar.models import CalendarKey, SigilAssigner  # noqa: E402
 from xx_calendar.month_grid import MonthGrid  # noqa: E402
 from xx_calendar.service import (  # noqa: E402
@@ -539,21 +538,22 @@ class CalendarWindow(Adw.ApplicationWindow):
         today = _datetime.date.today()
         if self._view == "schedule":
             focus = self._schedule.focus_date or today
-            header = shrink_header_title(widgets.page_header(
+            header = widgets.page_header(
                 "Agenda", views.month_label(focus.year, focus.month),
-                actions=self._today_action(focus != today), **search))
+                actions=self._today_action(focus != today),
+                shrink_title=True, **search)
         elif self._view == "month":
             year, month = self._month_year
-            header = shrink_header_title(widgets.page_header(
+            header = widgets.page_header(
                 views.month_title(year, month),
                 actions=self._today_action(
                     (year, month) != (today.year, today.month)),
-                **search))
+                shrink_title=True, **search)
         elif self._view == "day":
-            header = shrink_header_title(widgets.page_header(
+            header = widgets.page_header(
                 views.day_title(self._day_date),
                 actions=self._today_action(self._day_date != today),
-                **search))
+                shrink_title=True, **search)
         elif self._view == "calendars":
             header = widgets.compact_header(
                 lambda: self.show_view("settings"), "Calendars")
@@ -569,7 +569,8 @@ class CalendarWindow(Adw.ApplicationWindow):
         elif self._view == "export":
             header = widgets.compact_header(self.go_back, "Export")
         else:
-            header = shrink_header_title(widgets.page_header("Setup"))
+            header = widgets.page_header(
+                "Setup", shrink_title=True)
         self._header_slot.append(header)
         self._refresh_tabs()
 

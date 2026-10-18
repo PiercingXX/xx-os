@@ -157,32 +157,6 @@ if _HAS_GTK:
         line.set_ellipsize(Pango.EllipsizeMode.END)
         return line
 
-    def _wrap_labels(box: Gtk.Widget) -> None:
-        """Two-line wrap for every label directly in ``box``."""
-        child = box.get_first_child() if box is not None else None
-        while child is not None:
-            if isinstance(child, Gtk.Label):
-                _wrap_two(child)
-            child = child.get_next_sibling()
-
-    def setting_row(title: str, subtitle: str = "", trailing=None,
-                    last: bool = False) -> Gtk.Box:
-        """``widgets.setting_row`` whose lines wrap instead of
-        ellipsizing at large text."""
-        row = widgets.setting_row(title, subtitle, trailing, last=last)
-        _wrap_labels(row.get_first_child())
-        return row
-
-    def list_row(*args, **kwargs) -> Gtk.Button:
-        """``widgets.list_row`` whose name and day wrap at large text."""
-        row = widgets.list_row(*args, **kwargs)
-        child = row.get_child().get_first_child()
-        while child is not None:
-            if isinstance(child, Gtk.Box) and child.get_hexpand():
-                _wrap_labels(child)
-            child = child.get_next_sibling()
-        return row
-
     class SettingsWindow(Gtk.Window):
         """Captions settings with transcript history and detail pages."""
 
@@ -257,7 +231,7 @@ if _HAS_GTK:
                 for code in LANGUAGE_OPTIONS
             ]))
             body.append(widgets.section_label("Options"))
-            body.append(setting_row(
+            body.append(widgets.setting_row(
                 "Call transcription",
                 "Never leaves this phone.",
                 widgets.make_switch(
@@ -348,7 +322,7 @@ if _HAS_GTK:
             self._history_label.set_visible(bool(rows))
             for pos, (call_id, peer, started, ended) in enumerate(rows):
                 peer = str(peer or "Unknown call")
-                row = list_row(
+                row = widgets.list_row(
                     peer, format_day(started),
                     meta=format_duration(ended - started) if ended else "",
                     leading=widgets.avatar(initials_for(peer), 40),

@@ -179,8 +179,9 @@ def make_thread_row() -> tuple:
     dot_box.set_valign(Gtk.Align.CENTER)
     dot_box.set_visible(False)
     trail.append(dot_box)
+    # A mailbox keeps the one-line pitch (recycled ListView rows).
     row = widgets.list_row("x", "x", meta="x", leading=leading,
-                           trailing=trail)
+                           trailing=trail, wrap=False)
     middle = leading.get_next_sibling()
     title = middle.get_first_child()
     sub = title.get_next_sibling()

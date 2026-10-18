@@ -42,6 +42,12 @@ _KEY_SUB_CHARS = 8
 _ENTRY_CHARS = 20
 _BIG_LABEL_CHARS = 12
 
+#: A shrinking page title (page_header(shrink_title=True)) or tab label
+#: never goes under this share of its full size. Titles go further: a
+#: 30 px display title beside an action and an icon at 1.5x on 320 px.
+_TITLE_MIN_SCALE = 0.3
+_TAB_MIN_SCALE = 0.5
+
 _BIG_LABEL_CLASSES = frozenset(
     ('xx-display', 'xx-display-large', 'xx-hero'))
 
@@ -127,16 +133,18 @@ def _shrink_class():
 
     class _ShrinkToFit(Gtk.Widget):
         """Holds one widget whole: at its natural size where that fits,
-        scaled down (to ``min_scale``) where its slot is narrower, aligned
-        start and centered vertically. It never widens its parent past
-        ``min_scale`` of the natural width."""
+        scaled down (to ``min_scale``) where its slot is narrower, placed
+        by ``xalign`` and centered vertically. It never widens its parent
+        past ``min_scale`` of the natural width."""
 
         __gtype_name__ = 'XXUiShrinkToFit'
 
-        def __init__(self, child: Gtk.Widget, min_scale: float) -> None:
+        def __init__(self, child: Gtk.Widget, min_scale: float,
+                     xalign: float) -> None:
             super().__init__()
             self._child = child
             self._min_scale = min_scale
+            self._xalign = xalign
             child.set_parent(self)
 
         def _natural(self) -> tuple:
@@ -156,7 +164,8 @@ def _shrink_class():
             nat_w, nat_h = self._natural()
             scale = min(1.0, width / nat_w) if nat_w > 0 else 1.0
             offset = Graphene.Point()
-            offset.init(0, max(0.0, (height - nat_h * scale) / 2))
+            offset.init(max(0.0, (width - nat_w * scale) * self._xalign),
+                        max(0.0, (height - nat_h * scale) / 2))
             transform = Gsk.Transform.new().translate(offset).scale(scale, scale)
             self._child.allocate(nat_w, nat_h, -1, transform)
 
@@ -172,18 +181,19 @@ def _shrink_class():
     return _ShrinkToFit
 
 
-def shrink_to_fit(widget: Gtk.Widget, min_scale: float = 0.5) -> Gtk.Widget:
+def shrink_to_fit(widget: Gtk.Widget, min_scale: float = 0.5,
+                  xalign: float = 0.0) -> Gtk.Widget:
     """Wrap ``widget`` (a label that must read whole: a big title, a caps
     tile label) so it scales down instead of ellipsizing or widening the
     window when its slot is narrower than its text (320 px, large text).
-    A label passed in drops its ellipsis and width cap. Returns the
-    holder to pack in its place; ``holder.get_first_child()`` is the
-    widget."""
+    ``xalign`` places it in a wider slot (0 start, 0.5 centered). A label
+    passed in drops its ellipsis and width cap. Returns the holder to
+    pack in its place; ``holder.get_first_child()`` is the widget."""
     if isinstance(widget, Gtk.Label):
         widget.set_ellipsize(Pango.EllipsizeMode.NONE)
         widget.set_max_width_chars(-1)
         widget.set_hexpand(False)
-    return _shrink_class()(widget, min_scale)
+    return _shrink_class()(widget, min_scale, xalign)
 
 
 def _fit_button_text(button: Gtk.Button,
@@ -241,10 +251,17 @@ def page_header(title: str, caption_text: str | None = None,
                 actions: list | None = None,
                 overflow_cb=None,
                 icon_name: str | None = None,
-                icon_cb=None) -> Gtk.Box:
+                icon_cb=None,
+                shrink_title: bool = False,
+                title_min_scale: float = _TITLE_MIN_SCALE) -> Gtk.Box:
     """Big display title at the gutter, optional caption, trailing text
     actions (no chrome), an optional ``icon_name`` symbolic action and an
-    optional overflow menu button (view-more-symbolic)."""
+    optional overflow menu button (view-more-symbolic).
+
+    ``shrink_title`` keeps the title whole, scaling it down (to
+    ``title_min_scale``) where the row is narrower (large text, 320 px)
+    instead of ellipsizing; the title row's first child is then the
+    ``shrink_to_fit`` holder, its label ``holder.get_first_child()``."""
     root = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     root.add_css_class('xx-page-body')
     top = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 0)
@@ -254,7 +271,13 @@ def page_header(title: str, caption_text: str | None = None,
     _fit_single(title_label, _HEADER_TITLE_CHARS)
     title_label.set_hexpand(True)
     title_label.set_valign(Gtk.Align.CENTER)
-    top.append(title_label)
+    if shrink_title:
+        holder = shrink_to_fit(title_label, title_min_scale)
+        holder.set_hexpand(True)
+        holder.set_valign(Gtk.Align.CENTER)
+        top.append(holder)
+    else:
+        top.append(title_label)
     for action_label, callback in actions or []:
         button = Gtk.Button.new_with_label(action_label)
         button.add_css_class('xx-btn')
@@ -347,12 +370,12 @@ def list_row(primary: str, secondary: str = '', meta: str = '',
              leading=None, trailing=None, on_activate=None,
              last: bool = False, danger_sub: bool = False,
              wrap_secondary: bool = False,
-             wrap: bool = False) -> Gtk.Button:
-    """Activatable 64 px row with hairline (``last`` drops it).
-    ``wrap`` lets both lines wrap instead of ellipsizing, for rows that
-    must read whole at 320 px and large text (settings, about, licenses);
-    content lists (mail, tracks) keep the one-line pitch.
-    ``wrap_secondary`` wraps only the second line (a forecast summary)."""
+             wrap: bool = True) -> Gtk.Button:
+    """Activatable 64 px row with hairline (``last`` drops it). Both
+    lines wrap rather than ellipsize, so a row reads whole at 320 px and
+    large text; ``wrap=False`` keeps one line each for a dense content
+    list with a fixed pitch (a mailbox), where ``wrap_secondary`` can
+    still let the second line wrap."""
     row = Gtk.Button()
     row.add_css_class('xx-row')
     if last:
@@ -444,11 +467,20 @@ def bottom_tabs(items: list) -> Gtk.Box:
     root.add_css_class('xx-tabs')
     root.set_homogeneous(True)
     for _glyph, text, active, callback in items:
-        tab = Gtk.Button.new_with_label(text.upper())
+        shown = text.upper()
+        tab = Gtk.Button()
         tab.add_css_class('xx-tab')
         if active:
             tab.add_css_class('active')
-        _fit_button_text(tab, _TAB_CHARS)
+        # A long caps label (SETTINGS, SCHEDULE) at large text is wider
+        # than a quarter of the screen: it scales down to fit its tab
+        # rather than widening the row; a label past the cap ellipsizes.
+        name = Gtk.Label(label=shown)
+        if len(shown) <= _TAB_CHARS + 4:
+            tab.set_child(shrink_to_fit(name, _TAB_MIN_SCALE, xalign=0.5))
+        else:
+            tab.set_child(_fit_exact(name, shown, _TAB_CHARS))
+        tab.update_property([Gtk.AccessibleProperty.LABEL], [shown])
         if callback is not None:
             tab.connect('clicked', lambda _b, cb=callback: cb())
         root.append(tab)

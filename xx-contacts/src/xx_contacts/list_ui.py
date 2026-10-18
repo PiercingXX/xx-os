@@ -74,24 +74,6 @@ ACTION_LABELS = {
 
 REFRESH_DELAY_MS = 200
 
-#: The header title never shrinks below this share of its full size.
-TITLE_MIN_SCALE = 0.5
-
-
-def _shrink_header_title(header: Gtk.Widget) -> None:
-    """Swap a ``page_header``'s ellipsizing title for a whole one that
-    scales down to fit (large text, 320 px)."""
-    top = header.get_first_child()
-    title = top.get_first_child() if top is not None else None
-    if not isinstance(title, Gtk.Label):
-        return
-    top.remove(title)
-    holder = widgets.shrink_to_fit(title, TITLE_MIN_SCALE)
-    holder.set_hexpand(True)
-    holder.set_valign(Gtk.Align.CENTER)
-    top.prepend(holder)
-
-
 class RowItem(GObject.Object):
     """One ``Gio.ListStore`` entry: a section header or a contact row."""
 
@@ -318,12 +300,13 @@ class ContactsWindow(Adw.ApplicationWindow):
         navigation = Adw.NavigationView()
         self._navigation = navigation
 
+        # The title scales down rather than ellipsizing ("Conta…") at
+        # large text and 320 px.
         self._header = widgets.page_header(
             "Contacts", "0 contacts",
             actions=[("New", self._on_new_clicked)],
-            overflow_cb=self._show_overflow)
+            overflow_cb=self._show_overflow, shrink_title=True)
         self._count_label = self._header.get_last_child()
-        _shrink_header_title(self._header)
 
         self._chips_slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                                    spacing=0)
