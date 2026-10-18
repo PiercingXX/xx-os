@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.piercingxx.XXAudiobook</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>LicenseRef-Proprietary</project_license>
+  <project_license>GPL-3.0-only</project_license>
   <name>xx-audiobook</name>
   <summary>Self-hosted audiobooks for Linux phones</summary>
   <description>

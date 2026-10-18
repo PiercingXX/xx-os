@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.piercingxx.XXVitals</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>LicenseRef-Proprietary</project_license>
+  <project_license>GPL-3.0-only</project_license>
   <name>xx-vitals</name>
   <summary>Self-hosted health tracking for Linux phones</summary>
   <description>

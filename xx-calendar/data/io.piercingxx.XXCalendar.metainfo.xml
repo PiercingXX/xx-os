@@ -4,7 +4,7 @@
   <name>xx-calendar</name>
   <summary>Text-first calendar: it shows you your day</summary>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>LicenseRef-All-Rights-Reserved</project_license>
+  <project_license>GPL-3.0-only</project_license>
   <description>
     <p>
       Linux phone port of the PiercingXX Android calendar app. A renderer
