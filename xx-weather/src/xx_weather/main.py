@@ -321,7 +321,7 @@ class WeatherWindow:
                 "Today" if pos == 0 else day_label(point.date), secondary,
                 trailing=self._hilo_columns(point.hi_f, point.lo_f, units),
                 on_activate=self._open_day_cb(point.date),
-                last=pos == len(daily) - 1)
+                last=pos == len(daily) - 1, wrap_secondary=True)
             rows.append(row)
         self.forecast_body.append(rows)
 

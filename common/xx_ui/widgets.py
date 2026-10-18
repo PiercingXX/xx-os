@@ -262,8 +262,11 @@ def avatar(initials: str, size: int = 40, dashed: bool = False) -> Gtk.Label:
 
 def list_row(primary: str, secondary: str = '', meta: str = '',
              leading=None, trailing=None, on_activate=None,
-             last: bool = False, danger_sub: bool = False) -> Gtk.Button:
-    """Activatable 64 px row with hairline (``last`` drops it)."""
+             last: bool = False, danger_sub: bool = False,
+             wrap_secondary: bool = False) -> Gtk.Button:
+    """Activatable 64 px row with hairline (``last`` drops it).
+    ``wrap_secondary`` lets the second line wrap (a forecast summary at
+    large text) instead of ellipsizing."""
     row = Gtk.Button()
     row.add_css_class('xx-row')
     if last:
@@ -281,7 +284,10 @@ def list_row(primary: str, secondary: str = '', meta: str = '',
     middle.append(primary_label)
     if secondary:
         sub = label(secondary, 'xx-secondary')
-        _fit_single(sub, _ROW_CHARS)
+        if wrap_secondary:
+            _fit_wrap(sub)
+        else:
+            _fit_single(sub, _ROW_CHARS)
         if danger_sub:
             sub.add_css_class('xx-danger-text')
         middle.append(sub)
