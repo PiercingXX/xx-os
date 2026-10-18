@@ -157,3 +157,16 @@ def test_test_number_validates_and_runs_engine(tmp_path):
                                                       "blocked")
     with pytest.raises(ValueError):
         controller.test_number("   ")
+
+
+def test_direct_rule_changes_pop_no_toast(tmp_path):
+    # The screen shows each change (segment, card, list): no HUD on top.
+    notes: list[str] = []
+    controller = RulesController(RulesDeps(
+        db_file=tmp_path / "calls.db", home=tmp_path, notice=notes.append))
+    controller.set_enforcing(True)
+    controller.set_enforcing(False)
+    controller.arm_bypass(30)
+    controller.stop_bypass()
+    controller.clear_log()
+    assert notes == []

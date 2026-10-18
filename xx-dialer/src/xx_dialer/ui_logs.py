@@ -21,6 +21,12 @@ from xx_ui import widgets  # noqa: E402
 from xx_dialer import applog  # noqa: E402
 
 
+def _outline(text: str, callback=None):
+    """An outline button whose label wraps between words (large text,
+    320 px) instead of ellipsizing; it never widens the window."""
+    return widgets.wrap_to_fit(widgets.outline_button(text, callback))
+
+
 @dataclass
 class LogsDeps:
     db_file: Path
@@ -96,12 +102,12 @@ class LogsView:
         self._body.append(self._file_list)
         brow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self._refresh_button = widgets.wrap_to_fit(
-            widgets.outline_button("Refresh"))
+            _outline("Refresh"))
         self._refresh_button.set_hexpand(True)
         self._refresh_button.connect("clicked", self._on_refresh)
         brow.append(self._refresh_button)
         self._clear_button = widgets.wrap_to_fit(
-            widgets.outline_button("Clear logs"))
+            _outline("Clear logs"))
         self._clear_button.set_hexpand(True)
         self._clear_button.connect("clicked", self._on_clear)
         brow.append(self._clear_button)
@@ -130,9 +136,6 @@ class LogsView:
             files = self.controller.files()
         except Exception:
             files = []
-        if not files:
-            label = widgets.label("No log files yet.", "xx-secondary")
-            self._file_list.append(label)
         for name, size, _mtime in files:
             button = Gtk.Button()
             button.add_css_class("xx-menu-row")

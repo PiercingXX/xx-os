@@ -412,7 +412,7 @@ class KeypadView:
                           spacing=8)
         # The buttons share the card's width: a letter-spaced caps label
         # held to exactly its natural width can wrap its last word.
-        save = widgets.wrap_to_fit(widgets.caps_button("+\u00a0Save"))
+        save = widgets.wrap_to_fit(widgets.caps_button("Save"))
         save.set_hexpand(True)
         save.connect("clicked", self._on_save, number)
         actions.append(save)
@@ -436,7 +436,8 @@ class KeypadView:
             return
 
         def _done(_uid: str) -> None:
-            self._notice("Contact saved.")
+            # The match card picks the new contact up; no toast.
+            self.refresh()
 
         def _failed(_err) -> None:
             self._notice("Could not save the contact.")
