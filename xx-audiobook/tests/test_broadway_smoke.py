@@ -102,6 +102,7 @@ def _probe(tmp_path: Path, scale: int, mode: str = "signed-in",
 def test_offline_window_walks_every_screen_from_cache(tmp_path):
     output = _probe(tmp_path, 1)
     assert "SIZE:360x720" in output
+    assert "SHEET:bottom-sheet:360" in output
 
 
 def test_signed_in_home_lands_on_library(tmp_path):

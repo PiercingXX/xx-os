@@ -177,6 +177,23 @@ def main(argv: list[str]) -> int:
            "Play on…")
     _check_targets(window, failed)
 
+    # A sheet on a phone-width window docks as a full-width bottom sheet
+    # (Adw's AUTO floats a 360 px card on the 450 px FLX1).
+    from xx_audiobook.ui import common
+
+    dialog, _box = common.sheet("Probe")
+    common.present(dialog, window)
+    pump(100)
+    width = window.get_width() or window.get_default_size().width
+    sheet_mode = dialog.get_presentation_mode()
+    print(f"SHEET:{sheet_mode.value_nick}:{dialog.get_content_width()}")
+    if sheet_mode != Adw.DialogPresentationMode.BOTTOM_SHEET:
+        failed.append("a phone sheet floats instead of docking")
+    if dialog.get_content_width() != width:
+        failed.append("the bottom sheet is narrower than the phone")
+    dialog.close()
+    pump(300)
+
     shell.show("downloads")
     pump()
     expect("Downloads", "Active", "On this phone", "Failed or cancelled",

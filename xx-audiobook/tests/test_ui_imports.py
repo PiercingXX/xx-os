@@ -40,6 +40,19 @@ def test_app_css_renders_for_every_text_scale():
     assert "font-size: 44px" in style.render(2.0)
 
 
+def test_sheet_css_paints_only_the_card_over_a_scrim():
+    # floating-sheet / bottom-sheet span the whole window, dimming
+    # included: painting them hid the app behind an opaque slab.
+    from xx_audiobook.ui import style
+
+    css = style.render(1.0)
+    assert "dialog.xx-ab-dialog floating-sheet {" not in css
+    assert "dialog.xx-ab-dialog floating-sheet," not in css
+    assert "dialog.xx-ab-dialog sheet {" in css
+    assert "bottom-sheet > dimming" in css
+    assert "rgba(0, 0, 0, 0.55)" in css
+
+
 def test_app_icons_ship_with_the_package():
     # The tab bar and the cover glyph use the app's own symbolic SVGs.
     from pathlib import Path

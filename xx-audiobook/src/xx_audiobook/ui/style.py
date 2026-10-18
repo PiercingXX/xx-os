@@ -156,8 +156,14 @@ button.xx-ab-sheetbtn label { font-size: ${l10}px; }
 
 /* -- sheets and dialogs --------------------------------------------------- */
 .xx-ab-sheet { padding: 8px 16px 24px 16px; }
-dialog.xx-ab-dialog sheet, dialog.xx-ab-dialog floating-sheet {
+/* The sheet card only: floating-sheet / bottom-sheet span the whole
+   window (dimming included), so painting them blacked the app out. The
+   app dims behind it at the shell's ActionSheet scrim. */
+dialog.xx-ab-dialog sheet {
   background-color: @card_bg_color; border-radius: 0; }
+dialog.xx-ab-dialog bottom-sheet > dimming,
+dialog.xx-ab-dialog floating-sheet > dimming {
+  background-color: rgba(0, 0, 0, 0.55); }
 
 /* -- forms ---------------------------------------------------------------- */
 .xx-ab .xx-entry { border-radius: 0; border: 1px solid @borders;
