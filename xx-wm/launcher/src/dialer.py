@@ -58,7 +58,7 @@ def theme_css(preset: ThemePreset) -> str:
     color: {preset.background};
     border: none;
 }}
-.call-button:hover {{ background: mix({preset.accent}, {preset.background}, 0.85); }}
+.call-button:hover {{ background: mix({preset.accent}, {preset.background}, 0.15); }}
 .del-button {{
     font-size: 14pt;
     min-width: 100px;

@@ -26,7 +26,12 @@ def sanitize_font_family(family: str) -> str:
 
 
 def _family_css(family: str) -> bytes:
-    return f"window, popover {{ font-family: '{family}'; }}".encode('utf-8')
+    # libadwaita draws button labels bold; the house type is regular
+    # (common/DESIGN.md: no bold), so every shell button starts at 400 and
+    # a surface opts into 500 with its own class rule.
+    return (f"window, popover {{ font-family: '{family}'; }}\n"
+            "window button, popover button { font-weight: 400; }"
+            ).encode('utf-8')
 
 
 def apply_global_font(family: str) -> None:

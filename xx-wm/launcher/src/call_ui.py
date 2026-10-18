@@ -913,6 +913,18 @@ class CallBar(Gtk.Window):
         self._label.set_text(f'{caller}  ·  {timer_text}')
 
 
+def _fit_page(page):
+    """A call page that scrolls instead of growing the window: on a
+    320x640 screen the active page (avatar, timer, six tiles, End call)
+    needs ~680 px. Where it fits, the page fills the viewport and its
+    spacers center it exactly as before."""
+    scroller = Gtk.ScrolledWindow()
+    scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    scroller.set_has_frame(False)
+    scroller.set_child(page)
+    return scroller
+
+
 class CallUI(Gtk.Window):
     """
     Full-screen call surface, rendered from the modem monitor snapshot
@@ -993,9 +1005,9 @@ class CallUI(Gtk.Window):
         self.apply_theme()
 
         self._stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=180)
-        self._stack.add_named(self._build_incoming(), 'incoming')
-        self._stack.add_named(self._build_outgoing(), 'outgoing')
-        self._stack.add_named(self._build_active(), 'active')
+        self._stack.add_named(_fit_page(self._build_incoming()), 'incoming')
+        self._stack.add_named(_fit_page(self._build_outgoing()), 'outgoing')
+        self._stack.add_named(_fit_page(self._build_active()), 'active')
 
         root = Gtk.Box()
         root.add_css_class('call-root')
@@ -1050,6 +1062,11 @@ class CallUI(Gtk.Window):
         number.set_wrap(True)
         number.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         number.set_max_width_chars(24)
+        if centered:
+            # A name that wraps keeps every line on the center axis, not
+            # a left-ragged block under a centered avatar.
+            caller.set_justify(Gtk.Justification.CENTER)
+            number.set_justify(Gtk.Justification.CENTER)
 
         spacer = Gtk.Box()
         spacer.set_vexpand(True)
@@ -1201,8 +1218,16 @@ class CallUI(Gtk.Window):
             'Hold', '', False, self._on_hold_toggled)
         self._add_btn = widgets.status_tile(
             'Add call', '', False, self._on_add_call_toggled)
+        # 'BT' as on the shade's tile: three caps tiles across must fit a
+        # 360 px screen at large text (BLUETOOTH alone outgrew a third).
         self._bt_btn = widgets.status_tile(
-            'Bluetooth', '', False, self._on_bt_toggled)
+            'BT', '', False, self._on_bt_toggled)
+        for tile in (self._mute_btn, self._speaker_btn, self._keypad_btn,
+                     self._hold_btn, self._add_btn, self._bt_btn):
+            # Two-word labels (ADD CALL) wrap rather than widen the grid.
+            name = tile.get_child().get_first_child()
+            if name is not None:
+                widgets.wrap_to_fit(name)
 
         tiles = Gtk.Grid(row_spacing=8, column_spacing=8,
                          column_homogeneous=True)

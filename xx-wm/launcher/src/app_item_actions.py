@@ -52,6 +52,24 @@ _MENU_SCROLL_AFTER = 8
 _MENU_MAX_HEIGHT = 440
 
 
+def current_choice_index(anchor, actions) -> int | None:
+    """The choice a value row's menu should mark checked: the one whose
+    label reads exactly what the row's subtitle shows (a Settings value
+    row states its current value there). None for plain action menus and
+    for rows whose value no choice names."""
+    label = getattr(anchor, 'subtitle_label', None)
+    try:
+        current = label.get_text().strip() if label is not None else ''
+    except Exception:
+        return None
+    if not current:
+        return None
+    for index, (text, _callback) in enumerate(actions):
+        if str(text).strip() == current:
+            return index
+    return None
+
+
 def validate_folder_name(slots: list[dict], name: str,
                          exclude: int | None = None) -> str | None:
     """Folder-name rule shared by every create/rename path: blank names and
@@ -313,6 +331,8 @@ class AppItemActions:
                           actions: list[tuple[str, Callable[[], None]]],
                           subtitle: str | None = None,
                           checked: int | None = None) -> None:
+        if checked is None:
+            checked = current_choice_index(anchor, actions)
         content = self._action_list(actions, title, subtitle, checked)
         self._popover_ref = self._show_popover(anchor, content)
 
@@ -541,12 +561,10 @@ class AppItemActions:
                 self._config.set_app_label(entry.app_id, None)
                 self._rename_in_slots(entry.app_id, entry.name)
                 self._on_changed()
-                self._on_status(f'Renamed to {entry.name}.')
                 return
             self._config.set_app_label(entry.app_id, None if text == entry.name else text)
             self._rename_in_slots(entry.app_id, text)
             self._on_changed()
-            self._on_status(f'Renamed to {text}.')
 
         self._show_entry_dialog(anchor, 'Rename', current, 'Rename', _commit,
                                 allow_empty=True)
@@ -608,7 +626,6 @@ class AppItemActions:
         members.append({'label': display, 'app_id': entry.app_id})
         self._config.set_home_slots(slots)
         self._on_changed()
-        self._on_status(f'Added to {slots[slot_index].get("label", "folder")}.')
 
     def _show_new_folder(self, anchor: Gtk.Widget, entry: AppEntry, display: str) -> None:
         def _commit(name: str) -> None:
@@ -624,7 +641,6 @@ class AppItemActions:
                           'folder': [{'label': display, 'app_id': entry.app_id}]})
             self._config.set_home_slots(slots)
             self._on_changed()
-            self._on_status(f'Created folder {name}.')
 
         self._show_entry_dialog(anchor, 'New folder', '', 'Create', _commit)
 
@@ -637,7 +653,9 @@ class AppItemActions:
             hidden.append(app_id)
         self._config.set_hidden_apps(hidden)
         self._on_changed()
-        self._on_status('App hidden — still reachable via search.' if hide else 'App shown in drawer.')
+        if hide:
+            # Hiding is the one change that takes the row out of sight.
+            self._on_status('App hidden — still reachable via search.')
 
     def _set_pinned(self, entry: AppEntry, pin: bool) -> None:
         pinned = [p for p in self._config.pinned if p != entry.app_id]
@@ -645,7 +663,6 @@ class AppItemActions:
             pinned.append(entry.app_id)
         self._config.set_pinned(pinned)
         self._on_changed()
-        self._on_status('Pinned.' if pin else 'Unpinned.')
 
     def _move_pinned(self, entry: AppEntry, delta: int) -> None:
         pinned = self._config.pinned
@@ -741,7 +758,6 @@ class AppItemActions:
                 slots[slot_index]['folder'][member_index]['label'] = text
                 if member.get('app_id'):
                     self._config.set_app_label(str(member['app_id']), text)
-                self._on_status(f'Renamed to {text}.')
             elif member.get('app_id'):
                 # Blank clears the override and restores the real name at
                 # once, like the drawer rename.
@@ -749,7 +765,6 @@ class AppItemActions:
                 real = self._real_name(str(member['app_id']))
                 if real:
                     slots[slot_index]['folder'][member_index]['label'] = real
-                self._on_status('Name reset.')
             self._config.set_home_slots(slots)
             self._on_changed()
 
@@ -763,10 +778,9 @@ class AppItemActions:
         members = slots[slot_index].get('folder') or []
         if not (0 <= member_index < len(members)):
             return
-        removed = members.pop(member_index)
+        members.pop(member_index)
         if members:
             slots[slot_index]['folder'] = members
-            self._on_status(f'{removed.get("label", "Item")} removed from folder.')
         else:
             label = slots[slot_index].get('label', 'Folder')
             slots.pop(slot_index)
@@ -831,7 +845,6 @@ class AppItemActions:
         slots[slot_index]['label'] = name.strip()
         self._config.set_home_slots(slots)
         self._on_changed()
-        self._on_status(f'Renamed to {name.strip()}.')
         return True
 
     def move_folder(self, slot_index: int, delta: int) -> bool:
@@ -860,7 +873,6 @@ class AppItemActions:
         # the row it is anchored on mid-drag.
         if notify:
             self._on_changed()
-        self._on_status(f'{slot.get("label", "Folder")} sorted A–Z.')
         return True
 
     def confirm_delete_folder(self, anchor: Gtk.Widget, slot_index: int) -> None:

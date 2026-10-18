@@ -58,7 +58,7 @@ def theme_css(preset: ThemePreset) -> str:
     font-size: 17pt;
     font-weight: 400;
     min-width: 72px;
-    min-height: 64px;
+    min-height: 56px;
     border-radius: 16px;
     background: {preset.surface};
     color: {preset.foreground};
@@ -86,7 +86,9 @@ def theme_css(preset: ThemePreset) -> str:
     border: none;
 }}
 .wizard-next:hover {{
-    background: mix({preset.foreground}, {preset.background}, 0.85);
+    /* mix() takes the fraction of the SECOND color: 0.85 all but erased
+       the button under a resting touch pointer. */
+    background: mix({preset.foreground}, {preset.background}, 0.15);
 }}
 .wizard-skip {{
     font-size: 11pt;
@@ -354,6 +356,12 @@ def keyboard_step_available() -> bool:
             Path('/usr/share/xx-wm/squeekboard'),
         )
     )
+
+
+def _say(label, text: str) -> None:
+    """Set a hint line, hidden while it has nothing to say."""
+    label.set_text(text)
+    label.set_visible(bool(text))
 
 
 def setup_pending(config_path) -> bool:
@@ -635,6 +643,9 @@ class FirstBootWizard(Gtk.Window):
         self._pin_hint = Gtk.Label(label='')
         self._pin_hint.add_css_class('wizard-subtitle')
         self._pin_hint.set_halign(Gtk.Align.CENTER)
+        # Hidden while empty: an empty line still took a row of the page,
+        # pushing Next off a 640 px screen.
+        self._pin_hint.set_visible(False)
 
         self._pin_buf = ''
         keypad = self._build_pin_keypad(
@@ -654,7 +665,7 @@ class FirstBootWizard(Gtk.Window):
         skip_btn.connect('clicked', lambda _b: self._stack.set_visible_child_name('theme'))
 
         page.append(self._title_block(
-            'Set a PIN', 'At least 6 digits. Used to unlock your device.'))
+            'Set a PIN', 'At least 6 digits.'))
         page.append(self._centered(self._pin_dots, self._pin_hint, keypad))
         page.append(next_btn)
         page.append(skip_btn)
@@ -675,6 +686,7 @@ class FirstBootWizard(Gtk.Window):
         self._pin_error = Gtk.Label(label='')
         self._pin_error.add_css_class('wizard-subtitle')
         self._pin_error.set_halign(Gtk.Align.CENTER)
+        self._pin_error.set_visible(False)
 
         keypad = self._build_pin_keypad(
             on_digit=self._confirm_add,
@@ -740,7 +752,7 @@ class FirstBootWizard(Gtk.Window):
         self._pin_buf += digit
         self._pin_dots.set_text('●' * len(self._pin_buf))
         if len(self._pin_buf) >= 6:
-            self._pin_hint.set_text('')
+            _say(self._pin_hint, '')
 
     def _pin_del(self) -> None:
         if self._pin_buf:
@@ -885,19 +897,18 @@ class FirstBootWizard(Gtk.Window):
                 'Swipe down', 'Opens notifications and quick settings.\n\nTry it now.',
                 kind='swipe_down')),
             ('tour_swipe_side', self._gesture_page(
-                'Swipe sideways', 'Launches your side apps — camera on the '
-                'right out of the box, both configurable.\n\nTry it now.',
+                'Swipe sideways', 'Opens your side apps — camera on the '
+                'right.\n\nTry it now.',
                 kind='swipe_side')),
             ('info_shade', self._info_page(
                 'Shade & quick settings',
-                'Swipe down anytime: WiFi, Bluetooth, torch and more, brightness '
-                'and volume, your notifications, and an inline calendar behind '
-                'the date.')),
+                'Swipe down anytime: toggles, sliders, notifications, and a '
+                'calendar behind the date.')),
             ('info_focus', self._info_page(
                 'Do Not Disturb & Focus',
-                'DnD silences everything except starred contacts and repeat '
-                'callers.\n\nFocus pauses distracting apps and holds their '
-                'notifications until you are done. Both live in quick settings.')),
+                'DnD lets only starred contacts and repeat callers through.'
+                '\n\nFocus pauses distracting apps until you are done. Both '
+                'are quick settings tiles.')),
         ]
         if keyboard_step_available():
             pages.append(('tour_keyboard', self._keyboard_page()))
@@ -1005,10 +1016,8 @@ class FirstBootWizard(Gtk.Window):
     def _final_page(self) -> Gtk.Widget:
         page, footer = self._tour_scaffold(
             'Make it yours',
-            'Long-press the home screen to edit your slots.\n\nEvery shell '
-            'preference lives in ~/.config/xx-wm/ — edit it in a '
-            'terminal and the shell reloads live. The full reference is '
-            'docs/config.md.\n\nReplay this tour anytime with:\n'
+            'Long-press home to edit your slots.\n\nEverything else lives '
+            'in\n~/.config/xx-wm/\nand reloads live.\n\nReplay this tour:\n'
             'xx-wm --welcome')
         done_btn = Gtk.Button(label='Done')
         done_btn.add_css_class('wizard-next')
@@ -1049,18 +1058,18 @@ class FirstBootWizard(Gtk.Window):
     def _on_pin_next(self, _btn: Gtk.Widget) -> None:
         if len(self._pin_buf) < 6:
             self._pin_dots.add_css_class('error')
-            self._pin_hint.set_text('PIN must be at least 6 digits')
+            _say(self._pin_hint, 'PIN must be at least 6 digits')
             return
         self._pin_dots.remove_css_class('error')
         self._pin_entered = self._pin_buf
         self._confirm_buf = ''
         self._confirm_dots.set_text('')
-        self._pin_error.set_text('')
+        _say(self._pin_error, '')
         self._stack.set_visible_child_name('pin_confirm')
 
     def _on_pin_confirm(self, _btn: Gtk.Widget) -> None:
         if self._confirm_buf != self._pin_entered:
-            self._pin_error.set_text('PINs do not match — try again')
+            _say(self._pin_error, 'PINs do not match — try again')
             self._confirm_buf = ''
             self._confirm_dots.set_text('')
             return

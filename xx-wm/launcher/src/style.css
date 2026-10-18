@@ -57,10 +57,12 @@ entry {
   padding: 0 14px;
 }
 
-/* Drawer rows: centered names on the plain background */
+/* Drawer rows: centered names on the plain background. min-height is
+   the content box, so 40 + 2 x 8 padding = a 56 px row (a 48 px touch
+   target and then some), close to the Android drawer's 18sp + 2 x 10dp. */
 .app-entry {
-  padding: 16px;
-  min-height: 56px;
+  padding: 8px 16px;
+  min-height: 40px;
   border-radius: 0;
 }
 

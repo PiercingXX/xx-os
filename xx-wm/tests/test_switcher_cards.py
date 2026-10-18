@@ -75,10 +75,9 @@ def _fresh_name_cache():
         app_switcher._APP_NAME_CACHE.clear()
 
 
-def test_empty_state_message() -> None:
-    """The empty-state text is a stable, non-empty message for the user."""
-    assert isinstance(_EMPTY_STATE_TEXT, str)
-    assert _EMPTY_STATE_TEXT.strip() != ''
+def test_empty_state_shows_no_line() -> None:
+    """No open apps shows nothing (owner: no empty-state lines)."""
+    assert _EMPTY_STATE_TEXT == ''
 
 
 def test_empty_state_used_when_no_apps() -> None:

@@ -532,7 +532,7 @@ class DrawerPage:
             if letter not in win._alpha_letter_rows:
                 win._alpha_letter_rows[letter] = idx + row_offset
 
-        win._replace_rows(win.apps_list, results, 'No apps matched this search.', win._make_app_row)
+        win._replace_rows(win.apps_list, results, '', win._make_app_row)
 
         # Folder drop-downs sit above the app rows (design.md "App drawer")
         win._drawer_folder_header = None
@@ -603,10 +603,9 @@ class DrawerPage:
         title.add_css_class('app-name')
         title.set_ellipsize(Pango.EllipsizeMode.END)
         title.set_hexpand(True)
-        indicator = Gtk.Label(label='⌄' if slot_index == win._drawer_open_folder else '›')
-        indicator.add_css_class('dim-label')
+        # No expand glyph: the "(n)" count marks a folder, and its members
+        # open right under the row (owner: no decorative arrows).
         inner.append(title)
-        inner.append(indicator)
         inner.set_hexpand(True)
 
         btn = Gtk.Button()
@@ -667,16 +666,12 @@ class DrawerPage:
         from gi.repository import Gtk, Pango
 
         win = self._win
-        open_now = bool(getattr(win, '_drawer_open_hidden', False))
         inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         title = Gtk.Label(label=f'Hidden ({count})', xalign=drawer_xalign(win))
         title.add_css_class('app-name')
         title.set_ellipsize(Pango.EllipsizeMode.END)
         title.set_hexpand(True)
-        indicator = Gtk.Label(label='⌄' if open_now else '›')
-        indicator.add_css_class('dim-label')
         inner.append(title)
-        inner.append(indicator)
         inner.set_hexpand(True)
 
         btn = Gtk.Button()
@@ -781,6 +776,10 @@ class DrawerPage:
             child = next_child
 
         if not entries:
+            # An empty result shows nothing unless a caller names a line
+            # (owner: no empty-state lines in the drawer).
+            if not empty_message:
+                return
             label = Gtk.Label(label=empty_message, xalign=drawer_xalign(win))
             label.add_css_class('dim-label')
             row = Gtk.ListBoxRow(selectable=False, activatable=False)
@@ -814,6 +813,9 @@ class DrawerPage:
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         content.append(title)
         content.set_hexpand(True)
+        # Centered in the row like folder rows' labels, so every row's
+        # text sits on the same pitch.
+        content.set_valign(Gtk.Align.CENTER)
 
         launch_btn = Gtk.Button()
         launch_btn.add_css_class('flat')

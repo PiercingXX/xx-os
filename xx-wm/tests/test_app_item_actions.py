@@ -327,3 +327,32 @@ class TestSharedDialogStyles:
         assert 'xx-entry' in entry.calls['css_classes']
         commit = box.children[-1]
         assert 'xx-btn-primary' in commit.calls['css_classes']
+
+
+class _Sub:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def get_text(self) -> str:
+        return self._text
+
+
+class TestCurrentChoiceIndex:
+    """A value row's menu marks the value its subtitle shows."""
+
+    _CHOICES = [('App switcher', None), ('Home', None), ('None', None)]
+
+    def test_subtitle_value_is_checked(self):
+        row = SimpleNamespace(subtitle_label=_Sub('Home'))
+        assert app_item_actions.current_choice_index(row, self._CHOICES) == 1
+
+    def test_action_menus_stay_unchecked(self):
+        # A drawer row (no subtitle) or a subtitle no choice names.
+        assert app_item_actions.current_choice_index(
+            object(), self._CHOICES) is None
+        row = SimpleNamespace(subtitle_label=_Sub('On, starts at boot'))
+        assert app_item_actions.current_choice_index(
+            row, self._CHOICES) is None
+        empty = SimpleNamespace(subtitle_label=_Sub(''))
+        assert app_item_actions.current_choice_index(
+            empty, self._CHOICES) is None

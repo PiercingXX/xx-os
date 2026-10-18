@@ -82,12 +82,7 @@ window.switcher-window {{
 }}
 .switcher-header {{
     font-size: 11pt;
-    font-weight: 700;
     letter-spacing: 0.18em;
-    color: {preset.muted};
-}}
-.switcher-empty {{
-    font-size: 11pt;
     color: {preset.muted};
 }}
 .app-card {{
@@ -125,7 +120,9 @@ window.switcher-window {{
 
 _SWIPE_DISMISS_THRESHOLD = 120  # px upward drag to dismiss a card
 _SHEET_CLOSE_DY = 100  # px downward drag to close recents (resume the app)
-_EMPTY_STATE_TEXT = 'No open apps.'
+# No open apps shows nothing under the caption (owner: no empty-state
+# lines); a swipe down or a tap on the dim still closes recents.
+_EMPTY_STATE_TEXT = ''
 # Pixel-style overview: one large centered card, not a 280px bottom sheet.
 _CARD_WIDTH_FRAC = 0.82
 _CARD_HEIGHT_FRAC = 0.68
@@ -429,7 +426,8 @@ class AppSwitcher(_AppSwitcherBase):
 
     @staticmethod
     def _empty_state_label() -> str:
-        """Headless seam: the message shown when there are no open apps."""
+        """Headless seam: the line shown when there are no open apps
+        ('': recents show nothing but the caption)."""
         return _EMPTY_STATE_TEXT
 
     @staticmethod
@@ -482,13 +480,6 @@ class AppSwitcher(_AppSwitcherBase):
             child = nxt
 
         if not self._apps:
-            empty = Gtk.Label(label=_EMPTY_STATE_TEXT, xalign=0.5)
-            empty.add_css_class('switcher-empty')
-            empty.set_hexpand(True)
-            empty.set_vexpand(True)
-            empty.set_valign(Gtk.Align.CENTER)
-            empty.set_halign(Gtk.Align.CENTER)
-            self.card_box.append(empty)
             return
 
         for app in self._apps:

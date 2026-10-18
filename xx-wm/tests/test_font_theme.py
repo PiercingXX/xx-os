@@ -103,6 +103,11 @@ class TestApplyGlobalFont:
         assert len(fake_gi.loads) == 1
         assert b"font-family: 'My Font';" in fake_gi.loads[0]
 
+    def test_buttons_are_regular_weight(self, font_theme, fake_gi):
+        """libadwaita bolds button labels; the shell's type is regular."""
+        font_theme.apply_global_font('My Font')
+        assert b'button { font-weight: 400; }' in fake_gi.loads[0]
+
     def test_hostile_family_is_sanitized_before_load(self, font_theme, fake_gi):
         font_theme.apply_global_font("Evil'; } body {")
         assert len(fake_gi.loads) == 1

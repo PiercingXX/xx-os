@@ -197,8 +197,11 @@ def theme_css(preset: ThemePreset) -> str:
     box-shadow: none;
     border: 1px solid alpha({fg}, 0.10);
     border-radius: 12px;
-    min-width: 46px;
-    min-height: 38px;
+    /* Fixed-width keys (no theme padding) so the card fits a 320 px
+       shade; 44 px tall for the thumb. */
+    padding: 0;
+    min-width: 64px;
+    min-height: 44px;
 }}
 .media-btn:hover {{
     background: {preset.surface};

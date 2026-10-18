@@ -605,6 +605,9 @@ class ShellWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application) -> None:
         super().__init__(application=application, title='PiercingXX')
         self.add_css_class('xx-wm')
+        # libadwaita gives its windows a 360x200 floor unless the app sets
+        # one: the shell must shrink to a 320 px screen like the apps do.
+        self.set_size_request(320, 200)
 
         if _LAYER_SHELL and LayerShell.is_supported():
             LayerShell.init_for_window(self)
@@ -2394,7 +2397,8 @@ class ShellWindow(Adw.ApplicationWindow):
                + settings_ui.css(theme, scale) + '\n'
                + sheet_css({'surface': theme.surface,
                             'foreground': theme.foreground,
-                            'border': theme.border}))
+                            'border': theme.border,
+                            'background': theme.background}))
         self.theme_provider.load_from_data(css.encode('utf-8'))
 
     def _refresh_clock(self) -> None:

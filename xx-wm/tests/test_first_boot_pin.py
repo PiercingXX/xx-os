@@ -19,6 +19,9 @@ class _FakeLabel:
     def set_text(self, text):
         self.text = text
 
+    def set_visible(self, visible):
+        self.visible = visible
+
     def add_css_class(self, name):
         if name not in self.css:
             self.css.append(name)
@@ -90,6 +93,8 @@ class TestTypingHintThreshold:
         for digit in '123456':
             _first_boot().FirstBootWizard._pin_add(wizard, digit)
         assert wizard._pin_hint.text == ''
+        # Hidden, not an empty row: the page must fit a 320x640 screen.
+        assert wizard._pin_hint.visible is False
 
 
 class TestPinLengthCap:

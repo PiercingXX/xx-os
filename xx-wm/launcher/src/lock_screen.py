@@ -151,7 +151,10 @@ def theme_css(preset: ThemePreset) -> str:
 .emg-action {{
     font-size: 14pt;
     min-height: 56px;
-    min-width: 140px;
+    /* 2 x (120 + 2 x 12) + 8 = 296 px: Call and delete fit a 320 px
+       screen (theme padding on a 140 px floor made the lock 356 wide). */
+    min-width: 120px;
+    padding: 0 12px;
     border-radius: 28px;
     background: {preset.surface};
     color: {preset.foreground};

@@ -71,7 +71,7 @@ def theme_css(preset: ThemePreset) -> str:
     color: {preset.background};
     border: none;
 }}
-.sms-send:hover {{ background: mix({preset.accent}, {preset.background}, 0.85); }}
+.sms-send:hover {{ background: mix({preset.accent}, {preset.background}, 0.15); }}
 .bubble-failed {{
     background: {preset.surface};
     color: {preset.muted};

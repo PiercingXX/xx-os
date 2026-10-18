@@ -64,9 +64,19 @@ def sheet_css(tokens: dict) -> str:
 .xx-sheet .xx-menu-row {{
     min-height: 52px;
 }}
+/* An entry on the surface-colored sheet sinks to the page color with a
+   hairline (the Settings sheets' field look); surface on surface drew
+   the Rename field as bare text. */
+.xx-sheet entry.xx-entry {{
+    background-color: {background};
+    border: 1px solid {border};
+    min-height: 46px;
+}}
+.xx-sheet entry.xx-entry:focus-within {{ border-color: {foreground}; }}
 """.format(surface=tokens.get('surface', '#111111'),
            foreground=tokens.get('foreground', '#ffffff'),
-           border=tokens.get('border', '#333333'))
+           border=tokens.get('border', '#333333'),
+           background=tokens.get('background', '#000000'))
 
 
 class Sheet:

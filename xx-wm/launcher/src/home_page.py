@@ -531,7 +531,6 @@ class HomePage:
         win.stack.set_visible_child_name('home')
         win._home_launcher.refresh()
         win._populate_apps(win.apps_search.get_text())
-        win._show_status(f'{display} added to home.')
 
     def _create_folder_slot(self, name: str) -> None:
         from app_item_actions import validate_folder_name
@@ -571,7 +570,7 @@ class HomePage:
         if slots[idx].get('type') == 'folder' and widget is not None:
             win.item_actions.confirm_delete_folder(widget, idx)
             return
-        removed = slots.pop(idx)
+        slots.pop(idx)
         win.config.set_home_slots(slots)
         count = getattr(win.config, 'home_slot_count', None)
         if isinstance(count, int) and idx < count:
@@ -580,7 +579,6 @@ class HomePage:
             win.config.set_home_slot_count(count - 1)
         win._home_launcher.refresh(preserve_folder=True)
         win._populate_apps(win.apps_search.get_text())
-        win._show_status(f'{removed.get("label", "Slot")} removed from home.')
 
     def _rename_slot(self, widget, idx: int) -> None:
         """Edit-mode slot name tap: folders rename directly; app slots get
@@ -627,7 +625,6 @@ class HomePage:
         win.stack.set_visible_child_name('home')
         win._home_launcher.refresh()
         win._populate_apps(win.apps_search.get_text())
-        win._show_status(f'{display} added to home.')
 
     def _real_app_name(self, app_id: str) -> str | None:
         index = getattr(self._win, 'app_index', None)

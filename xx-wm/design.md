@@ -103,7 +103,7 @@ Versioned JSON export covering: home slots, folders + membership, pins, app rena
 
 XX-WM *is* the system UI, so the shell owns every surface beyond the launcher. These extend the same design language and already exist in `launcher/src/`:
 
-lock screen (6-digit PIN, fingerprint when hardware supports), notification shade + daemon, quick settings tiles, app switcher, call UI + dialer + SMS + contacts, first-boot wizard, power menu, volume/brightness HUD (in-shell), virtual keyboard (squeekboard with the PiercingXX Colemak layouts), display/power management.
+lock screen (6-digit PIN, fingerprint when hardware supports), notification shade + daemon, quick settings tiles, app switcher, call UI + dialer + SMS + contacts, first-boot wizard, power menu, volume HUD (in-shell; brightness has no HUD), virtual keyboard (squeekboard with the PiercingXX Colemak layouts), display/power management.
 
 ### Lock screen
 
