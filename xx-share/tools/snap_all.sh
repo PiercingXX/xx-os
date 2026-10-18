@@ -1,14 +1,21 @@
 #!/bin/sh
-# Render every xx-share screen in every theme and montage one labeled
-# contact sheet per theme:
+# Render every xx-share screen and montage one labeled contact sheet per
+# theme and phone size into OUTDIR, plus fit runs: every screen at 320 px
+# wide (sheet-fit320.png) and at large text, text-size scale 1.5 on
+# 360 px (sheet-scale15.png). Exits non-zero on any snap WARNING (a
+# window wider or taller than its phone screen) or any failed render.
+#
 #   xx-share/tools/snap_all.sh OUTDIR
-# Exits non-zero on any snap WARNING (phone-fit violation) or snap
-# failure. Python: $PYTHON, else ./.venv, else xx-wm/.venv, else
-# python3 (mirrors scripts/check-all.sh).
+#   THEMES="amoled paper forest" SIZES="450x1000 360x800" ... OUTDIR
+#   SCREENS="share receive" FIT320="" SCALE15="" ... (empty skips a run)
+#
+# Python: $PYTHON, else ./.venv, else xx-wm/.venv, else python3 (mirrors
+# scripts/check-all.sh). scripts/snap.py runs each shot on a private
+# Broadway runtime dir, so parallel lanes do not steal displays.
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 OUTDIR=${1:?usage: snap_all.sh OUTDIR}
-mkdir -p "$OUTDIR"
+mkdir -p "$OUTDIR" "$OUTDIR/logs"
 pick_python() {
     for py in "${PYTHON:-}" "$ROOT/.venv/bin/python" "$ROOT/xx-wm/.venv/bin/python"; do
         [ -n "$py" ] && [ -x "$py" ] && { echo "$py"; return; }
@@ -16,100 +23,96 @@ pick_python() {
     echo python3
 }
 PY=$(pick_python)
-sweep_stale() {
-    "$PY" - <<'EOF'
-import os, socket
-runtime = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
-try:
-    names = os.listdir(runtime)
-except OSError:
-    names = []
-for name in names:
-    if not (name.startswith("broadway") and name.endswith(".socket")):
-        continue
-    path = os.path.join(runtime, name)
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        probe.connect(path)
-    except OSError:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-    finally:
-        probe.close()
-EOF
-}
-THEMES="amoled paper forest aura"
-SCREENS="share history favorites settings receive sending"
+THEMES=${THEMES-"amoled paper forest"}
+SIZES=${SIZES-"450x1000 360x800"}
+# first / history-empty / settings-empty run on an unseeded HOME (first
+# launch: no files chosen, no peers, nothing received, no favorites).
+SCREENS=${SCREENS-"share first sending sent error pin history history-empty settings settings-empty receive"}
+FIT320=${FIT320-$SCREENS}
+SCALE15=${SCALE15-$SCREENS}
 WORK=$(mktemp -d)
-echo "snap_all: work $WORK" >&2
+trap 'rm -rf "$WORK"' EXIT INT TERM
 failed=""
-for theme in $THEMES; do
-    HOME_DIR="$WORK/home-$theme"
-    "$PY" "$ROOT/xx-share/tools/demo_seed.py" "$HOME_DIR" --theme "$theme" \
-        || { echo "snap_all: seed failed for $theme"; exit 1; }
-    for screen in $SCREENS; do
-        err="$WORK/snap-$theme-$screen.err"
-        snap_once() {
-            sweep_stale
-            HOME="$HOME_DIR" XDG_CONFIG_HOME="$HOME_DIR/.config" \
-                SCREEN="$screen" \
-                "$PY" "$ROOT/scripts/snap.py" --out "$WORK/$theme-$screen.png" \
-                --delay 1.5 --path "$ROOT/xx-share/src" --path "$ROOT/common" \
-                --script "$ROOT/xx-share/tools/snap_screen.py" \
-                -- "$ROOT/xx-share/src/main.py" \
-                --send "$HOME_DIR/demo-files/IMG_20240613_091522.jpg" \
-                       "$HOME_DIR/demo-files/concert-clip.mp4" \
-                2>"$err"
-            rc=$?
-            echo "snap_all: snap_once rc=$rc: $theme $screen" >&2
-            return $rc
-        }
+
+render_set() {
+    # $1=sheet name $2=theme $3=text-size scale $4=size $5=screens
+    sheet=$1 theme=$2 scale=$3 size=$4 screens=$5
+    for screen in $screens; do
+        SHOME="$WORK/home-$sheet-$screen"
+        rm -rf "$SHOME"
+        mkdir -p "$SHOME/.config/xx-wm"
+        set --
+        case "$screen" in
+            first | history-empty | settings-empty) ;;
+            *)
+                "$PY" "$ROOT/xx-share/tools/demo_seed.py" "$SHOME" >/dev/null \
+                    || { failed="$failed $sheet/$screen(seed)"; continue; }
+                set -- --send "$SHOME/demo-files/IMG_20240613_091522.jpg" \
+                    "$SHOME/demo-files/concert-clip.mp4"
+                ;;
+        esac
+        printf '{"theme": "%s", "text_size_scale": %s}\n' "$theme" "$scale" \
+            >"$SHOME/.config/xx-wm/config.json"
+        out="$WORK/$sheet-$screen.png"
+        log="$WORK/$sheet-$screen.log"
         ok=""
         attempt=0
-        while [ "$attempt" -lt 3 ] && [ -z "$ok" ]; do
+        while [ "$attempt" -lt 5 ] && [ -z "$ok" ]; do
             attempt=$((attempt + 1))
-            echo "snap_all: try $attempt: $theme $screen" >&2
-            # NOTE: snap.py can exit 0 with no window when the Broadway
-            # daemon is still starting (activation raises, app.run quits
-            # silently), so a zero-size/missing PNG retries like a failure.
-            if snap_once && [ -s "$WORK/$theme-$screen.png" ]; then
+            rm -f "$out"
+            HOME="$SHOME" XDG_CONFIG_HOME="$SHOME/.config" \
+                XDG_DATA_HOME="$SHOME/.local/share" SCREEN="$screen" \
+                "$PY" "$ROOT/scripts/snap.py" --out "$out" --size "$size" \
+                --delay 1.5 --path "$ROOT/xx-share/src" --path "$ROOT/common" \
+                --script "$ROOT/xx-share/tools/snap_screen.py" \
+                -- "$ROOT/xx-share/src/main.py" "$@" >"$log" 2>&1
+            # snap.py can exit 0 with no window while the Broadway daemon
+            # is still starting, so a missing PNG retries like a failure.
+            if [ -s "$out" ] && grep -q 'snap: wrote' "$log"; then
                 ok=1
             else
-                echo "snap_all: try $attempt rc=$?: $theme $screen" >&2
+                sleep 2
             fi
-            sleep 2
         done
-        if [ -z "$ok" ]; then
-            echo "snap_all: snap failed: $theme $screen"
-            tail -n 5 "$err"
-            failed="$failed $theme/$screen(rc)"
+        cp "$log" "$OUTDIR/logs/$sheet-$screen.log"
+        if grep -q 'snap: WARNING' "$log"; then
+            echo "FAIL: $sheet/$screen does not fit $size"
+            grep 'snap: WARNING' "$log"
+            failed="$failed $sheet/$screen(warning)"
+            [ -s "$out" ] && cp "$out" "$OUTDIR/failed-$sheet-$screen.png"
             continue
         fi
-        if grep -q 'snap: WARNING' "$err"; then
-            echo "snap_all: $theme $screen does not fit 360x720"
-            grep 'snap: WARNING' "$err"
-            failed="$failed $theme/$screen(size)"
+        if [ -z "$ok" ]; then
+            echo "FAIL: $sheet/$screen snap failed"
+            grep -E 'snap: |Traceback|Error' "$log" | tail -n 5
+            failed="$failed $sheet/$screen(snap)"
+            continue
         fi
-        if [ ! -s "$WORK/$theme-$screen.png" ]; then
-            echo "snap_all: missing output: $theme $screen"
-            tail -n 5 "$err"
-            failed="$failed $theme/$screen(missing)"
-        fi
+        echo "ok: $sheet/$screen"
     done
     args=""
-    for screen in $SCREENS; do
-        args="$args -label $screen $WORK/$theme-$screen.png"
+    for screen in $screens; do
+        [ -s "$WORK/$sheet-$screen.png" ] \
+            && args="$args -label $screen $WORK/$sheet-$screen.png"
     done
+    [ -n "$args" ] || return
     # shellcheck disable=SC2086
-    montage $args -tile 3x2 -geometry +4+4 -background black \
-        -fill white -pointsize 24 "$OUTDIR/sheet-$theme.png" \
-        || { echo "snap_all: montage failed for $theme"; exit 1; }
+    montage $args -tile 6x -geometry +4+4 -background black \
+        -fill white -pointsize 24 "$OUTDIR/sheet-$sheet.png" \
+        && echo "ok: sheet-$sheet" \
+        || failed="$failed sheet-$sheet(montage)"
+}
+
+for theme in $THEMES; do
+    for size in $SIZES; do
+        render_set "$theme-$size" "$theme" 1 "$size" "$SCREENS"
+    done
 done
+[ -n "$FIT320" ] && render_set fit320 amoled 1 320x720 "$FIT320"
+[ -n "$SCALE15" ] && render_set scale15 amoled 1.5 360x800 "$SCALE15"
+
 if [ -n "$failed" ]; then
-    echo "snap_all FAILED:$failed (work kept in $WORK)"
+    echo "snap_all FAILED:$failed"
     exit 1
 fi
-rm -rf "$WORK"
-echo "wrote $OUTDIR/sheet-{amoled,paper,forest,aura}.png"
+echo "ALL SHEETS OK in $OUTDIR"

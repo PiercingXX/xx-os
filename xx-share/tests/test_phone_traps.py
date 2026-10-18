@@ -44,8 +44,7 @@ def test_no_titlebar_chrome():
 
 def test_lists_use_xx_ui_builders():
     for token in ("widgets.page_header", "widgets.list_row",
-                  "widgets.bottom_tabs", "widgets.setting_row",
-                  "widgets.empty_state"):
+                  "widgets.bottom_tabs", "widgets.setting_row"):
         assert token in UI, token
     for gone in ("Gtk.ListView", "Gtk.SignalListItemFactory",
                  "Gtk.SingleSelection", "Gtk.StringList", "Gtk.ListBox"):
@@ -60,10 +59,22 @@ def test_file_picker_uses_modern_dialog():
 
 
 def test_share_window_scope_present():
-    for token in ("Cancel", "cancel_send", "Clear history", "history_box",
-                  "Favorite selected", "Auto-accept", "Auto-off",
-                  "Receiver PIN", "TransferDone", "IncomingRequest"):
+    for token in ("Cancel", "cancel_send", "_on_clear_history",
+                  "history_box", "_toggle_favorite", "Auto-accept",
+                  "Keep visible", "Receiver PIN", "PIN_NEEDED",
+                  "TransferDone", "IncomingRequest"):
         assert token in UI, token
+
+
+def test_minimal_no_clutter():
+    # An empty list shows nothing; one entry point per action (no
+    # overflow menu duplicating Clear/Settings); no PIN line in the
+    # receive prompt (the PIN is checked before the prompt appears).
+    for gone in ("widgets.empty_state", "overflow_cb", "Gtk.Popover",
+                 "Nothing received", "No favorites", "No devices",
+                 "No files", "Your PIN", "files chosen", "Empty = no PIN",
+                 "compact_header"):
+        assert gone not in UI, gone
 
 
 def test_service_wires_bus_signals_and_history():
