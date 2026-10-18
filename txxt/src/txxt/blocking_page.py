@@ -29,6 +29,7 @@ from gi.repository import Adw, GLib, Gtk  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 from txxt import blocking as blocking_mod  # noqa: E402
 from txxt.conversations import tap_to_focus  # noqa: E402
+from txxt.list_presenter import count_label  # noqa: E402
 
 DIALER_BLOCK_ENV = 'TXXT_DIALER_BLOCKS'
 DIALER_BLOCK_NAMES = ('blocked.json', 'blocklist.json')
@@ -352,7 +353,7 @@ class BlockingPage(Adw.NavigationPage):
 
     def _announce_import(self, imported: int) -> bool:
         self._import_label.set_text(
-            f'Imported {imported} numbers.' if imported
+            f"Imported {count_label(imported, 'number')}." if imported
             else 'No dialer block list found.',
         )
         return False

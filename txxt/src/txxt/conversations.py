@@ -444,9 +444,7 @@ class ConversationListPage(Adw.NavigationPage):
         total = len(self._views)
         try:
             self._caption.set_text(
-                f"{total} thread".upper() if total == 1
-                else f"{total} threads".upper(),
-            )
+                presenter.count_label(total, "thread").upper())
         except Exception:
             pass
         searching = bool((query or "").strip()) or self._filter != "all"

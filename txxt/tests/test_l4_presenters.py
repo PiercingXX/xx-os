@@ -13,6 +13,7 @@ from txxt.list_presenter import (
     HELD_AFTER_MILLIS,
     UNTITLED,
     Link,
+    count_label,
     filter_message_rows,
     filter_rows,
     find_links,
@@ -341,3 +342,10 @@ def test_url_at_and_normalize():
     assert url_at([], 3) is None
     assert normalize_link("https://example.com") == "https://example.com"
     assert normalize_link("example.com") == "https://example.com"
+
+
+def test_count_label_pluralises_by_count():
+    assert count_label(1, "number") == "1 number"
+    assert count_label(2, "term") == "2 terms"
+    assert count_label(0, "thread") == "0 threads"
+    assert count_label(3, "match", "matches") == "3 matches"

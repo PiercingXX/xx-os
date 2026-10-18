@@ -151,7 +151,7 @@ def _child_main():
         pump_until(lambda: window._navigation.get_visible_page() is page,
                    message="l6 smoke: settings page never shown")
         page.refresh_subtitles()
-        assert page.blocking_subtitle() == "1 numbers, 2 terms"
+        assert page.blocking_subtitle() == "1 number, 2 terms"
         assert page.quarantine_subtitle() == "1 held"
         assert not hasattr(page, "_auto_sync_row"), \
             "appearance lives in the shell theme, not in TxxT settings"

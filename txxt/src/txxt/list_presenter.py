@@ -35,6 +35,11 @@ HELD_AFTER_MILLIS = 15 * 60 * 1000
 THREAD_URI_SCHEME = "io.piercingxx.TxxT"
 
 
+def count_label(count: int, word: str, plural: str | None = None) -> str:
+    """``1 number`` / ``2 numbers`` / ``0 numbers``: one place for counts."""
+    return f"{count} {word if count == 1 else (plural or word + 's')}"
+
+
 @dataclass
 class ConversationRowView:
     conversation_id: int

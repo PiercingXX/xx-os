@@ -27,6 +27,7 @@ from xx_ui import widgets  # noqa: E402
 import txxt  # noqa: E402
 from txxt import settings as settings_mod  # noqa: E402
 from txxt.conversations import tap_to_focus  # noqa: E402
+from txxt.list_presenter import count_label  # noqa: E402
 
 LOCK_PRIVACY_OPTIONS = (
     ('sender-only', 'Sender only'),
@@ -148,7 +149,8 @@ class SettingsPage(Adw.NavigationPage):
         except Exception:
             senders, keywords, phrases = [], [], []
         self._blocking_sub = (
-            f'{len(senders)} numbers, {len(keywords) + len(phrases)} terms'
+            f"{count_label(len(senders), 'number')}, "
+            f"{count_label(len(keywords) + len(phrases), 'term')}"
         )
         try:
             held = sum(
