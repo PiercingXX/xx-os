@@ -903,11 +903,13 @@ def licenses_page(navigation, app_name: str,
 
 
 def about_content(app_name: str, version: str, entries: list,
-                  on_licenses) -> Gtk.Box:
+                  on_licenses, section: bool = True) -> Gtk.Box:
     """An 'About' section body: the app name and version, the app
-    license line, and an 'Open-source licenses' row."""
+    license line, and an 'Open-source licenses' row. ``section=False``
+    drops the 'About' label, for a page whose header already says it."""
     root = Gtk.Box.new(Gtk.Orientation.VERTICAL, 8)
-    root.append(section_label('About'))
+    if section:
+        root.append(section_label('About'))
     root.append(setting_row(app_name, 'Version %s' % version))
     spdx = entries[0].spdx if entries else ''
     root.append(setting_row('License', spdx))

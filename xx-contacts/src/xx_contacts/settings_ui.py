@@ -123,11 +123,13 @@ class AboutPage(Adw.NavigationPage):
         self._navigation = navigation
         entries = widgets.standard_license_entries(self.APP_NAME)
         version = getattr(xx_contacts, "__version__", "?")
+        # widgets.page() gives the body its gutter; the header already
+        # says About, so the block carries no second "About" label.
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        body.add_css_class("xx-page-body")
         body.set_valign(Gtk.Align.START)
         body.append(widgets.about_content(
-            self.APP_NAME, version, entries, self._on_licenses))
+            self.APP_NAME, version, entries, self._on_licenses,
+            section=False))
         header = widgets.compact_header(self._on_back, "About")
         self.set_child(widgets.page(header, body))
         self.set_title("About")
