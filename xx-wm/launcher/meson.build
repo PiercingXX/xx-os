@@ -132,6 +132,7 @@ install_data(
     'src/toplevel_manager.py',
     'src/update_checker.py',
     'src/usage_stats.py',
+    'src/xx_apps_update.py',
     'src/wayland_bindings.py',
     'src/weather.py',
     'src/window.py',
@@ -285,6 +286,16 @@ configure_file(
   output: 'xx-wm-ipc',
   configuration: launcher_conf,
   install: true,
+  install_dir: get_option('bindir'),
+  install_mode: 'rwxr-xr-x',
+)
+
+# Per-app updater (Settings › System update, owner's update-system.sh hook)
+# → $prefix/bin/xx-apps-update. The module also ships with the shell sources
+# above so Settings can import it; the bindir copy is the same file.
+install_data(
+  'src/xx_apps_update.py',
+  rename: 'xx-apps-update',
   install_dir: get_option('bindir'),
   install_mode: 'rwxr-xr-x',
 )

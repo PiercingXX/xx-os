@@ -1,0 +1,161 @@
+{
+  "common": {
+    "deps": [],
+    "path": "common",
+    "version": "0.1.0"
+  },
+  "txxt": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "txxt",
+    "version": "0.1.0"
+  },
+  "xx-audiobook": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-audiobook",
+    "version": "0.1.0"
+  },
+  "xx-auth": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-auth",
+    "version": "0.1.0"
+  },
+  "xx-auto": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-auto",
+    "version": "0.1.0"
+  },
+  "xx-calculator": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-calculator",
+    "version": "0.1.0"
+  },
+  "xx-calendar": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-calendar",
+    "version": "0.1.0"
+  },
+  "xx-captions": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-captions",
+    "version": "0.1.0"
+  },
+  "xx-clock": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-clock",
+    "version": "0.1.0"
+  },
+  "xx-contacts": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-contacts",
+    "version": "0.1.0"
+  },
+  "xx-dialer": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-dialer",
+    "version": "0.1.0"
+  },
+  "xx-email": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-email",
+    "version": "0.1.0"
+  },
+  "xx-files": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-files",
+    "version": "0.1.0"
+  },
+  "xx-find": {
+    "deps": [],
+    "path": "xx-find",
+    "version": "0.1.0"
+  },
+  "xx-keyboard": {
+    "deps": [],
+    "path": "xx-keyboard",
+    "version": "0.58.0"
+  },
+  "xx-note": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-note",
+    "version": "0.1.0"
+  },
+  "xx-radio": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-radio",
+    "version": "0.1.0"
+  },
+  "xx-share": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-share",
+    "version": "0.1.0"
+  },
+  "xx-vitals": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-vitals",
+    "version": "0.1.0"
+  },
+  "xx-weather": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-weather",
+    "version": "0.1.0"
+  },
+  "xx-wm": {
+    "common": "0.1.0",
+    "deps": [
+      "common"
+    ],
+    "path": "xx-wm",
+    "version": "0.1.1"
+  }
+}

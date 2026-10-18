@@ -1,16 +1,23 @@
 """Software-update flow helpers: reboot notice, update log, dots row.
 
-Pure file reads only (no subprocess, no D-Bus): the blocking package
-commands live in system_settings (worker threads) and the privileged
-apk work in the root helper. ``home``/``sysfs`` paths are injectable so
-tests never touch the real machine.
+File reads and the ``xx-apps-update --check`` probe only (no D-Bus): the
+blocking package commands live in system_settings (worker threads) and the
+privileged apk work in the root helper. ``home``/``sysfs`` paths are
+injectable so tests never touch the real machine. ``run_xx_apps_check``
+shells out and must run on a worker thread, never the main loop.
 """
 from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 
 LOG_TAIL_LINES = 15
+XX_APPS_BINARY = 'xx-apps-update'
+XX_APPS_CHECK_TIMEOUT = 60
+XX_APPS_APPLY_TIMEOUT = 1800
+XX_APPS_UP_TO_DATE = 'All XX apps are up to date.'
 
 OWNER_SCRIPT_REL = os.path.join(
     '.scripts', 'PiercingXX-Settings-Menu', 'update-system.sh')
@@ -172,3 +179,67 @@ def format_count(repo: int | None, flatpak: int | None) -> str:
     if flatpak:
         bits.append('%d Flatpak%s' % (flatpak, 's' if flatpak != 1 else ''))
     return '%d update%s available (%s).' % (total, plural, ', '.join(bits))
+
+
+def xx_apps_binary(which=None) -> str | None:
+    """Resolved ``xx-apps-update`` binary, or None when not installed."""
+    probe = which or shutil.which
+    try:
+        found = probe(XX_APPS_BINARY)
+    except Exception:
+        return None
+    return found or None
+
+
+def xx_apply_command(which=None) -> list[str] | None:
+    """``xx-apps-update --apply`` argv, or None when not installed."""
+    binary = xx_apps_binary(which=which)
+    return [binary, '--apply'] if binary else None
+
+
+def run_xx_apps_check(which=None, run=None,
+                      timeout: int = XX_APPS_CHECK_TIMEOUT,
+                      ) -> tuple[int | None, str]:
+    """(returncode, output) of ``xx-apps-update --check``.
+
+    Shells out with a timeout: call only on a worker thread. (None, '')
+    when the updater is not installed or the probe itself fails — callers
+    report that as unknown, never as up to date.
+    """
+    binary = xx_apps_binary(which=which)
+    if binary is None:
+        return None, ''
+    run_fn = run or subprocess.run
+    try:
+        result = run_fn([binary, '--check'], capture_output=True, text=True,
+                        timeout=timeout, check=False)
+    except Exception:
+        return None, ''
+    return result.returncode, result.stdout or ''
+
+
+def parse_xx_check_output(text: str) -> tuple[int, list[str]]:
+    """(count, app names) from ``xx-apps-update --check`` output."""
+    apps: list[str] = []
+    for line in (text or '').splitlines():
+        line = line.strip()
+        if not line or line == XX_APPS_UP_TO_DATE:
+            continue
+        head = line.split(' ', 1)[0]
+        if head and '/' not in head and '\\' not in head:
+            apps.append(head)
+    return len(apps), apps
+
+
+def xx_status_title(returncode: int | None, output: str) -> tuple[str, str]:
+    """(title, subtitle) for the Settings XX-apps row: one line plus the
+    app names underneath. Unknown stays unknown, never 'up to date'."""
+    if returncode == 0:
+        return 'XX apps: up to date', ''
+    if returncode == 10:
+        count, apps = parse_xx_check_output(output)
+        if count == 0:
+            return 'XX apps: status unknown', ''
+        plural = 's' if count != 1 else ''
+        return ('XX apps: %d update%s' % (count, plural), ', '.join(apps))
+    return 'XX apps: status unknown', ''

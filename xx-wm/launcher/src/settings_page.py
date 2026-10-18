@@ -242,6 +242,7 @@ class SystemSection(_Section):
     def __init__(self) -> None:
         self._status = None
         self._row = None
+        self._xx_row = None
         self._reboot = None
         self._log = None
         self._card = None
@@ -254,6 +255,7 @@ class SystemSection(_Section):
             lambda _r: win._on_check_updates_clicked(None),
             subtitle='Not checked yet.')
         self._status = self._row.subtitle_label
+        self._xx_row = ui.row('XX apps', 'Not checked yet.')
         self._reboot = ui.row('Restart to finish', '')
         self._log = ui.nav_row('Last update log', '',
                                lambda r: self._show_log(win, r))
@@ -277,7 +279,7 @@ class SystemSection(_Section):
             found = settings_updates.latest_update_log()
         except Exception:
             pass
-        rows = [self._row]
+        rows = [self._row, self._xx_row]
         if reason:
             ui.set_subtitle(self._reboot, reason)
             rows.append(self._reboot)
@@ -2144,18 +2146,49 @@ class SettingsPage:
                 flatpak = system_settings.flatpak_updates_available()
             except Exception:
                 flatpak = None
-            return repo, flatpak
+            try:
+                import settings_updates
+                xx = settings_updates.run_xx_apps_check()
+            except Exception:
+                xx = (None, '')
+            return repo, flatpak, xx
 
         _run_bg(_work, lambda result: self._on_counted(result, refresh_err))
+
+    def _on_xx_checked(self, xx) -> None:
+        """Paint the XX-apps row from a ``run_xx_apps_check`` result."""
+        import settings_updates
+
+        try:
+            returncode, output = xx
+        except Exception:
+            returncode, output = None, ''
+        title, subtitle = settings_updates.xx_status_title(returncode, output)
+        try:
+            import settings_ui as ui
+
+            section = self._sections.get('system')
+            row = getattr(section, '_xx_row', None)
+            if row is not None:
+                ui.set_title(row, title)
+                ui.set_subtitle(row, subtitle)
+        except Exception:
+            pass
 
     def _on_counted(self, result, refresh_err=None) -> None:
         import settings_updates
 
         win = self._win
         try:
-            repo, flatpak = result
+            repo, flatpak, xx = result
         except Exception:
-            repo, flatpak = None, None
+            try:
+                repo, flatpak = result
+            except Exception:
+                repo, flatpak = None, None
+            xx = None
+        if xx is not None:
+            self._on_xx_checked(xx)
         text = settings_updates.format_count(repo, flatpak)
         if refresh_err is not None and (repo is None and flatpak is None):
             text = 'Index refresh failed: %s' % refresh_err
@@ -2239,10 +2272,12 @@ class SettingsPage:
 
     def _execute_owner_update(self, script: str) -> None:
         """Run the owner script in a terminal when one is installed,
-        else headless with output streaming to the update log."""
+        else headless with output streaming to the update log. The
+        terminal command already chains ``xx-apps-update --apply`` after
+        the owner script (see update_checker.plan_update); the headless
+        run chains it in _on_owner_done."""
         import update_checker
 
-        win = self._win
         kind, detail, argv = update_checker.plan_update(script)
         if kind == 'terminal':
             import subprocess
@@ -2255,7 +2290,7 @@ class SettingsPage:
             self._update_status_text('Update running in terminal.')
             return
         if kind == 'missing':
-            win._on_update_clicked(None)
+            self._execute_xx_update_alone()
             return
         import settings_updates
 
@@ -2266,6 +2301,66 @@ class SettingsPage:
         update_checker.run_owner_headless(
             script, self._on_owner_line,
             lambda rc: self._on_owner_done(rc, log_path))
+
+    def _execute_xx_update_alone(self) -> None:
+        """No owner script: the XX-app update runs alone, in a terminal
+        when one is installed, else headless into the update log."""
+        import settings_updates
+        import update_checker
+
+        if settings_updates.xx_apply_command() is None:
+            win = self._win
+            win._on_update_clicked(None)
+            return
+        found = update_checker.update_terminal_argv('xx-apps-update --apply')
+        if found is not None:
+            import subprocess
+
+            try:
+                subprocess.Popen(found[1], close_fds=True)
+            except OSError:
+                self._update_status_text('Could not open a terminal.')
+                return
+            self._update_status_text('Updating XX apps in terminal.')
+            return
+        log_path = settings_updates.new_log_path()
+        self._update_status_text('Updating XX apps…')
+        _run_bg(lambda: self._run_xx_apply(log_path),
+                lambda res: self._on_xx_apply_done(res, log_path))
+
+    def _run_xx_apply(self, log_path: str) -> tuple[int, str]:
+        """Worker-thread body: ``xx-apps-update --apply`` into the log."""
+        import settings_updates
+        import subprocess
+
+        argv = settings_updates.xx_apply_command() or []
+        if not argv:
+            return -1, 'xx-apps-update is not installed.'
+        try:
+            result = subprocess.run(
+                argv, capture_output=True, text=True, check=False,
+                timeout=settings_updates.XX_APPS_APPLY_TIMEOUT)
+        except Exception as error:
+            return -1, 'XX app update failed to start: %s' % error
+        output = ((result.stdout or '') + (result.stderr or '')).strip()
+        settings_updates.append_log(log_path, output or '(no output)')
+        return result.returncode, output
+
+    def _on_xx_apply_done(self, result, log_path: str) -> None:
+        import settings_updates
+
+        try:
+            returncode, _output = result
+        except Exception:
+            returncode = -1
+        if returncode == 0:
+            self._update_status_text(
+                'XX apps updated. Log: %s' % log_path)
+        else:
+            self._update_status_text(
+                'XX app update failed — see the update log.')
+        _run_bg(settings_updates.run_xx_apps_check, self._on_xx_checked)
+        self._refresh_updates_section()
 
     def _on_owner_line(self, line: str) -> None:
         import settings_updates
@@ -2278,7 +2373,6 @@ class SettingsPage:
     def _on_owner_done(self, returncode: int, log_path: str) -> None:
         import settings_updates
 
-        win = self._win
         try:
             with open(log_path, encoding='utf-8', errors='replace') as handle:
                 text = handle.read()
@@ -2287,6 +2381,12 @@ class SettingsPage:
         summary = settings_updates.parse_owner_summary(text)
         reason = settings_updates.reboot_required()
         if returncode == 0 and summary['finished']:
+            if settings_updates.xx_apply_command() is not None:
+                self._update_status_text('System done — updating XX apps…')
+                _run_bg(lambda: self._run_xx_apply(log_path),
+                        lambda res: self._on_chained_xx_done(
+                            res, log_path, summary, reason))
+                return
             body = 'System and Flatpak updates finished.'
             if summary['reboot_reasons']:
                 body += ' %s' % '; '.join(summary['reboot_reasons'])
@@ -2294,6 +2394,7 @@ class SettingsPage:
                 body += ' %s' % reason
             body += ' Log: %s' % (summary['log_path'] or log_path)
             try:
+                win = self._win
                 win._ensure_shade().add_notification(
                     _UPDATE_RESULT_ID, 'System', 'System update finished',
                     body)
@@ -2307,6 +2408,38 @@ class SettingsPage:
             detail = '%d step(s) failed.' % summary['failures'] \
                 if summary['failures'] else 'see the update log.'
             self._update_status_text('System update failed: %s' % detail)
+        self._refresh_updates_section()
+
+    def _announce_owner_finished(self, summary, reason, log_path) -> None:
+        win = self._win
+        body = 'System and Flatpak updates finished.'
+        if summary['reboot_reasons']:
+            body += ' %s' % '; '.join(summary['reboot_reasons'])
+        elif reason:
+            body += ' %s' % reason
+        body += ' Log: %s' % (summary['log_path'] or log_path)
+        try:
+            win._ensure_shade().add_notification(
+                _UPDATE_RESULT_ID, 'System', 'System update finished',
+                body)
+        except Exception:
+            pass
+        self._update_status_text('System update finished.')
+
+    def _on_chained_xx_done(self, result, log_path, summary, reason) -> None:
+        """Headless owner run finished: report the combined result."""
+        import settings_updates
+
+        try:
+            returncode, _output = result
+        except Exception:
+            returncode = -1
+        if returncode == 0:
+            self._announce_owner_finished(summary, reason, log_path)
+        else:
+            self._update_status_text(
+                'System done, XX app update failed — see the update log.')
+        _run_bg(settings_updates.run_xx_apps_check, self._on_xx_checked)
         self._refresh_updates_section()
 
     def _confirm_native_update(self, anchor) -> None:

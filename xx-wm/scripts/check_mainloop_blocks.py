@@ -135,6 +135,8 @@ ALLOW = {
         'slider expand batch worker (_read_slider_values).',
     ('settings_page.py', '_gsm_connection_name'):
         'APN apply worker (_apply_apn _work).',
+    ('settings_page.py', '_run_xx_apply'):
+        'XX-app apply worker (_run_bg); timeout-bounded, never the main loop.',
     ('settings_storage.py', '_run'):
         'sole subprocess chokepoint; invoked via _run_bg workers only.',
     ('settings_device.py', '_run'):
@@ -210,6 +212,8 @@ ALLOW = {
         'xxdb service process, no GTK main loop.',
     ('xxdb_daemon.py', '_cmd_install'):
         'xxdb service process, no GTK main loop.',
+    ('xx_apps_update.py', '_default_run'):
+        'xx-apps-update bindir CLI, no GTK main loop; runner injectable.',
 }
 
 _POPENISH = {'Popen', '_spawn', '_popen', 'popen_factory'}

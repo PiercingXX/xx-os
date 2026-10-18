@@ -84,6 +84,22 @@ def update_terminal_argv(cmd: str, which=None) -> tuple[str, list[str]] | None:
     return None
 
 
+def xx_apply_suffix(which=None) -> str:
+    """' && xx-apps-update --apply' when the updater is installed, else ''.
+
+    One tap updates everything: the owner script first, then the XX apps
+    in the same terminal session. ``&&`` (not ``;``) so an aborted owner
+    run does not roll into app installs.
+    """
+    probe = which or shutil.which
+    try:
+        if probe('xx-apps-update'):
+            return ' && xx-apps-update --apply'
+    except Exception:
+        pass
+    return ''
+
+
 def plan_update(script_path: str, which=None) -> tuple[str, str, list[str] | None]:
     """How Settings runs the owner script: 'terminal' with the argv to
     open, 'headless' with the argv to run detached (stdin closed, so the
@@ -92,7 +108,8 @@ def plan_update(script_path: str, which=None) -> tuple[str, str, list[str] | Non
     path = Path(script_path).expanduser()
     if not path.exists():
         return 'missing', f'Update script not found: {path}', None
-    found = update_terminal_argv(shlex.quote(str(path)), which=which)
+    cmd = shlex.quote(str(path)) + xx_apply_suffix(which=which)
+    found = update_terminal_argv(cmd, which=which)
     if found is not None:
         binary, argv = found
         return 'terminal', binary, argv

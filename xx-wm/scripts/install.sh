@@ -13,11 +13,13 @@ UNATTENDED=0
 DEVICE_ARG=""
 AUTOLOGIN=0
 NO_FONTS=0
+REFRESH_ONLY=0
 
 parse_args() {
     while [ $# -gt 0 ]; do
         case $1 in
             --unattended) UNATTENDED=1 ;;
+            --refresh-only) REFRESH_ONLY=1 ;;
             --device)
                 DEVICE_ARG=${2:-}
                 [ -n "$DEVICE_ARG" ] || {
@@ -44,13 +46,19 @@ parse_args() {
 parse_args "$@" || exit 1
 
 # --- privilege helper (postmarketOS ships doas) -----------------------------
-if command -v doas >/dev/null 2>&1; then
-    SUDO=doas
-elif command -v sudo >/dev/null 2>&1; then
-    SUDO=sudo
+# --refresh-only (xx-apps-update's post-install refresh) needs neither root
+# nor the network: it only asks resident apps to restart on the session bus.
+if [ "${REFRESH_ONLY:-0}" != 1 ]; then
+    if command -v doas >/dev/null 2>&1; then
+        SUDO=doas
+    elif command -v sudo >/dev/null 2>&1; then
+        SUDO=sudo
+    else
+        echo "Need doas or sudo." >&2
+        exit 1
+    fi
 else
-    echo "Need doas or sudo." >&2
-    exit 1
+    SUDO=true
 fi
 
 # --- network check up front -------------------------------------------------
@@ -60,7 +68,7 @@ net_ok() {
     fi
     ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1
 }
-if ! net_ok; then
+if [ "${REFRESH_ONLY:-0}" != 1 ] && ! net_ok; then
     echo "Network connectivity is required to continue." >&2
     exit 1
 fi
@@ -89,7 +97,7 @@ pkg_install() {
 }
 
 # --- whiptail (TUI only; unattended never prompts) ---------------------------
-if [ "$UNATTENDED" != 1 ] && ! command -v whiptail >/dev/null 2>&1; then
+if [ "${REFRESH_ONLY:-0}" != 1 ] && [ "$UNATTENDED" != 1 ] && ! command -v whiptail >/dev/null 2>&1; then
     echo "Installing whiptail..."
     if [ "$PKG" = apk ]; then
         pkg_install newt
@@ -101,7 +109,7 @@ if [ "$UNATTENDED" != 1 ] && ! command -v whiptail >/dev/null 2>&1; then
 fi
 
 # --- cached sudo (doas has no timestamp cache; skip there) ------------------
-if [ "$SUDO" = sudo ]; then
+if [ "${REFRESH_ONLY:-0}" != 1 ] && [ "$SUDO" = sudo ]; then
     echo "Caching sudo credentials..."
     sudo -v
     ( while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null & )
@@ -286,7 +294,7 @@ install_xx_keyboard() {
         { meson setup build --prefix=/usr --reconfigure ||
           meson setup build --prefix=/usr; } &&
         $SUDO meson install -C build); then
-        :
+        record_installed "xx-keyboard" || true
     else
         echo "warn: xx-keyboard did not install; the session falls back to squeekboard when present" >&2
     fi
@@ -395,6 +403,91 @@ link_squeekboard_layouts() {
 # installs like the rest but runs nothing: its meson install never enables,
 # starts or autostarts the agent; it stays off until the owner enables and
 # pairs it in Settings. One app failing to build never blocks the shell.
+# --- installed app versions (app_updates) --------------------------------------
+# xx-apps-update --check compares this file against the published apps.json:
+# /var/lib/xx-apps/installed.json maps app -> {version, commit, common}.
+# XX_APPS_STATE_DIR overrides the directory (tests); XX_APPS_COMMIT overrides
+# the recorded commit (tarballs carry no git history). Best effort throughout:
+# recording never fails the install, and the write is atomic (tmp file plus
+# rename in the same directory).
+_xx_state_dir() {
+    if [ -n "${XX_APPS_STATE_DIR:-}" ]; then
+        printf '%s\n' "$XX_APPS_STATE_DIR"
+    else
+        printf '%s\n' /var/lib/xx-apps
+    fi
+}
+
+_xx_merge_installed() {
+    _m_app=$1 _m_current=$2 _m_stage=$3 _m_src=$4
+    _m_commit=${XX_APPS_COMMIT:-$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)}
+    XX_MERGE_APP="$_m_app" XX_MERGE_CURRENT="$_m_current" \
+    XX_MERGE_STAGE="$_m_stage" XX_MERGE_SRC="$_m_src" \
+    XX_MERGE_COMMIT="$_m_commit" python3 - <<'PYEOF' || return 1
+import json, os, re
+app = os.environ['XX_MERGE_APP']
+src = os.environ['XX_MERGE_SRC']
+def ver(path):
+    try:
+        with open(path, encoding='utf-8') as handle:
+            text = handle.read()
+    except OSError:
+        return None
+    match = re.search(r"version\s*:\s*['\"]([^'\"]+)['\"]", text)
+    return match.group(1) if match else None
+if app == 'xx-wm':
+    meson = os.path.join(src, 'launcher', 'meson.build')
+else:
+    meson = os.path.join(src, 'meson.build')
+common_meson = os.path.join(os.path.dirname(src), 'common', 'meson.build')
+if app == 'common':
+    common_meson = meson
+entry = {'version': ver(meson), 'commit': os.environ.get('XX_MERGE_COMMIT') or None,
+         'common': ver(common_meson)}
+current = os.environ['XX_MERGE_CURRENT']
+try:
+    with open(current, encoding='utf-8') as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        data = {}
+except (OSError, ValueError):
+    data = {}
+data[app] = entry
+stage = os.environ['XX_MERGE_STAGE']
+with open(stage, 'w', encoding='utf-8') as handle:
+    json.dump(data, handle, indent=2, sort_keys=True)
+    handle.write('\n')
+PYEOF
+}
+
+record_installed() {
+    _r_app=${1:-}
+    [ -n "$_r_app" ] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    _r_dir=$(_xx_state_dir)
+    _r_src=$REPO_DIR/../$_r_app
+    [ "$_r_app" = "xx-wm" ] && _r_src=$REPO_DIR
+    if (mkdir -p "$_r_dir" 2>/dev/null) && [ -w "$_r_dir" ]; then
+        _r_stage=$_r_dir/.installed.json.tmp.$$
+        if _xx_merge_installed "$_r_app" "$_r_dir/installed.json" \
+                "$_r_stage" "$_r_src"; then
+            mv -f "$_r_stage" "$_r_dir/installed.json" 2>/dev/null || \
+                rm -f "$_r_stage"
+        else
+            rm -f "$_r_stage"
+        fi
+    else
+        _r_stage=$(mktemp "${TMPDIR:-/tmp}/xx-apps-installed.XXXXXX") || return 0
+        if _xx_merge_installed "$_r_app" "$_r_dir/installed.json" \
+                "$_r_stage" "$_r_src"; then
+            $SUDO sh -c 'mkdir -p "$0" && cat > "$0/installed.json.tmp" && mv "$0/installed.json.tmp" "$0/installed.json"' \
+                "$_r_dir" < "$_r_stage" 2>/dev/null || true
+        fi
+        rm -f "$_r_stage"
+    fi
+    return 0
+}
+
 XX_APPS="xx-contacts xx-dialer txxt xx-calendar xx-calculator xx-email xx-vitals xx-share xx-captions xx-auto xx-radio xx-audiobook xx-note xx-weather xx-files xx-auth xx-clock xx-find"
 
 install_apps() {
@@ -404,7 +497,7 @@ install_apps() {
             { meson setup build --prefix=/usr --reconfigure ||
               meson setup build --prefix=/usr; } &&
             $SUDO meson install -C build); then
-            :
+            record_installed "$app" || true
         else
             echo "warn: $app did not install; the shell continues without it" >&2
         fi
@@ -416,10 +509,12 @@ build_install() {
     cd "$REPO_DIR/../common" || return 1
     meson setup build --prefix=/usr --reconfigure || meson setup build --prefix=/usr || return 1
     $SUDO meson install -C build || return 1
+    record_installed "common" || true
     echo "Building XX-WM..."
     cd "$REPO_DIR/launcher" || return 1
     meson setup build --prefix=/usr --reconfigure || meson setup build --prefix=/usr || return 1
     $SUDO meson install -C build || return 1
+    record_installed "xx-wm" || true
     install_apps
     install_xx_keyboard_deps
     install_xx_keyboard
@@ -1115,6 +1210,11 @@ menu() {
     whiptail --backtitle "GitHub.com/PiercingXX" --title "XX-WM" \
         --menu "Run options in order:" 0 0 0 "$@" 3>&1 1>&2 2>&3
 }
+
+if [ "${REFRESH_ONLY:-0}" = 1 ]; then
+    refresh_running_apps
+    exit $?
+fi
 
 if [ "$UNATTENDED" = 1 ]; then
     do_unattended
