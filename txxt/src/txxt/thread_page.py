@@ -516,7 +516,8 @@ class ThreadPage(Adw.NavigationPage):
         message.append(outgoing)
         photo = Gtk.Picture()
         photo.set_can_shrink(True)
-        photo.set_size_request(288, 160)
+        # Height only: a fixed 288 px width outgrew a 320 px screen.
+        photo.set_size_request(-1, 160)
         message.append(photo)
         photo_button = widgets.outline_button("Load photo")
         _widen(photo_button, 12)

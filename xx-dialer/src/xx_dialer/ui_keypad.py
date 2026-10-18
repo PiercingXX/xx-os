@@ -123,10 +123,24 @@ class KeypadView:
         self._number.add_controller(paste)
         self._root.append(self._number)
 
+        # The match card and the other matches share one area that gives
+        # up height first (it scrolls) when large text leaves the keys,
+        # the hero and the call row no room; at its natural size it
+        # never scrolls.
+        match_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                             spacing=2)
+        area_scroll = Gtk.ScrolledWindow()
+        area_scroll.set_policy(Gtk.PolicyType.NEVER,
+                               Gtk.PolicyType.AUTOMATIC)
+        area_scroll.set_propagate_natural_height(True)
+        area_scroll.set_child(match_area)
+        self._root.append(area_scroll)
+        self._match_area = area_scroll
+
         self._match_card = widgets.card()
         self._match_card.set_margin_start(20)
         self._match_card.set_margin_end(20)
-        self._root.append(self._match_card)
+        match_area.append(self._match_card)
 
         match_scroll = Gtk.ScrolledWindow()
         match_scroll.set_policy(Gtk.PolicyType.NEVER,
@@ -136,11 +150,12 @@ class KeypadView:
         self._matches = Gtk.ListBox()
         self._matches.set_selection_mode(Gtk.SelectionMode.NONE)
         match_scroll.set_child(self._matches)
-        self._root.append(match_scroll)
+        match_area.append(match_scroll)
         self._match_scroll = match_scroll
 
         grid = Gtk.Grid(column_spacing=8, row_spacing=4)
         grid.set_column_homogeneous(True)
+        grid.add_css_class("xx-dialer-keys")
         grid.set_hexpand(True)
         grid.set_margin_start(20)
         grid.set_margin_end(20)
@@ -316,14 +331,16 @@ class KeypadView:
 
     def refresh(self) -> None:
         region = self._region()
+        # The hero spans the page, so its ellipsis never misfires: a long
+        # number keeps its newest digits, and neither it nor the prompt
+        # can widen the window at 320 px or large text.
         if self.buffer.digits:
-            widgets.fit_text(
-                self._number,
-                xx_phone.as_you_type(
-                    self.buffer.digits,
-                    xx_phone.display_country(region)), 12)
+            self._number.set_text(xx_phone.as_you_type(
+                self.buffer.digits, xx_phone.display_country(region)))
+            self._number.set_ellipsize(Pango.EllipsizeMode.START)
         else:
-            widgets.fit_text(self._number, "Enter number", 12)
+            self._number.set_text("Enter number")
+            self._number.set_ellipsize(Pango.EllipsizeMode.END)
         self._call.set_sensitive(self.buffer.can_call)
         hits = self.match_rows()
         digit_count = sum(ch.isdigit() for ch in self.buffer.digits)
@@ -355,6 +372,8 @@ class KeypadView:
             button.connect("clicked", _picked)
             self._matches.append(button)
         self._match_scroll.set_visible(bool(hits[1:]))
+        self._match_area.set_visible(
+            self._match_card.get_visible() or bool(hits[1:]))
 
     def _render_card(self, top: tuple | None, saveable: str) -> None:
         while True:
@@ -391,11 +410,15 @@ class KeypadView:
         self._match_card.append(row)
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
                           spacing=8)
-        actions.set_halign(Gtk.Align.CENTER)
-        save = widgets.caps_button("+ Save")
+        # The buttons share the card's width: a letter-spaced caps label
+        # held to exactly its natural width can wrap its last word.
+        save = widgets.wrap_to_fit(widgets.caps_button("+\u00a0Save"))
+        save.set_hexpand(True)
         save.connect("clicked", self._on_save, number)
         actions.append(save)
-        text_btn = widgets.caps_button("Text this number")
+        text_btn = widgets.wrap_to_fit(
+            widgets.caps_button("Text this number"))
+        text_btn.set_hexpand(True)
         text_btn.connect("clicked", self._on_text, number)
         actions.append(text_btn)
         self._match_card.append(actions)

@@ -23,3 +23,9 @@
 .xx-dialer-group {
   min-height: 56px;
 }
+
+/* Keypad keys expand to fill their columns; the shared 72 px floor
+   made the three columns 332 px wide, past a 320 px screen. */
+.xx-dialer-keys .xx-key {
+  min-width: 48px;
+}

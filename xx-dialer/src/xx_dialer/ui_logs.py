@@ -95,11 +95,13 @@ class LogsView:
         self._file_list.set_selection_mode(Gtk.SelectionMode.NONE)
         self._body.append(self._file_list)
         brow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._refresh_button = widgets.outline_button("Refresh")
+        self._refresh_button = widgets.wrap_to_fit(
+            widgets.outline_button("Refresh"))
         self._refresh_button.set_hexpand(True)
         self._refresh_button.connect("clicked", self._on_refresh)
         brow.append(self._refresh_button)
-        self._clear_button = widgets.outline_button("Clear logs")
+        self._clear_button = widgets.wrap_to_fit(
+            widgets.outline_button("Clear logs"))
         self._clear_button.set_hexpand(True)
         self._clear_button.connect("clicked", self._on_clear)
         brow.append(self._clear_button)

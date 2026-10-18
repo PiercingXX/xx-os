@@ -85,6 +85,26 @@ def fit_text(text_label: Gtk.Label, text: str, chars: int) -> Gtk.Label:
     return _fit_exact(text_label, text, chars)
 
 
+def wrap_to_fit(widget: Gtk.Widget) -> Gtk.Widget:
+    """Let a short label (or a button's label) wrap between words, centered,
+    when its row is too narrow (320 px, large text), instead of widening
+    the window. It stays on one line wherever it fits; a single word
+    still never breaks. Give a letter-spaced (caps) label room to grow
+    (hexpand in a filling row): held to exactly its natural width, it
+    can wrap its last word. Returns ``widget``."""
+    text_label = widget.get_child() if isinstance(widget, Gtk.Button) \
+        else widget
+    if not isinstance(text_label, Gtk.Label):
+        return widget
+    # A generous cap: letter-spacing is not in the per-char width, so a
+    # tight cap would wrap a label that fits.
+    _fit_wrap(text_label, _STANDALONE_CHARS)
+    text_label.set_wrap_mode(Pango.WrapMode.WORD)
+    text_label.set_natural_wrap_mode(Gtk.NaturalWrapMode.NONE)
+    text_label.set_justify(Gtk.Justification.CENTER)
+    return widget
+
+
 def _fit_button_text(button: Gtk.Button,
                      chars: int = _BUTTON_CHARS) -> Gtk.Button:
     child = button.get_child()
@@ -313,7 +333,7 @@ def segmented(items: list) -> Gtk.Box:
             button.add_css_class('seg-mid')
         if selected:
             button.add_css_class('seg-selected')
-        _fit_button_text(button, _CHIP_CHARS)
+        wrap_to_fit(button)
         if callback is not None:
             button.connect('clicked', lambda _b, cb=callback: cb())
         button.set_hexpand(True)

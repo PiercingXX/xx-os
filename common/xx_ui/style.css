@@ -378,7 +378,7 @@ button.xx-danger-text {
 
 .xx-segmented button {
   min-height: 32px;
-  padding: 0 14px;
+  padding: 0 6px;
   border-radius: 0;
   font-size: ${chip_px}px;
   letter-spacing: 0.12em;

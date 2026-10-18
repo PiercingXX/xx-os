@@ -320,8 +320,8 @@ class RulesView:
     # ---- construction ---------------------------------------------------
 
     def _section(self, title: str) -> Gtk.Box:
+        # No gutter of its own: the page body already carries it.
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.add_css_class("xx-page-body")
         box.append(widgets.section_label(title))
         self._body.append(box)
         return box
@@ -329,10 +329,20 @@ class RulesView:
     def _build(self) -> None:
         self._body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                              spacing=4)
-        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                       spacing=8)
+        # The mode switch sits beside the title and drops under it when
+        # the line is too narrow (320 px, large text) rather than
+        # squeezing "Rules" to an ellipsis.
+        wrap_box = getattr(Adw, "WrapBox", None)
+        if wrap_box is not None:
+            head = wrap_box(child_spacing=8, line_spacing=4)
+            head.set_justify(Adw.JustifyMode.SPREAD)
+            head.set_justify_last_line(True)
+        else:
+            head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                           spacing=8)
         head.set_valign(Gtk.Align.CENTER)
         title = widgets.label("Rules", "xx-display")
+        title.set_ellipsize(Pango.EllipsizeMode.NONE)
         title.set_hexpand(True)
         title.set_valign(Gtk.Align.CENTER)
         head.append(title)
@@ -347,14 +357,15 @@ class RulesView:
         header.add_css_class("xx-page-body")
         header.append(head)
         self._mode_caption = widgets.caption("")
+        self._mode_caption.set_ellipsize(Pango.EllipsizeMode.NONE)
+        self._mode_caption.set_wrap(True)
+        self._mode_caption.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         header.append(self._mode_caption)
         self._offer_button = widgets.outline_button(
             "Start screening now", self._on_offer)
         header.append(self._offer_button)
 
         expect_card = widgets.card()
-        expect_card.set_margin_start(20)
-        expect_card.set_margin_end(20)
         expect_card.append(widgets.label(
             "Expecting a call", "xx-title"))
         expect_card.append(widgets.wrap_label(
@@ -364,7 +375,7 @@ class RulesView:
         self._dur_row.set_halign(Gtk.Align.CENTER)
         self._dur_buttons: list[Gtk.Button] = []
         for label, minutes in BYPASS_OPTIONS:
-            button = widgets.outline_button(label)
+            button = widgets.wrap_to_fit(widgets.outline_button(label))
             button.connect("clicked", self._on_expect, minutes)
             button.set_hexpand(True)
             self._dur_row.append(button)
@@ -442,10 +453,12 @@ class RulesView:
         self._pattern_list.set_selection_mode(Gtk.SelectionMode.NONE)
         pat.append(self._pattern_list)
         prow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._add_pattern = widgets.outline_button("Add pattern")
+        self._add_pattern = widgets.wrap_to_fit(
+            widgets.outline_button("Add pattern"))
         self._add_pattern.set_hexpand(True)
         self._add_pattern.connect("clicked", self._on_add_pattern)
-        self._neighbor_button = widgets.outline_button("")
+        self._neighbor_button = widgets.wrap_to_fit(
+            widgets.outline_button(""))
         self._neighbor_button.set_hexpand(True)
         self._neighbor_button.connect("clicked", self._on_neighbor)
         prow.append(self._add_pattern)
