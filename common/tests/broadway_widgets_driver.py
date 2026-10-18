@@ -10,8 +10,9 @@ import traceback
 import gi
 
 gi.require_version('Gtk', '4.0')
+gi.require_version('Graphene', '1.0')
 
-from gi.repository import GLib, Gtk, Pango
+from gi.repository import GLib, Graphene, Gtk, Pango
 
 import xx_ui
 from xx_ui import widgets
@@ -54,6 +55,7 @@ def _walk_images(widget):
 
 
 def main() -> None:
+    switches = []
     seen = []
     xx_ui.on_change(seen.append)
     first = xx_ui.apply()
@@ -157,6 +159,10 @@ def main() -> None:
         assert line.get_wrap(), 'setting rows wrap by default'
         assert line.get_ellipsize() == Pango.EllipsizeMode.NONE
     rows.append(setting)
+    target = widgets.make_switch(True)
+    assert isinstance(target, Gtk.Switch)
+    rows.append(widgets.setting_row('Gradual volume', 'Fades in', target))
+    switches.append(target)
     rows.append(widgets.end_call_button())
     rows.append(widgets.bubble('yeah. 9 at the laundromat', outgoing=True))
     rows.append(widgets.bubble('still on for tonight?', outgoing=False))
@@ -195,6 +201,30 @@ def main() -> None:
     loop = GLib.MainLoop()
 
     def _check():
+        for switch in switches:
+            ok, box = switch.compute_bounds(switch)
+            assert ok
+            # The target is 48 x 48 around the pill (46 x 26 with the
+            # theme's padding): 10 px above it still hits.
+            width, height = box.get_width(), box.get_height()
+            middle_x = box.get_x() + width / 2
+            middle_y = box.get_y() + height / 2
+            assert switch.contains(middle_x - 23.5, middle_y), \
+                'the switch target is not 48 px wide'
+            assert switch.contains(middle_x, middle_y - 23.5), \
+                'the switch target is not 48 px tall'
+            assert switch.contains(middle_x, box.get_y() - 10)
+            assert not switch.contains(middle_x, middle_y - 30), \
+                'the switch target grew past 48 px'
+            # GTK's hit test agrees: a tap 10 px above the pill, inside
+            # the setting row, lands on the switch.
+            row = switch.get_parent()
+            point = Graphene.Point()
+            point.init(middle_x, box.get_y() - 10)
+            ok, in_row = switch.compute_point(row, point)
+            assert ok and row.pick(in_row.x, in_row.y,
+                                   Gtk.PickFlags.DEFAULT) is switch, \
+                'a tap beside the pill missed the switch'
         if criticals:
             _fail('CRITICALS:\n' + '\n'.join(criticals))
         loop.quit()

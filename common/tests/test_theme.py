@@ -430,6 +430,3 @@ def test_shared_control_rules(isolated_home):
     assert f'border-color: {active.danger}' in error
     assert f'color: {active.danger}' in error
     assert 'font-size: 24px' in _rule(out, 'spinbutton')
-    switch = _rule(out, 'switch')
-    assert 'background-clip: padding-box' in switch
-    assert 'solid transparent' in switch

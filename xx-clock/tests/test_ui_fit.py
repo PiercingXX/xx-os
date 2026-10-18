@@ -1,7 +1,7 @@
 """Phone-fit rules the UI pass fixed: thumb-sized targets, taps on the
 alarm switch, and the copy that must stay whole."""
 import re
-from types import SimpleNamespace
+from pathlib import Path
 
 from xx_clock.ui import alarm_dialog, alarms_page, setup_page, shell, timers_page
 
@@ -21,26 +21,14 @@ def test_tap_targets_are_48_px():
 
 
 def test_switch_taps_stay_on_the_switch():
-    # The shared switch is a 48 px target (xx_ui style.css): a tap inside
-    # it is the switch's, anywhere else on the row opens the editor.
-    hit = SimpleNamespace(x=272, y=8, width=48, height=48)
-    assert alarms_page.tap_zone(300, 30, hit) == "switch"
-    assert alarms_page.tap_zone(274, 10, hit) == "switch"
-    assert alarms_page.tap_zone(260, 30, hit) == "row"
-    assert alarms_page.tap_zone(20, 30, hit) == "row"
-
-
-def test_shared_switch_is_a_48_px_target():
-    from pathlib import Path
-    css = (Path(__file__).resolve().parents[2] / "common" / "xx_ui"
-           / "style.css").read_text()
-    rule = re.search(r"\nswitch \{(.*?)\n\}", css, re.S).group(1)
-    border = re.search(r"border: (\d+)px solid transparent", rule)
-    side = re.search(r"border-left-width: (\d+)px", rule)
-    pad = re.search(r"padding: (\d+)px", rule)
-    # 20 px pill + 2 x (3 px padding + 11 px border) = 48 tall.
-    assert 20 + 2 * (int(pad.group(1)) + int(border.group(1))) >= 48
-    assert 40 + 2 * (int(pad.group(1)) + int(side.group(1))) >= 48
+    # The shared switch answers to a 48 px target (xx_ui make_switch): a
+    # tap inside it is the switch's, anywhere else on the row edits.
+    assert alarms_page.tap_zone(True) == "switch"
+    assert alarms_page.tap_zone(False) == "row"
+    src = (Path(__file__).resolve().parents[1] / "src" / "xx_clock" / "ui"
+           / "alarms_page.py").read_text()
+    assert "switch.contains(" in src
+    assert "SWITCH_SLOP" not in src
 
 
 def test_limits_line_is_unchanged():
@@ -57,7 +45,6 @@ def test_custom_minutes_range():
 def test_rejected_minutes_are_marked():
     # The error class must be visible, not a bare Adwaita class no theme
     # draws: the shared stylesheet outlines entry.xx-entry.error.
-    from pathlib import Path
     css = (Path(__file__).resolve().parents[2] / "common" / "xx_ui"
            / "style.css").read_text()
     assert "entry.xx-entry.error" in css

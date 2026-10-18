@@ -51,12 +51,13 @@ avatars circle, outgoing bubbles 4 px.
 ## Components
 
 `PageHeader` (display title + caption + chromeless text actions, no
-HeaderBar) and a compact 56 px back-chevron variant whose caps title
-wraps rather than ellipsizes; `ListRow` (40 px avatar or glyph, title +
-secondary, muted meta, pressed state); `Avatar` (32/40/64/88); `ChipBar`
+HeaderBar; `shrink_title` scales a long title down instead of cutting it)
+and a compact 56 px back-chevron variant whose caps title wraps rather
+than ellipsizes; `ListRow` (40 px avatar or glyph, title + secondary,
+muted meta, pressed state; both lines wrap, a dense mailbox keeps one); `Avatar` (32/40/64/88); `ChipBar`
 (32 px chips, inverted selected, scrollable); `Segmented`; `BottomTabs`
 (4 equal tabs, 2 px top indicator on active, top hairline, `background`
-fill); `SearchBar` (flat glyph + muted placeholder at list bottoms;
+fill; a label wider than its tab scales down); `SearchBar` (flat glyph + muted placeholder at list bottoms;
 filled `surface` box only where a box is needed); outline/primary/
 danger/text/caps buttons (44 px) and icon buttons (48 × 48 px targets),
 disabled at 40% opacity; `ButtonPair` (two buttons side by side, stacked
@@ -64,7 +65,8 @@ full width when a label would not fit); 56 px inverted `FAB`
 bottom-right above tabs; `Field` (caption over title value, muted
 placeholder); `SectionLabel`; borderless `Card`; `SettingRow` with
 hairlines (title and subtitle wrap, never ellipsize); inverted `Switch`
-(never Adwaita blue) with a 48 px tap area around the drawn pill;
+(never Adwaita blue) answering to a 48 px tap area around the drawn
+pill;
 one-sentence `EmptyState`; 72×64 `surface` keypad keys; `surface`
 dialogs/popovers/menus (48 px menu rows); entries with a 1 px `border`
 hairline, `foreground` while focused, danger outline and text while

@@ -309,8 +309,8 @@ def compact_header(back_cb, title: str, subtitle: str = '',
                    second_icon_cb=None) -> Gtk.Box:
     """Sub-page header: 56 px bar, back chevron, caption-style title,
     up to two trailing symbolic icons. Everything vertically centered.
-    A title or subtitle too long for the bar (320 px, large text) wraps
-    onto a second line instead of ellipsizing."""
+    A title too long for the bar (320 px, large text) wraps onto a
+    second line instead of ellipsizing."""
     root = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
     root.add_css_class('xx-page-body')
     root.add_css_class('xx-compact-header')
@@ -324,7 +324,9 @@ def compact_header(back_cb, title: str, subtitle: str = '',
     _fit_row_wrap(title_label)
     middle.append(title_label)
     sub = label(subtitle, 'xx-secondary')
-    _fit_row_wrap(sub)
+    # The subtitle (a number, a status) stays one line: a header that
+    # grows to three lines crowds the page under it.
+    _fit_single(sub, _ROW_CHARS)
     sub.set_visible(bool(subtitle))
     middle.append(sub)
     root.append(middle)
@@ -625,11 +627,46 @@ def setting_row(title: str, subtitle: str = '', trailing=None,
     return root
 
 
+#: The smallest tap target a switch answers to, around its drawn pill.
+SWITCH_TARGET_PX = 48
+_SWITCH_CLASS = []
+
+
+def _switch_class():
+    # Defined on first use, like the shrink holder: headless tests import
+    # this module against stub Gtk modules.
+    if _SWITCH_CLASS:
+        return _SWITCH_CLASS[0]
+
+    class _Switch(Gtk.Switch):
+        """A Gtk.Switch whose pick area is at least SWITCH_TARGET_PX on
+        each side, centered on the drawn pill (40 x 20): a tap just
+        beside, above or below it still toggles it. The pill keeps its
+        size; only GTK's hit test grows."""
+
+        __gtype_name__ = 'XXUiSwitch'
+
+        def do_contains(self, x, y):
+            ok, bounds = self.compute_bounds(self)
+            if not ok:
+                return Gtk.Switch.do_contains(self, x, y)
+            left, top = bounds.get_x(), bounds.get_y()
+            width, height = bounds.get_width(), bounds.get_height()
+            pad_x = max(0.0, (SWITCH_TARGET_PX - width) / 2)
+            pad_y = max(0.0, (SWITCH_TARGET_PX - height) / 2)
+            return (left - pad_x <= x <= left + width + pad_x
+                    and top - pad_y <= y <= top + height + pad_y)
+
+    _SWITCH_CLASS.append(_Switch)
+    return _Switch
+
+
 def make_switch(active: bool = False, callback=None) -> Gtk.Switch:
-    """Themed switch. The shared ``switch`` rule pads the drawn pill with a
-    transparent border, so the tap target is 48 px tall and wide while
-    the pill stays its usual size."""
-    switch = Gtk.Switch()
+    """Themed switch with a 48 px tap target around the unchanged pill
+    (GTK's hit test grows, the drawing does not). A row that handles its
+    own taps asks ``switch.contains()`` (in switch coordinates) before
+    treating a tap as its own."""
+    switch = _switch_class()()
     switch.add_css_class('xx-switch')
     switch.set_active(active)
     switch.set_valign(Gtk.Align.CENTER)

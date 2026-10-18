@@ -5,18 +5,26 @@ from __future__ import annotations
 from .. import alarm_logic
 
 
+def _point(x: float, y: float):
+    import gi
+
+    gi.require_version("Graphene", "1.0")
+    from gi.repository import Graphene
+
+    point = Graphene.Point()
+    point.init(x, y)
+    return point
+
+
 def time_text(hour: int, minute: int) -> str:
     return f"{hour:02d}:{minute:02d}"
 
 
-def tap_zone(x: float, y: float, hit) -> str:
-    """Where a tap at row (x, y) lands, given the switch's allocation
-    ``hit`` (x, y, width, height): "switch" (the shared switch's 48 px
-    target handles it) or "row" (open the editor)."""
-    if (hit.x <= x <= hit.x + hit.width
-            and hit.y <= y <= hit.y + hit.height):
-        return "switch"
-    return "row"
+def tap_zone(on_switch: bool) -> str:
+    """Where a row tap lands: "switch" when it is inside the switch's own
+    48 px target (xx_ui make_switch handles it) or "row" (open the
+    editor)."""
+    return "switch" if on_switch else "row"
 
 
 class AlarmsPage:
@@ -105,7 +113,9 @@ class AlarmsPage:
         def _released(_gesture, _n, x: float, y: float) -> None:
             if held["down"]:
                 return
-            if tap_zone(x, y, switch.get_allocation()) == "switch":
+            ok, point = row.compute_point(switch, _point(x, y))
+            if tap_zone(bool(ok) and switch.contains(point.x, point.y)) \
+                    == "switch":
                 return
             _edit()
 

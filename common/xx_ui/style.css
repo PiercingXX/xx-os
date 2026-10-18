@@ -90,16 +90,9 @@ button.destructive-action {
   color: ${on_danger};
 }
 
-/* The drawn pill keeps its size; a transparent border around it makes
-   the tap target 48 px tall and wide (the border box is the input area,
-   the background stops at the padding box). */
 switch {
   background-color: ${surface_alt};
-  background-clip: padding-box;
-  border: 11px solid transparent;
-  border-left-width: 1px;
-  border-right-width: 1px;
-  padding: 3px;
+  border: none;
   box-shadow: none;
 }
 
