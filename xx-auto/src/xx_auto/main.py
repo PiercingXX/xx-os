@@ -514,15 +514,14 @@ class AutoWindow:
             self.progress.set_visible(False)
             self.time_row.set_visible(False)
             self.title_label.set_text("Nothing playing" if show_card else "")
+            # With neither player installed, the tiles below already say
+            # "not installed": the card says nothing more.
             hint = ""
-            if show_card and not snap.tracks:
-                if not snap.installed.get("radio") and not snap.installed.get(
-                        "audiobook"):
-                    hint = ("Install the radio or xx-audiobook from "
-                            "xx-apps, and its controls show up here.")
-                else:
-                    hint = ("Start something in the radio or "
-                            "xx-audiobook, or press Radio.")
+            if show_card and not snap.tracks and (
+                    snap.installed.get("radio")
+                    or snap.installed.get("audiobook")):
+                hint = ("Start something in the radio or "
+                        "xx-audiobook, or press Radio.")
             # Word joiners keep "xx-audiobook" whole across line breaks.
             self.sub_label.set_text(hint.replace("-", "-\u2060"))
             self.sub_label.set_visible(bool(hint))
