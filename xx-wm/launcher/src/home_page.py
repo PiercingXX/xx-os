@@ -56,14 +56,14 @@ class HomePage:
 
         self._init_weather()
 
-        # Widget block at the top of the screen.
+        # Widget block: centered in the top half, like Android's
+        # widgetsContainer (weight 1 over a weight-1 Space).
         top_pane = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         top_pane.set_hexpand(True)
-        top_pane.set_margin_top(32)
-        top_pane.set_margin_bottom(16)
+        top_pane.set_valign(Gtk.Align.CENTER)
         top_pane.append(clock_inner)
 
-        # --- Launcher: centered on the whole screen ---
+        # --- Launcher: centered in the bottom two thirds ---
         def _get_home_slots() -> list[dict]:
             # Android "Home Slot Count": the first N slots show; the rest
             # stay stored. Edit mode works on the same visible prefix.
@@ -113,17 +113,6 @@ class HomePage:
         # Background gestures dispatch gestures.json: double-tap runs
         # double_tap_home, long-press runs long_press_home (edit = slot
         # edit mode, settings = open Settings, none = nothing).
-        top_press = Gtk.GestureLongPress.new()
-        top_press.set_touch_only(False)
-        top_press.connect('pressed', win._on_home_long_press)
-        top_pane.add_controller(top_press)
-        top_tap = Gtk.GestureClick.new()
-        top_tap.set_touch_only(False)
-        top_tap.connect(
-            'pressed',
-            lambda _g, n, _x, _y: win._on_home_background_tap(n))
-        top_pane.add_controller(top_tap)
-
         # Long-press anywhere on home → configured long_press_home action
         edit_press = Gtk.GestureLongPress.new()
         edit_press.set_touch_only(False)
@@ -136,25 +125,32 @@ class HomePage:
             lambda _g, n, _x, _y: win._on_home_background_tap(n))
         bot_pane.add_controller(bot_tap)
 
-        # The slot list is centered on the SCREEN, not on the space under
-        # the widget block (owner: home sat in the bottom third). A spacer
-        # below, sized like the widget block by a SizeGroup, balances the
-        # block above, so the launcher's middle is the screen's middle; a
-        # list taller than the room left still scrolls.
-        spacer = Gtk.Box()
-        spacer.set_margin_top(16)
-        spacer.set_margin_bottom(32)
-        balance = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.VERTICAL)
-        balance.add_widget(top_pane)
-        balance.add_widget(spacer)
-        self._home_balance = balance  # SizeGroups need a live reference
-        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        page.set_hexpand(True)
-        page.set_vexpand(True)
-        page.append(top_pane)
-        page.append(bot_pane)
-        page.append(spacer)
-        return page
+        # Android activity_home.xml stacks two layers: widgets centered in
+        # the top half, slots centered in the bottom two thirds. A
+        # homogeneous six-row grid holds both: the background takes the top
+        # third (rows 0-1), the widget block centers over rows 0-2 and the
+        # slot list fills rows 2-5. Overlapping cells are fine in a Grid.
+        top_bg = Gtk.Box()
+        top_bg.set_hexpand(True)
+        for gesture_parent in (top_bg, top_pane):
+            press = Gtk.GestureLongPress.new()
+            press.set_touch_only(False)
+            press.connect('pressed', win._on_home_long_press)
+            gesture_parent.add_controller(press)
+            tap = Gtk.GestureClick.new()
+            tap.set_touch_only(False)
+            tap.connect(
+                'pressed',
+                lambda _g, n, _x, _y: win._on_home_background_tap(n))
+            gesture_parent.add_controller(tap)
+        grid = Gtk.Grid()
+        grid.set_row_homogeneous(True)
+        grid.set_hexpand(True)
+        grid.set_vexpand(True)
+        grid.attach(top_bg, 0, 0, 1, 2)
+        grid.attach(bot_pane, 0, 2, 1, 4)
+        grid.attach(top_pane, 0, 0, 1, 3)
+        return grid
 
     def _launch_slot(self, slot: dict) -> None:
         """Launch an app or command from a home slot."""
