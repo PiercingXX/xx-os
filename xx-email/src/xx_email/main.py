@@ -176,6 +176,9 @@ class EmailApplication(Adw.Application):
             window = Adw.ApplicationWindow(application=self)
             window.set_title("xx-email")
             window.set_default_size(360, 720)
+            # Adw windows floor at 360 px wide by default: a 320 px
+            # screen would cut the app off.
+            window.set_size_request(320, 200)
             window.set_decorated(False)
             self._overlay = Adw.ToastOverlay()
             self._nav = Adw.NavigationView()

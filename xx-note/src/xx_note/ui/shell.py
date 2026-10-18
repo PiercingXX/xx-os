@@ -58,6 +58,9 @@ class NoteWindow:
         self.win = Adw.ApplicationWindow(application=app)
         self.win.set_title("xx-note")
         self.win.set_default_size(360, 720)
+        # Adw windows floor at 360 px wide by default: a 320 px
+        # screen would cut the app off.
+        self.win.set_size_request(320, 200)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         root.add_css_class("xx-note-root")

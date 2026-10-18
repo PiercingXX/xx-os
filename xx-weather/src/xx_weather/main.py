@@ -87,6 +87,9 @@ class WeatherWindow:
         self.win = Adw.ApplicationWindow(application=app)
         self.win.set_title("xx-weather")
         self.win.set_default_size(360, 720)
+        # Adw windows floor at 360 px wide by default: a 320 px
+        # screen would cut the app off.
+        self.win.set_size_request(320, 200)
         scale = 1.0
         try:
             scale = xx_ui.apply(self.win).scale

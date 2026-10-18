@@ -234,6 +234,9 @@ class CalendarWindow(Adw.ApplicationWindow):
         super().__init__(application=app)
         self.set_title("xx-calendar")
         self.set_default_size(360, 720)
+        # Adw windows floor at 360 px wide by default: a 320 px
+        # screen would cut the app off.
+        self.set_size_request(320, 200)
         try:
             self.set_decorated(False)
         except Exception:

@@ -339,6 +339,9 @@ def run_gui(args: list[str]) -> int:
             window.set_title("xx-dialer")
             window.set_decorated(False)
             window.set_default_size(360, 720)
+            # Adw windows floor at 360 px wide by default: a 320 px
+            # screen would cut the app off.
+            window.set_size_request(320, 200)
             xx_ui.apply(window)
             _apply_app_css()
             deps = DialerDeps(db_file=db_path(), home=Path.home())

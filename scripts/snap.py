@@ -100,6 +100,14 @@ def _navigate():
 def present(self, *a):
     if state['win'] is None:
         state['win'] = self
+        # The app's own floor (Adw windows default to 360 px wide) is
+        # replaced below, so judge it first: a real compositor cannot
+        # shrink the window under it, whatever the content allows.
+        rw, rh = self.get_size_request()
+        if rw > w or rh > h:
+            print(f'snap: WARNING window requests at least {rw}x{rh}, '
+                  f'more than {w}x{h}: it cannot shrink to a phone screen',
+                  file=sys.stderr, flush=True)
         self.set_default_size(w, h)
         self.set_size_request(w, h)
         GLib.timeout_add(int(delay * 1000), _navigate)

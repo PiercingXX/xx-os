@@ -241,6 +241,9 @@ def build(app, ctx) -> Adw.ApplicationWindow:
     window = Adw.ApplicationWindow(application=app)
     window.set_title("xx-audiobook")
     window.set_default_size(360, 720)
+    # Adw windows floor at 360 px wide by default: a 320 px
+    # screen would cut the app off.
+    window.set_size_request(320, 200)
     window.set_decorated(False)
     window.add_css_class("xx-ab")
     shell = Shell(window, ctx)

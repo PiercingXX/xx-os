@@ -483,6 +483,9 @@ def build_window(app, spec: AppSpec, engine: Engine | None = None,
     window = Adw.ApplicationWindow(application=app)
     window.set_title(spec.name)
     window.set_default_size(360, 720)
+    # Adw windows floor at 360 px wide by default: a 320 px
+    # screen would cut the app off.
+    window.set_size_request(320, 200)
     window.set_decorated(False)
     engine = engine if engine is not None else spec.make_engine()
     if ui_factory is not None:
