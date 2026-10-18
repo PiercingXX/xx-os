@@ -218,8 +218,8 @@ class SettingsPage:
         box.append(nav_row("Artists", blocked_summary(len(entries)),
                            self.open_blocked))
         box.append(switch_row(
-            "Remove their downloads too",
-            "Delete downloads by killed artists instead of hiding them",
+            "Delete their downloads",
+            "Instead of hiding them",
             bool(self.prefs.get("remove_blocked_downloads")),
             lambda on: self._set("remove_blocked_downloads", on),
             last=True))
