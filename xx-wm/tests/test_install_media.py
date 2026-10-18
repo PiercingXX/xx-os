@@ -306,3 +306,9 @@ def test_install_refreshes_icon_caches(install_script):
     assert 'refresh_icon_caches' in body
     fn = _function_body(install_script, 'refresh_icon_caches')
     assert 'gtk-update-icon-cache' in fn and '/usr/share/icons/hicolor' in fn
+
+
+def test_polkit_agent_typelib_installed_on_every_distro(install_script):
+    body = _function_body(install_script, 'install_deps')
+    assert 'gir1.2-polkit-1.0' in body          # apt
+    assert body.count('pkg_install polkit') >= 2  # apk + pacman

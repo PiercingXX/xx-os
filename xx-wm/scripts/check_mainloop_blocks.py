@@ -198,7 +198,7 @@ ALLOW = {
         'headless owner-script worker thread; lines stream via GLib.idle_add.',
     ('weather.py', '_geoclue_fix_sync'):
         'weather auto-fix worker thread (weather-locate); bounded GeoClue calls.',
-    ('wayland_bindings.py', 'generate_protocol_bindings'):
+    ('wayland_bindings.py', '_run_scanner'):
         'xx-wm-wayland-bindings worker; cached per pywayland version.',
     ('output_capture.py', '_run'):
         'grim worker thread spawned by capture(); never runs on the GTK loop.',

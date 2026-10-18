@@ -134,11 +134,14 @@ install_deps() {
         pkg_install networkmanager
         pkg_install brightnessctl
         pkg_install wlsunset
+        # PolkitAgent typelib: the shell's own password prompt (polkit_agent.py).
+        pkg_install polkit
     elif [ "$PKG" = pacman ]; then
         pkg_install python-gobject gtk4 libadwaita gtk4-layer-shell meson ninja \
             rsync git phoc python-pywayland wl-clipboard geoclue \
             networkmanager brightnessctl python-phonenumbers openssl python-cairo
         pkg_install wlsunset
+        pkg_install polkit   # ships the PolkitAgent typelib
         if command -v lisgd >/dev/null 2>&1; then
             echo "lisgd already present: $(command -v lisgd)"
         else
@@ -150,6 +153,9 @@ install_deps() {
             phoc lisgd wl-clipboard
         pkg_install python3-pywayland
         pkg_install python3-phonenumbers openssl python3-gi-cairo
+        # PolkitAgent typelib for the shell's password prompt. FuriOS ships
+        # it; Mobian does not (the Librem logged "no PolkitAgent typelib").
+        pkg_install gir1.2-polkit-1.0
         pkg_install geoclue-2.0
         pkg_install network-manager
         pkg_install brightnessctl

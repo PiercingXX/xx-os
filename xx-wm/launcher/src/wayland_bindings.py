@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -62,6 +63,13 @@ SCREENCAST_CLASS_NAMES = (
 )
 _WL_OBJECT_ATTR = ' interface="wl_object"'
 _SCANNER_TIMEOUT_SECONDS = 180
+
+# Generation is serialized (threads in-process, flock across processes) and
+# built in a temp dir that is swapped into place: two workers generating at
+# once used to rmtree the dir under each other's scanner, which failed with
+# "No such file ... wayland.py" on the Librem (pywayland 0.4.19).
+_GENERATE_LOCK = threading.Lock()
+_COMPLETE_MARKER = '.complete'
 
 _logged_once: set[str] = set()
 
@@ -161,9 +169,30 @@ def generate_protocol_bindings(
     if not targets:
         raise RuntimeError('no protocol XMLs to generate bindings for')
     package_dir = Path(package_dir)
-    if package_dir.exists():
-        shutil.rmtree(package_dir, ignore_errors=True)
-    package_dir.mkdir(parents=True, exist_ok=True)
+    package_dir.parent.mkdir(parents=True, exist_ok=True)
+    import fcntl
+    with _GENERATE_LOCK, open(package_dir.parent / '.generate.lock', 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if (package_dir / _COMPLETE_MARKER).exists():
+            return  # another worker or process generated it meanwhile
+        _generate_into(package_dir, base, targets)
+
+
+def _generate_into(package_dir: Path, base: Path, targets: list) -> None:
+    """Scanner into a fresh temp dir, then swap it into ``package_dir``."""
+    work = Path(tempfile.mkdtemp(prefix=package_dir.name + '.tmp-',
+                                 dir=str(package_dir.parent)))
+    try:
+        _run_scanner(work, base, targets)
+        (work / _COMPLETE_MARKER).write_text('')
+        if package_dir.exists():
+            shutil.rmtree(package_dir, ignore_errors=True)
+        os.replace(work, package_dir)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _run_scanner(package_dir: Path, base: Path, targets: list) -> None:
     stripped = strip_wl_object(base.read_text(encoding='utf-8'))
     fd, stripped_path = tempfile.mkstemp(
         prefix='wayland-stripped-', suffix='.xml',
