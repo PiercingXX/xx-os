@@ -4,12 +4,16 @@
 #   xx-wm/tools/snap_overlays.sh OUTDIR [theme ...]
 # Sibling of snap_shell.sh (part 1): same seeded temp HOME, first boot
 # done, same hermetic Broadway rig. Full-screen surfaces must be exactly
-# 360x720 with zero `snap: WARNING`s or the run fails; the HUD/banner/back
+# the snap size (360x720; SNAP_SIZE=450x1000 renders the FLX1) with zero
+# `snap: WARNING`s or the run fails (SNAP_TEXT_SCALE=1.5 seeds large text); the HUD/banner/back
 # arrow are small overlay windows captured at their natural size (their
 # expected sizes are asserted instead). One labeled sheet per surface.
 set -u
 REPO=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 OUTDIR=${1:?usage: snap_overlays.sh OUTDIR [theme ...]}
+SIZE=${SNAP_SIZE:-360x720}
+SW=${SIZE%x*} SH=${SIZE#*x}
+TEXT_SCALE=${SNAP_TEXT_SCALE:-1.0}
 shift || true
 if [ "$#" -gt 0 ]; then
     THEMES="$*"
@@ -24,6 +28,10 @@ else
     trap 'rm -rf "$WORK"' EXIT INT TERM
 fi
 export PATH="$HOME/.local/bin:$PATH"
+# Private session bus per shot: the shell is a single-instance app, so a
+# shell already on the user bus (or a parallel run) would swallow the launch.
+BUSWRAP=""
+command -v dbus-run-session >/dev/null 2>&1 && BUSWRAP="dbus-run-session --"
 
 APPS="Phone:phone Messages:messages Contacts:contacts Calendar:calendar Camera:camera Maps:maps Notes:notes Clocks:clocks Files:files Settings:settings Weather:weather TxxT:txxt"
 
@@ -36,7 +44,7 @@ seed_home() {
             > "$_home/.local/share/applications/${_id}.desktop"
     done
     cat > "$_home/.config/xx-wm/config.json" <<EOF
-{"theme": "$_theme",
+{"theme": "$_theme", "text_size_scale": $TEXT_SCALE,
  "pin_hash": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
  "home_slots": [
   {"type": "app", "label": "Notes", "app_id": "notes.desktop", "cmd": null, "folder": null},
@@ -48,7 +56,7 @@ EOF
 
 nav() {
     _name=$1
-    cat > "$WORK/nav-$_name.py"
+    sed "s/360, 720/$SW, $SH/g" > "$WORK/nav-$_name.py"
 }
 
 SIZE360="win.unfullscreen()
@@ -60,6 +68,8 @@ $SIZE360
 win._show_switcher()
 sw = win._switcher
 sw.unfullscreen()
+# Undecorated like the real layer-shell surface (no headless title bar).
+sw.set_decorated(False)
 sw.set_default_size(360, 720)
 sw.set_size_request(360, 720)
 win.set_visible(False)
@@ -72,6 +82,7 @@ from gi.repository import GLib
 from app_switcher import AppInfo
 sw = win._switcher
 sw.unfullscreen()
+sw.set_decorated(False)
 sw.set_default_size(360, 720)
 sw.set_size_request(360, 720)
 # Headless only: seed after the shell's own +50/+200 ms resyncs, which
@@ -93,6 +104,7 @@ sh._revealer.set_transition_type(Gtk.RevealerTransitionType.NONE)
 win._show_shade()
 from media_controls import MediaCard, PlayerSnapshot
 sh.unfullscreen()
+sh.set_decorated(False)
 sh.set_default_size(360, 720)
 sh.set_size_request(360, 720)
 sh.add_notification(21, 'Signal', 'Dinner at 7?', 'Running late, order without me')
@@ -114,6 +126,7 @@ from gi.repository import Gtk
 from call_ui import CallUI
 ui = CallUI(config=win.config)
 ui.unfullscreen()
+ui.set_decorated(False)
 ui.set_default_size(360, 720)
 ui.set_size_request(360, 720)
 # Headless only: the crossfade never completes under the snapshotter.
@@ -128,6 +141,7 @@ from gi.repository import Gtk
 from call_ui import CallUI
 ui = CallUI(config=win.config)
 ui.unfullscreen()
+ui.set_decorated(False)
 ui.set_default_size(360, 720)
 ui.set_size_request(360, 720)
 # Headless only: the crossfade never completes under the snapshotter.
@@ -145,6 +159,7 @@ $SIZE360
 win._show_power_menu()
 pm = win._power_menu
 pm.unfullscreen()
+pm.set_decorated(False)
 pm.set_default_size(360, 720)
 pm.set_size_request(360, 720)
 win.set_visible(False)
@@ -155,12 +170,6 @@ EOF
 nav hud-volume <<EOF
 from gi.repository import GLib
 GLib.timeout_add(800, lambda: (app._hud.show_volume(68), False)[1])
-win.set_visible(False)
-EOF
-
-nav hud-brightness <<EOF
-from gi.repository import GLib
-GLib.timeout_add(800, lambda: (app._hud.show_brightness(82), False)[1])
 win.set_visible(False)
 EOF
 
@@ -180,8 +189,8 @@ win.set_visible(False)
 EOF
 
 # shot -> minimum expected size (WxH). Full-screen surfaces must be exactly
-# 360x720; overlay pills just need a sane non-empty window.
-SHOTS="recents-empty:360x720 recents-cards:360x720 shade:360x720 call-incoming:360x720 call-active:360x720 power:360x720 hud-volume:100x40 hud-brightness:100x40 banner:200x60 back-arrow:40x40"
+# the snap size; overlay pills just need a sane non-empty window.
+SHOTS="recents-empty:$SIZE recents-cards:$SIZE shade:$SIZE call-incoming:$SIZE call-active:$SIZE power:$SIZE hud-volume:100x40 banner:200x60 back-arrow:40x40"
 RECENTS_SLOW="recents-empty recents-cards"
 
 run_one() {
@@ -197,10 +206,10 @@ run_one() {
             XDG_DATA_HOME="$_home/.local/share" \
             XDG_CACHE_HOME="$_home/.cache" \
             XDG_DATA_DIRS="$_home/.local/share" \
-            python3 "$REPO/scripts/snap.py" --out "$_out" --delay "$_delay" \
+            $BUSWRAP python3 "$REPO/scripts/snap.py" --out "$_out" --delay "$_delay" --size "$SIZE" \
             --path "$REPO/common" --path "$REPO/xx-wm/launcher/src" \
             --script "$_nav" -- "$REPO/xx-wm/launcher/src/main.py" 2>"$_err" \
-            && break
+            && [ -s "$_out" ] && break
         echo "snap retry $_try: $_out"
         sleep 1
     done
@@ -210,7 +219,7 @@ run_one() {
         return 1
     fi
     _ww=${_want%x*} _hh=${_want#*x}
-    if [ "$_ww" = 360 ] && [ "$_hh" = 720 ]; then
+    if [ "$_ww" = "$SW" ] && [ "$_hh" = "$SH" ]; then
         if grep -q 'snap: WARNING' "$_err"; then
             if [ "${ALLOW_WARN:-0}" = 1 ]; then
                 echo "note (tolerated): $_out: $(grep 'snap: WARNING' "$_err" | head -n 1)"

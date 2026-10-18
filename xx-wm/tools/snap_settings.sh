@@ -8,11 +8,13 @@
 # (snap_settings_nav.py, SNAP_MULTI); themes render in parallel, each on
 # its own session bus (the shell is a single-instance app). Output:
 # sheet-<theme>-settings-<n>.png contact sheets (KEEP_SHOTS=1 also keeps
-# the single shots). SNAP_SETTINGS_ONLY="network privacy" limits pages.
+# the single shots). SNAP_SETTINGS_ONLY="network privacy" limits pages;
+# SNAP_TEXT_SCALE=1.5 seeds large text.
 set -u
 REPO=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 OUTDIR=${1:?usage: snap_settings.sh OUTDIR [theme ...]}
 SIZE=${SNAP_SIZE:-360x720}
+TEXT_SCALE=${SNAP_TEXT_SCALE:-1.0}
 shift || true
 if [ "$#" -gt 0 ]; then
     THEMES="$*"
@@ -39,7 +41,7 @@ seed_home() {
             > "$_home/.local/share/applications/${_id}.desktop"
     done
     cat > "$_home/.config/xx-wm/config.json" <<EOF
-{"theme": "$_theme",
+{"theme": "$_theme", "text_size_scale": $TEXT_SCALE,
  "pin_hash": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
  "apn": "internet",
  "medical_id": {"name": "Alex Doe", "blood_type": "O+",
@@ -62,16 +64,24 @@ run_theme() {
     _err="$WORK/$_theme.err"
     mkdir -p "$_shots"
     seed_home "$_home" "$_theme"
-    HOME="$_home" XDG_CONFIG_HOME="$_home/.config" \
-        XDG_DATA_HOME="$_home/.local/share" \
-        XDG_CACHE_HOME="$_home/.cache" \
-        XDG_DATA_DIRS="$_home/.local/share" \
-        SNAP_MULTI=1 SNAP_SETTINGS_OUT="$_shots" SNAP_SETTINGS_THEME="$_theme" \
-        SNAP_SETTINGS_ONLY="${SNAP_SETTINGS_ONLY:-}" \
-        dbus-run-session -- python3 "$REPO/scripts/snap.py" --out "$_shots/done.png" --delay 2.0 --size "$SIZE" \
-        --path "$REPO/common" --path "$REPO/xx-wm/launcher/src" \
-        --script "$REPO/xx-wm/tools/snap_settings_nav.py" \
-        -- "$REPO/xx-wm/launcher/src/main.py" >"$WORK/$_theme.out" 2>"$_err"
+    # Parallel themes can race for a Broadway display (Gtk then fails to
+    # initialize and nothing is drawn): retry a run that drew no menu.
+    _try=0
+    while [ "$_try" -lt 3 ]; do
+        _try=$((_try + 1))
+        HOME="$_home" XDG_CONFIG_HOME="$_home/.config" \
+            XDG_DATA_HOME="$_home/.local/share" \
+            XDG_CACHE_HOME="$_home/.cache" \
+            XDG_DATA_DIRS="$_home/.local/share" \
+            SNAP_MULTI=1 SNAP_SETTINGS_OUT="$_shots" SNAP_SETTINGS_THEME="$_theme" \
+            SNAP_SETTINGS_ONLY="${SNAP_SETTINGS_ONLY:-}" \
+            dbus-run-session -- python3 "$REPO/scripts/snap.py" --out "$_shots/done.png" --delay 2.0 --size "$SIZE" \
+            --path "$REPO/common" --path "$REPO/xx-wm/launcher/src" \
+            --script "$REPO/xx-wm/tools/snap_settings_nav.py" \
+            -- "$REPO/xx-wm/launcher/src/main.py" >"$WORK/$_theme.out" 2>"$_err"
+        [ -f "$_shots/$_theme-menu.png" ] && break
+        sleep 2
+    done
 }
 
 for theme in $THEMES; do

@@ -4,10 +4,14 @@
 # Default themes: amoled paper forest aura burgundy.
 # Needs gtk4-broadwayd + ImageMagick montage. HOME/XDG_* point at seeded
 # temp dirs so the real config is untouched. Every render must be exactly
-# 360x720 with zero `snap: WARNING`s or the run fails.
+# the snap size (360x720; SNAP_SIZE=450x1000 renders the FLX1) with zero
+# `snap: WARNING`s or the run fails. SNAP_TEXT_SCALE=1.5 seeds large text.
 set -u
 REPO=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 OUTDIR=${1:?usage: snap_shell.sh OUTDIR [theme ...]}
+SIZE=${SNAP_SIZE:-360x720}
+SW=${SIZE%x*} SH=${SIZE#*x}
+TEXT_SCALE=${SNAP_TEXT_SCALE:-1.0}
 shift || true
 if [ "$#" -gt 0 ]; then
     THEMES="$*"
@@ -22,6 +26,10 @@ else
     trap 'rm -rf "$WORK"' EXIT INT TERM
 fi
 export PATH="$HOME/.local/bin:$PATH"
+# Private session bus per shot: the shell is a single-instance app, so a
+# shell already on the user bus (or a parallel run) would swallow the launch.
+BUSWRAP=""
+command -v dbus-run-session >/dev/null 2>&1 && BUSWRAP="dbus-run-session --"
 
 APPS="Phone:phone Messages:messages Contacts:contacts Calendar:calendar Camera:camera Maps:maps Notes:notes Clocks:clocks Files:files Settings:settings Weather:weather Vitals:vitals Email:email Share:share Calculator:calculator Photos:photos Music:music Browser:browser Terminal:terminal Software:software"
 
@@ -34,11 +42,13 @@ seed_home() {
         printf '[Desktop Entry]\nName=%s\nExec=true\nType=Application\n' "$_name" \
             > "$_home/.local/share/applications/${_id}.desktop"
     done
+    # Installed days ago, like a phone's apps: no "new" dot on every row.
+    touch -d '3 days ago' "$_home/.local/share/applications/"*.desktop
     if [ "$_cfg" = 1 ]; then
         # pin_hash is the legacy bare-sha256 of "123456": a set PIN keeps
         # the lock screen on its keypad instead of auto-unlocking.
         cat > "$_home/.config/xx-wm/config.json" <<EOF
-{"theme": "$_theme",
+{"theme": "$_theme", "text_size_scale": $TEXT_SCALE,
  "pin_hash": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
  "home_slots": [
   {"type": "folder", "label": "Comms", "app_id": null, "cmd": null,
@@ -54,13 +64,17 @@ seed_home() {
   {"type": "app", "label": "Weather", "app_id": "weather.desktop", "cmd": null, "folder": null}
 ]}
 EOF
+    else
+        # Wizard run: setup not complete, only the text size seeded.
+        printf '{"setup_complete": false, "text_size_scale": %s}\n' \
+            "$TEXT_SCALE" > "$_home/.config/xx-wm/config.json"
     fi
 }
 
 nav() {
     # $1 = name, body arrives on stdin (heredoc)
     _name=$1
-    cat > "$WORK/nav-$_name.py"
+    sed "s/360, 720/$SW, $SH/g" > "$WORK/nav-$_name.py"
 }
 
 nav home <<'EOF'
@@ -112,6 +126,13 @@ lock.set_size_request(360, 720)
 # Headless only: instant reveal, the slide animation never paints here.
 lock._pin_revealer.set_transition_type(Gtk.RevealerTransitionType.NONE)
 lock._swipe_up()
+# Headless only: the keypad sizes from the output's geometry, and
+# Broadway's virtual monitor is desktop-sized; size it for the phone.
+import lock_screen as _ls
+_w, _h = (360, 720)
+lock._apply_keypad_size(_ls.keypad_key_size(
+    _w - _ls._KEYPAD_SIDE_MARGINS,
+    _h - _ls._COLLAPSED_CLOCK_RESERVE - _ls._KEYPAD_HEIGHT_MARGIN))
 win.set_visible(False)
 EOF
 nav menu <<'EOF'
@@ -120,20 +141,11 @@ win.set_default_size(360, 720)
 win.set_size_request(360, 720)
 win.stack.set_visible_child_name('apps')
 from gi.repository import Gtk
+# The real long-press menu and rename prompt, as the in-window sheets
+# the phone shows (no hand-built stand-ins).
+Gtk.Settings.get_default().set_property('gtk-enable-animations', False)
 entry = next(e for e in win.app_index.entries if e.app_id == 'camera.desktop')
-content = win.item_actions._action_list(
-    [('App info', lambda: None), ('Rename', lambda: None),
-     ('Add to folder', lambda: None), ('Hide', lambda: None),
-     ('Disable for...', lambda: None), ('Pin', lambda: None)],
-    'Camera')
-outer = win.apps_search.get_parent()
-wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-wrap.set_hexpand(True)
-wrap.set_vexpand(True)
-wrap.set_valign(Gtk.Align.CENTER)
-wrap.set_halign(Gtk.Align.CENTER)
-wrap.append(content)
-outer.prepend(wrap)
+win.item_actions.show_app_menu(win.apps_list, entry)
 EOF
 nav rename <<'EOF'
 win.unfullscreen()
@@ -141,17 +153,9 @@ win.set_default_size(360, 720)
 win.set_size_request(360, 720)
 win.stack.set_visible_child_name('apps')
 from gi.repository import Gtk
+Gtk.Settings.get_default().set_property('gtk-enable-animations', False)
 entry = next(e for e in win.app_index.entries if e.app_id == 'camera.desktop')
-box, entry_widget, commit = win.item_actions._entry_dialog_content(
-    'Rename', 'Camera', 'Rename', lambda text: None)
-outer = win.apps_search.get_parent()
-wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-wrap.set_hexpand(True)
-wrap.set_vexpand(True)
-wrap.set_valign(Gtk.Align.CENTER)
-wrap.set_halign(Gtk.Align.CENTER)
-wrap.append(box)
-outer.prepend(wrap)
+win.item_actions._show_rename(win.apps_list, entry)
 EOF
 
 # Wizard nav scripts are parametrized by theme at run time (first window
@@ -163,8 +167,8 @@ wiz_nav() {
     f="$WORK/nav-wiz-$_t-$_p.py"
     {
         echo "win.unfullscreen()"
-        echo "win.set_default_size(360, 720)"
-        echo "win.set_size_request(360, 720)"
+        echo "win.set_default_size($SW, $SH)"
+        echo "win.set_size_request($SW, $SH)"
         echo "win._on_theme_row(None, '$_t')"
         echo "win._stack.set_visible_child_name('$_p')"
         if [ "$_p" = pin ]; then
@@ -186,16 +190,16 @@ run_one() {
     # The headless rig rarely tears the very first frame (render_texture
     # returns None); retry a few times before calling the run failed.
     _try=0
-    while [ "$_try" -lt 3 ]; do
+    while [ "$_try" -lt 5 ]; do
         _try=$((_try + 1))
         HOME="$_home" XDG_CONFIG_HOME="$_home/.config" \
             XDG_DATA_HOME="$_home/.local/share" \
             XDG_CACHE_HOME="$_home/.cache" \
             XDG_DATA_DIRS="$_home/.local/share" \
-            python3 "$REPO/scripts/snap.py" --out "$_out" --delay 1.0 \
+            $BUSWRAP python3 "$REPO/scripts/snap.py" --out "$_out" --delay 1.0 --size "$SIZE" \
             --path "$REPO/common" --path "$REPO/xx-wm/launcher/src" \
             --script "$_nav" -- "$REPO/xx-wm/launcher/src/main.py" 2>"$_err" \
-            && break
+            && [ -s "$_out" ] && break
         echo "snap retry $_try: $_out"
         sleep 1
     done
@@ -230,7 +234,7 @@ for theme in $THEMES; do
     montage $(
         for shot in $SHELL_SHOTS; do echo "-label $shot $WORK/$theme-$shot.png"; done
         for page in $WIZ_PAGES; do echo "-label firstboot-$page $WORK/$theme-firstboot-$page.png"; done
-    ) -tile 3x -geometry 360x720+4+4 -background black \
+    ) -tile 3x -geometry "$SIZE+4+4" -background black \
         -fill white -pointsize 20 "$OUTDIR/sheet-$theme.png" \
         || { echo "montage failed: $theme"; exit 1; }
     echo "wrote $OUTDIR/sheet-$theme.png"

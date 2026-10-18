@@ -150,6 +150,9 @@ SHEETS = [
     ('privacy-apps', 'privacy', 'Choose an app'),
     ('sheet-medical', 'privacy', 'Medical ID'),
     ('sheet-contact', 'privacy', 'Add emergency contact…'),
+    ('sheet-blocked', 'apps', 'Blocked apps'),
+    ('sheet-reset', 'storage', 'Reset home layout'),
+    ('menu-mode', 'display', 'Mode'),
     ('menu-keyboard', 'system', 'Keyboard layout'),
     ('sheet-keyboard', 'system', lambda: _section('keyboard')._open_custom(
         win, _section('keyboard')._row)),  # noqa: F821
