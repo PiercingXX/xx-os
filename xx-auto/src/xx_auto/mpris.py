@@ -63,7 +63,12 @@ def display_name(track: Track) -> str:
     """Suite-aware player label: xx-audiobook style names stay readable."""
     if track.desktop_entry.startswith(SUITE_DESKTOP_PREFIX):
         tail = track.desktop_entry[len(SUITE_DESKTOP_PREFIX):]
-        return tail.replace("-", " ").strip() or track.identity or track.short_name
+        name = tail.replace("-", " ").strip()
+        # Suite ids spell the brand prefix in caps ("XXRadio"): read it
+        # the way the suite writes app names, "xx-radio".
+        if len(name) > 2 and name[:2] == "XX" and name[2].isupper():
+            name = "xx-" + name[2:].lower()
+        return name or track.identity or track.short_name
     return track.identity or track.short_name
 
 

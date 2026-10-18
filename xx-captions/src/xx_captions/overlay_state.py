@@ -112,12 +112,14 @@ def model_missing(home=None) -> bool:
 
 
 def download_label(model_id: str | None = None) -> str:
-    """One-line first-run prompt with the size shown before download."""
+    """First-run subtitle: the size, shown before the download starts
+    (the title and the Download button already say the rest). Empty
+    when the catalog does not know the size."""
     entry = config.MODEL_CATALOG.get(model_id or phone_default_model(), {})
     size_mb = int(entry.get("size_mb") or 0)
     if size_mb > 0:
-        return f"Caption model download: {size_mb} MB"
-    return "Caption model download"
+        return f"{size_mb} MB"
+    return ""
 
 
 def progress_fraction(done: int, total: int | None) -> float:

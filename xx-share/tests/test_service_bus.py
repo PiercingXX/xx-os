@@ -5,7 +5,7 @@ from history import HistoryStore
 from notify import ACTION_ACCEPT
 from protocol import DeviceInfo, UploadFile
 from server import Session
-from service import ShareService
+from service import PIN_NEEDED, ShareService
 
 
 class FakeServer:
@@ -202,4 +202,4 @@ def test_start_send_pin_message(tmp_path, monkeypatch):
     svc.start_send("bb" * 32, ["a.jpg"], "",
                    lambda ok, msg: done.append((ok, msg)))
     _wait_for(lambda: done)
-    assert done == [(False, "Receiver needs the PIN it shows on screen")]
+    assert done == [(False, PIN_NEEDED)]

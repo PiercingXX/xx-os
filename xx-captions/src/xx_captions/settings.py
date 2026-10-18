@@ -94,6 +94,16 @@ def model_state(home, model_id: str) -> tuple[bool, int]:
     return models.is_installed(model_id, home), size_mb
 
 
+def model_status(installed: bool, size_mb: int,
+                 downloading: bool = False) -> str:
+    """Model card subtitle, e.g. '42 MB · Installed'."""
+    if downloading:
+        state = "Downloading"
+    else:
+        state = "Installed" if installed else "Not installed"
+    return f"{size_mb} MB · {state}" if size_mb > 0 else state
+
+
 def read_settings(home) -> dict:
     """Engine/language/opt-in snapshot for this HOME."""
     data = config.load(home)
@@ -131,13 +141,48 @@ if _HAS_GTK:
         gi.require_version("Pango", "1.0")
     except (ValueError, ImportError):
         pass
-    from gi.repository import GLib, Gtk, Pango
+    from gi.repository import Gdk, GLib, Gtk, Pango
 
     from xx_captions.overlay import DownloadCancelled, ensure_ui
     from xx_ui import widgets
 
 
 if _HAS_GTK:
+    def _wrap_two(line: Gtk.Label) -> Gtk.Label:
+        """Wrap a one-line label to two lines (large text, 320 px) and
+        ellipsize only past that; it never widens the window."""
+        line.set_wrap(True)
+        line.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        line.set_lines(2)
+        line.set_ellipsize(Pango.EllipsizeMode.END)
+        return line
+
+    def _wrap_labels(box: Gtk.Widget) -> None:
+        """Two-line wrap for every label directly in ``box``."""
+        child = box.get_first_child() if box is not None else None
+        while child is not None:
+            if isinstance(child, Gtk.Label):
+                _wrap_two(child)
+            child = child.get_next_sibling()
+
+    def setting_row(title: str, subtitle: str = "", trailing=None,
+                    last: bool = False) -> Gtk.Box:
+        """``widgets.setting_row`` whose lines wrap instead of
+        ellipsizing at large text."""
+        row = widgets.setting_row(title, subtitle, trailing, last=last)
+        _wrap_labels(row.get_first_child())
+        return row
+
+    def list_row(*args, **kwargs) -> Gtk.Button:
+        """``widgets.list_row`` whose name and day wrap at large text."""
+        row = widgets.list_row(*args, **kwargs)
+        child = row.get_child().get_first_child()
+        while child is not None:
+            if isinstance(child, Gtk.Box) and child.get_hexpand():
+                _wrap_labels(child)
+            child = child.get_next_sibling()
+        return row
+
     class SettingsWindow(Gtk.Window):
         """Captions settings with transcript history and detail pages."""
 
@@ -163,6 +208,19 @@ if _HAS_GTK:
             self.set_child(self._stack)
 
             self.connect("close-request", self._on_close_request)
+            keys = Gtk.EventControllerKey.new()
+            keys.connect("key-pressed", self._on_key)
+            self.add_controller(keys)
+
+        def _on_key(self, _ctl, keyval: int, _code: int, _state) -> bool:
+            """Escape (and the phone's back) steps back, then closes."""
+            if keyval not in (Gdk.KEY_Escape, Gdk.KEY_Back):
+                return False
+            if self._stack.get_visible_child_name() == "detail":
+                self.show_main()
+            else:
+                self.close()
+            return True
 
         def _store_open(self) -> TranscriptStore:
             if self._store is None:
@@ -180,8 +238,7 @@ if _HAS_GTK:
 
         def _build_main(self) -> Gtk.Widget:
             header = widgets.page_header(
-                "Captions", "On-device live captions",
-                actions=[("Close", self.close)])
+                "Captions", "On-device live captions")
             body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
             body.append(widgets.section_label("Engine"))
             body.append(widgets.segmented([
@@ -200,14 +257,15 @@ if _HAS_GTK:
                 for code in LANGUAGE_OPTIONS
             ]))
             body.append(widgets.section_label("Options"))
-            body.append(widgets.setting_row(
+            body.append(setting_row(
                 "Call transcription",
                 "Never leaves this phone.",
                 widgets.make_switch(
                     self._settings["call_transcription_enabled"],
                     self._on_call_opt_in),
                 last=True))
-            body.append(widgets.section_label("History"))
+            self._history_label = widgets.section_label("History")
+            body.append(self._history_label)
             self._history_box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
             body.append(self._history_box)
             self.refresh_history()
@@ -222,6 +280,7 @@ if _HAS_GTK:
             if self._detail_sub is None:
                 self._detail_sub = widgets.label("", "xx-secondary")
                 middle.append(self._detail_sub)
+            _wrap_two(self._detail_sub)
             return widgets.page(header, self._detail_body)
 
         @property
@@ -235,9 +294,6 @@ if _HAS_GTK:
         def show_main(self) -> None:
             self._stack.set_visible_child_name("main")
 
-        def show_history(self) -> None:
-            self.show_main()
-
         def show_detail(self, call_id: str) -> None:
             try:
                 peer, started, ended, lines = self._store_open() \
@@ -250,6 +306,8 @@ if _HAS_GTK:
                 f"{format_time(started)} · "
                 f"{format_duration(ended - started)}" if ended else
                 format_time(started))
+            self._detail_sub.set_visible(
+                bool(self._detail_sub.get_text()))
             child = self._detail_body.get_first_child()
             while child is not None:
                 following = child.get_next_sibling()
@@ -258,13 +316,8 @@ if _HAS_GTK:
             for text, offset_ms in lines:
                 self._detail_body.append(
                     widgets.caption(format_offset(offset_ms)))
-                line = widgets.label(str(text), "xx-body")
-                line.set_wrap(True)
-                line.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-                line.set_ellipsize(Pango.EllipsizeMode.NONE)
-                line.set_max_width_chars(32)
-                line.set_xalign(0.0)
-                self._detail_body.append(line)
+                self._detail_body.append(
+                    widgets.wrap_label(str(text), "xx-body"))
             delete = widgets.danger_button(
                 "Delete",
                 lambda call_id=call_id: self._on_delete(call_id))
@@ -291,12 +344,11 @@ if _HAS_GTK:
                 rows = self._store_open().list_transcripts()
             except Exception:
                 rows = []
-            if not rows:
-                box.append(widgets.empty_state("No transcripts yet."))
-                return
+            # An empty history shows nothing, not even its heading.
+            self._history_label.set_visible(bool(rows))
             for pos, (call_id, peer, started, ended) in enumerate(rows):
                 peer = str(peer or "Unknown call")
-                row = widgets.list_row(
+                row = list_row(
                     peer, format_day(started),
                     meta=format_duration(ended - started) if ended else "",
                     leading=widgets.avatar(initials_for(peer), 40),
@@ -329,14 +381,11 @@ if _HAS_GTK:
                 child = following
             model_id = self._settings["model"]
             installed, size_mb = model_state(self._home, model_id)
-            card.append(widgets.label(short_model_name(model_id),
-                                      "xx-title"))
-            if size_mb > 0:
-                status = (f"{size_mb} MB · Installed" if installed
-                          else f"{size_mb} MB · Not installed")
-            else:
-                status = ("Installed" if installed else "Not installed")
-            card.append(widgets.label(status, "xx-secondary"))
+            card.append(_wrap_two(widgets.label(short_model_name(model_id),
+                                                "xx-title")))
+            card.append(_wrap_two(widgets.label(
+                model_status(installed, size_mb, self._downloading),
+                "xx-secondary")))
             self._model_progress = Gtk.ProgressBar()
             self._model_progress.set_show_text(False)
             self._model_progress.set_visible(self._downloading)
@@ -447,6 +496,7 @@ __all__ = [
     "format_time",
     "initials_for",
     "model_state",
+    "model_status",
     "read_settings",
     "run_settings",
     "short_model_name",

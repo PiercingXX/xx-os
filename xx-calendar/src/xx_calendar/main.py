@@ -19,12 +19,17 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
+gi.require_version("Graphene", "1.0")
+
+from gi.repository import (  # noqa: E402
+    Adw, Gdk, Gio, GLib, GObject, Graphene, Gtk, Pango,
+)
 
 import xx_ui  # noqa: E402
 from xx_ui import widgets  # noqa: E402
 from xx_calendar import views  # noqa: E402
 from xx_calendar.app_config import load_settings, save_settings  # noqa: E402
+from xx_calendar.fit import shrink_header_title  # noqa: E402
 from xx_calendar.models import CalendarKey, SigilAssigner  # noqa: E402
 from xx_calendar.month_grid import MonthGrid  # noqa: E402
 from xx_calendar.service import (  # noqa: E402
@@ -41,24 +46,11 @@ SWIPE_VELOCITY_PX_S = 400.0
 CHANGED_DEBOUNCE_S = 2
 RELOAD_MARGIN_DAYS = 14
 
-RECURRENCE_CHOICES: tuple[tuple[str, str], ...] = (
-    ("None", ""),
-    ("Daily", "FREQ=DAILY"),
-    ("Weekly", "FREQ=WEEKLY;BYDAY=MO"),
-    ("Weekdays", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
-    ("Monthly", "FREQ=MONTHLY"),
-    ("Yearly", "FREQ=YEARLY"),
-)
+RECURRENCE_CHOICES = views.REPEAT_CHOICES
+REMINDER_CHOICES = views.REMINDER_CHOICES
 
-REMINDER_CHOICES: tuple[tuple[str, int | None], ...] = (
-    ("None", None),
-    ("5 min", 5),
-    ("10 min", 10),
-    ("30 min", 30),
-    ("1 hour", 60),
-    ("2 hours", 120),
-    ("1 day", 1440),
-)
+#: Sub-pages a back gesture (Escape, Alt+Left) leaves.
+SUB_VIEWS = ("detail", "editor", "import", "export", "search", "calendars")
 
 FILTERS: tuple[str, ...] = ("ALL", "TIMED", "ALL-DAY")
 
@@ -185,13 +177,90 @@ def agenda_list_model(days: list, dim_past: bool,
     return model
 
 
-def _initials(text: str) -> str:
-    parts = [p for p in (text or "").split() if p[:1].isalnum()]
-    if not parts:
-        return "·"
-    if len(parts) == 1:
-        return parts[0][:2].upper()
-    return (parts[0][:1] + parts[1][:1]).upper()
+class ChoiceChips:
+    """One-of-N picker as a scrollable chip row (inverted selected chip,
+    xx_ui ``.xx-chip``): every option visible and one tap away, styled
+    and scaled by the theme, unlike a Gtk.DropDown's own popover list."""
+
+    def __init__(self, labels: list[str], selected: int = 0,
+                 on_change=None) -> None:
+        self._buttons: list[Gtk.Button] = []
+        self._selected = max(0, min(int(selected), len(labels) - 1))
+        self._on_change = on_change
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        for index, text in enumerate(labels):
+            chip = Gtk.Button.new_with_label(text.upper())
+            chip.add_css_class("xx-chip")
+            chip.connect("clicked", lambda _b, i=index: self.set_selected(i))
+            box.append(chip)
+            self._buttons.append(chip)
+        self.widget = Gtk.ScrolledWindow()
+        self.widget.set_policy(Gtk.PolicyType.AUTOMATIC,
+                               Gtk.PolicyType.NEVER)
+        self.widget.set_child(box)
+        self._paint()
+
+    def _paint(self) -> None:
+        for index, chip in enumerate(self._buttons):
+            if index == self._selected:
+                chip.add_css_class("selected")
+            else:
+                chip.remove_css_class("selected")
+
+    def get_selected(self) -> int:
+        return self._selected
+
+    def set_selected(self, index: int) -> None:
+        if not 0 <= index < len(self._buttons):
+            return
+        changed = index != self._selected
+        self._selected = index
+        self._paint()
+        if changed and self._on_change is not None:
+            self._on_change(index)
+
+    def labels(self) -> list[str]:
+        return [chip.get_label() or "" for chip in self._buttons]
+
+
+def _labelled(caption_text: str, child: Gtk.Widget) -> Gtk.Box:
+    """Caption over a control: what an entry or picker holds stays named
+    once it is filled in."""
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    box.append(widgets.caption(caption_text))
+    box.append(child)
+    return box
+
+
+def _two_lines(row: Gtk.Widget) -> Gtk.Widget:
+    """Let a setting row's title and subtitle wrap to two lines each, so
+    large text on a narrow phone reads "Dim past events", not "Dim pa…"."""
+    for widget in _descendants(row):
+        if isinstance(widget, Gtk.Label) and (
+                widget.has_css_class("xx-title")
+                or widget.has_css_class("xx-secondary")):
+            widget.set_wrap(True)
+            widget.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            widget.set_lines(2)
+            widget.set_ellipsize(Pango.EllipsizeMode.END)
+    return row
+
+
+def _descendants(widget: Gtk.Widget):
+    child = widget.get_first_child()
+    while child is not None:
+        yield child
+        yield from _descendants(child)
+        child = child.get_next_sibling()
+
+
+def _button_pair(left: Gtk.Widget, right: Gtk.Widget) -> Gtk.Box:
+    """Full-width equal pair (Cancel/Save, Edit/Copy), gutter to gutter."""
+    pair = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    for button in (left, right):
+        button.set_hexpand(True)
+        pair.append(button)
+    return pair
 
 
 class CalendarApp(Adw.Application):
@@ -254,6 +323,13 @@ class CalendarWindow(Adw.ApplicationWindow):
         if self._view not in ("schedule", "month"):
             self._view = "schedule"
         self._filter = "ALL"
+        self._tab_view = self._view
+        # The schedule scrolls to this day once its rows exist: today on
+        # first open, the jumped-to or swiped-to day after.
+        self._scroll_target: _datetime.date | None = _datetime.date.today()
+        self._day_markers: dict = {}
+        self._editor_back = "schedule"
+        self._extended_back = False
         self._search_text = ""
         self._load_generation = 0
         self._reload_pending = False
@@ -265,6 +341,9 @@ class CalendarWindow(Adw.ApplicationWindow):
         self._load_app_css()
         self._unsub = xx_ui.on_change(self._on_theme_changed)
         self._build_chrome()
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key)
+        self.add_controller(keys)
         self._subscribe_changed()
         GLib.timeout_add_seconds(60, self._on_minute_tick)
 
@@ -314,12 +393,14 @@ class CalendarWindow(Adw.ApplicationWindow):
         self._schedule_chips_slot = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL)
         self._schedule_chips_slot.add_css_class("xx-page-body")
+        self._schedule_chips_slot.add_css_class("xxc-chips")
         schedule_page.append(self._schedule_chips_slot)
         schedule_page.append(schedule_scroll)
         swipe = Gtk.GestureSwipe()
         swipe.connect("swipe", self._on_schedule_swipe)
         schedule_scroll.add_controller(swipe)
         schedule_scroll.connect("edge-reached", self._on_schedule_edge)
+        self._schedule_scroll = schedule_scroll
         self._stack.add_named(schedule_page, "schedule")
         self._day_rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._day_rows.add_css_class("xx-page-body")
@@ -329,6 +410,9 @@ class CalendarWindow(Adw.ApplicationWindow):
         day_scroll.set_child(self._day_rows)
         day_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         day_page.append(day_scroll)
+        day_swipe = Gtk.GestureSwipe()
+        day_swipe.connect("swipe", self._on_day_swipe)
+        day_scroll.add_controller(day_swipe)
         self._stack.add_named(day_page, "day")
         month_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         month_page.add_css_class("xx-page-body")
@@ -399,7 +483,8 @@ class CalendarWindow(Adw.ApplicationWindow):
         self._detail_rid = 0
         self._build_settings_rows()
         self._tabs_slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self._fab = widgets.fab(callback=lambda: self.open_create_sheet(None))
+        self._fab = widgets.fab(
+            callback=lambda: self.open_create_sheet(self._fab_day()))
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         content.append(self._header_slot)
         content.append(self._stack)
@@ -449,78 +534,59 @@ class CalendarWindow(Adw.ApplicationWindow):
 
     def _refresh_header(self) -> None:
         self._clear_header()
+        search = {"icon_name": "system-search-symbolic",
+                  "icon_cb": lambda: self.show_view("search")}
+        today = _datetime.date.today()
         if self._view == "schedule":
-            focus = self._schedule.focus_date or _datetime.date.today()
-            title = "Schedule"
-            caption = f"{views.month_label(focus.year, focus.month)}"
-            count = sum(
-                1 for i in range(self._schedule_model.get_n_items())
-                if isinstance(self._schedule_model.get_item(i), EventItem))
-            if count == 1:
-                caption = f"{caption} · 1 EVENT"
-            elif count:
-                caption = f"{caption} · {count:d} EVENTS"
-            header = widgets.page_header(
-                title, caption,
-                icon_name="system-search-symbolic",
-                icon_cb=lambda: self.show_view("search"),
-                overflow_cb=self._open_overflow)
+            focus = self._schedule.focus_date or today
+            header = shrink_header_title(widgets.page_header(
+                "Agenda", views.month_label(focus.year, focus.month),
+                actions=self._today_action(focus != today), **search))
         elif self._view == "month":
             year, month = self._month_year
-            total = sum(self._month_counts.values())
-            if total:
-                caption = (f"{total:d} EVENT" if total == 1 else
-                           f"{total:d} EVENTS")
-            else:
-                caption = "NOTHING SCHEDULED"
-            header = widgets.page_header(
-                views.month_label(year, month), caption,
-                icon_name="system-search-symbolic",
-                icon_cb=lambda: self.show_view("search"),
-                overflow_cb=self._open_overflow)
+            header = shrink_header_title(widgets.page_header(
+                views.month_title(year, month),
+                actions=self._today_action(
+                    (year, month) != (today.year, today.month)),
+                **search))
         elif self._view == "day":
-            count = len(self._last_instances)
-            if count == 1:
-                caption = "1 EVENT"
-            elif count:
-                caption = f"{count:d} EVENTS"
-            else:
-                caption = "NOTHING SCHEDULED"
-            header = widgets.page_header(
-                views.day_header(self._day_date), caption,
-                icon_name="system-search-symbolic",
-                icon_cb=lambda: self.show_view("search"),
-                overflow_cb=self._open_overflow)
+            header = shrink_header_title(widgets.page_header(
+                views.day_title(self._day_date),
+                actions=self._today_action(self._day_date != today),
+                **search))
         elif self._view == "calendars":
-            try:
-                total = len(self._store.list_calendars())
-            except Exception:
-                total = 0
             header = widgets.compact_header(
-                lambda: self.show_view("settings"), "Calendars",
-                f"{total:d} CALENDARS")
+                lambda: self.show_view("settings"), "Calendars")
         elif self._view == "search":
-            query = (self._search_text or "").strip()
-            header = widgets.compact_header(
-                lambda: self.show_view("schedule"), "Search",
-                query or "TYPE TO FILTER")
+            header = widgets.compact_header(self.go_back, "Search")
         elif self._view == "detail":
-            header = widgets.compact_header(
-                self._go_back, "Details", "EVENT")
+            header = widgets.compact_header(self.go_back, "Event")
         elif self._view == "editor":
             header = widgets.compact_header(
-                self._go_back, "Editor", "EVENT")
+                self.go_back, getattr(self, "_editor_title", "New event"))
         elif self._view == "import":
-            header = widgets.compact_header(
-                self._go_back, "Import", "ICS FILE")
+            header = widgets.compact_header(self.go_back, "Import")
         elif self._view == "export":
-            header = widgets.compact_header(
-                self._go_back, "Export", "ICS FILE")
+            header = widgets.compact_header(self.go_back, "Export")
         else:
-            header = widgets.page_header("Settings", "XX-CALENDAR",
-                                         overflow_cb=self._open_overflow)
+            header = shrink_header_title(widgets.page_header("Setup"))
         self._header_slot.append(header)
         self._refresh_tabs()
+
+    def _today_action(self, away: bool) -> list:
+        """``Today`` sits in the header only while the page is elsewhere."""
+        return [("Today", self.go_today)] if away else []
+
+    def go_today(self) -> None:
+        today = _datetime.date.today()
+        if self._view == "month":
+            self._month_year = (today.year, today.month)
+            self._month_selected = today
+            self._day_date = today
+            self._refresh_header()
+            self.reload()
+            return
+        self.jump_to(today)
 
     def _go_back(self) -> None:
         target = getattr(self, "_back_view", "schedule")
@@ -529,15 +595,45 @@ class CalendarWindow(Adw.ApplicationWindow):
             target = "schedule"
         self.show_view(target)
 
+    def go_back(self) -> bool:
+        """One step back, as a phone back gesture means it: a sub-page
+        returns where it was opened from (the editor to the event it
+        edits); a tab page stays put. True when it moved."""
+        if self._view == "editor" and self._editor_back == "detail":
+            self._view = "detail"
+            try:
+                self._stack.set_visible_child_name("detail")
+            except Exception:
+                pass
+            self._refresh_header()
+            return True
+        if self._view == "search":
+            self.show_view(self._tab_view)
+            return True
+        if self._view == "calendars":
+            self.show_view("settings")
+            return True
+        if self._view in SUB_VIEWS:
+            self._go_back()
+            return True
+        return False
+
+    def _on_key(self, _controller, keyval, _code, state) -> bool:
+        alt = bool(state & Gdk.ModifierType.ALT_MASK)
+        if keyval in (Gdk.KEY_Escape, Gdk.KEY_Back) or (
+                alt and keyval == Gdk.KEY_Left):
+            return self.go_back()
+        return False
+
     def _refresh_tabs(self) -> None:
         child = self._tabs_slot.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
             self._tabs_slot.remove(child)
             child = nxt
-        active = self._view
-        if active in ("detail", "editor", "import", "export"):
-            active = getattr(self, "_back_view", "schedule")
+        active = self._tab_view
+        # Six letters at most: four tabs must fit 360 px at 1.5x text.
+        # Each page title is its tab's name.
         tabs = widgets.bottom_tabs([
             ("", "Agenda", active == "schedule",
              lambda: self.show_view("schedule")),
@@ -545,7 +641,7 @@ class CalendarWindow(Adw.ApplicationWindow):
              lambda: self.show_view("day")),
             ("", "Month", active == "month",
              lambda: self.show_view("month")),
-            ("", "Setup", active in ("settings", "calendars"),
+            ("", "Setup", active == "settings",
              lambda: self.show_view("settings")),
         ])
         self._tabs_slot.append(tabs)
@@ -553,6 +649,14 @@ class CalendarWindow(Adw.ApplicationWindow):
             self._fab.set_visible(self._view in ("schedule", "day", "month"))
         except Exception:
             pass
+
+    def _fab_day(self):
+        """The day a new event starts on: the day on screen."""
+        if self._view == "day":
+            return self._day_date
+        if self._view == "month":
+            return self._month_selected
+        return self._schedule.focus_date
 
     def _refresh_chips(self) -> None:
         child = self._schedule_chips_slot.get_first_child()
@@ -586,6 +690,16 @@ class CalendarWindow(Adw.ApplicationWindow):
         if tag in ("schedule", "day", "month", "calendars", "search",
                    "settings"):
             self._back_view = tag
+        if tag in ("schedule", "day", "month", "settings"):
+            self._tab_view = tag
+        if tag == "schedule" and self._view != "schedule" \
+                and self._scroll_target is None:
+            self._scroll_target = (self._schedule.focus_date
+                                   or _datetime.date.today())
+        if tag == "month" and self._month_selected is None:
+            today = _datetime.date.today()
+            if self._month_year == (today.year, today.month):
+                self._month_selected = today
         self._view = tag
         try:
             self._stack.set_visible_child_name(tag)
@@ -603,6 +717,7 @@ class CalendarWindow(Adw.ApplicationWindow):
         if day is None:
             return
         self._schedule.jump_to(day)
+        self._scroll_target = day
         self._month_year = (day.year, day.month)
         self._month_selected = day
         self._day_date = day
@@ -623,41 +738,6 @@ class CalendarWindow(Adw.ApplicationWindow):
         for arg in launch.get("opens", []):
             self.import_ics_uri(arg)
 
-    def _open_overflow(self) -> None:
-        pop = Gtk.Popover()
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        for label, target in (("Today", "today"),
-                             ("Calendars", "calendars"),
-                             ("Search", "search"),
-                             ("Import", "import"),
-                             ("Export", "export"),
-                             ("Settings", "settings")):
-            row = widgets.menu_row(label,
-                                   lambda t=target: self._overflow_go(t, pop))
-            box.append(row)
-        pop.set_child(box)
-        try:
-            pop.set_parent(self._header_slot)
-        except Exception:
-            pass
-        pop.popup()
-        self._last_dialog = pop
-
-    def _overflow_go(self, target: str, pop) -> None:
-        try:
-            pop.popdown()
-        except Exception:
-            pass
-        if target == "today":
-            self.jump_to(_datetime.date.today())
-            self.show_view("day" if self._view == "day" else self._view)
-        elif target == "import":
-            self._open_import_picker()
-        elif target == "export":
-            self.open_export_dialog()
-        else:
-            self.show_view(target)
-
     def _on_search_changed(self, entry) -> None:
         try:
             self._search_text = entry.get_text()
@@ -665,7 +745,6 @@ class CalendarWindow(Adw.ApplicationWindow):
             self._search_text = ""
         if self._view == "search":
             self.reload()
-        self._refresh_header()
 
     def _on_month_day(self, day) -> None:
         if self._month_selected == day:
@@ -767,10 +846,13 @@ class CalendarWindow(Adw.ApplicationWindow):
             self._schedule_model.remove_all()
             for i in range(model.get_n_items()):
                 self._schedule_model.append(model.get_item(i))
-            self._render_rows(self._schedule_rows, days, dim_past, now_ms,
-                              empty_text="Nothing scheduled.")
-            if self._schedule.focus_date is not None:
-                self._scroll_schedule_to_focus()
+            keep = self._scroll_anchor()
+            self._day_markers = self._render_rows(
+                self._schedule_rows, days, dim_past, now_ms)
+            if self._scroll_target is not None:
+                GLib.idle_add(self._scroll_schedule_to_focus)
+            elif keep is not None:
+                GLib.idle_add(self._restore_scroll_anchor, keep)
         elif self._view == "day":
             days = views.group_agenda(instances, zone, self._day_date,
                                       self._day_date)
@@ -778,8 +860,9 @@ class CalendarWindow(Adw.ApplicationWindow):
             self._schedule_model.remove_all()
             for i in range(model.get_n_items()):
                 self._schedule_model.append(model.get_item(i))
+            # The page title already names the day: no separator under it.
             self._render_rows(self._day_rows, days, dim_past, now_ms,
-                              empty_text="Nothing scheduled.")
+                              headers=False)
         elif self._view == "search":
             query = (self._search_text or "").strip().lower()
             days = views.group_agenda(instances, zone,
@@ -799,15 +882,70 @@ class CalendarWindow(Adw.ApplicationWindow):
                 days = kept
             else:
                 days = []
-            self._render_rows(self._search_rows, days, dim_past, now_ms,
-                              empty_text="No results.")
+            self._render_rows(self._search_rows, days, dim_past, now_ms)
         else:
             self._render_month(instances, now_ms, dim_past)
         self._refresh_header()
         return False
 
-    def _scroll_schedule_to_focus(self) -> None:
-        return None
+    def _scroll_anchor(self) -> tuple[str, float] | None:
+        """Where the schedule is scrolled, so a reload keeps the view
+        still: measured from the end after rows were prepended above (an
+        extend backward), from the top otherwise."""
+        try:
+            adj = self._schedule_scroll.get_vadjustment()
+        except Exception:
+            return None
+        back, self._extended_back = self._extended_back, False
+        if back:
+            return ("end", adj.get_upper() - adj.get_value())
+        return ("top", adj.get_value())
+
+    def _restore_scroll_anchor(self, anchor: tuple[str, float]) -> bool:
+        try:
+            adj = self._schedule_scroll.get_vadjustment()
+            edge, offset = anchor
+            value = adj.get_upper() - offset if edge == "end" else offset
+            adj.set_value(max(0.0, value))
+        except Exception:
+            pass
+        return False
+
+    def _scroll_schedule_to_focus(self) -> bool:
+        """Scroll the schedule so the target day (or the next day with
+        events) sits at the top: the app opens on today, not on the first
+        day of last month."""
+        target = self._scroll_target
+        if target is None:
+            return False
+        later = sorted(day for day in self._day_markers if day >= target)
+        marker = self._day_markers.get(later[0]) if later else None
+        if marker is None and self._day_markers:
+            marker = self._day_markers[max(self._day_markers)]
+        try:
+            adj = self._schedule_scroll.get_vadjustment()
+        except Exception:
+            return False
+        if marker is None:
+            self._scroll_target = None
+            adj.set_value(0.0)
+            return False
+        ok, point = marker.compute_point(
+            self._schedule_rows, _graphene_point(0.0, 0.0))
+        laid_out = (ok and self._schedule_rows.get_height() > 0
+                    and adj.get_upper() >= self._schedule_rows.get_height()
+                    and (point.y > 0.0 or marker is
+                         self._schedule_rows.get_first_child()))
+        self._scroll_tries = getattr(self, "_scroll_tries", 0) + 1
+        if not laid_out and self._scroll_tries < 50:
+            # Not laid out yet: try again on a later turn.
+            GLib.timeout_add(40, self._scroll_schedule_to_focus)
+            return False
+        self._scroll_tries = 0
+        self._scroll_target = None
+        adj.set_value(min(point.y, max(0.0, adj.get_upper()
+                                       - adj.get_page_size())))
+        return False
 
     def _clear_rows(self, box) -> None:
         child = box.get_first_child()
@@ -828,38 +966,43 @@ class CalendarWindow(Adw.ApplicationWindow):
             meta = ""
         return (secondary, meta)
 
+    def _event_row(self, row, names: dict, last: bool, dim_past: bool,
+                   now_ms: int) -> Gtk.Widget:
+        """Text-first event row: title over time and calendar."""
+        secondary, meta = self._event_secondary(row, names)
+        uid, rid = row.uid, int(row.recurrence_id)
+        item = widgets.list_row(
+            row.title or views.UNTITLED, secondary, meta=meta, last=last,
+            on_activate=lambda u=uid, r=rid: self.open_detail(u, r))
+        if dim_past:
+            if row.end_ms > row.start_ms:
+                past = row.end_ms < now_ms
+            else:
+                past = row.start_ms < now_ms
+            if past:
+                item.set_opacity(0.55)
+        return item
+
     def _render_rows(self, box, days: list, dim_past: bool, now_ms: int,
-                     empty_text: str) -> None:
+                     headers: bool = True) -> dict:
+        """Day separators and event rows; an empty list shows nothing.
+        Returns each day's first widget, for scrolling to a day."""
         self._clear_rows(box)
-        if not days:
-            holder = widgets.empty_state(empty_text)
-            holder.set_vexpand(True)
-            holder.set_valign(Gtk.Align.CENTER)
-            box.append(holder)
-            return
-        names = self._calendar_names()
-        total = sum(len(d.all_day) + len(d.timed) for d in days)
-        index = 0
+        markers: dict = {}
+        names = self._calendar_names() if days else {}
         for day in days:
-            box.append(widgets.day_separator(views.day_header(day.date)))
-            for row in list(day.all_day) + list(day.timed):
-                secondary, meta = self._event_secondary(row, names)
-                last = index == total - 1
-                index += 1
-                uid, rid = row.uid, int(row.recurrence_id)
-                item = widgets.list_row(
-                    row.title or views.UNTITLED, secondary, meta=meta,
-                    leading=widgets.avatar(_initials(row.title or "?"), 40),
-                    last=last,
-                    on_activate=lambda u=uid, r=rid: self.open_detail(u, r))
-                if dim_past:
-                    if row.end_ms > row.start_ms:
-                        past = row.end_ms < now_ms
-                    else:
-                        past = row.start_ms < now_ms
-                    if past:
-                        item.set_opacity(0.55)
+            rows = list(day.all_day) + list(day.timed)
+            for index, row in enumerate(rows):
+                if index == 0 and headers:
+                    separator = widgets.day_separator(
+                        views.day_header(day.date))
+                    box.append(separator)
+                    markers[day.date] = separator
+                item = self._event_row(row, names, index == len(rows) - 1,
+                                       dim_past, now_ms)
                 box.append(item)
+                markers.setdefault(day.date, item)
+        return markers
 
     def _render_month(self, instances: list[dict], now_ms: int,
                       dim_past: bool) -> None:
@@ -873,45 +1016,32 @@ class CalendarWindow(Adw.ApplicationWindow):
         by_date = views.events_by_date(instances, self._zone, start, last)
         counts = {day: len(rows) for day, rows in by_date.items()}
         self._month_counts = counts
-        child = self._month_dow.get_first_child()
-        while child is not None:
-            nxt = child.get_next_sibling()
-            self._month_dow.remove(child)
-            child = nxt
+        week_numbers = bool(settings.get("week_numbers", False))
+        self._month_grid.set_week_numbers(week_numbers)
+        self._clear_rows(self._month_dow)
+        if week_numbers:
+            lead = Gtk.Box()
+            lead.set_size_request(int(self._month_grid._lead()), -1)
+            self._month_dow.append(lead)
         for label in views.weekday_labels(first_weekday):
             cell = widgets.caption(label)
             cell.set_hexpand(True)
             cell.set_xalign(0.5)
             self._month_dow.append(cell)
-        if bool(settings.get("week_numbers", False)):
-            pass
         self._month_grid.set_data(weeks, counts, _datetime.date.today(),
                                   self._month_selected)
         self._clear_rows(self._peek_label_slot)
         self._clear_rows(self._peek_rows)
         selected = self._month_selected
-        if selected is None:
-            self._peek_label_slot.append(widgets.caption("PICK A DAY"))
-            self._peek_rows.append(
-                widgets.empty_state("Nothing scheduled."))
-            self._schedule_model.remove_all()
+        if selected is None or not (start <= selected < last):
             return
         self._peek_label_slot.append(
             widgets.caption(views.day_header(selected)))
         rows = list(by_date.get(selected, []))
-        if not rows:
-            self._peek_rows.append(
-                widgets.empty_state("Nothing scheduled."))
-            return
         names = self._calendar_names()
         for i, row in enumerate(rows):
-            secondary, meta = self._event_secondary(row, names)
-            uid, rid = row.uid, int(row.recurrence_id)
-            self._peek_rows.append(widgets.list_row(
-                row.title or views.UNTITLED, secondary, meta=meta,
-                leading=widgets.avatar(_initials(row.title or "?"), 40),
-                last=i == len(rows) - 1,
-                on_activate=lambda u=uid, r=rid: self.open_detail(u, r)))
+            self._peek_rows.append(self._event_row(
+                row, names, i == len(rows) - 1, dim_past, now_ms))
 
     def _render_calendars(self) -> None:
         self._clear_rows(self._cal_rows)
@@ -919,10 +1049,6 @@ class CalendarWindow(Adw.ApplicationWindow):
             calendars = self._store.list_calendars()
         except Exception:
             calendars = []
-        if not calendars:
-            self._cal_rows.append(
-                widgets.empty_state("No calendars yet."))
-            return
         for i, cal in enumerate(calendars):
             switch = widgets.make_switch(bool(cal.is_visible),
                                          lambda on, c=cal:
@@ -930,20 +1056,8 @@ class CalendarWindow(Adw.ApplicationWindow):
             row = widgets.list_row(
                 cal.display_name or cal.id, cal.account_name or "",
                 meta="READ-ONLY" if not cal.is_writable else "",
-                leading=widgets.avatar(_initials(cal.display_name or cal.id),
-                                       40),
                 trailing=switch, last=i == len(calendars) - 1)
             self._cal_rows.append(row)
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        import_button = widgets.outline_button(
-            "Import", callback=self._open_import_picker)
-        import_button.set_hexpand(True)
-        actions.append(import_button)
-        export_button = widgets.outline_button(
-            "Export", callback=self.open_export_dialog)
-        export_button.set_hexpand(True)
-        actions.append(export_button)
-        self._cal_rows.append(actions)
 
     def _toggle_calendar(self, cal, visible: bool) -> None:
         try:
@@ -966,61 +1080,48 @@ class CalendarWindow(Adw.ApplicationWindow):
     def _render_settings(self) -> None:
         self._clear_rows(self._settings_rows)
         get = self._settings.get
-        self._settings_rows.append(widgets.section_label("VIEW"))
-        self._settings_rows.append(widgets.setting_row(
-            "Dim past events", "Fade events that already ended",
+        rows = self._settings_rows
+        rows.append(widgets.section_label("VIEW"))
+        rows.append(_two_lines(widgets.setting_row(
+            "Dim past events", "Fade ended events",
             widgets.make_switch(bool(get("dim_past", True)),
                                 lambda on: self._save_setting("dim_past",
-                                                             bool(on)))))
-        self._settings_rows.append(widgets.setting_row(
-            "Week numbers", "Show ISO week numbers",
+                                                             bool(on))))))
+        rows.append(_two_lines(widgets.setting_row(
+            "Week numbers", "In the month grid",
             widgets.make_switch(bool(get("week_numbers", False)),
                                 lambda on: self._save_setting("week_numbers",
-                                                             bool(on)))))
-        self._settings_rows.append(widgets.setting_row(
-            "Show declined", "Include declined events",
-            widgets.make_switch(bool(get("show_declined", False)),
-                                lambda on: self._save_setting(
-                                    "show_declined", bool(on)))))
-        self._settings_rows.append(widgets.setting_row(
-            "Hide auto-added", "Hide Gmail auto-added events",
-            widgets.make_switch(bool(get("hide_auto_added", True)),
-                                lambda on: self._save_setting(
-                                    "hide_auto_added", bool(on))),
-            last=True))
-        self._settings_rows.append(widgets.section_label("NOTIFICATIONS"))
-        self._settings_rows.append(widgets.setting_row(
-            "Heads up", "Peek when a reminder fires",
-            widgets.make_switch(bool(get("heads_up", False)),
-                                lambda on: self._save_setting("heads_up",
-                                                             bool(on)))))
-        self._settings_rows.append(widgets.setting_row(
-            "Daily agenda", "Morning summary notification",
-            widgets.make_switch(bool(get("daily_agenda", False)),
-                                lambda on: self._save_setting("daily_agenda",
-                                                             bool(on))),
-            last=True))
-        self._settings_rows.append(widgets.section_label("CALENDARS"))
+                                                             bool(on))))))
+        sunday = str(get("start_day_of_week", "MONDAY")).upper() == "SUNDAY"
+        rows.append(_two_lines(widgets.setting_row(
+            "Week starts", "",
+            widgets.segmented([
+                ("Mon", not sunday,
+                 lambda: self._set_week_start("MONDAY")),
+                ("Sun", sunday,
+                 lambda: self._set_week_start("SUNDAY")),
+            ]), last=True)))
+        rows.append(widgets.section_label("CALENDARS"))
         try:
-            total = len(self._store.list_calendars())
+            calendars = self._store.list_calendars()
         except Exception:
-            total = 0
-        self._settings_rows.append(widgets.setting_row(
-            "Calendars", f"{total:d} ON THIS PHONE",
-            widgets.text_button("Open",
-                                callback=lambda: self.show_view("calendars")),
-            last=True))
-        self._settings_rows.append(widgets.section_label("DATA"))
-        data_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        import_button = widgets.outline_button(
-            "Import", callback=self._open_import_picker)
-        import_button.set_hexpand(True)
-        data_row.append(import_button)
-        export_button = widgets.outline_button(
-            "Export", callback=self.open_export_dialog)
-        export_button.set_hexpand(True)
-        data_row.append(export_button)
-        self._settings_rows.append(data_row)
+            calendars = []
+        rows.append(_two_lines(widgets.list_row(
+            "Calendars",
+            ", ".join(c.display_name or c.id for c in calendars),
+            last=True, on_activate=lambda: self.show_view("calendars"))))
+        rows.append(widgets.section_label("DATA"))
+        rows.append(_button_pair(
+            widgets.outline_button("Import",
+                                   callback=self._open_import_picker),
+            widgets.outline_button("Export",
+                                   callback=self.open_export_dialog)))
+
+    def _set_week_start(self, value: str) -> None:
+        if str(self._settings.get("start_day_of_week", "")).upper() == value:
+            return
+        self._save_setting("start_day_of_week", value)
+        self._render_settings()
 
     def _save_setting(self, key: str, value) -> None:
         self._settings[key] = value
@@ -1038,6 +1139,7 @@ class CalendarWindow(Adw.ApplicationWindow):
             self._schedule.extend_forward()
         elif pos == Gtk.PositionType.TOP:
             self._schedule.extend_backward()
+            self._extended_back = True
         else:
             return
         self.reload()
@@ -1047,9 +1149,15 @@ class CalendarWindow(Adw.ApplicationWindow):
                                           SWIPE_VELOCITY_PX_S)
         if direction == 0:
             return
-        anchor = self._schedule.focus_date or _datetime.date.today()
-        self._schedule.focus_on(anchor + _datetime.timedelta(days=direction))
-        self._ensure_focus_window()
+        self.shift_focus(direction)
+
+    def _on_day_swipe(self, _gesture, velocity_x, velocity_y) -> None:
+        direction = views.swipe_direction(velocity_x, velocity_y,
+                                          SWIPE_VELOCITY_PX_S)
+        if direction == 0:
+            return
+        self._day_date = self._day_date + _datetime.timedelta(days=direction)
+        self._refresh_header()
         self.reload()
 
     def _ensure_focus_window(self) -> None:
@@ -1066,6 +1174,7 @@ class CalendarWindow(Adw.ApplicationWindow):
     def shift_focus(self, days: int) -> None:
         anchor = self._schedule.focus_date or _datetime.date.today()
         self._schedule.focus_on(anchor + _datetime.timedelta(days=days))
+        self._scroll_target = self._schedule.focus_date
         self._ensure_focus_window()
         self.reload()
 
@@ -1081,6 +1190,10 @@ class CalendarWindow(Adw.ApplicationWindow):
         else:
             nxt = first - _datetime.timedelta(days=1)
         self._month_year = (nxt.year, nxt.month)
+        today = _datetime.date.today()
+        self._month_selected = today if (today.year, today.month) == \
+            self._month_year else None
+        self._refresh_header()
         self.reload()
 
     # -------------------------------------------------------------- changed
@@ -1157,62 +1270,38 @@ class CalendarWindow(Adw.ApplicationWindow):
         headline.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         headline.set_max_width_chars(32)
         box.append(headline)
-        try:
-            start = event.dtstart()
-            if start is not None:
-                moment = _datetime.datetime.fromtimestamp(
-                    start[0] / 1000, _datetime.timezone.utc).astimezone(
-                        self._zone)
-                if start[1]:
-                    when = moment.date().isoformat() + " · ALL DAY"
-                else:
-                    end = event.dtend()
-                    if end is not None:
-                        stop = _datetime.datetime.fromtimestamp(
-                            end[0] / 1000,
-                            _datetime.timezone.utc).astimezone(self._zone)
-                        when = (moment.strftime("%Y-%m-%d %H:%M") + " – " +
-                                stop.strftime("%H:%M"))
-                    else:
-                        when = moment.strftime("%Y-%m-%d %H:%M")
-                box.append(widgets.field("WHEN", when))
-        except Exception:
-            pass
+        when = self._when_text(event, int(recurrence_id))
+        if when:
+            box.append(_wrapped_field("WHEN", when))
         try:
             names = self._calendar_names()
             record = self._store.get_event(uid)
-            box.append(widgets.field(
+            box.append(_wrapped_field(
                 "CALENDAR", names.get(record.calendar_id,
                                       record.calendar_id)))
         except Exception:
             pass
         location = event.location() or ""
         if location:
-            box.append(widgets.field("LOCATION", location))
+            box.append(_wrapped_field("LOCATION", location))
         description = event.description() or ""
         if description:
-            box.append(widgets.field("DESCRIPTION", description))
+            box.append(_wrapped_field("DESCRIPTION", description))
         rule = event.rrule() or ""
         if rule:
-            box.append(widgets.field("REPEAT", rule))
+            box.append(widgets.field("REPEAT", views.repeat_label(rule)))
         reminders = event.reminder_minutes()
         if reminders:
             box.append(widgets.field(
-                "REMINDER", f"{reminders[0]:d} MIN BEFORE"))
+                "REMINDER", views.reminder_label(reminders[0])))
         self._detail_uid = uid
         self._detail_rid = int(recurrence_id)
-        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        edit = widgets.outline_button(
-            "Edit", callback=lambda: self.open_editor(uid=uid))
-        edit.set_hexpand(True)
-        buttons.append(edit)
-        copy = widgets.outline_button(
-            "Copy",
-            callback=lambda: self.open_editor(uid=uid, duplicate=True))
-        copy.set_hexpand(True)
-        buttons.append(copy)
-        box.append(buttons)
-        box.append(widgets.section_label("DELETE"))
+        box.append(_button_pair(
+            widgets.outline_button(
+                "Edit", callback=lambda: self.open_editor(uid=uid)),
+            widgets.outline_button(
+                "Copy",
+                callback=lambda: self.open_editor(uid=uid, duplicate=True))))
         scope = {"value": "this" if rule else "all"}
         if rule:
             box.append(widgets.segmented([
@@ -1228,13 +1317,36 @@ class CalendarWindow(Adw.ApplicationWindow):
         self._last_dialog = box
         self.show_view("detail")
 
+    def _when_text(self, event, recurrence_id: int = 0) -> str:
+        """The tapped occurrence's time in words, not the series start."""
+        try:
+            start = event.dtstart()
+            if start is None:
+                return ""
+            end = event.dtend()
+            start_ms = int(start[0])
+            end_ms = int(end[0]) if end is not None else None
+            if recurrence_id and recurrence_id != start_ms:
+                if end_ms is not None:
+                    end_ms = recurrence_id + (end_ms - start_ms)
+                start_ms = recurrence_id
+            zone = _datetime.timezone.utc if start[1] else self._zone
+            moment = _datetime.datetime.fromtimestamp(
+                start_ms / 1000, _datetime.timezone.utc).astimezone(zone)
+            stop = None
+            if end_ms is not None:
+                stop = _datetime.datetime.fromtimestamp(
+                    end_ms / 1000, _datetime.timezone.utc).astimezone(zone)
+            return views.when_label(moment, stop, bool(start[1]))
+        except Exception:
+            return ""
+
     def _delete_event(self, uid: str, scope: str, recurrence_id: int) -> None:
         try:
             self._service.delete(uid, scope, int(recurrence_id))
         except Exception as exc:
             self._toasts.add_toast(Adw.Toast.new(f"Could not delete: {exc}"))
             return
-        self._toasts.add_toast(Adw.Toast.new("Deleted"))
         self._schedule.force_refresh()
         self._go_back()
 
@@ -1258,11 +1370,11 @@ class CalendarWindow(Adw.ApplicationWindow):
                 existing = parsed[0] if parsed else None
             except Exception:
                 existing = None
+        editing = existing is not None and not duplicate
+        self._editor_title = "Edit event" if editing else "New event"
+        self._editor_back = "detail" if self._view == "detail" else "list"
         content = self._editor_rows
         self._clear_rows(content)
-        content.append(widgets.label(
-            "Edit event" if existing and not duplicate else "New event",
-            "xx-display-large"))
         title_entry = widgets.text_entry("Title")
         self._defocusable(title_entry)
         if existing is not None and (existing.summary() or ""):
@@ -1272,12 +1384,11 @@ class CalendarWindow(Adw.ApplicationWindow):
         content.append(widgets.setting_row("All day", "", all_day_switch,
                                            last=True))
         if existing is not None and existing.dtstart() is not None:
-            start_info = existing.dtstart()
-            if start_info[1]:
+            if existing.dtstart()[1]:
                 all_day_switch.set_active(True)
-        start_entry = widgets.text_entry("Start: YYYY-MM-DD HH:MM")
+        start_entry = widgets.text_entry("YYYY-MM-DD HH:MM")
         self._defocusable(start_entry)
-        end_entry = widgets.text_entry("End: YYYY-MM-DD HH:MM")
+        end_entry = widgets.text_entry("YYYY-MM-DD HH:MM")
         self._defocusable(end_entry)
         duration_min = self._settings.get("default_duration_min", 30)
         try:
@@ -1288,58 +1399,55 @@ class CalendarWindow(Adw.ApplicationWindow):
         if existing is not None:
             try:
                 prefill = self._prefill_range(existing)
-                if prefill[0]:
-                    start_entry.set_text(prefill[0])
-                if prefill[1]:
-                    end_entry.set_text(prefill[1])
             except Exception:
-                pass
-        content.append(start_entry)
-        content.append(end_entry)
-        names = [f"{c.display_name or c.id}" for c in calendars]
-        picker = Gtk.DropDown.new_from_strings(names)
-        picker.set_selected(0)
+                prefill = ("", "")
+        else:
+            prefill = views.default_range(anchor, _datetime.datetime.now(),
+                                          duration_min)
+        if prefill[0]:
+            start_entry.set_text(prefill[0])
+        if prefill[1]:
+            end_entry.set_text(prefill[1])
+        content.append(_labelled("STARTS", start_entry))
+        content.append(_labelled("ENDS", end_entry))
+        selected_cal = 0
         if existing is not None:
             try:
                 record = self._store.get_event(uid or "")
                 for i, cal in enumerate(calendars):
                     if cal.id == record.calendar_id:
-                        picker.set_selected(i)
+                        selected_cal = i
                         break
             except Exception:
                 pass
-        content.append(picker)
-        repeat_picker = Gtk.DropDown.new_from_strings(
-            [label for label, _value in RECURRENCE_CHOICES])
-        repeat_picker.set_selected(0)
-        if existing is not None and existing.rrule():
-            raw = existing.rrule()
-            for i, (_label, value) in enumerate(RECURRENCE_CHOICES):
-                if value and value.split(";")[0] in raw:
-                    repeat_picker.set_selected(i)
-                    break
-        content.append(repeat_picker)
-        reminder_picker = Gtk.DropDown.new_from_strings(
-            [label for label, _value in REMINDER_CHOICES])
+        picker = ChoiceChips([c.display_name or c.id for c in calendars],
+                             selected_cal)
+        if len(calendars) > 1:
+            content.append(_labelled("CALENDAR", picker.widget))
+        raw_rule = existing.rrule() if existing is not None else ""
+        repeat_choices = views.repeat_choices(raw_rule or "")
+        repeat_index = views.repeat_index(raw_rule or "", repeat_choices)
+        repeat_picker = ChoiceChips(
+            [label for label, _value in repeat_choices],
+            repeat_index if repeat_index is not None else 0)
+        content.append(_labelled("REPEAT", repeat_picker.widget))
         default_rem = self._settings.get("default_notification_min")
         try:
             default_rem = int(default_rem)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             default_rem = 10
         sel_rem = 0
-        for i, (_label, value) in enumerate(REMINDER_CHOICES):
-            if value == default_rem:
-                sel_rem = i
-                break
+        wanted = default_rem
         if existing is not None:
             got = existing.reminder_minutes()
-            if got:
-                for i, (_label, value) in enumerate(REMINDER_CHOICES):
-                    if value == got[0]:
-                        sel_rem = i
-                        break
-        reminder_picker.set_selected(sel_rem)
-        content.append(reminder_picker)
+            wanted = got[0] if got else None
+        for i, (_label, value) in enumerate(REMINDER_CHOICES):
+            if value == wanted:
+                sel_rem = i
+                break
+        reminder_picker = ChoiceChips(
+            [label for label, _value in REMINDER_CHOICES], sel_rem)
+        content.append(_labelled("REMINDER", reminder_picker.widget))
         location_entry = widgets.text_entry("Location")
         self._defocusable(location_entry)
         if existing is not None and existing.location():
@@ -1350,46 +1458,39 @@ class CalendarWindow(Adw.ApplicationWindow):
         if existing is not None and existing.description():
             desc_entry.set_text(existing.description() or "")
         content.append(desc_entry)
-        scope_picker = Gtk.DropDown.new_from_strings(
-            ["This instance", "This and following", "All events"])
-        scope_picker.set_selected(0)
-        if existing is not None and not duplicate and existing.rrule():
-            content.append(widgets.section_label("SCOPE"))
-            content.append(scope_picker)
+        scope_picker = None
+        if editing and existing.rrule():
+            scope_picker = ChoiceChips(["This", "Following", "All"], 0)
+            content.append(_labelled("CHANGE", scope_picker.widget))
         error_label = widgets.label("", "xx-danger-text")
+        error_label.set_wrap(True)
         content.append(error_label)
-        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        buttons.set_halign(Gtk.Align.CENTER)
-        cancel = widgets.text_button("Cancel",
-                                     callback=lambda: self._go_back())
         save = widgets.primary_button(
             "Save",
             callback=lambda: self._save_editor(
                 content, title_entry, all_day_switch, start_entry, end_entry,
                 picker, calendars, repeat_picker, reminder_picker,
-                location_entry, desc_entry, scope_picker
-                if (existing is not None and not duplicate
-                    and existing.rrule()) else None,
-                error_label,
+                location_entry, desc_entry, scope_picker, error_label,
                 {"anchor": anchor, "duration_min": duration_min,
-                 "uid": None if duplicate else uid}))
-        buttons.append(cancel)
-        buttons.append(save)
-        content.append(buttons)
+                 "uid": None if duplicate else uid,
+                 "repeat_choices": repeat_choices}))
+        content.append(_button_pair(
+            widgets.text_button("Cancel", callback=self.go_back), save))
         self._last_dialog = content
         self.show_view("editor")
 
-        def refresh_placeholders(*_args) -> None:
-            if all_day_switch.get_active():
-                start_entry.set_placeholder_text("Start: YYYY-MM-DD")
-                end_entry.set_placeholder_text("End: YYYY-MM-DD")
-            else:
-                start_entry.set_placeholder_text("Start: YYYY-MM-DD HH:MM")
-                end_entry.set_placeholder_text("End: YYYY-MM-DD HH:MM")
+        def on_all_day(*_args) -> None:
+            on = all_day_switch.get_active()
+            for entry, hour in ((start_entry, 9), (end_entry, 10)):
+                entry.set_placeholder_text(
+                    "YYYY-MM-DD" if on else "YYYY-MM-DD HH:MM")
+                entry.set_text(views.retime_text(entry.get_text(), on, hour))
 
-        all_day_switch.connect("notify::active",
-                               lambda _s, _p: refresh_placeholders())
-        refresh_placeholders()
+        all_day_switch.connect("notify::active", on_all_day)
+        for entry in (start_entry, end_entry):
+            entry.set_placeholder_text(
+                "YYYY-MM-DD" if all_day_switch.get_active()
+                else "YYYY-MM-DD HH:MM")
 
     def _prefill_range(self, event) -> tuple[str, str]:
         start = event.dtstart()
@@ -1452,7 +1553,8 @@ class CalendarWindow(Adw.ApplicationWindow):
         index = picker.get_selected()
         calendar_id = calendars[index].id if 0 <= index < len(calendars) \
             else calendars[0].id
-        rrule = RECURRENCE_CHOICES[repeat_picker.get_selected()][1] or None
+        choices = state.get("repeat_choices") or RECURRENCE_CHOICES
+        rrule = choices[repeat_picker.get_selected()][1] or None
         rem_value = REMINDER_CHOICES[reminder_picker.get_selected()][1]
         location = location_entry.get_text().strip() or None
         description = desc_entry.get_text().strip() or None
@@ -1491,8 +1593,9 @@ class CalendarWindow(Adw.ApplicationWindow):
             if scope == "all":
                 self._service.update(uid, ics_text, "all", 0)
             else:
-                rid = 0
-                for item in self._last_instances:
+                # The occurrence the user opened, not the first one loaded.
+                rid = self._detail_rid if self._detail_uid == uid else 0
+                for item in self._last_instances if not rid else []:
                     if item.get("uid") == uid:
                         rid = int(item.get("start", 0))
                         break
@@ -1500,7 +1603,7 @@ class CalendarWindow(Adw.ApplicationWindow):
         except Exception as exc:
             error_label.set_text(f"Could not save: {exc}")
             return
-        GLib.idle_add(self._on_create_done, host, True, "Saved")
+        GLib.idle_add(self._on_create_done, host, True, "")
 
     def _write_create(self, calendar_id: str, ics_text: str, host,
                       error_label) -> None:
@@ -1527,7 +1630,7 @@ class CalendarWindow(Adw.ApplicationWindow):
         except Exception as exc:
             self._show_sheet_error(host, f"Could not save: {exc}")
             return
-        GLib.idle_add(self._on_create_done, host, True, "Saved")
+        GLib.idle_add(self._on_create_done, host, True, "")
 
     def _create_locally(self, calendar_id: str, ics_text: str,
                         host) -> None:
@@ -1537,7 +1640,7 @@ class CalendarWindow(Adw.ApplicationWindow):
             GLib.idle_add(self._show_sheet_error, host,
                           f"Could not save: {exc}")
             return
-        GLib.idle_add(self._on_create_done, host, True, "Saved")
+        GLib.idle_add(self._on_create_done, host, True, "")
 
     def _show_sheet_error(self, host, message: str) -> bool:
         error = _find_error_label(host)
@@ -1553,9 +1656,15 @@ class CalendarWindow(Adw.ApplicationWindow):
             self._toasts.add_toast(Adw.Toast.new(message))
         return False
 
-    def _on_create_done(self, _host, _ok: bool, message: str) -> bool:
-        self._toasts.add_toast(Adw.Toast.new(message))
+    def _on_create_done(self, _host, _ok: bool, _message: str = "") -> bool:
+        """A finished write returns to the list (or the edited event's
+        page) quietly: the new or changed rows are the confirmation."""
         self._schedule.force_refresh()
+        if self._view == "editor" and self._editor_back == "detail" \
+                and self._detail_uid:
+            self.open_detail(self._detail_uid, self._detail_rid)
+            if self._view == "detail":
+                return False
         self._go_back()
         return False
 
@@ -1593,27 +1702,19 @@ class CalendarWindow(Adw.ApplicationWindow):
             return
         content = self._import_rows
         self._clear_rows(content)
-        content.append(widgets.label("Import into", "xx-display-large"))
-        content.append(widgets.field("FILE", path))
-        picker = Gtk.DropDown.new_from_strings(
-            [c.display_name or c.id for c in calendars])
-        picker.set_selected(0)
-        content.append(picker)
+        content.append(_wrapped_field("FILE", os.path.basename(path)))
+        picker = ChoiceChips([c.display_name or c.id for c in calendars])
+        content.append(_labelled("INTO", picker.widget))
         error_label = widgets.label("", "xx-danger-text")
+        error_label.set_wrap(True)
         content.append(error_label)
-        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        cancel = widgets.text_button(
-            "Cancel", callback=lambda: self._go_back())
-        cancel.set_hexpand(True)
-        buttons.append(cancel)
-        go = widgets.primary_button(
-            "Import",
-            callback=lambda: self._start_import(
-                picker.get_selected(), calendars, path, content,
-                error_label))
-        go.set_hexpand(True)
-        buttons.append(go)
-        content.append(buttons)
+        content.append(_button_pair(
+            widgets.text_button("Cancel", callback=self.go_back),
+            widgets.primary_button(
+                "Import",
+                callback=lambda: self._start_import(
+                    picker.get_selected(), calendars, path, content,
+                    error_label))))
         self._last_dialog = content
         self.show_view("import")
 
@@ -1632,15 +1733,12 @@ class CalendarWindow(Adw.ApplicationWindow):
 
         try:
             text = read_bounded_text(path)
-            created, updated, skipped = self._service.import_ics(calendar_id,
-                                                                 text)
+            self._service.import_ics(calendar_id, text)
         except Exception as exc:
             GLib.idle_add(self._show_sheet_error, host,
                           f"Could not import: {exc}")
             return
-        message = (f"{created:d} imported · {updated:d} updated · "
-                   f"{skipped:d} skipped")
-        GLib.idle_add(self._on_create_done, host, True, message)
+        GLib.idle_add(self._on_create_done, host, True, "")
 
     def open_export_dialog(self) -> None:
         try:
@@ -1649,26 +1747,19 @@ class CalendarWindow(Adw.ApplicationWindow):
             calendars = []
         content = self._export_rows
         self._clear_rows(content)
-        content.append(widgets.label("Export", "xx-display-large"))
-        names = ["All calendars"] + [c.display_name or c.id
-                                     for c in calendars]
-        picker = Gtk.DropDown.new_from_strings(names)
-        picker.set_selected(0)
-        content.append(picker)
+        picker = ChoiceChips(["All"] + [c.display_name or c.id
+                                        for c in calendars])
+        content.append(_labelled("CALENDARS", picker.widget))
         error_label = widgets.label("", "xx-danger-text")
+        error_label.set_wrap(True)
         content.append(error_label)
-        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        cancel = widgets.text_button(
-            "Cancel", callback=lambda: self._go_back())
-        cancel.set_hexpand(True)
-        buttons.append(cancel)
-        go = widgets.primary_button(
-            "Export",
-            callback=lambda: self._start_export(
-                picker.get_selected(), calendars, content, error_label))
-        go.set_hexpand(True)
-        buttons.append(go)
-        content.append(buttons)
+        content.append(_button_pair(
+            widgets.text_button("Cancel", callback=self.go_back),
+            widgets.primary_button(
+                "Export",
+                callback=lambda: self._start_export(
+                    picker.get_selected(), calendars, content,
+                    error_label))))
         self._last_dialog = content
         self.show_view("export")
 
@@ -1699,6 +1790,15 @@ class CalendarWindow(Adw.ApplicationWindow):
         try:
             chosen = dialog.save_finish(result)  # type: ignore[arg-type]
             path = chosen.get_path() if hasattr(chosen, "get_path") else None
+        except GLib.Error as exc:
+            # Dismissing the save dialog is not an error to report.
+            if exc.matches(Gtk.DialogError.quark(),
+                           Gtk.DialogError.DISMISSED) or \
+                    exc.matches(Gtk.DialogError.quark(),
+                                Gtk.DialogError.CANCELLED):
+                return
+            error_label.set_text(f"Could not export: {exc.message}")
+            return
         except Exception as exc:
             error_label.set_text(f"Could not export: {exc}")
             return
@@ -1710,7 +1810,27 @@ class CalendarWindow(Adw.ApplicationWindow):
         except Exception as exc:
             error_label.set_text(f"Could not export: {exc}")
             return
-        GLib.idle_add(self._on_create_done, parent, True, "Exported")
+        GLib.idle_add(self._on_create_done, parent, True, "")
+
+
+def _wrapped_field(caption_text: str, value: str) -> Gtk.Box:
+    """``widgets.field`` whose value wraps (a long location, a file name)
+    instead of running off a 320 px screen."""
+    box = widgets.field(caption_text, value)
+    shown = box.get_last_child()
+    if isinstance(shown, Gtk.Label):
+        shown.set_wrap(True)
+        shown.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        shown.set_ellipsize(Pango.EllipsizeMode.NONE)
+        shown.set_max_width_chars(-1)
+        shown.set_width_chars(-1)
+        shown.set_xalign(0.0)
+    return box
+
+def _graphene_point(x: float, y: float):
+    point = Graphene.Point()
+    point.init(x, y)
+    return point
 
 
 def _tier_index(tier) -> int:

@@ -28,6 +28,14 @@ def _pump_until(predicate, timeout=8.0):
     return predicate()
 
 
+def _walk(widget):
+    yield widget
+    child = widget.get_first_child()
+    while child is not None:
+        yield from _walk(child)
+        child = child.get_next_sibling()
+
+
 def main(db_path: str) -> int:
     import gi
 
@@ -135,15 +143,44 @@ def main(db_path: str) -> int:
                 "Edit/Copy are a full-width equal pair"
             window.show_view("schedule")
         probe = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        window._render_rows(probe, [], True, 0,
-                            empty_text="Nothing scheduled.")
-        holder = probe.get_first_child()
-        assert holder is not None
-        assert holder.get_next_sibling() is None
-        assert holder.get_vexpand(), "empty state fills the body height"
-        assert holder.get_valign() == Gtk.Align.CENTER, \
-            "empty state centers vertically in the body"
-        print("EMPTY_CENTER=ok", flush=True)
+        window._render_rows(probe, [], True, 0)
+        assert probe.get_first_child() is None, \
+            "an empty list shows nothing, no empty-state line"
+        print("EMPTY_NOTHING=ok", flush=True)
+
+        def _labels(widget, out):
+            if isinstance(widget, Gtk.Label):
+                out.append(widget.get_label() or "")
+            if isinstance(widget, Gtk.Image):
+                out.append(f"icon:{widget.get_icon_name()}")
+            child = widget.get_first_child()
+            while child is not None:
+                _labels(child, out)
+                child = child.get_next_sibling()
+            return out
+
+        for view in ("schedule", "month", "day", "settings"):
+            window.show_view(view)
+            shown = _labels(window._header_slot, [])
+            assert "icon:view-more-symbolic" not in shown, \
+                f"{view}: no overflow menu (one way to each thing)"
+        print("NO_OVERFLOW=ok", flush=True)
+        window.show_view("schedule")
+        if first_uid is not None:
+            window.open_detail(first_uid[0], first_uid[1])
+            window.open_editor(uid=first_uid[0])
+            assert window._view == "editor"
+            captions = _labels(window._editor_rows, [])
+            for name in ("STARTS", "ENDS", "REPEAT", "REMINDER"):
+                assert name in captions, f"editor names its {name} field"
+            assert not any(isinstance(w, Gtk.DropDown) for w in
+                           _walk(window._editor_rows)), \
+                "editor pickers are theme chips, not unstyled dropdowns"
+            assert window.go_back() and window._view == "detail", \
+                "back from an edit returns to the event"
+            assert window.go_back() and window._view == "schedule", \
+                "back from the event returns to the list"
+            print("BACK_STACK=ok", flush=True)
         window.open_export_dialog()
         if not _pump_until(lambda: window._view == "export"):
             raise AssertionError("export never opened")

@@ -49,6 +49,17 @@ def gap_band_text(groups, today) -> str | None:
     return None
 
 
+def journal_caption(days: int, total_steps: int) -> str | None:
+    """Header caption: day and step counts, nothing for an empty journal."""
+    if not days:
+        return None
+    caption = f"{days} day" if days == 1 else f"{days} days"
+    if total_steps:
+        caption += (" · 1 step" if total_steps == 1
+                    else f" · {total_steps:,} steps")
+    return caption
+
+
 def _local_zone():
     return datetime.now().astimezone().tzinfo
 
@@ -92,9 +103,9 @@ def activity_title(activity) -> str:
     if kind == "walk":
         return f"{_daypart(activity.started_at)} walk"
     if kind == "run":
-        return f"{_daypart(activity.started_at)} Run"
+        return f"{_daypart(activity.started_at)} run"
     if kind == "cycle":
-        return f"{_daypart(activity.started_at)} Ride"
+        return f"{_daypart(activity.started_at)} ride"
     return kind.capitalize() if kind else "Activity"
 
 
@@ -155,15 +166,14 @@ def build_journal_page(db, config, nav, live: dict | None = None) -> object:
     list_holder.set_vexpand(True)
 
     def menu() -> object:
+        items = shell_page.settings_items(config, nav)
+        if not items:
+            return None
         if state["overflow"] is not None:
             state["overflow"].popup()
             return state["overflow"]
         anchor = header_box.get_first_child()
-        popover = shell_page.open_overflow(anchor, [
-            ("Log activity", nav.add_activity),
-            ("Import Takeout", nav.import_takeout),
-            ("Settings", lambda: nav.show("profile")),
-        ])
+        popover = shell_page.open_overflow(anchor, items)
         state["overflow"] = popover
         popover.connect("closed", lambda _p: state.update(overflow=None))
         return popover
@@ -206,14 +216,10 @@ def build_journal_page(db, config, nav, live: dict | None = None) -> object:
             if first is None:
                 break
             header_box.remove(first)
-        days = len(groups)
-        caption = ((f"{days} day" if days == 1 else f"{days} days")
-                   if groups else "No entries")
-        if total_steps:
-            caption += (" · 1 step" if total_steps == 1
-                        else f" · {total_steps:,} steps")
         header_box.append(widgets.page_header(
-            "Journal", caption, overflow_cb=menu))
+            "Journal", journal_caption(len(groups), total_steps),
+            overflow_cb=menu if shell_page.settings_items(config, nav)
+            else None))
         while True:
             first = chips_box.get_first_child()
             if first is None:
@@ -230,9 +236,7 @@ def build_journal_page(db, config, nav, live: dict | None = None) -> object:
                 break
             list_holder.remove(first)
         if not groups:
-            list_holder.append(widgets.empty_state(
-                "No activities yet.", "Log activity", nav.add_activity))
-            return
+            return  # an empty journal shows nothing; the FAB logs one
         item_type = _item_type()
         store = Gio.ListStore.new(item_type)
         for group in groups:
@@ -261,12 +265,25 @@ def build_journal_page(db, config, nav, live: dict | None = None) -> object:
         else:
             holder.append(_activity_row(entry.payload, config, live))
 
+    def open_first():
+        try:
+            activities = db.list_activities(limit=1)
+        except (OSError, AttributeError):
+            return None
+        if not activities:
+            return None
+        return _open_detail(activities[0], config, live.get("window"))
+
     live["refresh"] = refresh
     live["menu"] = menu
+    live["open_first"] = open_first
     live["window"] = None
     refresh()
     body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     body.add_css_class("xx-page-body")
+    from xx_vitals.ui.home import FAB_CLEARANCE
+
+    body.set_margin_bottom(FAB_CLEARANCE)  # the last row scrolls clear of the FAB
     body.append(chips_box)
     body.append(list_holder)
     return widgets.page(header_box, body, None, widgets.fab(nav.add_activity))
@@ -283,24 +300,20 @@ def _day_header(group, config):
 
     row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
     row.set_valign(Gtk.Align.CENTER)
-    title = widgets.caption(_day_title(group.date, date.today()))
-    title.set_hexpand(True)
-    title.set_valign(Gtk.Align.CENTER)
-    row.append(title)
+    row.add_css_class("xx-vitals-day")
+    text = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
+    text.set_hexpand(True)
+    text.set_valign(Gtk.Align.CENTER)
+    text.append(widgets.caption(_day_title(group.date, date.today())))
     meta_bits = []
     if group.total_steps:
         meta_bits.append(f"{group.total_steps:,} steps")
     if group.total_effort:
         meta_bits.append(f"{group.total_effort} pts")
     if meta_bits:
-        from gi.repository import Pango
-
-        meta = widgets.caption(" · ".join(meta_bits))
-        # Allocated exactly its natural width: an ellipsis would misfire
-        # on fractional rounding, a sub-pixel clip stays invisible.
-        meta.set_ellipsize(Pango.EllipsizeMode.NONE)
-        meta.set_valign(Gtk.Align.CENTER)
-        row.append(meta)
+        meta = widgets.wrap_label(" · ".join(meta_bits), "xx-secondary")
+        text.append(meta)
+    row.append(text)
     ring = Gtk.DrawingArea()
     ring.set_content_width(MINI_PX)
     ring.set_content_height(MINI_PX)
@@ -365,8 +378,6 @@ def _open_detail(activity, config, window) -> None:
         rows.append(("Heart rate", f"{activity.hr_avg} bpm (average)"))
     for title, value in rows:
         box.append(widgets.field(title, value))
-    if not rows:
-        box.append(widgets.empty_state("Nothing was recorded for this entry."))
     close = widgets.primary_button("Close", dialog.close)
     box.append(close)
     from xx_vitals.ui import entry as entry_page
@@ -374,3 +385,4 @@ def _open_detail(activity, config, window) -> None:
     entry_page.fit_dialog(dialog, box)
     if window is not None:
         dialog.present(window)
+    return dialog

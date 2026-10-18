@@ -54,11 +54,13 @@ the payloads with a fake bus).
   `meson.build`). It is a separate process from the service.
 - First run with no model installed shows a download screen, not
   captions: model id `sherpa-onnx-streaming-zipformer-en-20M-2023-02-17`
-  (the phone default, `config.DEFAULT_CONFIG["model"]`), size label
-  `Caption model download: 42 MB`, progress bar, Download/Cancel.
+  (the phone default, `config.DEFAULT_CONFIG["model"]`), title
+  `Captions need a model`, size `42 MB`, progress bar, Download/Cancel
+  (no Start until a model is installed).
   Download runs on a worker thread through the lane-1 model manager
   (`models.download`, SHA-256 verified); cancel aborts and keeps the
-  partial file for resume.
+  partial file for resume; a cancel shows no message, a failure reads
+  `Download failed`.
 - The overlay re-execs itself once with `LD_PRELOAD` pointed at
   `libgtk4-layer-shell.so.0` (same trick as `xx-wm.in`), so the
   shell lane must not preload anything itself.
@@ -68,12 +70,13 @@ the payloads with a fake bus).
   position persists in `~/.config/xx-captions/config.json`
   (`overlay_margin_bottom`). Input passes through everywhere except
   the drag handle and the overflow button. The handle holds
-  Start/Stop plus a `⋯` menu (Settings, Transcripts, Close overlay);
+  Start/Stop (disabled while starting) plus a `⋯` menu (Settings,
+  Close); the overlay is full width less 12 px each side;
   engine, language, model download and history live in
   `xx-captions --settings`. Colors come from the shared `xx_ui`
   design system, which follows `~/.config/xx-wm/config.json` with
-  hot-reload; the `● Captions on` dot is the shell danger red
-  `#ff6b6b`.
+  hot-reload; `CAPTIONS ON` (and an error) reads in the shell danger
+  red `#ff6b6b`.
 
 ## Tile states
 

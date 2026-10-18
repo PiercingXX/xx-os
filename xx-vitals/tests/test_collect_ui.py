@@ -20,8 +20,8 @@ def test_collect_wrappers_stay_thin_and_headless():
     assert callable(profile.set_count_while_screen_off)
     assert callable(profile.start_resident_in_background)
     assert callable(profile.maybe_start_fallback)
-    assert "only counted while the phone is awake" in profile.screen_off_copy()
-    assert profile.screen_off_copy().startswith("Count steps while screen is off")
+    # A row subtitle, not a paragraph (the minimal rule).
+    assert profile.screen_off_copy() == "Uses more battery"
     cfg = prefs.AppConfig()
     assert home.collect_status(cfg)["title"] == "Step counting is off"
     assert profile.collect_status(cfg, accelerometer_available=True)["title"] == (
@@ -86,7 +86,7 @@ def test_profile_collect_uses_switch_and_worker_thread():
     assert "run_in_background" in src
     assert "Sample now" in src
     assert "start_resident_in_background" in src
-    assert "uses more battery" in src
+    assert "screen_off_copy()" in src
     for token in ("subprocess.run", "subprocess.check_output", "time.sleep", "call_sync"):
         assert token not in src, token
 

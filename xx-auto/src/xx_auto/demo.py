@@ -43,7 +43,8 @@ def _paused_radio() -> Track:
 def demo_settings():
     from .settings_store import Settings
 
-    return Settings(surface_calls=True)
+    return Settings(surface_calls=True, auto_launch=True,
+                    auto_launch_device="AA:BB:CC:DD:EE:FF")
 
 
 def snapshot_for(scenario: str):
@@ -51,7 +52,7 @@ def snapshot_for(scenario: str):
 
     if scenario == "nothing_installed":
         return DriveSnapshot(tracks=[], installed={},
-                             maps_title="Maps", maps_sub="Get xx-maps")
+                             maps_title="Maps", maps_sub="not installed")
     if scenario == "nothing_playing":
         return DriveSnapshot(tracks=[],
                              installed={"radio": True, "audiobook": True})
@@ -60,6 +61,9 @@ def snapshot_for(scenario: str):
                              installed={"radio": True, "audiobook": True})
     if scenario == "audiobook":
         return DriveSnapshot(tracks=[_audiobook_track(), _paused_radio()],
+                             installed={"radio": True, "audiobook": True})
+    if scenario == "paused":
+        return DriveSnapshot(tracks=[_paused_radio()],
                              installed={"radio": True, "audiobook": True})
     if scenario == "playing":
         return DriveSnapshot(tracks=[_audiobook_track()],

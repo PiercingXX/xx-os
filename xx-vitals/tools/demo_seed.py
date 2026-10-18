@@ -39,7 +39,7 @@ def main(argv: list[str]) -> int:
     from xx_vitals import prefs as prefs_module
     from xx_vitals.paths import ensure_app_dirs
     from xx_vitals.store import entries
-    from xx_vitals.store.db import Activity, DailyMetric, Database, PendingWrite, SyncState
+    from xx_vitals.store.db import Activity, DailyMetric, Database, SyncState
 
     ensure_app_dirs()
     now = datetime.now().astimezone()

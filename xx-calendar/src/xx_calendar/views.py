@@ -229,6 +229,154 @@ def month_label(year: int, month: int) -> str:
     return f"{_calendar.month_name[month].upper()} {year:d}"
 
 
+def month_title(year: int, month: int) -> str:
+    """``August 2026``: the month page title (display type, not caps)."""
+    return f"{_calendar.month_name[month]} {year:d}"
+
+
+def day_title(day: _datetime.date) -> str:
+    """``Sat 15 Aug``: the day page title."""
+    return f"{day.strftime('%a')} {day.day:d} {day.strftime('%b')}"
+
+
+#: Editor repeat choices: (label, RRULE). Weekly recurs on the start's
+#: own weekday (no BYDAY), as RFC 5545 reads a bare FREQ=WEEKLY.
+REPEAT_CHOICES: tuple[tuple[str, str], ...] = (
+    ("Never", ""),
+    ("Daily", "FREQ=DAILY"),
+    ("Weekly", "FREQ=WEEKLY"),
+    ("Weekdays", "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
+    ("Monthly", "FREQ=MONTHLY"),
+    ("Yearly", "FREQ=YEARLY"),
+)
+
+#: Editor reminder choices: (label, minutes before; None for none).
+REMINDER_CHOICES: tuple[tuple[str, int | None], ...] = (
+    ("None", None),
+    ("5 min", 5),
+    ("10 min", 10),
+    ("30 min", 30),
+    ("1 hour", 60),
+    ("2 hours", 120),
+    ("1 day", 1440),
+)
+
+
+def _rule_parts(rule: str) -> dict[str, str]:
+    parts: dict[str, str] = {}
+    for chunk in (rule or "").strip().upper().split(";"):
+        key, _sep, value = chunk.partition("=")
+        if key and value:
+            parts[key] = value
+    return parts
+
+
+def repeat_choices(rule: str = "") -> list[tuple[str, str]]:
+    """The editor's repeat list. A rule none of the presets says exactly
+    (``BYDAY=MO,WE``, an ``UNTIL``) gets its own ``Custom`` entry, so
+    saving an untouched event never rewrites its rule."""
+    choices = list(REPEAT_CHOICES)
+    if rule and repeat_index(rule, choices) is None:
+        choices.append(("Custom", rule.strip()))
+    return choices
+
+
+def repeat_index(rule: str, choices=REPEAT_CHOICES) -> int | None:
+    """Index of the choice whose rule equals ``rule`` (part order and
+    case ignored); ``0`` (Never) for no rule; None when nothing matches."""
+    if not (rule or "").strip():
+        return 0
+    wanted = _rule_parts(rule)
+    for index, (_label, value) in enumerate(choices):
+        if value and _rule_parts(value) == wanted:
+            return index
+    return None
+
+
+def repeat_label(rule: str) -> str:
+    """``Weekdays``, ``Weekly``…; ``Custom`` for anything else."""
+    index = repeat_index(rule)
+    if index is None:
+        return "Custom"
+    return REPEAT_CHOICES[index][0]
+
+
+def reminder_label(minutes: int) -> str:
+    """``10 min before``, ``1 hour before``, ``1 day before``."""
+    total = max(0, int(minutes))
+    if total and total % 1440 == 0:
+        days = total // 1440
+        amount = f"{days:d} day" + ("" if days == 1 else "s")
+    elif total and total % 60 == 0:
+        hours = total // 60
+        amount = f"{hours:d} hour" + ("" if hours == 1 else "s")
+    else:
+        amount = f"{total:d} min"
+    return f"{amount} before"
+
+
+def when_label(start: _datetime.datetime, end: _datetime.datetime | None,
+               all_day: bool) -> str:
+    """Detail page WHEN: ``Tue 4 Aug 2026 · 06:30 – 07:30``, an all-day
+    span ``Wed 5 – Fri 7 Aug 2026`` (``end`` exclusive), or one day."""
+    def _day(moment) -> str:
+        return f"{moment.strftime('%a')} {moment.day:d} {moment.strftime('%b')}"
+
+    if all_day:
+        first = start.date() if isinstance(start, _datetime.datetime) \
+            else start
+        last = first
+        if end is not None:
+            stop = end.date() if isinstance(end, _datetime.datetime) else end
+            last = max(first, stop - _datetime.timedelta(days=1))
+        if last == first:
+            return f"{_day(first)} {first.year:d}"
+        if (last.year, last.month) == (first.year, first.month):
+            head = f"{first.strftime('%a')} {first.day:d}"
+        else:
+            head = _day(first)
+        return f"{head} – {_day(last)} {last.year:d}"
+    text = f"{_day(start)} {start.year:d} · {start.strftime('%H:%M')}"
+    if end is None or end <= start:
+        return text
+    if end.date() == start.date():
+        return f"{text} – {end.strftime('%H:%M')}"
+    return f"{text} – {_day(end)} {end.strftime('%H:%M')}"
+
+
+def default_range(day: _datetime.date, now: _datetime.datetime,
+                  duration_min: int = 30) -> tuple[str, str]:
+    """A new event's prefilled ``YYYY-MM-DD HH:MM`` start and end: the
+    next whole hour today, 09:00 on any other day."""
+    if day == now.date():
+        start = now.replace(minute=0, second=0, microsecond=0) \
+            + _datetime.timedelta(hours=1)
+        if start.date() != day:
+            start = _datetime.datetime(day.year, day.month, day.day, 23, 0)
+    else:
+        start = _datetime.datetime(day.year, day.month, day.day, 9, 0)
+    end = start + _datetime.timedelta(minutes=max(1, int(duration_min)))
+    return (start.strftime("%Y-%m-%d %H:%M"), end.strftime("%Y-%m-%d %H:%M"))
+
+
+def retime_text(text: str, all_day: bool, hour: int = 9) -> str:
+    """Editor All day switch: drop the time from ``YYYY-MM-DD HH:MM`` when
+    it turns on, add ``hour``:00 to a bare date when it turns off. Text
+    that is neither is left as typed."""
+    cleaned = (text or "").strip()
+    if all_day:
+        try:
+            moment = _datetime.datetime.strptime(cleaned, "%Y-%m-%d %H:%M")
+        except ValueError:
+            return text
+        return moment.date().isoformat()
+    try:
+        day = _datetime.date.fromisoformat(cleaned)
+    except ValueError:
+        return text
+    return f"{day.isoformat()} {int(hour):02d}:00"
+
+
 def day_header(day: _datetime.date) -> str:
     """``MON 24 AUG``: the agenda/peek day header language."""
     return (f"{day.strftime('%a').upper()} {day.day:d} "

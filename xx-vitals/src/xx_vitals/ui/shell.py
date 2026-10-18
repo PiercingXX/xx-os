@@ -31,6 +31,14 @@ def visible_tabs(config) -> list[str]:
     return tabs
 
 
+def settings_items(config, nav) -> list:
+    """Overflow rows that reach Profile: only while its tab is hidden
+    (otherwise the tab is the one way there)."""
+    if getattr(config, "show_profile_tab", True):
+        return []
+    return [("Settings", lambda: nav.show("profile"))]
+
+
 def copy_to_clipboard(text: str) -> str | None:
     """Copy text; returns an error line or None on success."""
     from gi.repository import Gdk
@@ -40,26 +48,6 @@ def copy_to_clipboard(text: str) -> str | None:
         return "No clipboard available right now."
     display.get_clipboard().set(text)
     return None
-
-
-def show_result_dialog(window, title: str, text: str):
-    """One-shot surface notice (import/export/copy outcomes)."""
-    import gi
-
-    gi.require_version("Gtk", "4.0")
-    gi.require_version("Adw", "1")
-    from gi.repository import Adw
-
-    from xx_vitals.ui import entry as entry_page
-
-    dialog = Adw.Dialog(title=title)
-    box = widgets.dialog_box(title)
-    box.append(widgets.wrap_label(text, "xx-body"))
-    close = widgets.primary_button("Close", dialog.close)
-    box.append(close)
-    entry_page.fit_dialog(dialog, box)
-    dialog.present(window)
-    return dialog
 
 
 def open_overflow(anchor, items: list):
@@ -116,7 +104,9 @@ def build_window(app, db, config, secrets) -> object:
     def show(name: str) -> None:
         if name not in TABS:
             return
-        if name not in visible_tabs(config):
+        # Profile stays reachable with its tab hidden (it is Settings:
+        # the place to bring the tab back).
+        if name not in visible_tabs(config) and name != "profile":
             name = "home"
         state["current"] = name
         stack.set_visible_child_name(name)
@@ -149,13 +139,6 @@ def build_window(app, db, config, secrets) -> object:
     nav.add_activity = lambda: _open_sheet("activity")
     nav.add_weight = lambda: _open_sheet("weight")
 
-    def _import_here() -> None:
-        profile_page.open_takeout_import(
-            window, db,
-            lambda text: show_result_dialog(window, "Import", text),
-            on_done=refresh_all)
-
-    nav.import_takeout = _import_here
     nav.open_menu = lambda name="home": lives[name]["menu"]()
 
     for tab in TABS:
@@ -174,6 +157,29 @@ def build_window(app, db, config, secrets) -> object:
     root = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     root.append(stack)
     window.set_child(root)
+
+    def back() -> bool:
+        """One step back, as Escape (or a phone's back key) expects: a
+        sub-page first, then Home. False on Home (the shell closes)."""
+        step = lives.get(state["current"], {}).get("back")
+        if step is not None and step():
+            return True
+        if state["current"] != "home":
+            show("home")
+            return True
+        return False
+
+    def on_key(_ctrl, keyval, _code, _state) -> bool:
+        from gi.repository import Gdk
+
+        if keyval in (Gdk.KEY_Escape, Gdk.KEY_Back):
+            return back()
+        return False
+
+    keys = Gtk.EventControllerKey()
+    keys.connect("key-pressed", on_key)
+    window.add_controller(keys)
+    nav.back = back
     _rebuild_tabs()
     show("home")
 
@@ -182,9 +188,13 @@ def build_window(app, db, config, secrets) -> object:
         "refresh_all": refresh_all,
         "add_activity": nav.add_activity,
         "add_weight": nav.add_weight,
-        "import_takeout": nav.import_takeout,
         "open_menu": nav.open_menu,
+        "back": back,
         "open_metric": lambda key="steps": lives["browse"].get(
             "open_metric", lambda _k: None)(key),
+        "open_category": lambda cid="activity": lives["browse"].get(
+            "open_category", lambda _c: None)(cid),
+        "open_activity": lambda: lives["journal"].get(
+            "open_first", lambda: None)(),
     }
     return window

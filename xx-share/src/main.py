@@ -133,7 +133,7 @@ class BusBackend:
             with self._lock:
                 callback = self._pending.pop(transfer_id, None)
             if callback is not None:
-                callback(False, "send timed out")
+                callback(False, "Send timed out")
 
         timer = threading.Timer(150.0, _expired)
         timer.daemon = True

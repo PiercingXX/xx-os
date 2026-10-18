@@ -32,6 +32,9 @@ from transfers import TransferManager
 logger = logging.getLogger(__name__)
 
 DOWNLOAD_SUBDIR = "xx-share"
+#: Send outcome when the receiver asks for its on-screen PIN; the share
+#: window shows its PIN field on exactly this text (it crosses the bus).
+PIN_NEEDED = "Enter the receiver's PIN"
 STAGING_SUBDIR = "xx-share"
 
 
@@ -319,7 +322,6 @@ class ShareService:
         def work() -> None:
             from client import (
                 FingerprintMismatch,
-                PinRequired,
                 TransferError,
                 send_files,
             )
@@ -340,13 +342,12 @@ class ShareService:
                                    transfer_id),
                                cert_path=str(self.cert_path),
                                key_path=str(self.key_path))
-                except PinRequired:
-                    outcome = (False, "Receiver needs the PIN it shows on screen")
                 except (TransferError, FingerprintMismatch, OSError) as error:
-                    outcome = (False, str(error))
+                    logger.info("send %s failed: %s", transfer_id, error)
+                    outcome = (False, send_error_text(peer.info.alias, error))
                 except Exception as error:
                     logger.warning("send %s failed: %s", transfer_id, error)
-                    outcome = (False, f"Send failed: {error}")
+                    outcome = (False, "Send failed")
                 else:
                     outcome = (True, f"Sent to {peer.info.alias}")
                 try:
@@ -369,6 +370,26 @@ class ShareService:
 
     def cancel_send(self, transfer_id: str) -> bool:
         return self.outgoing.request_cancel(str(transfer_id))
+
+
+def send_error_text(alias: str, error: BaseException) -> str:
+    """One short line for a failed send: no HTTP codes, no jargon."""
+    from client import FingerprintMismatch, PinRequired, TransferError
+
+    if isinstance(error, PinRequired):
+        return PIN_NEEDED
+    if isinstance(error, TransferError):
+        if error.status == 403:
+            return f"{alias} declined" if alias else "Declined"
+        if error.message == "cancelled":
+            return "Cancelled"
+        text = str(error.message or "Send failed")
+        return text[:1].upper() + text[1:]
+    if isinstance(error, FingerprintMismatch):
+        return f"{alias or 'Device'} changed identity, send stopped"
+    if isinstance(error, OSError):
+        return f"Couldn't reach {alias}" if alias else "Couldn't reach device"
+    return "Send failed"
 
 
 def thread_scheduler(seconds: int, callback: Callable[[], bool]) -> object:

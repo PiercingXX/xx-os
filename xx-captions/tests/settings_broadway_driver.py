@@ -100,6 +100,9 @@ def main() -> int:
           "detail page opens")
     check("MARA VOSS" in window._detail_title.get_text(),
           "detail titles the peer in caps")
+    check(window._detail_sub.get_visible()
+          and window._detail_sub.get_text(),
+          "detail shows when the call was and how long")
     detail_texts = _labels(window._detail_page)
     check(any("broken sign" in text for text in detail_texts),
           "detail shows transcript lines")
@@ -118,8 +121,14 @@ def main() -> int:
     bare = SettingsWindow(home=bare_home)
     bare.present()
     bare_texts = _labels(bare)
-    check(any("No transcripts yet." in text for text in bare_texts),
-          "bare HOME shows the empty state")
+    check(not any("transcripts yet" in text.lower() for text in bare_texts),
+          "an empty history shows no empty-state line")
+    check(not bare._history_label.get_visible(),
+          "an empty history hides its HISTORY heading")
+    check(window._history_label.get_visible(),
+          "a filled history keeps its heading")
+    check(not any(text == "Close" for text in bare_texts),
+          "no Close action: the shell closes windows")
     check(any("Download" in text for text in bare_texts),
           "bare HOME offers the model download")
 

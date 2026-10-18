@@ -87,6 +87,8 @@ def test_profile_window_pumps_without_exceptions(tmp_path, monkeypatch):
     assert "FAIL:" not in output
     assert "CRITICAL:" not in output
     assert "ERROR:" not in output
-    assert "LABEL:NAS host: http://127.0.0.1:9" in output
+    # The host shows once, in its captioned entry: no "NAS host:" echo line.
+    assert "LABEL:NAS HOST" in output
+    assert "LABEL:NAS host:" not in output
     assert "LABEL:Sign-in: signed in" in output
     assert "LABEL:Queue: 2 queued" in output

@@ -6,8 +6,8 @@ everywhere except the drag handle and the overflow button (empty input
 region plus those rects). Partials replace the last line in
 place; the matching final commits it (CaptionBuffer), so labels only
 ever change text, never rebuild. Colors come from the xx_ui design
-system with live reload; the recording dot is the danger red, the one
-fixed color allowed. Engine and download work stays on worker threads
+system with live reload; the on state (and an error) reads in the danger
+red, the one fixed color allowed. Engine and download work stays on worker threads
 and posts back with GLib.idle_add, so the main loop never blocks.
 
 Without layer-shell (Broadway, test VMs) the same window falls back
@@ -155,6 +155,7 @@ if _HAS_GTK:
             self._cancel_download = threading.Event()
             self._drag_start_margin = self._margin
             self._unsubscribe_ui = None
+            self._settings_window = None
 
             self.set_decorated(False)
             self.set_resizable(False)
@@ -196,7 +197,10 @@ if _HAS_GTK:
             handle.set_size_request(-1, _HANDLE_HEIGHT)
             handle.set_valign(Gtk.Align.CENTER)
             self._status = widgets.caption("Captions off")
-            self._status.set_halign(Gtk.Align.START)
+            # FILL, not START: a wrapping label at START gets only its
+            # (narrow) natural width and breaks "CAPTIONS OFF" in two.
+            self._status.set_halign(Gtk.Align.FILL)
+            self._status.set_xalign(0.0)
             self._status.set_hexpand(True)
             self._status.set_valign(Gtk.Align.CENTER)
             self.set_status("Captions off")
@@ -222,23 +226,16 @@ if _HAS_GTK:
             caption_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                                   spacing=2)
             for _ in range(3):
-                line = widgets.label("", "xx-body")
-                line.set_halign(Gtk.Align.START)
-                line.set_xalign(0.0)
-                line.set_wrap(True)
-                line.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-                line.set_ellipsize(Pango.EllipsizeMode.NONE)
-                line.set_max_width_chars(32)
+                line = widgets.wrap_label("", "xx-body")
+                line.set_halign(Gtk.Align.FILL)
                 line.set_visible(False)
                 caption_box.append(line)
                 self._lines.append(line)
             self._caption_box = caption_box
 
-            self._model_title = widgets.label("Captions need a model",
-                                             "xx-dialog-title")
-            self._model_title.set_xalign(0.0)
-            self._model_size = widgets.label("", "xx-secondary")
-            self._model_size.set_xalign(0.0)
+            self._model_title = widgets.wrap_label("Captions need a model",
+                                                  "xx-dialog-title")
+            self._model_size = widgets.wrap_label("", "xx-secondary")
             self._progress = Gtk.ProgressBar()
             self._progress.set_show_text(False)
             self._progress.set_visible(False)
@@ -247,7 +244,7 @@ if _HAS_GTK:
             self._cancel = widgets.outline_button("Cancel")
             self._cancel.connect("clicked", self._on_cancel_clicked)
             self._cancel.set_visible(False)
-            self._model_error = widgets.label("", "xx-secondary")
+            self._model_error = widgets.wrap_label("", "xx-secondary")
             self._model_error.add_css_class("xx-danger-text")
             self._model_error.set_xalign(0.0)
             self._model_error.set_visible(False)
@@ -263,8 +260,12 @@ if _HAS_GTK:
 
             root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             root.add_css_class("caption-root")
-            root.set_size_request(336, -1)
-            root.set_halign(Gtk.Align.CENTER)
+            # Full width less a 12 px inset each side: the overlay follows
+            # the screen (320 px to 450 px) instead of a fixed card.
+            root.set_halign(Gtk.Align.FILL)
+            root.set_hexpand(True)
+            root.set_margin_start(12)
+            root.set_margin_end(12)
             root.set_vexpand(True)
             root.set_valign(Gtk.Align.END)
             root.append(handle)
@@ -284,8 +285,7 @@ if _HAS_GTK:
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
             box.set_size_request(240, -1)
             box.append(widgets.menu_row("Settings", self._open_settings))
-            box.append(widgets.menu_row("Transcripts", self._open_history))
-            box.append(widgets.menu_row("Close overlay", self._close_menu))
+            box.append(widgets.menu_row("Close", self._close_menu))
             menu.set_child(box)
             return menu
 
@@ -303,19 +303,12 @@ if _HAS_GTK:
                 self._menu.popdown()
             except Exception:
                 pass
-            window = SettingsWindow(home=self._home)
+            # One settings window: a second tap raises it, never a twin.
+            window = self._settings_window
+            if window is None or not window.get_visible():
+                window = SettingsWindow(home=self._home)
+                self._settings_window = window
             window.present()
-
-        def _open_history(self) -> None:
-            from xx_captions.settings import SettingsWindow
-
-            try:
-                self._menu.popdown()
-            except Exception:
-                pass
-            window = SettingsWindow(home=self._home)
-            window.present()
-            window.show_history()
 
         def _on_ui_theme(self, theme) -> None:
             try:
@@ -345,14 +338,19 @@ if _HAS_GTK:
                 pass
 
         def show_caption_view(self) -> None:
+            # Start only means something once a model is installed.
+            self._toggle.set_visible(True)
             self._model_box.set_visible(False)
             self._caption_box.set_visible(True)
             self.render()
 
         def show_model_view(self) -> None:
+            self._toggle.set_visible(False)
             self._caption_box.set_visible(False)
             self._model_box.set_visible(True)
-            self._model_size.set_text(download_label(self._model_id))
+            size = download_label(self._model_id)
+            self._model_size.set_text(size)
+            self._model_size.set_visible(bool(size))
             self._progress.set_visible(False)
             self._cancel.set_visible(False)
             self._download.set_visible(True)
@@ -381,35 +379,38 @@ if _HAS_GTK:
             GLib.idle_add(self._refresh_input_region, priority=GLib.PRIORITY_LOW)
 
         def set_status(self, text: str, recording: bool = False) -> None:
-            shown = text.upper()
-            self._status.set_text(shown)
-            # Short labels never ellipsize: at exactly the natural width
-            # fractional rounding swaps a fitting character for an
-            # ellipsis. Only longer text (errors) may truncate.
+            """Caps state line. It wraps (two lines at most) rather than
+            widening the overlay, so a long error or large text still
+            fits 320 px; short labels never ellipsize."""
+            self._status.set_text(text.upper())
+            self._status.set_wrap(True)
+            self._status.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            self._status.set_lines(2)
+            self._status.set_ellipsize(Pango.EllipsizeMode.END)
             self._status.set_max_width_chars(18)
-            if len(shown) > 18:
-                self._status.set_ellipsize(Pango.EllipsizeMode.END)
-            else:
-                self._status.set_ellipsize(Pango.EllipsizeMode.NONE)
             if recording:
                 self._status.add_css_class("caption-rec-on")
             else:
                 self._status.remove_css_class("caption-rec-on")
 
         def set_active(self, active: bool, _source: str = "") -> None:
+            self._toggle.set_sensitive(True)
             if active:
-                self.set_status("\u25cf Captions on", recording=True)
+                self.set_status("Captions on", recording=True)
                 self._toggle.set_label("STOP")
             else:
                 self.set_status("Captions off")
                 self._toggle.set_label("START")
 
         def set_starting(self) -> None:
-            self.set_status("Starting captions\u2026")
+            self.set_status("Starting\u2026")
+            # No second Start while the engine warms up.
+            self._toggle.set_sensitive(False)
 
         def set_error(self, message: str) -> None:
-            self._status.set_text(f"CAPTIONS ERROR: {message}")
-            self._status.remove_css_class("caption-rec-on")
+            # Red like the on state: something needs the user's eye.
+            self.set_status(message, recording=True)
+            self._toggle.set_sensitive(True)
 
         def _on_toggle_clicked(self, _button) -> None:
             client = self._client
@@ -479,10 +480,10 @@ if _HAS_GTK:
                 models.download(self._model_id, self._home,
                                 progress=self._download_progress)
             except DownloadCancelled:
-                error = "Download cancelled"
+                error = ""
             except Exception as exc:
                 _log.warning("model download failed: %s", exc)
-                error = "model download failed"
+                error = "Download failed"
             GLib.idle_add(self._on_download_finished, error)
 
         def _on_download_finished(self, error: str | None) -> bool:
@@ -493,8 +494,9 @@ if _HAS_GTK:
             else:
                 self._download.set_visible(True)
                 self._progress.set_visible(False)
+                # A cancel the user just tapped needs no message.
                 self._model_error.set_text(error)
-                self._model_error.set_visible(True)
+                self._model_error.set_visible(bool(error))
             return False
 
         def apply_margin(self, margin: int) -> int:

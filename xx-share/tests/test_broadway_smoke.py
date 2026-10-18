@@ -152,8 +152,9 @@ def _child_main():
         assert Gdk.Display.get_default() is not None
         assert window.window.get_width() == 360
         assert window.window.get_height() == 720
-        for name in ("share", "history", "favorites", "settings"):
+        for name in ("share", "history", "settings"):
             assert window.stack.get_child_by_name(name) is not None, name
+        assert window.stack.get_child_by_name("favorites") is None
 
         def _contains(root, target) -> bool:
             if root is target:
@@ -171,24 +172,38 @@ def _child_main():
         assert _contains(share_kids[-1], window.cancel_button)
         assert _contains(share_kids[-1], window.progress_bar)
         assert _contains(share_kids[-1], window.status_label)
+        assert _contains(share_kids[-1], window.send_pin)
+        assert not window.send_pin.get_visible(), \
+            "the receiver-PIN field waits until a receiver asks for it"
+        assert not window.cancel_button.get_visible()
+        assert not window.status_label.get_visible()
         assert not _contains(share_kids[1], window.send_button), \
             "Send stays pinned above the tabs, out of the scroll body"
-        for header in (window.share_header, window.history_header,
-                       window.favorites_header):
+        for header in (window.share_header, window.history_header):
             top = header.get_first_child()
             assert "xx-page-top" in top.get_css_classes(), \
                 "every PageHeader shares one title-row height"
         assert focus_inside_entry(window.window) is False
         assert len(rows(window.file_box)) == 2
         assert len(rows(window.history_box)) == 2
+        assert window.history_caption.get_text() == "2 FILES"
+        assert window.send_button.get_sensitive() is False, \
+            "Send waits for a device"
+        assert window.device_label.get_visible() is False
         window._peers = [dict(peer) for peer in PEERS]
         window._render_peers()
         assert len(rows(window.device_box)) == 2
+        assert window.device_label.get_visible() is True
         window._select_peer(PEERS[0]["fingerprint"])
         assert window.selected_fp == PEERS[0]["fingerprint"]
+        assert window.send_button.get_sensitive() is True
         window.refresh_favorites()
         assert len(rows(window.favorites_box)) == 1
-        for name in ("history", "favorites", "settings", "share"):
+        window._toggle_favorite(PEERS[1]["fingerprint"])
+        assert len(rows(window.favorites_box)) == 2
+        window._toggle_favorite(PEERS[1]["fingerprint"])
+        assert len(rows(window.favorites_box)) == 1
+        for name in ("history", "settings", "share"):
             window._show_tab(name)
             pump_until(
                 lambda _name=name: window.stack.get_visible_child_name()
@@ -210,9 +225,27 @@ def _child_main():
         window.current_transfer = "tx-demo"
         window._idle_bus_progress("tx-demo", 512, 1024)
         pump(0.3)
+        assert window.cancel_button.get_visible() is True
+        assert window.send_button.get_visible() is False
         window._idle_done("Sent to Mara's Pixel", True)
         pump(0.3)
         assert window.current_transfer is None
+        assert window.cancel_button.get_visible() is False
+        assert window.send_button.get_visible() is True
+        assert window.status_label.get_text() == "Sent to Mara's Pixel"
+        from service import PIN_NEEDED
+        window._idle_done(PIN_NEEDED, False)
+        assert window.send_pin.get_visible() is True
+        window._on_clear_history()
+        assert rows(window.history_box) == []
+        assert window.history_clear.get_visible() is False, \
+            "Clear hides with nothing to clear"
+        assert window.history_caption.get_visible() is False
+        window.files = []
+        window.refresh_files()
+        assert rows(window.file_box) == []
+        assert window.file_label.get_visible() is False
+        assert window.send_button.get_sensitive() is False
         config_path = os.path.join(
             os.environ.get("XDG_CONFIG_HOME",
                            os.path.join(os.environ["HOME"], ".config")),

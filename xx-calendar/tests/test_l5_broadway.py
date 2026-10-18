@@ -133,6 +133,9 @@ def test_real_window_schedule_and_month(tmp_path):
         assert child.returncode == 0, \
             f"smoke child failed:\n{child.stdout}\n{child.stderr}"
         assert "SMOKE=ok" in child.stdout, child.stdout
+        for marker in ("EMPTY_NOTHING=ok", "NO_OVERFLOW=ok",
+                       "BACK_STACK=ok"):
+            assert marker in child.stdout, child.stdout
     finally:
         daemon.terminate()
         try:
