@@ -753,13 +753,13 @@ class AutoWindow:
         body.append(about)
 
     def _nav_row(self, texts, callback):
-        """A full-width row button: texts plus a trailing chevron."""
+        """A full-width row button around ``texts``; no trailing chevron
+        (the row reads as tappable on its own)."""
         Gtk = self._Gtk
         btn = Gtk.Button()
         btn.add_css_class("xx-auto-row")
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         row.append(texts)
-        row.append(_icon(Gtk, "go-next-symbolic", 20))
         btn.set_child(row)
         btn.connect("clicked", lambda *_: callback())
         return btn

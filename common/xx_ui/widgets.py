@@ -887,11 +887,11 @@ def licenses_page(navigation, app_name: str,
                   entries: list,
                   licenses_root: str = LICENSES_ROOT):
     """An 'Open-source licenses' page: one row per component showing
-    its SPDX id; tapping a row pushes its license text."""
+    its SPDX id; tapping a row pushes its license text. No trailing
+    chevrons: the rows read as tappable on their own."""
     body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 8)
     for entry in entries:
         row = list_row(entry.name, entry.spdx,
-                       trailing=icon_image('go-next-symbolic'),
                        on_activate=(lambda item=entry: navigation.push(
                            _license_text_page(item, licenses_root))))
         body.append(row)
@@ -943,7 +943,6 @@ def show_licenses_dialog(parent: Gtk.Window, app_name: str,
         stack.add_named(sheet.get_child(), entry.name)
         listing.append(list_row(
             entry.name, entry.spdx,
-            trailing=icon_image('go-next-symbolic'),
             on_activate=(lambda name=entry.name:
                          stack.set_visible_child_name(name))))
     back = Gtk.Button.new_with_label('Back')

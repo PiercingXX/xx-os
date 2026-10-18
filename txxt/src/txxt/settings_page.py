@@ -107,13 +107,12 @@ class SettingsPage(Adw.NavigationPage):
         filtering.append(widgets.section_label('Filtering'))
         self._blocking_sub = ''
         self._blocking_row = widgets.list_row(
-            'Blocking', '', trailing=widgets.icon_image('go-next-symbolic'),
-            on_activate=self._on_blocking_activated)
+            'Blocking', '', on_activate=self._on_blocking_activated)
         filtering.append(self._blocking_row)
         self._quarantine_sub = ''
         self._quarantine_row = widgets.list_row(
-            'Quarantine', '', trailing=widgets.icon_image('go-next-symbolic'),
-            on_activate=self._on_quarantine_activated, last=True)
+            'Quarantine', '', on_activate=self._on_quarantine_activated,
+            last=True)
         filtering.append(self._quarantine_row)
         body.append(filtering)
 

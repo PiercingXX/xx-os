@@ -69,8 +69,8 @@ class SettingsPage(Adw.NavigationPage):
 
     def _nav_row(self, title: str, subtitle: str, callback,
                  last: bool = False) -> Gtk.Widget:
-        chevron = widgets.icon_image("go-next-symbolic")
-        row = widgets.setting_row(title, subtitle, chevron, last=last)
+        # No trailing chevron: the row reads as tappable on its own.
+        row = widgets.setting_row(title, subtitle, last=last)
         click = Gtk.GestureClick.new()
         click.connect("pressed",
                       lambda _g, _n, _x, _y: callback())
