@@ -22,6 +22,7 @@ class ListController:
         self.searching = False
         self._cards = []
         self._suppress_click = False
+        self.menu_popover = None
 
     def on_show(self) -> None:
         self.refresh()
@@ -120,8 +121,10 @@ def code_label(window, hero: bool = False):  # type: ignore[no-untyped-def]
     if hero:
         label.add_css_class("hero")
     label.set_xalign(0.0)
+    # A code is never cut: CODE_MAX_PX keeps the longest one inside a
+    # 320 px screen, so it needs no ellipsis to fit.
     label.set_max_width_chars(10)
-    label.set_ellipsize(window._Pango.EllipsizeMode.END)
+    label.set_ellipsize(window._Pango.EllipsizeMode.NONE)
     return label
 
 
@@ -140,7 +143,11 @@ class _Row:
         row.add_css_class("xx-auth-row")
         if last:
             row.add_css_class("last")
-        box = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
+        # Names with the ring (or HOTP counter) beside them, then the code
+        # on its own full-width line: an 8-digit code at large text never
+        # shares its width with the ring.
+        box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+        top = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
         column = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
         column.set_hexpand(True)
         column.set_valign(Gtk.Align.CENTER)
@@ -149,29 +156,30 @@ class _Row:
         self.sub = widgets.label(self.sub_text, "xx-secondary")
         self.sub.set_visible(bool(self.sub_text))
         column.append(self.sub)
-        self.code = code_label(window)
-        self.code.set_margin_top(6)
-        if card.unreadable:
-            self.code.add_css_class("unreadable")
-        column.append(self.code)
-        if card.unreadable:
-            note = widgets.wrap_label("Can't decrypt on this phone. Re-add it.", "xx-secondary")
-            note.add_css_class("xx-danger-text")
-            column.append(note)
-        box.append(column)
+        top.append(column)
         self.ring = None
         self.counter = None
         if card.is_hotp:
-            hotp = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+            hotp = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 4)
             hotp.set_valign(Gtk.Align.CENTER)
             self.counter = Gtk.Label(label="")
             self.counter.add_css_class("xx-auth-counter")
             hotp.append(self.counter)
             hotp.append(widgets.icon_button("view-refresh-symbolic", lambda: self._next()))
-            box.append(hotp)
+            top.append(hotp)
         else:
             self.ring = Ring(Gtk)
-            box.append(self.ring.widget)
+            top.append(self.ring.widget)
+        box.append(top)
+        self.code = code_label(window)
+        self.code.set_margin_top(6)
+        if card.unreadable:
+            self.code.add_css_class("unreadable")
+        box.append(self.code)
+        if card.unreadable:
+            note = widgets.wrap_label("Can't decrypt on this phone. Re-add it.", "xx-secondary")
+            note.add_css_class("xx-danger-text")
+            box.append(note)
         row.set_child(box)
         self.widget = row
         self.update(card)
@@ -297,18 +305,23 @@ def build(window):  # type: ignore[no-untyped-def]
         controller.refresh()
 
     def show_menu() -> None:
-        popover = Gtk.Popover()
-        box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
-        for title, target in (("Import / export", "io"),
-                              ("App lock", "locksettings"),
-                              ("About", "about")):
-            def go(_t=target) -> None:
-                popover.popdown()
-                window.show(_t)
+        # Built once and reused: a fresh popover per tap would pile up
+        # parented, hidden popovers on the button.
+        popover = controller.menu_popover
+        if popover is None:
+            popover = Gtk.Popover()
+            box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+            for title, target in (("Import / export", "io"),
+                                  ("App lock", "locksettings"),
+                                  ("About", "about")):
+                def go(_t=target) -> None:
+                    popover.popdown()
+                    window.show(_t)
 
-            box.append(widgets.menu_row(title, go))
-        popover.set_child(box)
-        popover.set_parent(more_button or header)
+                box.append(widgets.menu_row(title, go))
+            popover.set_child(box)
+            popover.set_parent(more_button or header)
+            controller.menu_popover = popover
         popover.popup()
 
     header = widgets.page_header(
@@ -358,6 +371,8 @@ def build(window):  # type: ignore[no-untyped-def]
             rows.append(row.widget)
 
     controller._render = render
+    controller.show_menu = show_menu
+    controller.toggle_search = toggle_search
 
     body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     body.append(search)

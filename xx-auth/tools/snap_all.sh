@@ -1,9 +1,9 @@
 #!/bin/sh
 # Seeded screenshots of every xx-auth screen in amoled + paper at the FLX1
 # canvas (450x1000) and a 360x800 phone, plus graphite/aura spot checks and
-# phone-fit probes (320 px wide, large text):
+# phone-fit probes (320 px wide, large text at 1.5):
 #   xx-auth/tools/snap_all.sh OUTDIR
-# Writes sheet-{amoled,paper}-{450,360}.png and sheet-fit.png.
+# Writes sheet-{amoled,paper}-{450,360}{,-flows}.png and sheet-fit{,-2}.png.
 # Exits non-zero on any snap WARNING (phone-fit breach).
 set -u
 LANE=$(cd "$(dirname "$0")/../.." && pwd)
@@ -86,12 +86,66 @@ NAV_DETAIL='w = app._auth_window
 rows = w.backend.store.get_all()
 if rows:
     w.show_detail(rows[0].id)'
+# The seeded vault is keyring-backed: the app lock is a UI gate on top,
+# set like Settings > App lock does (setup_password refuses a vault with
+# rows, by design).
 NAV_LOCK='w = app._auth_window
-w.set_password("snap-lock-1")
+from xx_auth import accounts as _am
+from xx_auth import keystore as _ks
+_am.change_password(w.backend.store, w.backend.prefs, _ks.MemoryKeyring(), "", "snap-lock-1")
 w.backend.prefs.lock_enabled = True
 from xx_auth import prefs as _pm
 _pm.save(w.backend.prefs)
 w.lock()'
+
+HELPERS="exec(open('$ROOT/tools/snap_surface.py').read())"
+NAV_SEARCH='w = app._auth_window
+w._pages["list"].toggle_search()'
+NAV_MANUAL='w = app._auth_window
+page = w.stack.get_child_by_name("add")
+def _find(x, label):
+    if isinstance(x, Gtk.Button) and x.get_label() == label:
+        return x
+    c = x.get_first_child()
+    while c is not None:
+        r = _find(c, label)
+        if r is not None:
+            return r
+        c = c.get_next_sibling()
+    return None
+_find(page, "Enter details").emit("clicked")'
+NAV_DETAIL_BOTTOM="$NAV_DETAIL
+$HELPERS
+page = w.stack.get_child_by_name('detail')
+def _find(x, label):
+    if isinstance(x, Gtk.Button) and x.get_label() == label:
+        return x
+    c = x.get_first_child()
+    while c is not None:
+        r = _find(c, label)
+        if r is not None:
+            return r
+        c = c.get_next_sibling()
+    return None
+_find(page, 'Reveal secret').emit('clicked')
+scroll_to_bottom('detail')"
+NAV_IO_TYPED='w = app._auth_window
+page = w.stack.get_child_by_name("io")
+def _entries(x, out):
+    if isinstance(x, Gtk.Entry):
+        out.append(x)
+    c = x.get_first_child()
+    while c is not None:
+        _entries(c, out)
+        c = c.get_next_sibling()
+    return out
+_entries(page, [])[0].set_text("snap-export-1")'
+
+# The overflow menu is its own surface: painted to menu-<theme><suffix>.png.
+nav_menu() {
+    printf '%s\nw = app._auth_window\nw._pages["list"].show_menu()\nGLib.timeout_add(300, lambda: snap_widget(w._pages["list"].menu_popover, "%s"))\n' \
+        "$HELPERS" "$1"
+}
 
 # Every screen at one size: $1=theme $2=size $3=suffix
 snap_screens() {
@@ -104,6 +158,11 @@ snap_screens() {
     snap_one "$1" "about$3" "$2" "demo" "about" "" 1
     snap_one "$1" "lock$3" "$2" "demo" "list" "$NAV_LOCK" 1
     snap_one "$1" "setup$3" "$2" "demo" "list" "" 0 2.5
+    snap_one "$1" "search$3" "$2" "demo" "list" "$NAV_SEARCH" 1
+    snap_one "$1" "menuwin$3" "$2" "demo" "list" "$(nav_menu "$WORK/$1-menu$3.png")" 1
+    snap_one "$1" "manual$3" "$2" "demo" "add" "$NAV_MANUAL" 1
+    snap_one "$1" "detailbottom$3" "$2" "demo" "list" "$NAV_DETAIL_BOTTOM" 1
+    snap_one "$1" "iotyped$3" "$2" "demo" "io" "$NAV_IO_TYPED" 1
 }
 
 sheet() {
@@ -120,6 +179,14 @@ sheet() {
         -tile 3x3 -geometry +4+4 -background black \
         -fill white -pointsize 28 "$OUTDIR/sheet-$1$2.png" \
         || fail "montage failed for $1$2"
+    montage -label 'search' "$WORK/$1-search$2.png" \
+        -label 'menu' "$WORK/$1-menu$2.png" \
+        -label 'manual entry' "$WORK/$1-manual$2.png" \
+        -label 'detail, revealed' "$WORK/$1-detailbottom$2.png" \
+        -label 'export password' "$WORK/$1-iotyped$2.png" \
+        -tile 5x1 -geometry +4+4 -background black \
+        -fill white -pointsize 28 "$OUTDIR/sheet-$1$2-flows.png" \
+        || fail "montage failed for $1$2 flows"
 }
 
 for theme in $THEMES; do
@@ -131,14 +198,23 @@ done
 snap_one "graphite" "list-450" "450x1000" "demo" "list" "" 1 2.0
 snap_one "aura" "detail-450" "450x1000" "demo" "list" "$NAV_DETAIL" 1 2.0
 
-# Phone-fit probes: 320 px wide, and large text (scale 1.3) at 360x800.
-LARGE=', "text_size_scale": 1.3'
+# Phone-fit probes: 320 px wide, and large text (scale 1.5) at 360x800.
+LARGE=', "text_size_scale": 1.5'
 snap_one "amoled" "fit320-list" "320x640" "demo" "list" "" 1 2.0
 snap_one "amoled" "fit320-add" "320x640" "demo" "add" "" 1 2.0
 snap_one "amoled" "fit320-detail" "320x640" "demo" "list" "$NAV_DETAIL" 1 2.0
 snap_one "paper" "large-list" "360x800" "demo" "list" "" 1 2.0 "$LARGE"
 snap_one "paper" "large-add" "360x800" "demo" "add" "" 1 2.0 "$LARGE"
 snap_one "paper" "large-detail" "360x800" "demo" "list" "$NAV_DETAIL" 1 2.0 "$LARGE"
+snap_one "amoled" "fit320-io" "320x640" "demo" "io" "$NAV_IO_TYPED" 1 2.0
+snap_one "amoled" "fit320-locksettings" "320x640" "demo" "locksettings" "" 1 2.0
+snap_one "amoled" "fit320-setup" "320x640" "demo" "list" "" 0 2.5
+snap_one "paper" "large-io" "360x800" "demo" "io" "$NAV_IO_TYPED" 1 2.0 "$LARGE"
+snap_one "paper" "large-locksettings" "360x800" "demo" "locksettings" "" 1 2.0 "$LARGE"
+snap_one "paper" "large-detailbottom" "360x800" "demo" "list" "$NAV_DETAIL_BOTTOM" 1 2.0 "$LARGE"
+snap_one "paper" "large-manual" "360x800" "demo" "add" "$NAV_MANUAL" 1 2.0 "$LARGE"
+snap_one "paper" "large-lock" "360x800" "demo" "list" "$NAV_LOCK" 1 2.0 "$LARGE"
+snap_one "paper" "large-about" "360x800" "demo" "about" "" 1 2.0 "$LARGE"
 
 for theme in $THEMES; do
     sheet "$theme" "-450"
@@ -156,7 +232,20 @@ montage -label 'graphite list' "$WORK/graphite-list-450.png" \
     -tile 4x2 -geometry +4+4 -background black \
     -fill white -pointsize 28 "$OUTDIR/sheet-fit.png" \
     || fail "montage failed for fit sheet"
+montage -label '320 export' "$WORK/amoled-fit320-io.png" \
+    -label '320 app lock' "$WORK/amoled-fit320-locksettings.png" \
+    -label '320 setup' "$WORK/amoled-fit320-setup.png" \
+    -label 'large export' "$WORK/paper-large-io.png" \
+    -label 'large app lock' "$WORK/paper-large-locksettings.png" \
+    -label 'large revealed' "$WORK/paper-large-detailbottom.png" \
+    -label 'large manual' "$WORK/paper-large-manual.png" \
+    -label 'large lock' "$WORK/paper-large-lock.png" \
+    -label 'large about' "$WORK/paper-large-about.png" \
+    -tile 5x2 -geometry +4+4 -background black \
+    -fill white -pointsize 28 "$OUTDIR/sheet-fit-2.png" \
+    || fail "montage failed for fit sheet 2"
 cp "$WORK/graphite-"*.png "$WORK/aura-"*.png "$OUTDIR/"
+cp "$WORK/"*fit320*.png "$WORK/"*large*.png "$OUTDIR/"
 rm -rf "$WORK"
 trap - EXIT
-echo "wrote $OUTDIR/sheet-{amoled,paper}-{450,360}.png $OUTDIR/sheet-fit.png"
+echo "wrote $OUTDIR/sheet-{amoled,paper}-{450,360}{,-flows}.png $OUTDIR/sheet-fit{,-2}.png"

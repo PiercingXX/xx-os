@@ -56,10 +56,18 @@ def build(window):  # type: ignore[no-untyped-def]
         status.set_visible(bool(message))
 
     section("Scan", first=True)
-    scan_btn = widgets.outline_button("Choose file", lambda: pick_image())
-    _widen(scan_btn, 11)
-    body.append(widgets.setting_row(
-        "QR image", qr_mod.backend_help() or "PNG or JPEG", scan_btn, last=True))
+    # One full-width button, like Paste and Manual entry below: a row
+    # with a trailing button squeezes both at large text.
+    scan_btn = widgets.outline_button("Choose QR image", lambda: pick_image())
+    _widen(scan_btn, 16)
+    body.append(scan_btn)
+    scan_help = qr_mod.backend_help()
+    if scan_help:
+        # Only when no decoder is installed: the button can't work then.
+        scan_btn.set_sensitive(False)
+        help_line = widgets.wrap_label(scan_help)
+        help_line.set_margin_top(8)
+        body.append(help_line)
 
     section("Paste")
     paste = widgets.deferred_entry("otpauth:// or secret")
@@ -71,15 +79,15 @@ def build(window):  # type: ignore[no-untyped-def]
     body.append(paste_btn)
 
     section("Manual entry")
-    open_manual = widgets.outline_button("Enter details by hand", lambda: show_manual())
-    _widen(open_manual, 21)
+    open_manual = widgets.outline_button("Enter details", lambda: show_manual())
+    _widen(open_manual, 14)
     body.append(open_manual)
     manual = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     manual.set_visible(False)
     body.append(manual)
 
     issuer = widgets.text_entry("e.g. GitHub")
-    account = widgets.text_entry("e.g. alice@example.com")
+    account = widgets.text_entry("e.g. alice")
     secret = widgets.text_entry("Base32")
     labeled(manual, "Issuer", issuer)
     labeled(manual, "Account", account)

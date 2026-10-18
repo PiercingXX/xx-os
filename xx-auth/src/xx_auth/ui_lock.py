@@ -76,7 +76,7 @@ def build_lock(window):  # type: ignore[no-untyped-def]
         note.set_text("No keyring answered. A password encrypts the vault."
                       if setup else "")
         note.set_visible(setup)
-        password.set_placeholder_text("New password, 8+ characters" if setup else "Password")
+        password.set_placeholder_text("New password, 8+" if setup else "Password")
         confirm.set_visible(setup)
         action.set_label("Protect vault" if setup else "Unlock")
         retry.set_visible(setup)
@@ -138,7 +138,7 @@ def build_settings(window):  # type: ignore[no-untyped-def]
     syncing = {"on": False}
 
     lock_switch = widgets.make_switch(False, lambda on: toggle_lock(on))
-    body.append(widgets.setting_row("App lock", "Ask for the password", lock_switch))
+    body.append(widgets.setting_row("App lock", "Password to open", lock_switch))
     idle = widgets.text_entry("120")
     idle.set_width_chars(5)
     idle.set_max_width_chars(5)
@@ -149,7 +149,7 @@ def build_settings(window):  # type: ignore[no-untyped-def]
     idle.add_controller(focus)
     body.append(widgets.setting_row("Idle relock", "Seconds", idle))
     keyring_switch = widgets.make_switch(False, lambda on: toggle_keyring(on))
-    body.append(widgets.setting_row("Use keyring", "Applies on next start", keyring_switch, last=True))
+    body.append(widgets.setting_row("Use keyring", "Holds the vault key", keyring_switch, last=True))
 
     password_label = widgets.section_label("Password")
     password_label.set_margin_top(28)
@@ -157,7 +157,7 @@ def build_settings(window):  # type: ignore[no-untyped-def]
     body.append(password_label)
     current = widgets.text_entry("Current password")
     current.set_visibility(False)
-    fresh = widgets.text_entry("New password, 8+ characters")
+    fresh = widgets.text_entry("New password, 8+")
     fresh.set_visibility(False)
     repeat = widgets.text_entry("Confirm new password")
     repeat.set_visibility(False)

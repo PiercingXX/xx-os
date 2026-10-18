@@ -46,12 +46,20 @@ def build(window):  # type: ignore[no-untyped-def]
         body.append(widget)
 
     section("Export", first=True)
-    password = widgets.text_entry("Blank: plain file")
+    password = widgets.text_entry("Optional")
     password.set_visibility(False)
-    confirm = widgets.text_entry("Again")
+    confirm = widgets.text_entry("")
     confirm.set_visibility(False)
     labeled("Password", password)
-    labeled("Confirm", confirm)
+    # Confirm appears once a password is typed: a plain export needs none.
+    confirm_box = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
+    confirm_cap = widgets.caption("Confirm")
+    confirm_cap.set_margin_bottom(6)
+    confirm_box.append(confirm_cap)
+    confirm.set_margin_bottom(12)
+    confirm_box.append(confirm)
+    confirm_box.set_visible(False)
+    body.append(confirm_box)
     export_btn = widgets.primary_button("Export vault file", lambda: do_export())
     _widen(export_btn, 17)
     body.append(export_btn)
@@ -64,9 +72,11 @@ def build(window):  # type: ignore[no-untyped-def]
     import_password.set_margin_bottom(12)
     import_box.append(import_password)
     body.append(import_box)
-    choose_btn = widgets.outline_button("Choose file", lambda: pick_import())
-    _widen(choose_btn, 11)
-    body.append(widgets.setting_row("Vault file", "Aegis or otpauth", choose_btn, last=True))
+    # One full-width button, like Export above: a row with a trailing
+    # button squeezes both at large text.
+    choose_btn = widgets.outline_button("Choose vault file", lambda: pick_import())
+    _widen(choose_btn, 18)
+    body.append(choose_btn)
     found = widgets.label("", "xx-title")
     found.set_margin_top(16)
     found.set_visible(False)
@@ -112,7 +122,14 @@ def build(window):  # type: ignore[no-untyped-def]
             plain["armed"] = False
             export_btn.set_label("Export vault file")
 
+    def sync_confirm(*_args) -> None:  # type: ignore[no-untyped-def]
+        typed = bool(password.get_text())
+        confirm_box.set_visible(typed)
+        if not typed and confirm.get_text():
+            confirm.get_buffer().set_text("", 0)
+
     password.connect("changed", disarm_plain)
+    password.connect("changed", sync_confirm)
     confirm.connect("changed", disarm_plain)
 
     def backend_ready():  # type: ignore[no-untyped-def]

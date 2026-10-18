@@ -41,6 +41,15 @@ def _seed(a):
             seen = win.stack.get_visible_child_name()
             assert seen == "list", seen
             assert win.backend.store.count() == 3
+            # The overflow menu is one popover, reused on every tap.
+            controller = win._pages["list"]
+            controller.show_menu()
+            first = controller.menu_popover
+            assert first is not None
+            first.popdown()
+            controller.show_menu()
+            assert controller.menu_popover is first
+            first.popdown()
     except Exception:
         failures.append(traceback.format_exc())
     return False

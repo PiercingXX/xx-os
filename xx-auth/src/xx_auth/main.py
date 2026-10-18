@@ -30,7 +30,16 @@ _APP_CSS = """
 .xx-auth-ring.warn {{ color: {danger}; }}
 .xx-auth-danger {{ color: {danger}; border-color: alpha({danger}, 0.6); }}
 .xx-auth-counter {{ font-size: {time}px; color: {muted}; }}
+flowboxchild.xx-auth-slot,
+flowboxchild.xx-auth-slot:hover,
+flowboxchild.xx-auth-slot:focus {{ padding: 0; background: none; outline: none; }}
 """
+
+
+# The largest live code that still fits a 320 px screen in full: an 8-digit
+# code is 9 Space Mono cells (0.612 em + 0.04 em tracking) inside 280 px of
+# content. A code is never ellipsized, so large text stops growing it here.
+CODE_MAX_PX = 44
 
 
 def app_css(theme) -> str:  # type: ignore[no-untyped-def]
@@ -43,7 +52,8 @@ def app_css(theme) -> str:  # type: ignore[no-untyped-def]
         return round(base * scale)
 
     return _APP_CSS.format(
-        code=px(32), hero=px(40), title=px(16), time=px(13),
+        code=min(px(32), CODE_MAX_PX), hero=min(px(40), CODE_MAX_PX),
+        title=px(16), time=px(13),
         fg=theme.foreground, muted=theme.muted, danger=theme_mod.DANGER_RED)
 
 

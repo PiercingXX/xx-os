@@ -14,6 +14,49 @@ def _widen(button, chars: int) -> None:
         child.set_max_width_chars(chars)
 
 
+def button_pair(Gtk, Pango, *buttons):  # type: ignore[no-untyped-def]
+    """Two buttons side by side while both labels fit, stacked full width
+    when they don't (large text, a narrow screen): a label is never cut.
+    A FlowBox wraps on the children's minimum width, so the labels give up
+    ellipsizing and report their whole text as that minimum."""
+    flow = Gtk.FlowBox()
+    flow.set_selection_mode(Gtk.SelectionMode.NONE)
+    flow.set_homogeneous(True)
+    flow.set_min_children_per_line(1)
+    flow.set_max_children_per_line(len(buttons))
+    flow.set_column_spacing(8)
+    flow.set_row_spacing(8)
+    for button in buttons:
+        label = button.get_first_child()
+        if label is not None and hasattr(label, "set_ellipsize"):
+            label.set_ellipsize(Pango.EllipsizeMode.NONE)
+        button.set_hexpand(True)
+        flow.append(button)
+        slot = button.get_parent()
+        slot.set_focusable(False)
+        slot.add_css_class("xx-auth-slot")
+    return flow
+
+
+def set_slot_visible(button, visible: bool) -> None:  # type: ignore[no-untyped-def]
+    """Show or hide a button_pair member: its FlowBox slot, not just the
+    button, or a hidden button leaves an empty half."""
+    slot = button.get_parent()
+    if slot is None:
+        button.set_visible(visible)
+        return
+    slot.set_visible(visible)
+    # A FlowBox keeps a column per child, hidden or not: the visible
+    # buttons take the whole width.
+    flow = slot.get_parent()
+    shown, child = 0, flow.get_first_child() if flow is not None else None
+    while child is not None:
+        shown += 1 if child.get_visible() else 0
+        child = child.get_next_sibling()
+    if flow is not None:
+        flow.set_max_children_per_line(max(1, shown))
+
+
 class DetailController:
     def __init__(self, window) -> None:  # type: ignore[no-untyped-def]
         self.window = window
@@ -48,7 +91,9 @@ def meta_line(account) -> str:  # type: ignore[no-untyped-def]
         parts.append(f"counter{nbsp}{account.counter}")
     else:
         parts.append(f"{account.period}{nbsp}s")
-    return " · ".join(parts)
+    # The separator stays with the part before it: a wrapped line never
+    # starts with a dot.
+    return f"{nbsp}· ".join(parts)
 
 
 def build(window):  # type: ignore[no-untyped-def]
@@ -78,43 +123,48 @@ def build(window):  # type: ignore[no-untyped-def]
         body.append(widget)
 
     # Identity and the live code.
+    # Names with the ring beside them, the code on its own full-width
+    # line, as on the list: an 8-digit hero code never shares its width.
+    name_row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
+    name_row.set_margin_top(8)
+    names = Gtk.Box.new(Gtk.Orientation.VERTICAL, 2)
+    names.set_hexpand(True)
+    names.set_valign(Gtk.Align.CENTER)
     title = widgets.label("", "xx-title")
-    title.set_margin_top(8)
-    body.append(title)
+    names.append(title)
     subtitle = widgets.label("", "xx-secondary")
-    body.append(subtitle)
-    code_row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 12)
-    code_row.set_margin_top(8)
-    code = code_label(window, hero=True)
-    code.set_hexpand(True)
-    code_row.append(code)
+    names.append(subtitle)
+    name_row.append(names)
     ring = Ring(Gtk)
-    code_row.append(ring.widget)
-    body.append(code_row)
+    name_row.append(ring.widget)
+    body.append(name_row)
+    code = code_label(window, hero=True)
+    code.set_margin_top(8)
+    body.append(code)
     meta = widgets.wrap_label("", "xx-secondary")
     meta.set_margin_top(4)
     body.append(meta)
 
-    buttons = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
-    buttons.set_homogeneous(True)
-    buttons.set_margin_top(16)
     copy_btn = widgets.primary_button("Copy code", lambda: do_copy())
     next_btn = widgets.outline_button("Next code", lambda: do_next())
     for btn in (copy_btn, next_btn):
-        btn.set_hexpand(True)
         _widen(btn, 14)
-    buttons.append(copy_btn)
-    buttons.append(next_btn)
+    buttons = button_pair(Gtk, window._Pango, copy_btn, next_btn)
+    buttons.set_margin_top(16)
     body.append(buttons)
 
     section("Identity")
     issuer = widgets.text_entry("e.g. GitHub")
-    label = widgets.text_entry("e.g. alice@example.com")
+    label = widgets.text_entry("e.g. alice")
     group = widgets.text_entry("Optional")
     labeled("Issuer", issuer)
     labeled("Account", label)
     labeled("Group", group)
+    # The gap below Group belongs to the save button, which is often
+    # hidden: sections then sit the same distance apart as the others.
+    group.set_margin_bottom(0)
     save_btn = widgets.primary_button("Save changes", lambda: do_save())
+    save_btn.set_margin_top(12)
     _widen(save_btn, 14)
     # Shown only while an edit is pending: no disabled block on the page.
     save_btn.set_sensitive(False)
@@ -133,15 +183,12 @@ def build(window):  # type: ignore[no-untyped-def]
     secret_text.set_visible(False)
     secret_text.set_margin_bottom(8)
     body.append(secret_text)
-    secret_actions = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
-    secret_actions.set_homogeneous(True)
-    secret_actions.set_margin_bottom(8)
     copy_secret = widgets.outline_button("Copy secret", lambda: do_copy_secret())
     copy_uri = widgets.outline_button("Copy link", lambda: do_copy_uri())
     for btn in (copy_secret, copy_uri):
-        btn.set_hexpand(True)
         _widen(btn, 12)
-        secret_actions.append(btn)
+    secret_actions = button_pair(Gtk, window._Pango, copy_secret, copy_uri)
+    secret_actions.set_margin_bottom(8)
     secret_actions.set_visible(False)
     body.append(secret_actions)
     reveal_btn = widgets.outline_button("Reveal secret", lambda: do_reveal())
@@ -152,16 +199,11 @@ def build(window):  # type: ignore[no-untyped-def]
     position = widgets.label("", "xx-secondary")
     position.set_margin_bottom(10)
     body.append(position)
-    move_row = Gtk.Box.new(Gtk.Orientation.HORIZONTAL, 8)
-    move_row.set_homogeneous(True)
     up_btn = widgets.outline_button("Move up", lambda: do_move(-1))
     down_btn = widgets.outline_button("Move down", lambda: do_move(1))
     for btn in (up_btn, down_btn):
-        btn.set_hexpand(True)
         _widen(btn, 12)
-    move_row.append(up_btn)
-    move_row.append(down_btn)
-    body.append(move_row)
+    body.append(button_pair(Gtk, window._Pango, up_btn, down_btn))
 
     section("Remove")
     warn = widgets.wrap_label("Turn off two-factor on the service first.")
@@ -237,7 +279,7 @@ def build(window):  # type: ignore[no-untyped-def]
         if not card.is_hotp:
             ring.update(*ring_state(card))
         meta.set_text(meta_line(account))
-        next_btn.set_visible(card.is_hotp)
+        set_slot_visible(next_btn, card.is_hotp)
         copy_btn.set_sensitive(not card.unreadable)
         # Fill the fields from the vault unless the operator is editing.
         if not save_btn.get_sensitive():
