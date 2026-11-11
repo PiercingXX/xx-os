@@ -61,6 +61,23 @@ SCREENCAST_CLASS_NAMES = (
     'ZwlrScreencopyManagerV1',
     'ZwlrScreencopyFrameV1',
 )
+# phosh_private (verbatim from phoc, MIT-style licence): XX-WM uses only
+# set_shell_state (since v6) to lower phoc's -S shield. The XML references
+# interfaces from protocols we do not vendor (layer-shell, screencopy,
+# foreign-toplevel); strip_unknown_interfaces() drops those attributes on
+# a scanner copy so generation works — request opcodes are positional,
+# so the requests we send keep their wire numbers.
+PHOSH_PRIVATE_XML_NAME = 'phosh-private.xml'
+PHOSH_PRIVATE_XML_NAMES = (WAYLAND_XML_NAME, PHOSH_PRIVATE_XML_NAME)
+PHOSH_PRIVATE_CLASS_NAMES = ('PhoshPrivate',)
+PHOSH_PRIVATE_MIN_VERSION = 6
+PHOSH_PRIVATE_MAX_VERSION = 8
+SHELL_STATE_UP = 1
+# Safety net for the no-PIN path only: if neither the shell nor the
+# wizard reported ready by then (a bug, or a ~25 s a11y stall twice
+# over), lower the shield anyway rather than leave a dead black screen.
+# With a PIN configured the shield never drops before the lock maps.
+SHELL_STATE_WATCHDOG_SECONDS = 90
 _WL_OBJECT_ATTR = ' interface="wl_object"'
 _SCANNER_TIMEOUT_SECONDS = 180
 
@@ -406,3 +423,269 @@ def ensure_protocol_bindings(
                   'generated wayland protocol bindings are unusable')
         return None
     return loaded
+
+
+# ---------------------------------------------------------------------------
+# phoc shell mode (-S): report the shell up through phosh_private
+# ---------------------------------------------------------------------------
+
+def strip_unknown_interfaces(xml_text: str, known: Sequence[str]) -> str:
+    """Drop ``interface="X"`` from every arg whose X is neither declared in
+    ``xml_text`` nor in ``known``. Unused requests then decode as generic
+    objects/new_ids; opcodes (positional) are unchanged."""
+    import re
+    declared = set(re.findall(r'<interface\s+name="([^"]+)"', xml_text))
+    declared.update(known)
+
+    def _sub(match: re.Match) -> str:
+        return match.group(0) if match.group(1) in declared else ''
+
+    return re.sub(r'\s+interface="([^"]+)"', _sub, xml_text)
+
+
+def _declared_interfaces(path: Path) -> list[str]:
+    import re
+    try:
+        text = path.read_text(encoding='utf-8')
+    except OSError:
+        return []
+    return re.findall(r'<interface\s+name="([^"]+)"', text)
+
+
+def ensure_phosh_private_bindings() -> dict[str, type] | None:
+    """Bindings for phosh_private (scanner on a stripped copy). Blocking —
+    worker thread only. None on any failure, logged once."""
+    version = installed_pywayland_version()
+    if version is None:
+        _log_once(logging.INFO, 'no-pywayland-phosh',
+                  'pywayland is not installed; phoc shell state not reported')
+        return None
+    names = PHOSH_PRIVATE_XML_NAMES
+    package_dir = package_dir_for(version, names)
+    try:
+        cached = load_classes_from(package_dir, PHOSH_PRIVATE_CLASS_NAMES)
+    except Exception:
+        cached = None
+    if cached is not None:
+        return cached
+    wayland_xml = protocol_xml_path(WAYLAND_XML_NAME)
+    phosh_xml = protocol_xml_path(PHOSH_PRIVATE_XML_NAME)
+    if wayland_xml is None or phosh_xml is None:
+        _log_once(logging.INFO, 'xml-missing-phosh',
+                  'phosh-private.xml not found; phoc shell state not reported')
+        return None
+    try:
+        package_dir.parent.mkdir(parents=True, exist_ok=True)
+        stripped = strip_unknown_interfaces(
+            phosh_xml.read_text(encoding='utf-8'),
+            _declared_interfaces(wayland_xml))
+        fd, tmp = tempfile.mkstemp(prefix='phosh-private-', suffix='.xml',
+                                   dir=str(package_dir.parent), text=True)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                handle.write(stripped)
+            generate_protocol_bindings(package_dir, [wayland_xml, Path(tmp)])
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    except Exception as exc:
+        _log_once(logging.INFO, 'generate-failed-phosh',
+                  'failed to generate phosh_private bindings: %s', exc)
+        return None
+    _drop_cached_modules(package_dir.name)
+    try:
+        return load_classes_from(package_dir, PHOSH_PRIVATE_CLASS_NAMES)
+    except Exception:
+        return None
+
+
+class ShellStateGate:
+    """When to tell phoc the shell is up (pure, GTK-free).
+
+    UP needs the shell (or first-boot wizard) on screen AND, when a PIN
+    is configured, the lock surface mapped — phoc then lowers its shield
+    straight onto the lock, never onto unlocked apps. Sticky: reported
+    once per process. A crash drops the phosh_private connection, phoc
+    raises the shield again, and the restarted shell repeats this.
+    """
+
+    def __init__(self) -> None:
+        self.shell_ready = False
+        self.lock_required = False
+        self.lock_mapped = False
+        self.reported = False
+
+    def ready_to_report(self) -> bool:
+        if self.reported or not self.shell_ready:
+            return False
+        return self.lock_mapped or not self.lock_required
+
+
+class ShellStateReporter:
+    """Binds phosh_private on its own wl_display in a worker thread and
+    sends set_shell_state(UP) once the gate opens.
+
+    The connection is held for the whole process: phoc resets the state
+    to UNKNOWN (shield up, input blocked) when the binding goes away.
+    Every failure — no pywayland, phosh_private not advertised (older
+    phoc, other compositors), version < 6, bind refused — degrades to a
+    log line and nothing else; phoc without -S never needed the report.
+    The note_* methods are called on the GTK main loop and never block.
+    """
+
+    def __init__(self, *, bind_fn=None, display_factory=None,
+                 start_thread: bool = True, pin_configured=None,
+                 watchdog_seconds: float = SHELL_STATE_WATCHDOG_SECONDS,
+                 ) -> None:
+        self.gate = ShellStateGate()
+        self._pin_configured = pin_configured or pin_configured_on_disk
+        self._watchdog_seconds = watchdog_seconds
+        self._lock = threading.Lock()
+        self._up = threading.Event()
+        self._bind_fn = bind_fn or ensure_phosh_private_bindings
+        self._display_factory = display_factory
+        self._display = None
+        self._registry = None
+        self._phosh = None
+        self.sent = False
+        self.available: bool | None = None
+        self._thread: threading.Thread | None = None
+        if start_thread:
+            self.start()
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run,
+                                        name='xx-shell-state', daemon=True)
+        self._thread.start()
+
+    # -- main-loop side ---------------------------------------------------
+
+    def _update(self, **flags: bool) -> None:
+        with self._lock:
+            for name, value in flags.items():
+                setattr(self.gate, name, value)
+            if self.gate.ready_to_report():
+                self.gate.reported = True
+                self._up.set()
+
+    def require_lock(self, required: bool = True) -> None:
+        self._update(lock_required=bool(required))
+
+    def note_lock_mapped(self) -> None:
+        self._update(lock_mapped=True)
+
+    def note_shell_ready(self) -> None:
+        self._update(shell_ready=True)
+
+    # -- worker side ------------------------------------------------------
+
+    def _connect(self) -> bool:
+        bindings = self._bind_fn()
+        if not bindings:
+            return False
+        phosh_cls = bindings['PhoshPrivate']
+        if self._display_factory is not None:
+            display = self._display_factory()
+        else:
+            from pywayland.client import Display
+            display = Display()
+        display.connect()
+        found: dict[str, int] = {}
+
+        def _on_global(registry, name, interface, version) -> None:
+            if interface == 'phosh_private':
+                found['name'] = int(name)
+                found['version'] = int(version)
+
+        # Held for the connection's lifetime (pywayland resolves new_id
+        # args through the live registry proxy).
+        self._registry = display.get_registry()
+        registry = self._registry
+        registry.dispatcher['global'] = _on_global
+        if display.roundtrip() < 0:
+            raise RuntimeError('wayland roundtrip failed')
+        if 'name' not in found:
+            _log_once(logging.INFO, 'phosh-absent',
+                      'compositor does not offer phosh_private; '
+                      'shell state not reported')
+            display.disconnect()
+            return False
+        version = min(found['version'], PHOSH_PRIVATE_MAX_VERSION)
+        if version < PHOSH_PRIVATE_MIN_VERSION:
+            _log_once(logging.INFO, 'phosh-old',
+                      'phosh_private v%s lacks set_shell_state', version)
+            display.disconnect()
+            return False
+        self._phosh = registry.bind(found['name'], phosh_cls, version)
+        # A refused bind ("only a single client") arrives as a protocol
+        # error: libwayland marks the display dead and roundtrip fails.
+        if display.roundtrip() < 0:
+            raise RuntimeError('phosh_private bind refused')
+        self._display = display
+        return True
+
+    def _run(self) -> None:
+        try:
+            ok = self._connect()
+        except Exception as exc:  # noqa: BLE001 - degrade, never raise
+            _log_once(logging.WARNING, 'phosh-bind-failed',
+                      'phosh_private unavailable: %s', exc)
+            ok = False
+        self.available = ok
+        if not ok:
+            if os.environ.get('XX_WM_PHOC_SHELL_MODE') == '1':
+                log.error('phoc runs in shell mode (-S) but the shell '
+                          'cannot report UP; outputs stay shielded')
+            return
+        while not self._up.wait(self._watchdog_seconds):
+            with self._lock:
+                gate = self.gate
+                if gate.reported or gate.lock_required:
+                    continue
+            if self._pin_configured():
+                continue
+            log.warning('shell never reported ready; lowering the phoc '
+                        'shield anyway (no PIN configured)')
+            self._update(shell_ready=True)
+        try:
+            self._phosh.set_shell_state(SHELL_STATE_UP)
+            self._display.flush()
+            self.sent = True
+            log.info('reported shell state UP to phoc')
+        except Exception as exc:  # noqa: BLE001
+            log.warning('set_shell_state failed: %s', exc)
+
+
+def pin_configured_on_disk(path: Path | None = None) -> bool:
+    """Whether config.json carries a PIN (hash or helper marker). Fails
+    closed: an unreadable or corrupt file counts as a PIN."""
+    import json
+    if path is None:
+        # Same location config.ShellConfig uses (HOME, not XDG_CONFIG_HOME).
+        path = Path.home() / '.config' / 'xx-wm' / 'config.json'
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        return True
+    return not isinstance(data, dict) or data.get('pin_hash') is not None
+
+
+_reporter: ShellStateReporter | None = None
+_reporter_lock = threading.Lock()
+
+
+def shell_state() -> ShellStateReporter:
+    """Process-wide reporter, started on first use. XX_WM_SHELL_STATE=0
+    disables it (the gate still records, nothing is sent)."""
+    global _reporter
+    with _reporter_lock:
+        if _reporter is None:
+            enabled = os.environ.get('XX_WM_SHELL_STATE', '1') != '0'
+            _reporter = ShellStateReporter(start_thread=enabled)
+        return _reporter

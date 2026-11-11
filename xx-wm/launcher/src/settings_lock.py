@@ -1,8 +1,11 @@
 """Lock settings: change PIN and change the device password.
 
-Change PIN verifies the current PIN through config (which owns the
-hash), respects the escalating lockout, and writes the new PIN twice
-confirmation through config.set_pin. PIN digits are never logged —
+Change PIN verifies the current PIN — through the root helper when it
+holds the PIN (async: helper_client.pin_change, lockout enforced
+root-side), else against the local config hash — respects the
+escalating lockout, and stores the twice-confirmed new PIN through
+helper_client.pin_change (config first, then moved into the helper when
+it is installed). PIN digits are never logged —
 this module logs nothing at all. Change device password opens `passwd`
 in a terminal, the same terminal-table path as system updates.
 """
@@ -60,14 +63,48 @@ def validate_new_pin(current: str, new: str, confirm: str) -> str | None:
     return None
 
 
-def change_pin(config, current: str, new: str,
-               confirm: str) -> tuple[bool, str]:
-    """Verify `current`, then store `new` via config.set_pin.
+def _helper_change(config, current: str, new: str, on_async) -> None:
+    import helper_client
+
+    def _done(done: bool, retry_after: int, error) -> None:
+        if done:
+            try:
+                config.clear_lockout_state()
+            except Exception:
+                pass
+            on_async(True, 'PIN changed.')
+        elif error is not None:
+            on_async(False, 'Could not reach the PIN service.')
+        elif retry_after > 0:
+            on_async(False, 'Locked out — try again in %ds.' % retry_after)
+        else:
+            on_async(False, 'Current PIN is wrong.')
+
+    helper_client.pin_change(config, current, new, _done)
+
+
+def change_pin(config, current: str, new: str, confirm: str,
+               on_async=None) -> tuple[bool | None, str]:
+    """Verify `current`, then store `new`.
 
     A live lockout refuses the change; a wrong current PIN escalates
-    the lockout like the lock screen does; success clears it. Never
-    logs — PIN digits must not reach any log.
+    the lockout like the lock screen does; success clears it. When the
+    root helper holds the PIN the check is async: the return is
+    ``(None, message)`` and ``on_async(ok, message)`` fires later (no
+    ``on_async`` → refused). Never logs — PIN digits must not reach any
+    log.
     """
+    if getattr(config, 'pin_in_helper', False):
+        error = validate_new_pin(current, new, confirm)
+        if error is not None:
+            return False, error
+        if on_async is None:
+            return False, 'Could not verify the current PIN.'
+        try:
+            _helper_change(config, current, new, on_async)
+        except Exception:
+            return False, 'Could not verify the current PIN.'
+        return None, 'Checking current PIN…'
     if _lockout_remaining(config) > 0:
         return False, 'Locked out — try again when the timer ends.'
     try:
@@ -84,9 +121,16 @@ def change_pin(config, current: str, new: str,
     error = validate_new_pin(current, new, confirm)
     if error is not None:
         return False, error
+    stored: list = []
     try:
-        config.set_pin(new)
+        import helper_client
+        # Local hash path: config first (sync), then moved into the helper.
+        helper_client.pin_change(
+            config, current, new,
+            lambda done, _retry, err: stored.append((done, err)))
     except Exception:
+        stored = [(False, 'error')]
+    if not stored or not stored[0][0]:
         return False, 'Could not save the new PIN.'
     try:
         config.clear_lockout_state()
@@ -142,15 +186,29 @@ class LockSection(settings_page._Section):
 
     def _on_change_pin(self, win, values: dict) -> str | None:
         """Sheet commit: an error string keeps the sheet open."""
+        def _later(ok: bool, message: str) -> None:
+            self._say(message)
+            if ok:
+                self.refresh(win)
+            try:
+                win._show_status(message)
+            except Exception:
+                pass
+
         ok, message = change_pin(win.config, values.get('current', ''),
                                  values.get('new', ''),
-                                 values.get('confirm', ''))
+                                 values.get('confirm', ''), on_async=_later)
         # Typed PINs never linger: every attempt clears the fields.
         for entry in (getattr(self, '_pin_entries', None) or {}).values():
             try:
                 entry.set_text('')
             except Exception:
                 pass
+        if ok is None:
+            # The helper answers async: the sheet closes, the verdict
+            # lands in the section note and a status toast.
+            self._say(message)
+            return None
         if not ok:
             return message
         self._say(message)

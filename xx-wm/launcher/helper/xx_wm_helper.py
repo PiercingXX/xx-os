@@ -189,6 +189,25 @@ CHARGE_START_DELTA = 5
 
 IDLE_EXIT_SECONDS = 60
 
+# PIN store (HasPin/VerifyPin/SetPin/ClearPin): one root-owned 0600 JSON
+# record per uid under a 0700 dir, so no process running as the user can
+# read the hash and brute-force it offline. The escalation mirrors the
+# shell's lock_lines._lockout_secs (a test pins the two together) and is
+# persisted here, root-side, so a user process can neither reset it nor
+# outrun it by restarting the helper.
+PIN_DIR_NAME = 'pin'
+PIN_MAX_LEN = 64
+PIN_FAIL_THRESHOLD = 5
+PIN_LOCKOUT_STEP = 30
+PIN_LOCKOUT_CAP = 300
+# scrypt cost: 2^15 x 8 = 32 MiB, a few hundred ms on a phone SoC — paid
+# by this process, never by the shell's main loop.
+PIN_SCRYPT_N = 2 ** 15
+PIN_SCRYPT_R = 8
+PIN_SCRYPT_P = 1
+PIN_PBKDF2_ITERATIONS = 600_000
+PIN_METHODS = ('HasPin', 'VerifyPin', 'SetPin', 'ClearPin')
+
 INTROSPECT_XML = """\
 <node>
   <interface name="io.piercingxx.XXWM.Helper1">
@@ -245,6 +264,26 @@ INTROSPECT_XML = """\
     </method>
     <method name="GetFirewallState">
       <arg name="state" type="a{sv}" direction="out"/>
+    </method>
+    <method name="HasPin">
+      <arg name="has_pin" type="b" direction="out"/>
+    </method>
+    <method name="VerifyPin">
+      <arg name="pin" type="s" direction="in"/>
+      <arg name="matched" type="b" direction="out"/>
+      <arg name="retry_after" type="u" direction="out"/>
+      <arg name="has_pin" type="b" direction="out"/>
+    </method>
+    <method name="SetPin">
+      <arg name="old_pin" type="s" direction="in"/>
+      <arg name="new_pin" type="s" direction="in"/>
+      <arg name="done" type="b" direction="out"/>
+      <arg name="retry_after" type="u" direction="out"/>
+    </method>
+    <method name="ClearPin">
+      <arg name="old_pin" type="s" direction="in"/>
+      <arg name="done" type="b" direction="out"/>
+      <arg name="retry_after" type="u" direction="out"/>
     </method>
   </interface>
 </node>
@@ -1269,6 +1308,210 @@ class HelperCore:
         return applied
 
 
+# ------------------------------------------------------------- PIN store
+
+def pin_lockout_secs(fail_count: int) -> int:
+    """Seconds of lockout after ``fail_count`` total wrong PINs — the
+    same escalation as the shell's ``lock_lines._lockout_secs`` (5 free
+    tries, then 30 s per extra miss, capped at 5 min)."""
+    if fail_count < PIN_FAIL_THRESHOLD:
+        return 0
+    return min((fail_count - PIN_FAIL_THRESHOLD + 1) * PIN_LOCKOUT_STEP,
+               PIN_LOCKOUT_CAP)
+
+
+def _valid_pin_text(pin: object) -> bool:
+    return (isinstance(pin, str) and 0 < len(pin) <= PIN_MAX_LEN
+            and '\x00' not in pin)
+
+
+class PinStore:
+    """Per-uid PIN hashes, verification and the persisted lockout.
+
+    Every method takes the caller's uid as resolved from the bus
+    (``GetConnectionUnixUser``), never from an argument, so a caller can
+    only ever reach its own record. ``root`` and ``now`` (wall clock)
+    are injectable for tests, as are the scrypt cost parameters.
+    """
+
+    def __init__(self, *, root: str = os.path.join(STATE_DIR_DEFAULT,
+                                                   PIN_DIR_NAME),
+                 now=time.time, scrypt_n: int = PIN_SCRYPT_N,
+                 pbkdf2_iterations: int = PIN_PBKDF2_ITERATIONS) -> None:
+        self.root = root
+        self._now = now
+        self._scrypt_n = scrypt_n
+        self._pbkdf2_iterations = pbkdf2_iterations
+
+    # ---------------------------------------------------------- storage
+
+    def record_path(self, uid: int) -> str:
+        uid = int(uid)
+        if uid < 0:
+            raise HelperError(ERROR_INVALID_ARGS, 'bad uid')
+        return os.path.join(self.root, '%d.json' % uid)
+
+    def _load(self, uid: int) -> dict:
+        try:
+            with open(self.record_path(uid), 'r', encoding='utf-8') as fh:
+                raw = json.load(fh)
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError):
+            # A corrupt record must fail closed: keep "a PIN exists" with
+            # a hash nothing matches, never collapse to "no PIN".
+            return {'hash': 'corrupt'}
+        return raw if isinstance(raw, dict) else {'hash': 'corrupt'}
+
+    def _save(self, uid: int, record: dict) -> None:
+        path = self.record_path(uid)
+        try:
+            os.makedirs(self.root, mode=0o700, exist_ok=True)
+            os.chmod(self.root, 0o700)
+            tmp = path + '.tmp'
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                         | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+            with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+                json.dump(record, fh, sort_keys=True)
+                fh.write('\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except OSError as err:
+            raise _failed('cannot persist PIN record: %s'
+                          % (err.strerror or err)) from None
+
+    def _delete(self, uid: int) -> None:
+        try:
+            os.unlink(self.record_path(uid))
+        except FileNotFoundError:
+            pass
+        except OSError as err:
+            raise _failed('cannot remove PIN record: %s'
+                          % (err.strerror or err)) from None
+
+    # -------------------------------------------------------------- KDF
+
+    def hash_pin(self, pin: str) -> str:
+        import hashlib
+        salt = os.urandom(16)
+        scrypt = getattr(hashlib, 'scrypt', None)
+        if scrypt is not None:
+            n, r, p = self._scrypt_n, PIN_SCRYPT_R, PIN_SCRYPT_P
+            digest = scrypt(pin.encode(), salt=salt, n=n, r=r, p=p,
+                            maxmem=256 * r * n + (1 << 20), dklen=32)
+            return 'scrypt$%d$%d$%d$%s$%s' % (n, r, p, salt.hex(),
+                                              digest.hex())
+        iters = self._pbkdf2_iterations
+        digest = hashlib.pbkdf2_hmac('sha256', pin.encode(), salt, iters)
+        return 'pbkdf2$%d$%s$%s' % (iters, salt.hex(), digest.hex())
+
+    @staticmethod
+    def check_hash(pin: str, stored: object) -> bool:
+        import hashlib
+        import hmac
+        if not isinstance(stored, str):
+            return False
+        try:
+            parts = stored.split('$')
+            if parts[0] == 'scrypt' and len(parts) == 6:
+                n, r, p = int(parts[1]), int(parts[2]), int(parts[3])
+                expected = bytes.fromhex(parts[5])
+                digest = hashlib.scrypt(
+                    pin.encode(), salt=bytes.fromhex(parts[4]), n=n, r=r,
+                    p=p, maxmem=256 * r * n + (1 << 20), dklen=len(expected))
+            elif parts[0] == 'pbkdf2' and len(parts) == 4:
+                expected = bytes.fromhex(parts[3])
+                digest = hashlib.pbkdf2_hmac(
+                    'sha256', pin.encode(), bytes.fromhex(parts[2]),
+                    int(parts[1]))
+            else:
+                return False
+        except (ValueError, TypeError, AttributeError, MemoryError):
+            return False
+        return hmac.compare_digest(digest, expected)
+
+    # ---------------------------------------------------------- lockout
+
+    def _retry_after(self, record: dict) -> int:
+        """Seconds left on the persisted lockout. Like the shell's
+        resume_lockout_secs: never longer than the fail count earns,
+        and a clock that went back before the lockout began clears the
+        running lockout (the count stays)."""
+        fails = record.get('fails', 0)
+        fails = fails if isinstance(fails, int) and fails > 0 else 0
+        until = record.get('until', 0.0)
+        start = record.get('start', 0.0)
+        try:
+            until = float(until)
+            start = float(start)
+        except (TypeError, ValueError):
+            until = start = 0.0
+        now = self._now()
+        if start > 0 and now < start:
+            return 0
+        if fails <= 0 or until <= now:
+            return 0
+        return max(0, min(int(until - now + 0.999), pin_lockout_secs(fails)))
+
+    def _check(self, uid: int, record: dict, pin: str) -> tuple:
+        """(matched, retry_after) against an existing record, updating
+        and persisting the fail counter. A live lockout refuses without
+        running the KDF at all."""
+        retry = self._retry_after(record)
+        if retry > 0:
+            return False, retry
+        if _valid_pin_text(pin) and self.check_hash(pin, record.get('hash')):
+            if record.get('fails') or record.get('until'):
+                record = {'hash': record.get('hash'), 'v': 1}
+                self._save(uid, record)
+            return True, 0
+        fails = record.get('fails', 0)
+        fails = (fails if isinstance(fails, int) and fails > 0 else 0) + 1
+        secs = pin_lockout_secs(fails)
+        now = self._now()
+        record = dict(record, fails=fails, until=now + secs if secs else 0.0,
+                      start=now if secs else 0.0)
+        self._save(uid, record)
+        return False, secs
+
+    # ---------------------------------------------------------- methods
+
+    def has_pin(self, uid: int) -> bool:
+        return bool(self._load(uid).get('hash'))
+
+    def verify_pin(self, uid: int, pin: str) -> tuple:
+        """(matched, retry_after, has_pin)."""
+        record = self._load(uid)
+        if not record.get('hash'):
+            return False, 0, False
+        matched, retry = self._check(uid, record, pin)
+        return matched, retry, True
+
+    def set_pin(self, uid: int, old: str, new: str) -> tuple:
+        """(done, retry_after). Without a record ``old`` is ignored; with
+        one it must verify first (counting toward the lockout)."""
+        if not _valid_pin_text(new):
+            raise HelperError(ERROR_INVALID_ARGS, 'invalid PIN')
+        record = self._load(uid)
+        if record.get('hash'):
+            matched, retry = self._check(uid, record, old)
+            if not matched:
+                return False, retry
+        self._save(uid, {'hash': self.hash_pin(new), 'v': 1})
+        return True, 0
+
+    def clear_pin(self, uid: int, old: str) -> tuple:
+        """(done, retry_after): removes the record once ``old`` verifies."""
+        record = self._load(uid)
+        if not record.get('hash'):
+            return True, 0
+        matched, retry = self._check(uid, record, old)
+        if not matched:
+            return False, retry
+        self._delete(uid)
+        return True, 0
+
+
 # ------------------------------------------------------- authorization (Gio)
 
 def _require_gio():
@@ -1441,10 +1684,14 @@ class HelperService:
     """
 
     def __init__(self, connection=None, core=None, authorize=None,
-                 now=time.monotonic) -> None:
+                 now=time.monotonic, pin_store=None, get_uid=None) -> None:
         self.connection = connection
         self.core = core if core is not None else HelperCore()
         self._authorize = authorize or check_polkit_authorization
+        # PIN methods need no polkit action: the caller's bus uid selects
+        # the record, so every user can only touch their own PIN.
+        self.pins = pin_store if pin_store is not None else PinStore()
+        self._get_uid = get_uid or get_connection_uid
         self._now = now
         self._last_activity = self._now()
         self._registration_id: int | None = None
@@ -1505,6 +1752,9 @@ class HelperService:
             invocation.return_value(GLib.Variant('(a{sv})', (payload,)))
             return
         args = params.unpack() if params is not None else ()
+        if method in PIN_METHODS:
+            self._dispatch_pin(conn, sender, method, args, invocation)
+            return
         policy = policy_for(method, args)
         if policy is None or conn is None:
             invocation.return_dbus_error(
@@ -1519,6 +1769,53 @@ class HelperService:
             )
         except Exception as err:
             invocation.return_dbus_error(ERROR_FAILED, str(err))
+
+    def _dispatch_pin(self, conn, sender, method, args, invocation) -> None:
+        """PIN methods: resolve the sender's uid, then run against that
+        uid's record only. Argument shapes are checked before the bus
+        round-trip; PIN text never reaches an error message or log."""
+        expected = {'HasPin': 0, 'VerifyPin': 1, 'SetPin': 2, 'ClearPin': 1}
+        if (conn is None or not isinstance(args, tuple)
+                or len(args) != expected[method]
+                or not all(isinstance(a, str) for a in args)):
+            invocation.return_dbus_error(
+                ERROR_INVALID_ARGS, 'bad arguments for %s' % (method,))
+            return
+
+        def _on_uid(uid, err) -> None:
+            if err is not None or uid is None:
+                invocation.return_dbus_error(
+                    ERROR_NOT_AUTHORIZED, err or 'unknown sender')
+                return
+            self._run_pin(invocation, method, args, int(uid))
+
+        try:
+            self._get_uid(conn, sender, _on_uid)
+        except Exception as err:
+            invocation.return_dbus_error(ERROR_FAILED, str(err))
+
+    def _run_pin(self, invocation, method, args, uid: int) -> None:
+        self.touch()
+        try:
+            if method == 'HasPin':
+                sig, out = '(b)', (self.pins.has_pin(uid),)
+            elif method == 'VerifyPin':
+                matched, retry, has = self.pins.verify_pin(uid, args[0])
+                sig, out = '(bub)', (bool(matched), int(retry), bool(has))
+            elif method == 'SetPin':
+                done, retry = self.pins.set_pin(uid, args[0], args[1])
+                sig, out = '(bu)', (bool(done), int(retry))
+            else:
+                done, retry = self.pins.clear_pin(uid, args[0])
+                sig, out = '(bu)', (bool(done), int(retry))
+        except HelperError as err:
+            invocation.return_dbus_error(err.dbus_name, str(err))
+            return
+        except Exception as err:
+            invocation.return_dbus_error(ERROR_FAILED, type(err).__name__)
+            return
+        Gio, GLib = _require_gio()
+        invocation.return_value(GLib.Variant(sig, out))
 
     def _on_authorized(self, invocation, method, args, authorized, uid,
                        auth_error) -> None:

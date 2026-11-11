@@ -855,6 +855,10 @@ class ShellWindow(Adw.ApplicationWindow):
         GLib.idle_add(self._warm_toplevel_manager)
         # SIGUSR1 respawns Python only; pick up migrated lisgd verbs now.
         GLib.idle_add(self._sync_system_gestures)
+        # Every shell start (boot, crash restart, deploy respawn) comes up
+        # locked when a PIN is set, and only then tells phoc (-S) to drop
+        # its shield; logind lock-session requests show the lock too.
+        GLib.idle_add(self._startup_lock_gate)
         try:
             self._attach_osk(self.apn_entry)
             self._attach_osk(self.apn_user_entry)
@@ -1627,6 +1631,68 @@ class ShellWindow(Adw.ApplicationWindow):
         """True while the lock screen is up; IPC verbs consult this."""
         lock = getattr(self, '_lock_screen', None)
         return lock is not None and bool(lock.get_visible())
+
+    def _startup_lock_gate(self) -> bool:
+        """Lock-on-startup + phoc shell-state sequencing (idle, once).
+
+        PIN in config (hash or helper marker): require the lock, show it,
+        and report ready — phoc's shield lowers only once the lock maps
+        (lock_screen reports that). No PIN in config: ask the helper
+        whether it still holds one (config.json reset), bounded so a
+        slow bus never keeps the shield up; then lock or report ready.
+        """
+        try:
+            from lock_screen import _shell_state, logind_session
+            reporter = _shell_state()
+            logind_session().set_on_lock(lambda: self._show_lock_screen())
+        except Exception:
+            reporter = None
+        gate = getattr(reporter, 'gate', None)
+        if gate is not None and gate.reported:
+            # Already reported up in this process before the shell window
+            # existed: the first-boot wizard just finished (and set the
+            # PIN) — don't lock the user out of their own fresh setup.
+            return False
+        if self.config.pin_hash is not None:
+            self._lock_at_startup(reporter)
+            return False
+        state = {'done': False}
+
+        def _finish(has_pin) -> None:
+            if state['done']:
+                if has_pin:  # helper answered after the bounded wait
+                    self._show_lock_screen()
+                return
+            state['done'] = True
+            if has_pin or self.config.pin_hash is not None:
+                self._lock_at_startup(reporter)
+            elif reporter is not None:
+                reporter.note_shell_ready()
+
+        def _timeout() -> bool:
+            _finish(None)
+            return False
+
+        try:
+            import helper_client
+            helper_client.pin_sync(self.config, _finish)
+        except Exception:
+            _finish(None)
+        if not state['done']:
+            GLib.timeout_add(3000, _timeout)
+        return False
+
+    def _lock_at_startup(self, reporter) -> None:
+        if reporter is not None:
+            reporter.require_lock(True)
+        try:
+            self._show_lock_screen()
+        except Exception as exc:
+            # The shield (phoc -S) stays up: never fall open onto apps.
+            from shell_log import get_logger
+            get_logger('window').error('startup lock failed: %s', exc)
+        if reporter is not None:
+            reporter.note_shell_ready()
 
     def _show_lock_screen(self) -> None:
         self._disarm_search_keyboard()

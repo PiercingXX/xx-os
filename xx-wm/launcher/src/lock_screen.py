@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import threading
@@ -35,6 +36,169 @@ from lock_lines import (
 from media_controls import MediaCard
 
 import smart_lock
+
+_log = logging.getLogger('lock_screen')
+
+LOGIND_BUS = 'org.freedesktop.login1'
+LOGIND_PATH = '/org/freedesktop/login1'
+LOGIND_MANAGER = 'org.freedesktop.login1.Manager'
+LOGIND_SESSION = 'org.freedesktop.login1.Session'
+# A mapped lock is reported to phoc (shell mode) on its first frame; this
+# bounds the wait when the compositor withholds frames under the shield.
+_LOCK_MAPPED_FALLBACK_MS = 500
+
+
+class LogindSession:
+    """The shell's logind session: SetLockedHint on lock/unlock, and the
+    session's Lock signal (``loginctl lock-session``) shows the lock.
+
+    Unlock signals are deliberately ignored: only a PIN (or the swipe,
+    with no PIN) dismisses the lock. Everything is async on the GLib
+    main loop; without a system bus or logind (elogind included) this
+    is a silent no-op. The latest hint requested before the session path
+    resolves is sent once it does.
+    """
+
+    def __init__(self, bus_getter=None) -> None:
+        self._bus = None
+        self.path: str | None = None
+        self._pending_hint: bool | None = None
+        self._on_lock: Callable[[], None] | None = None
+        self._sub_id: int | None = None
+        self._failed = False
+        self._bus_getter = bus_getter
+        self._start()
+
+    # -- public ------------------------------------------------------------
+
+    def set_on_lock(self, callback: Callable[[], None] | None) -> None:
+        self._on_lock = callback
+
+    def set_locked_hint(self, locked: bool) -> None:
+        locked = bool(locked)
+        if self.path is None or self._bus is None:
+            self._pending_hint = locked
+            return
+        self._send_hint(locked)
+
+    # -- plumbing ----------------------------------------------------------
+
+    def _start(self) -> None:
+        try:
+            from gi.repository import Gio
+            if self._bus_getter is not None:
+                self._bus_getter(self._got_bus)
+                return
+            Gio.bus_get(Gio.BusType.SYSTEM, None, self._on_bus)
+        except Exception as exc:
+            self._fail('no system bus: %s' % exc)
+
+    def _fail(self, why: str) -> None:
+        if not self._failed:
+            self._failed = True
+            _log.info('logind session unavailable: %s', why)
+
+    def _on_bus(self, _source, result) -> None:
+        from gi.repository import Gio
+        try:
+            bus = Gio.bus_get_finish(result)
+        except Exception as exc:
+            self._fail(str(exc))
+            return
+        self._got_bus(bus)
+
+    def _got_bus(self, bus) -> None:
+        self._bus = bus
+        candidates: list[tuple[str, object]] = []
+        sid = os.environ.get('XDG_SESSION_ID')
+        if sid:
+            candidates.append(('GetSession', ('s', sid)))
+        candidates.append(('GetSession', ('s', 'auto')))
+        candidates.append(('GetSessionByPID', ('u', os.getpid())))
+        self._resolve(candidates)
+
+    def _resolve(self, candidates: list) -> None:
+        if not candidates:
+            self._fail('no logind session for this process')
+            return
+        from gi.repository import Gio, GLib
+        method, (sig, value) = candidates[0]
+
+        def _reply(conn, result) -> None:
+            try:
+                path = str(conn.call_finish(result).unpack()[0])
+            except Exception:
+                self._resolve(candidates[1:])
+                return
+            self._got_path(path)
+
+        try:
+            self._bus.call(
+                LOGIND_BUS, LOGIND_PATH, LOGIND_MANAGER, method,
+                GLib.Variant('(%s)' % sig, (value,)), None,
+                Gio.DBusCallFlags.NONE, 5_000, None, _reply)
+        except Exception:
+            self._resolve(candidates[1:])
+
+    def _got_path(self, path: str) -> None:
+        from gi.repository import Gio
+        self.path = path
+        try:
+            self._sub_id = self._bus.signal_subscribe(
+                LOGIND_BUS, LOGIND_SESSION, 'Lock', path, None,
+                Gio.DBusSignalFlags.NONE, self._on_lock_signal)
+        except Exception as exc:
+            _log.info('logind Lock signal unavailable: %s', exc)
+        if self._pending_hint is not None:
+            hint, self._pending_hint = self._pending_hint, None
+            self._send_hint(hint)
+
+    def _on_lock_signal(self, *_args) -> None:
+        _log.info('lock requested via logind')
+        callback = self._on_lock
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception as exc:
+            _log.warning('logind lock handler failed: %s', exc)
+
+    def _send_hint(self, locked: bool) -> None:
+        from gi.repository import Gio, GLib
+
+        def _done(conn, result) -> None:
+            try:
+                conn.call_finish(result)
+            except Exception as exc:
+                _log.info('SetLockedHint failed: %s', exc)
+
+        try:
+            self._bus.call(
+                LOGIND_BUS, self.path, LOGIND_SESSION, 'SetLockedHint',
+                GLib.Variant('(b)', (locked,)), None,
+                Gio.DBusCallFlags.NONE, 5_000, None, _done)
+        except Exception as exc:
+            _log.info('SetLockedHint failed: %s', exc)
+
+
+_logind: LogindSession | None = None
+
+
+def logind_session() -> LogindSession:
+    """Process-wide logind session watcher (created on first use)."""
+    global _logind
+    if _logind is None:
+        _logind = LogindSession()
+    return _logind
+
+
+def _shell_state():
+    """wayland_bindings' phoc shell-state reporter, or None."""
+    try:
+        import wayland_bindings
+        return wayland_bindings.shell_state()
+    except Exception:
+        return None
 
 
 def theme_css(preset: ThemePreset) -> str:
@@ -448,6 +612,42 @@ class LockScreen(Gtk.Window):
         self._resume_lockout_state()
         self.refresh_fp_state()
         GLib.timeout_add_seconds(1, self._tick_clock)
+        self._verifying = False
+        self._mapped_reported = False
+        # phoc shell mode: the shield lowers only once this surface is up.
+        self.connect('map', self._on_map)
+        # logind LockedHint follows every show/hide path.
+        self.connect('notify::visible', self._on_visible_changed)
+        if self.get_visible():
+            self._on_visible_changed()
+
+    # ------------------------------------------------------------------
+    # Session integration: phoc shell state + logind LockedHint
+    # ------------------------------------------------------------------
+
+    def _on_map(self, *_args) -> None:
+        if self._mapped_reported:
+            return
+
+        def _report(*_a) -> bool:
+            if not self._mapped_reported:
+                self._mapped_reported = True
+                reporter = _shell_state()
+                if reporter is not None:
+                    reporter.note_lock_mapped()
+            return False
+
+        try:
+            self.add_tick_callback(lambda *_a: _report())
+        except Exception:
+            pass
+        GLib.timeout_add(_LOCK_MAPPED_FALLBACK_MS, _report)
+
+    def _on_visible_changed(self, *_args) -> None:
+        try:
+            logind_session().set_locked_hint(bool(self.get_visible()))
+        except Exception:
+            pass
 
     def _display_preset(self) -> ThemePreset:
         """Preset this surface renders with: window.resolve_theme over the
@@ -1185,9 +1385,27 @@ class LockScreen(Gtk.Window):
     def _check_pin(self) -> None:
         if self._lockout_src is not None:
             return
-        if not self._pin:
+        if not self._pin or getattr(self, '_verifying', False):
             return
-        if self._config.verify_pin(self._pin):
+        # helper_client.pin_verify: the root helper verifies (KDF in its
+        # process, async) when it holds the PIN; a local config hash is
+        # verified synchronously and migrated on success.
+        import helper_client
+        self._verifying = True
+
+        def _done(matched: bool, retry_after: int, error) -> None:
+            self._verifying = False
+            # Class-qualified: headless harnesses drive these unbound.
+            LockScreen._on_pin_result(self, matched, retry_after, error)
+
+        try:
+            helper_client.pin_verify(self._config, self._pin, _done)
+        except Exception:
+            _done(False, 0, 'PIN check failed')
+
+    def _on_pin_result(self, matched: bool, retry_after: int,
+                       error) -> None:
+        if matched:
             # A successful PIN entry clears the boot gate, any explicit
             # "Lock now" demand, and restarts the 4-hour trust clock.
             # Fingerprint unlocks deliberately skip this: only the PIN
@@ -1197,12 +1415,20 @@ class LockScreen(Gtk.Window):
             except Exception:
                 pass
             self._unlock()
+        elif error is not None:
+            # Helper unreachable: fail closed without counting a miss.
+            self._pin = ''
+            self._refresh_dots()
+            self._shake()
+            self.error_label.set_text('Could not check PIN — try again')
         else:
             self._fail_count += 1
             self._pin = ''
             self._refresh_dots()
             self._shake()
-            secs = _lockout_secs(self._fail_count)
+            # The helper's root-side lockout is authoritative; the local
+            # count only drives the message and the restart resume.
+            secs = max(_lockout_secs(self._fail_count), int(retry_after or 0))
             if secs > 0:
                 self.error_label.set_text('')
                 self._persist_lockout_state(time.time() + secs)

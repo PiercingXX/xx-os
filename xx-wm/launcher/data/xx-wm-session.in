@@ -81,6 +81,24 @@ if command -v gsettings >/dev/null 2>&1 && \
     gsettings set org.gnome.desktop.input-sources mru-sources "[('xkb', '$_keyboard_layout')]" 2>/dev/null || true
 fi
 
-exec phoc \
+# phoc shell mode (-S): phoc covers every output and drops input until
+# the shell reports UP over phosh_private (wayland_bindings.py) — sent only
+# once the lock screen is mapped when a PIN is set, so a shell crash or
+# restart never exposes unlocked apps. Only with a phoc that has the flag
+# and a pywayland able to generate the bindings (otherwise nothing could
+# ever lower the shield); XX_WM_PHOC_SHELL_MODE=0 opts out.
+_phoc_shell_flag=
+if [ "${XX_WM_PHOC_SHELL_MODE:-1}" != "0" ] && \
+   phoc --help 2>&1 | grep -q -- '--shell' && \
+   python3 -c 'import pywayland.scanner' >/dev/null 2>&1; then
+    _phoc_shell_flag=-S
+    XX_WM_PHOC_SHELL_MODE=1
+else
+    XX_WM_PHOC_SHELL_MODE=0
+fi
+export XX_WM_PHOC_SHELL_MODE
+
+# shellcheck disable=SC2086 # empty flag must vanish, not become ''
+exec phoc $_phoc_shell_flag \
   -C @datadir@/xx-wm/phoc.ini \
   -E "@bindir@/xx-wm"

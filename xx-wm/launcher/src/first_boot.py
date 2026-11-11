@@ -386,6 +386,32 @@ def status_bar_start(data, device_default: Callable[[], int]) -> int:
     return saved if saved is not None else int(device_default())
 
 
+def _report_shell_ready() -> None:
+    try:
+        import wayland_bindings
+        wayland_bindings.shell_state().note_shell_ready()
+    except Exception:
+        pass
+
+
+def _store_pin(config, pin: str) -> None:
+    """Wizard PIN: config first, then into the root helper when it is
+    installed (helper_client.pin_change). A helper refusal (a stale
+    record) falls back to the local hash so the PIN is never lost."""
+    def _done(done: bool, _retry: int, _error) -> None:
+        if not done:
+            try:
+                config.set_pin(pin)
+            except OSError:
+                pass
+
+    try:
+        import helper_client
+        helper_client.pin_change(config, '', pin, _done)
+    except Exception:
+        config.set_pin(pin)
+
+
 class FirstBootWizard(Gtk.Window):
     """
     First-run setup (keyboard, PIN, theme, status bar, timezone) followed by the usage walkthrough:
@@ -459,6 +485,9 @@ class FirstBootWizard(Gtk.Window):
         root.set_vexpand(True)
         root.append(self._stack)
         self.set_child(root)
+        # phoc shell mode (-S): first boot has no PIN yet, so the wizard
+        # being on screen is enough to lower the shield.
+        self.connect('map', lambda *_a: _report_shell_ready())
 
     @staticmethod
     def is_needed() -> bool:
@@ -1080,7 +1109,7 @@ class FirstBootWizard(Gtk.Window):
             self._confirm_buf = ''
             self._confirm_dots.set_text('')
             return
-        self._config.set_pin(self._pin_entered)
+        _store_pin(self._config, self._pin_entered)
         self._stack.set_visible_child_name('theme')
 
     def _on_theme_next(self, _btn: Gtk.Button) -> None:

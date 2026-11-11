@@ -13,6 +13,7 @@ reports failure through the callback.
 """
 from __future__ import annotations
 
+import logging as _logging
 from typing import Any, Callable
 
 BUS_NAME = 'io.piercingxx.XXWM.Helper1'
@@ -46,8 +47,10 @@ def _is_missing_service(message: str) -> bool:
             or 'activat' in lowered or 'no such service' in lowered)
 
 
-def _call_helper(method: str, params, on_done: ResultCallback) -> None:
-    """One async helper call; ``params`` is a GLib.Variant or None."""
+def _call_helper(method: str, params, on_done: ResultCallback, *,
+                 whole: bool = False) -> None:
+    """One async helper call; ``params`` is a GLib.Variant or None.
+    ``whole`` hands back every out-arg as a tuple instead of the first."""
     try:
         Gio, _GLib = _gio()
     except ImportError as err:
@@ -75,6 +78,9 @@ def _call_helper(method: str, params, on_done: ResultCallback) -> None:
                 out = reply.unpack()
             except Exception as err:
                 _fail(str(err))
+                return
+            if whole:
+                on_done(True, tuple(out))
                 return
             on_done(True, out[0] if out else None)
 
@@ -359,3 +365,258 @@ def get_firewall_state(on_done: ResultCallback) -> None:
         on_done(False, result)
 
     _call_helper('GetFirewallState', None, _on_reply)
+
+
+# ------------------------------------------------------------- PIN store
+#
+# The PIN hash lives root-side (HasPin/VerifyPin/SetPin/ClearPin, scoped to
+# the caller's bus uid, with a persisted lockout). config.json keeps only
+# the marker ``config.HELPER_PIN_MARKER`` so every "is a PIN set?" check
+# stays synchronous. Installs without the helper keep the legacy local
+# pbkdf2 hash in config (dev/test, older installs); a later successful
+# unlock migrates it. PIN text is never logged.
+
+_log = _logging.getLogger('helper_client')
+_pin_logged: set[str] = set()
+
+# (matched_or_done: bool, retry_after_secs: int, error: str | None)
+PinCallback = Callable[[bool, int, Any], None]
+
+
+def _log_pin_once(key: str, level: int, message: str) -> None:
+    if key not in _pin_logged:
+        _pin_logged.add(key)
+        _log.log(level, message)
+
+
+def pin_helper_enabled(environ=None) -> bool:
+    """Whether PINs move into the helper: in the real session only
+    (XX_WM_SESSION=1, like desktop_theme.in_session), so tests and dev
+    runs never touch the device's root-side record. XX_WM_PIN_HELPER=0/1
+    overrides. A PIN already held by the helper (config marker) is always
+    verified there regardless."""
+    import os
+    env = os.environ if environ is None else environ
+    override = env.get('XX_WM_PIN_HELPER')
+    if override in ('0', '1'):
+        return override == '1'
+    return env.get('XX_WM_SESSION') == '1'
+
+
+def has_pin(on_done: ResultCallback) -> None:
+    """``on_done(True, bool)`` or ``(False, error)``."""
+    _call_helper('HasPin', None, lambda ok, result: on_done(
+        ok, bool(result) if ok else result))
+
+
+def verify_pin(pin: str, on_done: ResultCallback) -> None:
+    """``on_done(True, (matched, retry_after, has_pin))`` or
+    ``(False, error)``. The KDF runs in the helper process."""
+    try:
+        _Gio, GLib = _gio()
+        params = GLib.Variant('(s)', (str(pin),))
+    except ImportError as err:
+        on_done(False, 'D-Bus unavailable: %s' % err)
+        return
+    _call_helper('VerifyPin', params, on_done, whole=True)
+
+
+def set_pin(old: str, new: str, on_done: ResultCallback) -> None:
+    """``on_done(True, (done, retry_after))`` or ``(False, error)``."""
+    try:
+        _Gio, GLib = _gio()
+        params = GLib.Variant('(ss)', (str(old), str(new)))
+    except ImportError as err:
+        on_done(False, 'D-Bus unavailable: %s' % err)
+        return
+    _call_helper('SetPin', params, on_done, whole=True)
+
+
+def clear_pin(old: str, on_done: ResultCallback) -> None:
+    """``on_done(True, (done, retry_after))`` or ``(False, error)``."""
+    try:
+        _Gio, GLib = _gio()
+        params = GLib.Variant('(s)', (str(old),))
+    except ImportError as err:
+        on_done(False, 'D-Bus unavailable: %s' % err)
+        return
+    _call_helper('ClearPin', params, on_done, whole=True)
+
+
+def _in_helper(config) -> bool:
+    # getattr: duck-typed configs (tests, older callers) predate the marker.
+    return bool(getattr(config, 'pin_in_helper', False))
+
+
+def _note_unavailable(error) -> None:
+    if error == HELPER_NOT_INSTALLED:
+        _log_pin_once('pin-local', _logging.INFO,
+                      'PIN helper not installed; PIN stays in config.json')
+    else:
+        _log_pin_once('pin-error', _logging.WARNING,
+                      'PIN helper unreachable: %s' % (error,))
+
+
+def migrate_pin(config, pin: str, on_done=None) -> None:
+    """Move a locally stored PIN into the helper.
+
+    Called after the local hash verified ``pin`` (unlock, or a PIN just
+    set through config.set_pin). On success the config copy is replaced
+    by the marker — only if the stored hash is still the one we started
+    from, so a concurrent change is never clobbered. Helper missing:
+    the config hash stays (logged once). ``on_done(migrated: bool)``.
+    """
+    finish = on_done or (lambda _migrated: None)
+    started_from = config.pin_hash
+    if (started_from is None or _in_helper(config)
+            or not pin_helper_enabled()):
+        finish(False)
+        return
+
+    def _adopt() -> None:
+        if config.pin_hash == started_from:
+            try:
+                config.set_pin_in_helper()
+            except OSError:
+                finish(False)
+                return
+            _log_pin_once('pin-migrated', _logging.INFO,
+                          'PIN moved to the root helper')
+            finish(True)
+            return
+        finish(False)
+
+    def _on_verified(ok: bool, result) -> None:
+        # A record already held there (stale, or a previous half-done
+        # migration) is adopted only when it matches this very PIN.
+        if ok and isinstance(result, tuple) and result and result[0]:
+            _adopt()
+            return
+        _log_pin_once('pin-stale', _logging.WARNING,
+                      'helper holds a different PIN record; '
+                      'PIN stays in config.json')
+        finish(False)
+
+    def _on_set(ok: bool, result) -> None:
+        if not ok:
+            _note_unavailable(result)
+            finish(False)
+            return
+        if isinstance(result, tuple) and result and result[0]:
+            _adopt()
+            return
+        verify_pin(pin, _on_verified)
+
+    set_pin('', pin, _on_set)
+
+
+def pin_verify(config, pin: str, on_result: PinCallback) -> None:
+    """Verify an unlock PIN: ``on_result(matched, retry_after, error)``.
+
+    No PIN: matches at once. Helper-held PIN: async VerifyPin, failing
+    closed when the helper is unreachable (``error`` set). Local hash:
+    verified synchronously as before, then migrated on success.
+    """
+    if config.pin_hash is None:
+        on_result(True, 0, None)
+        return
+    if not _in_helper(config):
+        try:
+            matched = bool(config.verify_pin(pin))
+        except Exception:
+            matched = False
+        on_result(matched, 0, None)
+        if matched:
+            try:
+                migrate_pin(config, pin)
+            except Exception:
+                pass
+        return
+
+    def _reply(ok: bool, result) -> None:
+        if not ok:
+            _note_unavailable(result)
+            on_result(False, 0, 'PIN service unavailable')
+            return
+        try:
+            matched, retry, has = result
+        except (TypeError, ValueError):
+            on_result(False, 0, 'PIN service error')
+            return
+        if not has:
+            # The helper lost the record (state wiped by root): treat the
+            # marker as stale, exactly like an absent config key.
+            _log_pin_once('pin-lost', _logging.WARNING,
+                          'helper has no PIN record; clearing the marker')
+            try:
+                config.clear_pin()
+            except OSError:
+                pass
+            on_result(True, 0, None)
+            return
+        on_result(bool(matched), int(retry or 0), None)
+
+    verify_pin(pin, _reply)
+
+
+def pin_change(config, current: str, new: str,
+               on_result: PinCallback) -> None:
+    """Store ``new`` as the PIN: ``on_result(done, retry_after, error)``.
+
+    Helper-held PIN: SetPin(current, new) — the helper verifies
+    ``current`` and applies its lockout. Otherwise (no PIN, or a local
+    hash the caller has already verified against ``current``): the PIN
+    is written to config first, so it is never lost, then moved into
+    the helper when it answers.
+    """
+    if _in_helper(config):
+        def _reply(ok: bool, result) -> None:
+            if not ok:
+                _note_unavailable(result)
+                on_result(False, 0, 'PIN service unavailable')
+                return
+            try:
+                done, retry = result
+            except (TypeError, ValueError):
+                on_result(False, 0, 'PIN service error')
+                return
+            on_result(bool(done), int(retry or 0), None)
+
+        set_pin(current, new, _reply)
+        return
+    try:
+        config.set_pin(new)
+    except Exception:
+        on_result(False, 0, 'Could not save the new PIN.')
+        return
+    on_result(True, 0, None)
+    try:
+        migrate_pin(config, new)
+    except Exception:
+        pass
+
+
+def pin_sync(config, on_done=None) -> None:
+    """Startup heal: a helper record with no config marker (config.json
+    reset or restored) re-adds the marker so the lock still demands the
+    PIN. ``on_done(has_pin: bool | None)``; None = helper unavailable."""
+    finish = on_done or (lambda _has: None)
+    if config.pin_hash is not None:
+        finish(True)
+        return
+    if not pin_helper_enabled():
+        finish(None)
+        return
+
+    def _reply(ok: bool, result) -> None:
+        if not ok:
+            finish(None)
+            return
+        if result and config.pin_hash is None:
+            try:
+                config.set_pin_in_helper()
+            except OSError:
+                pass
+        finish(bool(result))
+
+    has_pin(_reply)

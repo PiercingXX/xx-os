@@ -43,6 +43,12 @@ DESTRUCTIVE_TINT_BG = '#2a1010'
 # iteration count can change without a migration).
 _PIN_HASH_PREFIX = 'pbkdf2$'
 _PBKDF2_ITERATIONS = 100_000
+# pin_hash value meaning "a PIN is set and the root helper holds its hash"
+# (helper_client.pin_verify / pin_change). The local pbkdf2 hash above is
+# only the fallback for installs without the helper: config.json is
+# readable by every process running as the user, so a stored hash there
+# can be brute-forced offline.
+HELPER_PIN_MARKER = 'helper$'
 
 DEFAULT_CONFIG = {
     'theme': 'amoled',
@@ -371,6 +377,21 @@ class ShellConfig:
         # fail closed (verify_pin rejects) rather than collapse to unlocked.
         return str(value) if value is not None else None
 
+    @property
+    def pin_in_helper(self) -> bool:
+        """True when the PIN hash lives in the root helper, not here."""
+        return self.data.get('pin_hash') == HELPER_PIN_MARKER
+
+    def set_pin_in_helper(self) -> None:
+        """Drop the local hash: the helper now holds the PIN."""
+        self.data['pin_hash'] = HELPER_PIN_MARKER
+        self.save()
+
+    def clear_pin(self) -> None:
+        """Forget the PIN locally (hash or marker)."""
+        if self.data.pop('pin_hash', None) is not None:
+            self.save()
+
     def set_pin(self, pin: str) -> None:
         salt = os.urandom(16)
         digest = hashlib.pbkdf2_hmac('sha256', pin.encode(), salt, _PBKDF2_ITERATIONS)
@@ -383,6 +404,10 @@ class ShellConfig:
         stored = self.pin_hash
         if stored is None:
             return True
+        if stored == HELPER_PIN_MARKER:
+            # Only the helper can verify (helper_client.pin_verify); the
+            # synchronous path fails closed.
+            return False
         if stored.startswith(_PIN_HASH_PREFIX):
             return self._verify_pbkdf2_pin(pin, stored)
         # Bytes comparison: compare_digest rejects non-ASCII str inputs, and
