@@ -5,7 +5,8 @@ network blocking (nftables + cgroupv2), cgroup freezing on devices
 without systemd's `FreezeUnit`, system cache cleanup (package
 caches, journal vacuum), system logs, package index refresh and
 upgrades, single-package removal, curated service control, rfkill
-radio blocks, and inbound firewall presets. The shell itself never
+radio blocks, inbound firewall presets, the lock-screen PIN hash, and
+the RTC wake alarm that lets alarms fire from suspend. The shell itself never
 runs as root — those operations go through a small D-Bus system
 service, `io.piercingxx.XXWM.Helper1`, and the shell talks to it via
 `launcher/src/helper_client.py`.
@@ -17,7 +18,7 @@ service, `io.piercingxx.XXWM.Helper1`, and the shell talks to it via
 | `launcher/helper/xx_wm_helper.py` | `$libexecdir/xx-wm-helper` (mode 755) | daemon (Gio + stdlib only) |
 | `launcher/data/dbus-1/system-services/io.piercingxx.XXWM.Helper1.service` | `$datadir/dbus-1/system-services/` | D-Bus activation, `User=root` |
 | `launcher/data/dbus-1/system.d/io.piercingxx.XXWM.Helper1.conf` | `$datadir/dbus-1/system.d/` | bus policy: root owns, any caller may message the helper interfaces |
-| `launcher/data/polkit-1/actions/io.piercingxx.XXWM.Helper.policy` | `$datadir/polkit-1/actions/` | fourteen actions, `allow_active=yes` except `…upgrade-system`, `…remove-package`, `…service-remote` and `…firewall-open` (`auth_admin_keep`), others `no` |
+| `launcher/data/polkit-1/actions/io.piercingxx.XXWM.Helper.policy` | `$datadir/polkit-1/actions/` | fifteen actions, `allow_active=yes` except `…upgrade-system`, `…remove-package`, `…service-remote` and `…firewall-open` (`auth_admin_keep`), others `no` |
 | `launcher/data/systemd/xx-wm-helper-boot.service` | `$datadir/systemd/system/` | oneshot `--apply-saved` at boot |
 | `launcher/data/openrc/xx-wm-helper-boot` | `$sysconfdir/init.d/` | OpenRC equivalent |
 | `launcher/src/helper_client.py` | shell datadir | async shell-side client |
@@ -28,7 +29,10 @@ Interface `io.piercingxx.XXWM.Helper1` at
 `CleanSystem(as) → as`, `ReadLog(s) → s`, `RefreshPackageIndex()`,
 `UpgradeSystem() → s`, `RemovePackage(s)`, `ManageService(s, s)`,
 `SetRfkill(s, b)`, `SetPowerProfile(s)`, `SetInboundPreset(s, b)`,
-`SetFirewallEnabled(b)`, `GetFirewallState() → a{sv}`.
+`SetInboundAllowed(as)`, `SetFirewallEnabled(b)`,
+`GetFirewallState() → a{sv}`, `SetWakeAlarm(t)`, `ClearWakeAlarm()`,
+`HasPin() → b`, `VerifyPin(s) → (b, u, b)`, `SetPin(s, s) → (b, u)`,
+`ClearPin(s) → (b, u)`.
 The daemon exits after 60 s without a method call; the bus re-activates
 it on demand.
 
@@ -46,6 +50,9 @@ Denial (or an unresolvable sender) returns
 `io.piercingxx.XXWM.Helper1.Error.NotAuthorized`.
 `GetCapabilities` and `GetFirewallState` are intentionally
 unauthenticated — they only report state so the shell can render it.
+The PIN methods take no polkit action either: they resolve the caller's
+uid the same way and act only on that uid's own record (see PIN store
+below).
 
 `CheckAuthorization` is called with flags 0 (non-interactive) for the
 `allow_active` actions. The `auth_admin_keep` actions —
@@ -80,6 +87,8 @@ the service refuses those with InvalidArgs without contacting polkit.
 | `SetInboundAllowed` empty (closes everything) | `…firewall-restrict` | `allow_active=yes` |
 | `SetFirewallEnabled` disable (`enabled` false) | `…firewall-open` | `allow_active=auth_admin_keep` |
 | `SetFirewallEnabled` enable (`enabled` true) | `…firewall-restrict` | `allow_active=yes` |
+| `SetWakeAlarm`, `ClearWakeAlarm` | `…wake-alarm` | `allow_active=yes` |
+| `HasPin`, `VerifyPin`, `SetPin`, `ClearPin` | none (caller's own uid) | — |
 | `GetCapabilities`, `GetFirewallState` | none (no auth) | — |
 
 ## Confinement
@@ -162,6 +171,47 @@ the service refuses those with InvalidArgs without contacting polkit.
   disables (nftables removes the owned table and drop-in: off means
   no table, live or at boot).
 
+- `SetWakeAlarm(t epoch)` accepts only an integer absolute epoch
+  between 5 s and 48 h from now (InvalidArgs otherwise, checked against
+  the helper's clock). It writes `/sys/class/rtc/rtc0/wakealarm`: `0`
+  first (the kernel refuses a new alarm while one is pending), then the
+  epoch. The helper owns at most one wake, recorded in
+  `/var/lib/xx-wm-helper/wake.json` (0600) because the daemon exits
+  when idle; re-arming replaces it. A pending wake some other program
+  set (still in the future, not ours) is never overwritten: the call
+  fails and automatic suspend falls back to staying awake for the alarm.
+  No RTC (`rtc0` missing) fails too. `ClearWakeAlarm()` writes `0` only
+  when the pending wake is still the one recorded, then drops the
+  record. The `…wake-alarm` action is `allow_active=yes`, non-interactive:
+  only the active local session may schedule wakes.
+
+## PIN store
+
+`HasPin`, `VerifyPin`, `SetPin` and `ClearPin` keep the lock-screen PIN
+out of the user-readable config, so no process running as the user can
+read the hash and brute-force it offline:
+
+- One record per uid at `/var/lib/xx-wm-helper/pin/<uid>.json` (dir
+  0700, file 0600, atomic tmp + rename), holding a scrypt hash
+  (N = 2^15, r = 8, p = 1; ~32 MiB, a few hundred ms on a phone SoC,
+  paid by the helper, never the shell's main loop) and the failure
+  state. A corrupt record fails closed (a PIN exists that nothing
+  matches).
+- The uid comes from `GetConnectionUnixUser` on the caller's bus name,
+  never from an argument, so a user can only query or change their own
+  PIN. Argument shapes are checked before the uid lookup.
+- `VerifyPin(pin) → (matched, retry_after, has_pin)`; `SetPin(old, new)`
+  and `ClearPin(old)` verify `old` first (empty when no PIN is set) and
+  return `(done, retry_after)`. PINs are 1–64 characters.
+- Lockout escalates like the shell's (`lock_lines._lockout_secs`, pinned
+  together by a test): 30 s at the 5th wrong PIN, 30 s more for each
+  one after, capped at 300 s. It is persisted root-side and checked before any KDF runs,
+  so restarting the helper or the shell does not reset it.
+- PIN text never appears in a reply, error message or log.
+- The shell's config keeps only a marker (`pin_hash` = the helper
+  marker) so "is a PIN set?" stays synchronous; without the helper the
+  local pbkdf2 hash keeps working and migrates on the next good unlock.
+
 ## Shell client
 
 `helper_client` exposes async `get_capabilities` (cached per session,
@@ -170,7 +220,9 @@ the service refuses those with InvalidArgs without contacting polkit.
 `clean_system`, `read_log`, `refresh_package_index`,
 `upgrade_system`, `remove_package`, `manage_service`, `set_rfkill`,
 `set_inbound_preset`, `set_inbound_allowed`, `set_firewall_enabled`,
-`get_firewall_state` —
+`get_firewall_state`, `set_wake_alarm`, `clear_wake_alarm`, `has_pin`,
+`verify_pin`, `set_pin`, `clear_pin` (wrapped by `pin_verify`,
+`pin_change`, `pin_sync`, `migrate_pin`) —
 each calling `on_done(ok, result)` exactly once on the main loop. An
 uninstalled or unactivatable helper reports `HELPER_NOT_INSTALLED`
 (`'helper not installed'`) instead of raising.

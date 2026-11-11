@@ -1005,3 +1005,132 @@ class TestStartupLock:
         shell, shown = self._shell('helper$')
         window.ShellWindow._startup_lock_gate(shell)
         assert shown == [] and reporter.events == []
+
+
+# ------------------------------------- first boot resumed with a PIN set
+
+class _FakeLock:
+    instances = []
+    fail = False
+
+    def __init__(self, on_unlock, config):
+        if _FakeLock.fail:
+            raise RuntimeError('no layer shell')
+        self.on_unlock = on_unlock
+        self.config = config
+        self.events = []
+        _FakeLock.instances.append(self)
+
+    def set_application(self, app):
+        self.events.append('app')
+
+    def present(self):
+        self.events.append('present')
+
+    def on_shown(self):
+        self.events.append('shown')
+
+    def destroy(self):
+        self.events.append('destroy')
+
+
+class _FakeWizard:
+    instances = []
+
+    def __init__(self, on_complete, tour_only=False):
+        self.on_complete = on_complete
+        _FakeWizard.instances.append(self)
+
+    def set_application(self, app):
+        pass
+
+    def present(self):
+        pass
+
+
+class TestFirstBootLock:
+    @pytest.fixture()
+    def app(self, monkeypatch):
+        import types
+        try:
+            import main
+        except Exception as exc:  # pragma: no cover - env without GTK
+            pytest.skip('main not importable: %s' % exc)
+        import config as config_mod
+        ls = _lock_screen()
+        _FakeLock.instances = []
+        _FakeLock.fail = False
+        _FakeWizard.instances = []
+        reporter = _Reporter()
+        idle = []
+        state = {'pin': 'helper$'}
+        monkeypatch.setattr(ls, 'LockScreen', _FakeLock)
+        monkeypatch.setattr(ls, '_shell_state', lambda: reporter)
+        monkeypatch.setattr(main, 'FirstBootWizard', _FakeWizard)
+        monkeypatch.setattr(config_mod, 'ShellConfig', lambda: SimpleNamespace(
+            pin_hash=state['pin']))
+        monkeypatch.setattr(main.GLib, 'idle_add',
+                            lambda fn, *a: idle.append(fn) or 1)
+        obj = SimpleNamespace(_wizard=None, _shell=None, _wizard_lock=None,
+                              reporter=reporter, idle=idle, state=state)
+        for name in ('_start_first_boot', '_present_wizard',
+                     '_lock_before_wizard', '_wizard_unlocked',
+                     '_wizard_done'):
+            setattr(obj, name, types.MethodType(
+                getattr(main.XXWMApplication, name), obj))
+        obj._show_shell = lambda: None
+        return obj
+
+    def test_pin_set_locks_before_wizard(self, app):
+        app._start_first_boot()
+        assert _FakeWizard.instances == []
+        (lock,) = _FakeLock.instances
+        assert lock.events == ['app', 'present', 'shown']
+        assert app._wizard_lock is lock
+        # The report needs the lock mapped: required first, then ready.
+        assert app.reporter.events == [('require_lock', True), 'ready']
+        lock.on_unlock()
+        assert len(_FakeWizard.instances) == 1
+        assert app._wizard is _FakeWizard.instances[0]
+        assert app._wizard_lock is None
+        for fn in app.idle:
+            fn()
+        assert lock.events[-1] == 'destroy'
+
+    def test_shield_waits_for_the_lock_surface(self, app):
+        gate = wayland_bindings.ShellStateReporter(start_thread=False)
+        app.reporter.require_lock = gate.require_lock
+        app.reporter.note_shell_ready = gate.note_shell_ready
+        app._start_first_boot()
+        assert not gate.gate.reported          # the wizard is not up yet
+        gate.note_lock_mapped()
+        assert gate.gate.reported
+
+    def test_no_pin_goes_straight_to_wizard(self, app):
+        app.state['pin'] = None
+        app._start_first_boot()
+        assert _FakeLock.instances == [] and app.reporter.events == []
+        assert len(_FakeWizard.instances) == 1
+
+    def test_lock_failure_keeps_shield_and_shows_wizard(self, app):
+        _FakeLock.fail = True
+        app._start_first_boot()
+        assert app.reporter.events == [('require_lock', True), 'ready']
+        assert len(_FakeWizard.instances) == 1
+
+    def test_second_unlock_does_not_stack_wizards(self, app):
+        app._start_first_boot()
+        _FakeLock.instances[0].on_unlock()
+        _FakeLock.instances[0].on_unlock()
+        assert len(_FakeWizard.instances) == 1
+
+    def test_resumed_wizard_skips_pin_step(self):
+        try:
+            import first_boot
+        except Exception as exc:  # pragma: no cover - env without GTK
+            pytest.skip('first_boot not importable: %s' % exc)
+        wiz = SimpleNamespace(_config=SimpleNamespace(pin_hash='helper$'))
+        step = first_boot.FirstBootWizard._after_keyboard_step
+        assert step(wiz) == 'theme'
+        wiz._config.pin_hash = None
+        assert step(wiz) == 'pin'

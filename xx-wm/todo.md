@@ -332,6 +332,27 @@ Done when: Phosh is gone, XX-WM is the session, and the canary smoke is written 
 
 ---
 
+## On-device checks (reference-fixes + tier2)
+
+Landed in code with headless tests only; each needs a device to confirm.
+
+- [ ] **phoc `-S` shield** on phoc 0.56 and on the FLX1: boot comes up covered, lowers onto the lock (PIN) or shell; kill the Python shell and the crash-restart comes back covered, then locked.
+- [ ] **pywayland bindings from the stripped `phosh-private.xml`** generate on the device's pywayland and `set_shell_state` reaches phoc (log: `reported shell state UP to phoc`); `deploy.sh` now ships the XML.
+- [ ] **scrypt time on the SoC**: `VerifyPin` with N = 2^15 stays a few hundred ms (FLX1, Librem 5), not seconds.
+- [ ] **`SetLockedHint` under elogind** (pmOS/OpenRC): `loginctl show-session` shows `LockedHint=yes` while locked; `loginctl lock-session` shows the lock.
+- [ ] **Lock-screen swipe feel** on glass (drag threshold, fling, keypad reveal).
+- [ ] **Suspend waits for lock paint**: resume never flashes the unlocked session.
+- [ ] **Video keeps the screen on**: Firefox / mpv fullscreen holds the ScreenSaver cookie through phoc's idle-inhibit forwarding; the screen blanks after the player quits.
+- [ ] **logind `Suspend` without a prompt** from the session (systemd and elogind); a refusal is logged and retried.
+- [ ] **Calls, SMS and the power key wake the phone from suspend** (modem ring / SMS IRQ as wake sources on Halium and mainline).
+- [ ] **RTC wake fires the alarm**: with an xx-clock alarm 10 min out, automatic suspend arms `SetWakeAlarm` (check `/sys/class/rtc/rtc0/wakealarm`), the phone wakes a minute early and the alarm rings on time; the wake is cleared after resume.
+- [ ] **ModemManager comes back after resume** (post-resume modem check log line shows the modem registered).
+- [ ] **USSD / MMI**: `*100#` balance, `*#06#` IMEI sheet, a menu USSD with replies and cancel, `**21*…#` call forwarding handed to the network.
+- [ ] **PIN / PUK SIM flow**: locked SIM prompts after unlock, attempts left shown, wrong PIN count drops, PUK + new PIN, "Later" then Settings → Mobile data → SIM PIN reopens it.
+- [ ] **Busy / network-error end notices** show briefly (and stay off while GNOME Calls owns calls, back once it quits).
+- [ ] **Waiting call during DnD** counts as the repeat caller; the second call rings through.
+- [ ] **FLX1 modem stack**: is it oFono or ModemManager? `busctl --system list | grep -E 'ofono|ModemManager'` — everything above assumes ModemManager.
+
 ## Parked (do not attempt in this sequence)
 
 - **Fairphone 5 flash and bring-up** — image in `devices/fairphone-5/downloads/`, `flash.sh` ready. pmOS: VoLTE not working, fingerprint dead, USB data drops while charging (WiFi SSH only), default user `user`. Pick it up after Librem 5, not before.

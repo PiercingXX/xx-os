@@ -43,6 +43,7 @@ ACTION_RFKILL = BUS_NAME + '.rfkill'
 ACTION_FW_OPEN = BUS_NAME + '.firewall-open'
 ACTION_FW_RESTRICT = BUS_NAME + '.firewall-restrict'
 ACTION_POWER = BUS_NAME + '.power-profile'
+ACTION_WAKE = BUS_NAME + '.wake-alarm'
 
 # Destructive actions pass AllowUserInteraction (flag 1) so the in-shell
 # polkit agent can prompt; harmless probes stay non-interactive (flag 0).
@@ -189,6 +190,18 @@ CHARGE_START_DELTA = 5
 
 IDLE_EXIT_SECONDS = 60
 
+# RTC wake alarm (SetWakeAlarm/ClearWakeAlarm): automatic suspend arms one
+# hardware wake ahead of the next xx-clock alarm. The helper owns at most
+# one wake (recorded in WAKE_FILE_NAME because the daemon exits when idle)
+# and never clobbers a pending wake some other program set. Absolute epoch
+# seconds only, a little in the future and at most WAKE_MAX_AHEAD_S out,
+# so a caller can neither wake the phone every few seconds nor park a
+# wake years away.
+RTC_WAKEALARM_REL = os.path.join('class', 'rtc', 'rtc0', 'wakealarm')
+WAKE_FILE_NAME = 'wake.json'
+WAKE_MIN_AHEAD_S = 5
+WAKE_MAX_AHEAD_S = 48 * 3600
+
 # PIN store (HasPin/VerifyPin/SetPin/ClearPin): one root-owned 0600 JSON
 # record per uid under a 0700 dir, so no process running as the user can
 # read the hash and brute-force it offline. The escalation mirrors the
@@ -264,6 +277,11 @@ INTROSPECT_XML = """\
     </method>
     <method name="GetFirewallState">
       <arg name="state" type="a{sv}" direction="out"/>
+    </method>
+    <method name="SetWakeAlarm">
+      <arg name="epoch" type="t" direction="in"/>
+    </method>
+    <method name="ClearWakeAlarm">
     </method>
     <method name="HasPin">
       <arg name="has_pin" type="b" direction="out"/>
@@ -367,7 +385,9 @@ class HelperCore:
         nft_bin: str = 'nft',
         nft_dropin_dir: str = NFT_DROPIN_DIR,
         log_dir: str = LOG_DIR_DEFAULT,
+        wake_file: str | None = None,
         run=_default_run,
+        now=time.time,
     ) -> None:
         self.sysfs = sysfs
         self.cgroup_root = cgroup_root
@@ -376,7 +396,10 @@ class HelperCore:
         self.nft_bin = nft_bin
         self.nft_dropin_dir = nft_dropin_dir
         self.log_dir = log_dir
+        self.wake_file = wake_file or os.path.join(
+            os.path.dirname(state_file) or '.', WAKE_FILE_NAME)
         self._run = run
+        self._now = now
 
     # ---------------------------------------------------------- capabilities
 
@@ -1222,6 +1245,97 @@ class HelperCore:
         self.save_inbound(state)
         return wanted
 
+    # ------------------------------------------------------- RTC wake alarm
+
+    def wakealarm_path(self) -> str:
+        return os.path.join(self.sysfs, RTC_WAKEALARM_REL)
+
+    def _read_wakealarm(self) -> int | None:
+        """Pending wake as epoch seconds; None when unset (the kernel
+        reads back an empty file) or unreadable."""
+        try:
+            with open(self.wakealarm_path(), 'r', encoding='ascii') as handle:
+                text = handle.read().strip()
+        except (OSError, ValueError):
+            return None
+        try:
+            value = int(text)
+        except ValueError:
+            return None
+        return value if value > 0 else None
+
+    def _load_wake_owned(self) -> int | None:
+        try:
+            with open(self.wake_file, 'r', encoding='utf-8') as handle:
+                raw = json.load(handle)
+        except (OSError, ValueError):
+            return None
+        value = raw.get('epoch') if isinstance(raw, dict) else None
+        return value if isinstance(value, int) and value > 0 else None
+
+    def _save_wake_owned(self, epoch: int | None) -> None:
+        if epoch is None:
+            try:
+                os.remove(self.wake_file)
+            except FileNotFoundError:
+                pass
+            except OSError as err:
+                raise _failed('cannot drop wake record: %s'
+                              % (err.strerror or err)) from None
+            return
+        directory = os.path.dirname(self.wake_file) or '.'
+        try:
+            os.makedirs(directory, mode=0o755, exist_ok=True)
+            tmp = os.path.join(directory, '.%s.tmp' % WAKE_FILE_NAME)
+            with open(tmp, 'w', encoding='utf-8') as handle:
+                json.dump({'epoch': int(epoch)}, handle)
+                handle.write('\n')
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.wake_file)
+        except OSError as err:
+            raise _failed('cannot persist wake record: %s'
+                          % (err.strerror or err)) from None
+
+    def set_wake_alarm(self, epoch) -> int:
+        """Arm the RTC to wake the system at absolute ``epoch`` seconds.
+
+        The epoch must lie WAKE_MIN_AHEAD_S..WAKE_MAX_AHEAD_S ahead. The
+        kernel refuses a new alarm while one is pending, so the old one is
+        cleared with ``0`` first — but only when it is ours (or already
+        past): another program's pending wake is left alone and the call
+        fails."""
+        if isinstance(epoch, bool) or not isinstance(epoch, int):
+            raise HelperError(ERROR_INVALID_ARGS, 'wake time is not an integer')
+        now = int(self._now())
+        if epoch < now + WAKE_MIN_AHEAD_S:
+            raise HelperError(ERROR_INVALID_ARGS, 'wake time is not in the '
+                              'future')
+        if epoch > now + WAKE_MAX_AHEAD_S:
+            raise HelperError(ERROR_INVALID_ARGS, 'wake time is more than '
+                              '%d h ahead' % (WAKE_MAX_AHEAD_S // 3600))
+        path = self.wakealarm_path()
+        if not os.path.isfile(path):
+            raise _failed('no RTC wake alarm on this device')
+        pending = self._read_wakealarm()
+        owned = self._load_wake_owned()
+        if pending is not None and pending > now and pending != owned:
+            raise _failed('RTC wake alarm already set by another program')
+        self._write_file(path, '0')
+        self._write_file(path, str(epoch))
+        self._save_wake_owned(epoch)
+        return epoch
+
+    def clear_wake_alarm(self) -> bool:
+        """Drop the helper's wake. Clears the RTC only when the pending
+        alarm is still the one we set; True when something was cleared."""
+        owned = self._load_wake_owned()
+        cleared = False
+        if owned is not None and self._read_wakealarm() == owned:
+            self._write_file(self.wakealarm_path(), '0')
+            cleared = True
+        self._save_wake_owned(None)
+        return cleared
+
     # ----------------------------------------------------------------- state
 
     def load_state(self) -> dict:
@@ -1597,7 +1711,9 @@ def check_polkit_authorization(connection, sender, action, callback,
 # SetInboundAllowed, SetFirewallEnabled) are NOT listed here:
 # policy_for() below decides
 # them from the already-validated arguments. SetPowerProfile is listed
-# but policy_for() still allowlists its profile first. GetCapabilities
+# but policy_for() still allowlists its profile first, and SetWakeAlarm
+# its argument shape (the time window is checked by HelperCore against
+# its clock). GetCapabilities
 # and GetFirewallState need no auth and are dispatched before any
 # lookup.
 _METHOD_ACTIONS = {
@@ -1611,6 +1727,8 @@ _METHOD_ACTIONS = {
     'ReadLog': (ACTION_READLOG, False),
     'SetRfkill': (ACTION_RFKILL, False),
     'SetPowerProfile': (ACTION_POWER, False),
+    'SetWakeAlarm': (ACTION_WAKE, False),
+    'ClearWakeAlarm': (ACTION_WAKE, False),
 }
 
 
@@ -1633,6 +1751,18 @@ def policy_for(method: str, args) -> tuple | None:
         except (TypeError, ValueError):
             return None
         if profile not in POWER_PROFILES:
+            return None
+        return _METHOD_ACTIONS[method]
+    if method == 'SetWakeAlarm':
+        try:
+            (epoch,) = args
+        except (TypeError, ValueError):
+            return None
+        if isinstance(epoch, bool) or not isinstance(epoch, int):
+            return None
+        return _METHOD_ACTIONS[method]
+    if method == 'ClearWakeAlarm':
+        if tuple(args or ()) != ():
             return None
         return _METHOD_ACTIONS[method]
     if method == 'ManageService':
@@ -1879,12 +2009,20 @@ class HelperService:
             elif method == 'SetFirewallEnabled':
                 (enabled,) = args
                 self.core.set_firewall_enabled(bool(enabled))
+            elif method == 'SetWakeAlarm':
+                (epoch,) = args
+                self.core.set_wake_alarm(int(epoch))
+            elif method == 'ClearWakeAlarm':
+                self.core.clear_wake_alarm()
             else:
                 invocation.return_dbus_error(
                     ERROR_INVALID_ARGS, 'unknown method: %s' % (method,))
                 return
         except HelperError as err:
+            # One reply per invocation: an error must not fall through to
+            # the success reply below.
             invocation.return_dbus_error(err.dbus_name, str(err))
+            return
         except Exception as err:
             invocation.return_dbus_error(ERROR_FAILED, str(err))
             return

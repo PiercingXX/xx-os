@@ -275,7 +275,7 @@ def test_policy_new_actions():
     assert 'action id="io.piercingxx.XXWM.Helper1.refresh-packages"' in text
     assert 'action id="io.piercingxx.XXWM.Helper1.upgrade-system"' in text
     assert 'action id="io.piercingxx.XXWM.Helper1.remove-package"' in text
-    assert text.count('<allow_active>yes</allow_active>') == 10
+    assert text.count('<allow_active>yes</allow_active>') == 11
     assert text.count('<allow_active>auth_admin_keep</allow_active>') == 4
     for action in ('set-charge-limit', 'app-network', 'freeze'):
         assert 'action id="io.piercingxx.XXWM.Helper1.%s"' % action in text

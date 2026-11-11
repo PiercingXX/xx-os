@@ -1735,6 +1735,8 @@ def _every_branch():
         ('RemovePackage', ('vim',)),
         ('SetRfkill', ('wifi', True)),
         ('SetRfkill', ('bluetooth', False)),
+        ('SetWakeAlarm', (1_800_000_000,)),
+        ('ClearWakeAlarm', ()),
     ]
     for name in helper.SERVICE_ALLOW:
         for action in helper.SERVICE_ACTIONS:
@@ -1788,6 +1790,7 @@ class TestUnifiedPolicy:
             helper.ACTION_SERVICE, helper.ACTION_SERVICE_REMOTE,
             helper.ACTION_RFKILL, helper.ACTION_FW_OPEN,
             helper.ACTION_FW_RESTRICT, helper.ACTION_POWER,
+            helper.ACTION_WAKE,
         ])
 
     def test_docs_list_every_method_and_action(self):
@@ -1797,7 +1800,9 @@ class TestUnifiedPolicy:
                        'RefreshPackageIndex', 'UpgradeSystem',
                        'RemovePackage', 'ManageService', 'SetRfkill',
                        'SetInboundPreset', 'SetFirewallEnabled',
-                       'GetFirewallState'):
+                       'GetFirewallState', 'SetWakeAlarm',
+                       'ClearWakeAlarm', 'HasPin', 'VerifyPin', 'SetPin',
+                       'ClearPin'):
             assert text.count('`%s' % method) >= 1, method
         for action in _policy_defaults():
             short = action.split('.')[-1]

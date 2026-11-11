@@ -248,16 +248,22 @@ call is live, any idle inhibitor (ScreenSaver cookie, Caffeine, a call),
 an MPRIS player is Playing, the phone is charging (unless
 `suspend_when_charging`), the file `$XDG_RUNTIME_DIR/xx-wm/no-suspend`
 exists, a wireless-debugging client is connected, or xx-clock has an
-alarm/timer ringing, due within 2 minutes, or armed at all. The last one
-is because nothing can wake a suspended phone for an alarm yet: user
-systemd timers ignore `WakeSystem=` and the RTC wake alarm is root-only.
+alarm/timer ringing or due within 2 minutes. With an alarm or timer
+further out, it first asks the root helper to arm the RTC wake alarm
+(`SetWakeAlarm`, see `docs/helper.md`) for one minute before it (at most
+47 h ahead; a later alarm gets an interim wake and the phone goes back
+to sleep) and suspends only once that succeeded; resume, a wake or a
+refused suspend clears it again. Without the helper or an RTC, or when
+the call fails, an armed alarm blocks suspend outright: user systemd
+timers ignore `WakeSystem=` and the RTC wake alarm is root-only, so
+nothing else could wake the phone for it.
 If logind refuses (an inhibitor, policy), it logs and tries again 45 s
 later. After a resume with the screen still off it waits 30 s before the
 next attempt, and logs a ModemManager check.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `suspend_after` | int | `0` | Seconds the screen must be off before automatic suspend; `0` = off. Settings offers Off / 1 / 5 / 15 min. Off by default: modem and RTC wake sources are unverified on the target devices, and armed alarms can't wake a suspended phone yet. |
+| `suspend_after` | int | `0` | Seconds the screen must be off before automatic suspend; `0` = off. Settings offers Off / 1 / 5 / 15 min. Off by default: modem and RTC wake sources are unverified on the target devices. |
 | `suspend_when_charging` | bool | `false` | Allow automatic suspend while charging. When it's `false`, charging blocks it, so a phone on the charger stays reachable. |
 | `caffeine_minutes` | int | `60` | Caffeine auto-off in minutes (Settings: 30 / 60 / 120 / when turned off); `0` keeps it on until turned off, locked or the screen goes off. Clamped 0..1440. |
 

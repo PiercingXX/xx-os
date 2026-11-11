@@ -1491,6 +1491,13 @@ class LockScreen(Gtk.Window):
         self.set_visible(False)
         if open_shade:
             self._on_open_shade()
+        # A SIM PIN prompt held back while locked shows now, not on the
+        # controller's next deferred poll.
+        try:
+            import sim_pin
+            sim_pin.on_shell_unlocked()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Lockout timer

@@ -20,8 +20,9 @@ SUSPEND_CHOICES = ((0, 'Off'), (60, '1 min'), (300, '5 min'),
                    (900, '15 min'))
 CAFFEINE_CHOICES = (30, 60, 120, 0)
 SUSPEND_NOTE = ('Never during a call, playing media, Caffeine, or an app '
-                'keeping the screen on. An armed alarm keeps the phone '
-                'awake: a suspended phone cannot wake for it yet.')
+                'keeping the screen on. The phone wakes a minute before '
+                'an alarm; where it cannot schedule that wake, an armed '
+                'alarm keeps the phone awake.')
 
 
 def suspend_after(win) -> int:

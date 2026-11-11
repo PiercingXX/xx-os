@@ -637,7 +637,17 @@ class FirstBootWizard(Gtk.Window):
     def _on_keyboard_next(self, _btn: Gtk.Widget | None) -> None:
         # The untouched default is a choice too: write and apply it once.
         self._apply_keyboard(self._keyboard_choice)
-        self._stack.set_visible_child_name('pin')
+        self._stack.set_visible_child_name(self._after_keyboard_step())
+
+    def _after_keyboard_step(self) -> str:
+        """'pin', unless a PIN is already set: a wizard resumed after a
+        crash (main.py showed the lock first) never offers to replace it —
+        changing a PIN goes through Settings, which asks for the old one."""
+        try:
+            pin_set = self._config.pin_hash is not None
+        except Exception:
+            pin_set = False
+        return 'theme' if pin_set else 'pin'
 
     def _apply_keyboard(self, choice: str) -> None:
         """Write `keyboard_layout` (xx-keyboard follows the file live)

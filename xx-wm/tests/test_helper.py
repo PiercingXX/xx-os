@@ -728,6 +728,7 @@ def test_shipped_policy_actions_and_defaults():
                    'io.piercingxx.XXWM.Helper1.service-manage',
                    'io.piercingxx.XXWM.Helper1.rfkill',
                    'io.piercingxx.XXWM.Helper1.power-profile',
+                   'io.piercingxx.XXWM.Helper1.wake-alarm',
                    'io.piercingxx.XXWM.Helper1.firewall-restrict'):
         assert ('action id="%s"' % action) in text
     for action in ('io.piercingxx.XXWM.Helper1.upgrade-system',
@@ -735,10 +736,10 @@ def test_shipped_policy_actions_and_defaults():
                    'io.piercingxx.XXWM.Helper1.service-remote',
                    'io.piercingxx.XXWM.Helper1.firewall-open'):
         assert ('action id="%s"' % action) in text
-    assert text.count('<allow_active>yes</allow_active>') == 10
+    assert text.count('<allow_active>yes</allow_active>') == 11
     assert text.count('<allow_active>auth_admin_keep</allow_active>') == 4
-    assert text.count('<allow_inactive>no</allow_inactive>') == 14
-    assert text.count('<allow_any>no</allow_any>') == 14
+    assert text.count('<allow_inactive>no</allow_inactive>') == 15
+    assert text.count('<allow_any>no</allow_any>') == 15
 
 
 def test_shipped_bus_policy_allows_default_callers_without_at_console():
@@ -773,3 +774,155 @@ def test_shipped_boot_units_reapply_saved():
     assert openrc.startswith('#!/sbin/openrc-run')
     assert '@libexecdir@/xx-wm-helper' in openrc
     assert '--apply-saved' in openrc
+
+
+# ------------------------------------------------------- RTC wake alarm
+
+NOW = 1_800_000_000
+
+
+@pytest.fixture()
+def rtc(layout, tmp_path):
+    """A writable stand-in for /sys/class/rtc/rtc0/wakealarm that records
+    every write (the kernel needs ``0`` before a new absolute epoch)."""
+    path = Path(layout.sysfs) / 'class' / 'rtc' / 'rtc0' / 'wakealarm'
+    path.parent.mkdir(parents=True)
+    path.write_text('')
+    writes = []
+    core = make_core(layout, now=lambda: NOW,
+                     wake_file=str(tmp_path / 'wake.json'))
+    real_write = core._write_file
+
+    def recording_write(target, text):
+        if target == str(path):
+            writes.append(text)
+        real_write(target, text)
+
+    core._write_file = recording_write
+    return SimpleNamespace(core=core, path=path, writes=writes,
+                           record=tmp_path / 'wake.json')
+
+
+def test_wake_alarm_clears_then_writes_absolute_epoch(rtc):
+    assert rtc.core.set_wake_alarm(NOW + 3600) == NOW + 3600
+    assert rtc.writes == ['0', str(NOW + 3600)]
+    assert rtc.path.read_text() == str(NOW + 3600)
+    assert json.loads(rtc.record.read_text()) == {'epoch': NOW + 3600}
+    assert (rtc.record.stat().st_mode & 0o777) == 0o600
+    # Re-arming replaces the helper's own single wake.
+    rtc.core.set_wake_alarm(NOW + 7200)
+    assert rtc.writes[-2:] == ['0', str(NOW + 7200)]
+
+
+@pytest.mark.parametrize('epoch', [NOW - 10, NOW, NOW + 2,
+                                   NOW + helper.WAKE_MAX_AHEAD_S + 1,
+                                   True, 'soon', 1.5])
+def test_wake_alarm_window_and_type_enforced(rtc, epoch):
+    with pytest.raises(helper.HelperError) as err:
+        rtc.core.set_wake_alarm(epoch)
+    assert err.value.dbus_name == helper.ERROR_INVALID_ARGS
+    assert rtc.writes == [] and not rtc.record.exists()
+
+
+def test_wake_alarm_leaves_foreign_wake_alone(rtc):
+    rtc.path.write_text(str(NOW + 600))          # someone else's wake
+    with pytest.raises(helper.HelperError):
+        rtc.core.set_wake_alarm(NOW + 3600)
+    assert rtc.writes == [] and rtc.path.read_text() == str(NOW + 600)
+    assert rtc.core.clear_wake_alarm() is False
+    assert rtc.path.read_text() == str(NOW + 600)
+    # A foreign wake already in the past no longer counts.
+    rtc.path.write_text(str(NOW - 600))
+    rtc.core.set_wake_alarm(NOW + 3600)
+    assert rtc.path.read_text() == str(NOW + 3600)
+
+
+def test_clear_wake_alarm_only_clears_own(rtc):
+    rtc.core.set_wake_alarm(NOW + 3600)
+    assert rtc.core.clear_wake_alarm() is True
+    assert rtc.path.read_text() == '0' and not rtc.record.exists()
+    assert rtc.core.clear_wake_alarm() is False      # nothing owned now
+    rtc.core.set_wake_alarm(NOW + 3600)
+    rtc.path.write_text(str(NOW + 900))              # replaced behind us
+    assert rtc.core.clear_wake_alarm() is False
+    assert rtc.path.read_text() == str(NOW + 900)
+    assert not rtc.record.exists()
+
+
+def test_wake_alarm_without_rtc_fails(layout, tmp_path):
+    core = make_core(layout, now=lambda: NOW,
+                     wake_file=str(tmp_path / 'wake.json'))
+    with pytest.raises(helper.HelperError) as err:
+        core.set_wake_alarm(NOW + 3600)
+    assert err.value.dbus_name == helper.ERROR_FAILED
+    assert core.clear_wake_alarm() is False
+
+
+def test_wake_alarm_policy_and_shape():
+    assert helper.policy_for('SetWakeAlarm', (NOW,)) == (helper.ACTION_WAKE,
+                                                         False)
+    assert helper.policy_for('ClearWakeAlarm', ()) == (helper.ACTION_WAKE,
+                                                       False)
+    for args in [(), ('x',), (True,), (1, 2)]:
+        assert helper.policy_for('SetWakeAlarm', args) is None
+    assert helper.policy_for('ClearWakeAlarm', (1,)) is None
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(helper.INTROSPECT_XML)
+    methods = {m.get('name'): m for m in root.iter('method')}
+    arg = methods['SetWakeAlarm'].find('arg')
+    assert (arg.get('type'), arg.get('direction')) == ('t', 'in')
+    assert methods['ClearWakeAlarm'].find('arg') is None
+
+
+def test_wake_alarm_service_authorizes_and_replies_once(rtc):
+    pytest.importorskip('gi')
+    allow_all.seen.clear()
+    service = helper.HelperService(connection=object(), core=rtc.core,
+                                   authorize=allow_all)
+
+    class OneReply(FakeInvocation):
+        replies = 0
+
+        def return_value(self, value):
+            self.replies += 1
+            super().return_value(value)
+
+        def return_dbus_error(self, name, message):
+            self.replies += 1
+            super().return_dbus_error(name, message)
+
+    def call(method, args):
+        inv = OneReply()
+        service._on_method_call(service.connection, ':1.7', '/p', 'i',
+                                method, SimpleNamespace(unpack=lambda: args),
+                                inv)
+        return inv
+
+    inv = call('SetWakeAlarm', (NOW + 3600,))
+    assert inv.error is None and inv.replies == 1
+    assert rtc.path.read_text() == str(NOW + 3600)
+    inv = call('SetWakeAlarm', (NOW - 1,))           # authorized, invalid
+    assert inv.error[0] == helper.ERROR_INVALID_ARGS and inv.replies == 1
+    inv = call('ClearWakeAlarm', ())
+    assert inv.error is None and inv.replies == 1
+    assert rtc.path.read_text() == '0'
+    assert allow_all.seen == [(helper.ACTION_WAKE, False)] * 3
+    deny_all.seen.clear()
+    service._authorize = deny_all
+    inv = call('SetWakeAlarm', (NOW + 3600,))
+    assert inv.error[0] == helper.ERROR_NOT_AUTHORIZED
+    assert rtc.path.read_text() == '0'
+
+
+def test_client_wake_alarm_calls(fake_gio):
+    FakeGio.conn = FakeClientConn(reply=FakeClientReply())
+    done = []
+    helper_client.set_wake_alarm(NOW + 3600,
+                                 lambda ok, res: done.append((ok, res)))
+    helper_client.clear_wake_alarm(lambda ok, res: done.append((ok, res)))
+    assert done == [(True, None), (True, None)]
+    assert [c[3] for c in FakeGio.conn.calls] == ['SetWakeAlarm',
+                                                  'ClearWakeAlarm']
+    helper_client.set_wake_alarm('later',
+                                 lambda ok, res: done.append((ok, res)))
+    assert done[-1][0] is False

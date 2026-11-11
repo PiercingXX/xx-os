@@ -109,6 +109,28 @@ def test_dry_run_prints_real_paths():
     assert '/usr/share/xx-wm/main.py' in out
 
 
+def test_ships_every_protocol_xml(deploy_script):
+    """Each vendored protocol XML the shell generates bindings from lives
+    next to the modules on the device: a missing one (phosh-private.xml)
+    leaves that feature without bindings after a deploy."""
+    import re
+    source = (REPO / 'launcher' / 'src' / 'wayland_bindings.py').read_text(
+        encoding='utf-8')
+    names = set(re.findall(r"^[A-Z_]+_XML_NAME = '([^']+\.xml)'", source,
+                           re.M))
+    assert 'phosh-private.xml' in names and len(names) >= 6
+    stanza = deploy_script.replace('\\\n', ' ')
+    shipped = [line for line in stanza.splitlines()
+               if line.lstrip().startswith('rsync -az')]
+    assert shipped, 'no protocol XML rsync in deploy.sh'
+    dry = [line for line in stanza.splitlines()
+           if '[dry-run] rsync -az' in line]
+    for name in sorted(names):
+        assert (REPO / 'launcher' / 'data' / name).is_file(), name
+        assert any('launcher/data/%s' % name in cmd for cmd in shipped), name
+        assert any('launcher/data/%s' % name in cmd for cmd in dry), name
+
+
 def test_script_syntax_parses():
     result = subprocess.run(
         ['sh', '-n', str(DEPLOY_SH)], capture_output=True, text=True)

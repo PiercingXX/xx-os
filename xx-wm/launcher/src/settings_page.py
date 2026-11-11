@@ -676,12 +676,36 @@ class MobileSection(_Section):
 
     def __init__(self) -> None:
         self._row = None
+        self._sim_row = None
 
     def build(self, win) -> list:
+        # A SIM prompt dismissed with "Later" stays away until the lock
+        # changes; this row (only while a SIM is locked) brings it back.
+        self._sim_row = ui.nav_row('SIM PIN', '',
+                                   lambda _r: self._reopen_sim_prompt())
+        self._sync_sim_row()
         self._row = ui.nav_row('Access point (APN)', apn_summary(win.config),
                                lambda r: self._open_sheet(win, r))
         win._apn_row = self._row
-        return ui.group(self.title, [self._row])
+        return ui.group(self.title, [self._sim_row, self._row])
+
+    def _sync_sim_row(self) -> None:
+        if self._sim_row is None:
+            return
+        try:
+            import sim_pin
+            summary = sim_pin.locked_summary()
+        except Exception:
+            summary = None
+        ui.set_subtitle(self._sim_row, summary or '')
+        self._sim_row.set_visible(summary is not None)
+
+    def _reopen_sim_prompt(self) -> None:
+        try:
+            import sim_pin
+            sim_pin.controller().reopen()
+        except Exception:
+            pass
 
     def _open_sheet(self, win, anchor):
         data = win.config.data
@@ -696,6 +720,7 @@ class MobileSection(_Section):
 
     def refresh(self, win) -> None:
         ui.set_subtitle(self._row, apn_summary(win.config))
+        self._sync_sim_row()
 
 
 class AppearanceSection(_Section):

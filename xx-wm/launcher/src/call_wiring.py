@@ -121,16 +121,34 @@ class CallWiring:
         except Exception:
             pass
 
-    def _on_call_incoming(self, caller: str, number: str) -> None:
+    def _calls_app_owns_calls(self) -> bool:
+        """Whether GNOME Calls owns its bus name now, probed on every call
+        event. ``_calls_owner_warned`` mirrors the last answer: set (and
+        logged once) while Calls owns the name, reset once it has left the
+        bus, so the shell's surfaces and call end notices come back for
+        the rest of the session instead of staying off for good."""
         from modem_monitor import CALLS_BUS_NAME, bus_name_has_owner
         from shell_log import get_logger
 
         win = self._win
-        if bus_name_has_owner(CALLS_BUS_NAME):
-            if not win._calls_owner_warned:
-                win._calls_owner_warned = True
-                get_logger('window').info(
-                    '%s owns the session bus; leaving calls to it', CALLS_BUS_NAME)
+        owned = bool(bus_name_has_owner(CALLS_BUS_NAME))
+        was = bool(getattr(win, '_calls_owner_warned', False))
+        if owned and not was:
+            get_logger('window').info(
+                '%s owns the session bus; leaving calls to it',
+                CALLS_BUS_NAME)
+        elif was and not owned:
+            get_logger('window').info(
+                '%s left the session bus; the shell handles calls again',
+                CALLS_BUS_NAME)
+        win._calls_owner_warned = owned
+        return owned
+
+    def _on_call_incoming(self, caller: str, number: str) -> None:
+        from shell_log import get_logger
+
+        win = self._win
+        if self._calls_app_owns_calls():
             return
         call_ui, _bar = win._ensure_call_surfaces()
         raw = number if isinstance(number, str) else ''
@@ -446,14 +464,7 @@ class CallWiring:
         # waiting, and the empty close. The legacy adapters stay as the
         # responsive path for their own transitions; render converges them.
         try:
-            from modem_monitor import CALLS_BUS_NAME, bus_name_has_owner
-            from shell_log import get_logger
-            if bus_name_has_owner(CALLS_BUS_NAME):
-                if not getattr(win, '_calls_owner_warned', False):
-                    win._calls_owner_warned = True
-                    get_logger('window').info(
-                        '%s owns the session bus; leaving calls to it',
-                        CALLS_BUS_NAME)
+            if self._calls_app_owns_calls():
                 return
             self._note_waiting_calls(calls)
             call_ui, _bar = win._ensure_call_surfaces()

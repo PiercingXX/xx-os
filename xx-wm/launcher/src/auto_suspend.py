@@ -20,20 +20,24 @@ Blockers (``blockers()``, pure):
   to hold the phone awake, remove it to release);
 - a connected wireless-debugging (xxdb) client;
 - xx-clock: an alarm or timer is ringing, the next alarm/timer is within
-  ``ALARM_GUARD_S``, or one is armed at all while no RTC wake can be
-  set (see below), or the clock daemon did not answer.
+  ``ALARM_GUARD_S``, or one is armed while no RTC wake could be set
+  (see below), or the clock daemon did not answer.
 
 Alarms. xx-clock's daemon exposes its next fire time (``GetState`` ->
 ``next.fire_at_ms`` and running timers' ``ends_at_ms``). A suspended
 phone only fires it if something arms an RTC wake, and the session has
 no unprivileged way to (systemd *user* timers ignore ``WakeSystem=``
 without CAP_WAKE_ALARM, logind has no wakealarm API, and
-``/sys/class/rtc/rtc0/wakealarm`` is root-only). Until the root helper
-grows a wake-alarm method (``rtc_wake`` hook below), an armed alarm
-blocks automatic suspend entirely: alarms win over battery. xx-calendar
-has no reminder scheduler or next-reminder API yet, so calendar
-reminders are not considered (they do not fire with the screen off
-today either).
+``/sys/class/rtc/rtc0/wakealarm`` is root-only), so the root helper does
+it: right before suspending with an alarm more than ``ALARM_GUARD_S``
+away, the controller asks ``SetWakeAlarm(next - RTC_WAKE_LEAD_S)``
+(:class:`HelperRtcWake`) and suspends only once that succeeded; resume,
+a wake or a refused suspend clears it (``ClearWakeAlarm``). Without the
+helper, without an RTC, or when the call fails, the old rule stands: an
+armed alarm blocks automatic suspend, because alarms win over battery.
+xx-calendar has no reminder scheduler or next-reminder API yet, so
+calendar reminders are not considered (they do not fire with the screen
+off today either).
 
 Logind inhibitors are respected implicitly: a refused or failed Suspend
 is logged and retried after the capped back-off. After resume the
@@ -54,8 +58,8 @@ from shell_log import get_logger
 _log = get_logger('auto_suspend')
 
 # Default off: wake sources (modem ring/SMS wake on Halium and mainline
-# kernels, RTC alarms) are unverified on the target devices, and an armed
-# alarm cannot wake a suspended phone yet. Opt in from Settings → Battery.
+# kernels, RTC alarms) are unverified on the target devices. Opt in from
+# Settings → Battery.
 DEFAULT_SUSPEND_AFTER = 0
 SUSPEND_AFTER_CHOICES = ((0, 'Off'), (60, '1 min'), (300, '5 min'),
                          (900, '15 min'))
@@ -66,6 +70,12 @@ RESUME_GRACE_S = 30
 MODEM_CHECK_DELAY_S = 5
 # Never suspend this close to a known alarm/timer, even with RTC wake.
 ALARM_GUARD_S = 120
+# The RTC wakes the phone this long before the alarm, so it is resumed
+# (and xx-clock's own timer has caught up) when the alarm is due.
+RTC_WAKE_LEAD_S = 60
+# The helper refuses wakes more than 48 h out; a later alarm gets an
+# interim wake instead (the phone wakes blank, re-checks, sleeps again).
+RTC_WAKE_MAX_AHEAD_S = 47 * 3600
 
 FLAG_NAME = 'no-suspend'
 
@@ -181,6 +191,13 @@ def alarm_blocker(alarm: AlarmInfo, now_ms: int,
     if not rtc_wake_available:
         return 'alarm armed (no RTC wake)'
     return None
+
+
+def rtc_wake_time(next_ms: int, now_ms: int) -> int:
+    """Epoch seconds to arm: RTC_WAKE_LEAD_S before the alarm, but never
+    more than RTC_WAKE_MAX_AHEAD_S from now."""
+    return min(int(next_ms // 1000) - RTC_WAKE_LEAD_S,
+               int(now_ms // 1000) + RTC_WAKE_MAX_AHEAD_S)
 
 
 class SuspendContext(NamedTuple):
@@ -312,6 +329,65 @@ def logind_suspend_async(on_done: Callable[[bool, str], None]) -> None:
         on_done(False, str(exc))
 
 
+class HelperRtcWake:
+    """``rtc_wake`` / ``rtc_clear`` backed by the root helper's
+    SetWakeAlarm / ClearWakeAlarm (async, fail soft). A helper that is not
+    installed is remembered for the session, so the blank back-off does
+    not try D-Bus activation every 45 s; other failures are retried on the
+    next check. Each distinct error is logged once."""
+
+    def __init__(self, client=None) -> None:
+        self._client = client
+        self.unavailable = False
+        self._logged: set[str] = set()
+
+    def _hc(self):
+        if self._client is None:
+            import helper_client
+            self._client = helper_client
+        return self._client
+
+    def _log_once(self, message: str) -> None:
+        if message not in self._logged:
+            self._logged.add(message)
+            _log.info(message)
+
+    def arm(self, epoch_s: int, on_done: Callable[[bool], None]) -> None:
+        if self.unavailable:
+            on_done(False)
+            return
+        try:
+            client = self._hc()
+        except Exception as exc:
+            self.unavailable = True
+            self._log_once('RTC wake unavailable: %s' % exc)
+            on_done(False)
+            return
+
+        def _reply(ok: bool, error) -> None:
+            if not ok:
+                if error == getattr(client, 'HELPER_NOT_INSTALLED', None):
+                    self.unavailable = True
+                self._log_once('RTC wake not armed: %s' % (error,))
+            on_done(bool(ok))
+
+        try:
+            client.set_wake_alarm(int(epoch_s), _reply)
+        except Exception as exc:
+            self._log_once('RTC wake not armed: %s' % exc)
+            on_done(False)
+
+    def clear(self) -> None:
+        if self.unavailable:
+            return
+        try:
+            self._hc().clear_wake_alarm(
+                lambda ok, error: ok or self._log_once(
+                    'RTC wake not cleared: %s' % (error,)))
+        except Exception as exc:
+            self._log_once('RTC wake not cleared: %s' % exc)
+
+
 def modem_alive_check_async() -> None:
     """Post-resume hook point: log what ModemManager reports. Recovery
     (re-enable / restart a modem that did not come back) is a follow-up."""
@@ -366,8 +442,9 @@ def _false() -> bool:
 class AutoSuspendController:
     """Blank-driven suspend scheduler. Every probe is an injected callable
     (main.py wires the live shell; tests pass fakes); every effect is
-    asynchronous. ``rtc_wake(epoch_s) -> bool`` arms an RTC wake when a
-    privileged backend exists (None today)."""
+    asynchronous. ``rtc_wake(epoch_s, on_done(ok))`` arms an RTC wake and
+    ``rtc_clear()`` drops it (main.py: :class:`HelperRtcWake`); without
+    them an armed alarm blocks suspend."""
 
     def __init__(self, config: object,
                  is_blanked: Callable[[], bool],
@@ -380,7 +457,8 @@ class AutoSuspendController:
                  query_clock: Callable = query_clock_async,
                  suspend: Callable = logind_suspend_async,
                  modem_check: Callable[[], None] = modem_alive_check_async,
-                 rtc_wake: Callable[[float], bool] | None = None,
+                 rtc_wake: Callable | None = None,
+                 rtc_clear: Callable[[], None] | None = None,
                  timeout_add: Callable | None = None,
                  source_remove: Callable | None = None,
                  wall_ms: Callable[[], int] | None = None) -> None:
@@ -396,6 +474,8 @@ class AutoSuspendController:
         self._suspend = suspend
         self._modem_check = modem_check
         self._rtc_wake = rtc_wake
+        self._rtc_clear = rtc_clear
+        self._rtc_armed = False
         self._timeout_add = timeout_add
         self._source_remove = source_remove
         self._wall_ms = wall_ms or (lambda: int(time.time() * 1000))
@@ -449,6 +529,7 @@ class AutoSuspendController:
         self._last_blockers = None
         self.in_flight = False
         if not blanked:
+            self._clear_rtc()
             return
         after = suspend_after_secs(self._config)
         if after > 0:
@@ -457,6 +538,7 @@ class AutoSuspendController:
     def note_resumed(self) -> None:
         """logind PrepareForSleep(false)."""
         self.in_flight = False
+        self._clear_rtc()
         try:
             self._add(MODEM_CHECK_DELAY_S, self._run_modem_check)
         except Exception:
@@ -531,15 +613,49 @@ class AutoSuspendController:
             self._back_off(reasons)
             return
         if alarm.next_ms is not None and self._rtc_wake is not None:
-            wake_at = (alarm.next_ms - ALARM_GUARD_S * 1000) / 1000.0
+            wake_at = rtc_wake_time(alarm.next_ms, ctx.now_ms)
+            self.in_flight = True
             try:
-                armed = bool(self._rtc_wake(wake_at))
+                self._rtc_wake(wake_at, lambda ok: self._on_rtc_armed(
+                    gen, wake_at, ok))
             except Exception as exc:
-                _log.warning('RTC wake failed: %s', exc)
-                armed = False
-            if not armed:
-                self._back_off(['RTC wake not armed'])
-                return
+                _log.warning('RTC wake raised: %s', exc)
+                self._on_rtc_armed(gen, wake_at, False)
+            return
+        self._go_suspend(gen)
+
+    def _on_rtc_armed(self, gen: int, wake_at: int, ok: bool) -> None:
+        if ok:
+            self._rtc_armed = True
+        if gen != self._gen or not self.in_flight:
+            # Woken (or superseded) while the helper answered.
+            self._clear_rtc()
+            return
+        self.in_flight = False
+        if not ok:
+            # Fallback rule: no wake, no suspend while an alarm is armed.
+            self._back_off(['alarm armed (RTC wake failed)'])
+            return
+        if not self._safe(self._is_blanked):
+            self._clear_rtc()
+            return
+        _log.info('auto-suspend: RTC wake armed for %d (alarm in %d s)',
+                  wake_at, max(0, wake_at + RTC_WAKE_LEAD_S
+                               - self._wall_ms() // 1000))
+        self._go_suspend(gen)
+
+    def _clear_rtc(self) -> None:
+        if not self._rtc_armed:
+            return
+        self._rtc_armed = False
+        if self._rtc_clear is None:
+            return
+        try:
+            self._rtc_clear()
+        except Exception as exc:
+            _log.warning('RTC wake clear failed: %s', exc)
+
+    def _go_suspend(self, gen: int) -> None:
         _log.info('auto-suspend: display blank, nothing blocking — suspending')
         self.in_flight = True
         try:
@@ -561,6 +677,7 @@ class AutoSuspendController:
             # arrives as PrepareForSleep(false) -> note_resumed().
             return
         self.in_flight = False
+        self._clear_rtc()
         _log.warning('auto-suspend refused: %s; retry in %d s',
                      message or 'unknown error', BACKOFF_CAP_S)
         if gen == self._gen and self._safe(self._is_blanked):

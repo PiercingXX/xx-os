@@ -19,9 +19,11 @@ never logged, and the entries are cleared on every submit.
 The prompt is a system prompt like the polkit dialog (own undecorated
 toplevel). It is not shown over the lock screen: while the shell is
 locked the prompt waits and re-checks every few seconds, and
-:func:`on_shell_unlocked` lets the lock screen show it at once (the hook
-lock_screen.py should call after a successful unlock). "Later" dismisses
-it until the lock changes (another kind of lock, or a modem re-probe).
+:func:`on_shell_unlocked` lets the lock screen show it at once (lock_screen
+calls it after every successful unlock). "Later" dismisses it until the
+lock changes (another kind of lock, or a modem re-probe); Settings →
+Network & internet → Mobile data shows a "SIM PIN" row while a SIM is
+locked that brings it back (:meth:`SimPinController.reopen`).
 
 Lock semantics follow phosh's ``phosh-wwan-mm.c`` (GPL-3.0+): locked when
 State is LOCKED and UnlockRequired is not NONE.
@@ -243,6 +245,10 @@ class SimPinController:
     def visible(self) -> bool:
         return self._view is not None
 
+    def locked_sims(self) -> list:
+        """Every locked SIM's latest report, dismissed ones included."""
+        return [self._locks[modem] for modem in sorted(self._locks)]
+
     # -- presentation -------------------------------------------------
 
     def _next_info(self):
@@ -341,6 +347,21 @@ def on_shell_unlocked() -> None:
     """Hook for the lock screen: show a deferred SIM prompt right away."""
     if _controller is not None:
         _controller.on_shell_unlocked()
+
+
+def locked_summary() -> str | None:
+    """Settings row value while a SIM waits for its PIN or PUK ('SIM PIN
+    required'), None otherwise. Never creates the controller: no report
+    yet means no locked SIM."""
+    if _controller is None:
+        return None
+    try:
+        infos = _controller.locked_sims()
+    except Exception:
+        return None
+    if not infos:
+        return None
+    return '%s required' % lock_name(infos[0].unlock_required)
 
 
 # ------------------------------------------------------------------ view

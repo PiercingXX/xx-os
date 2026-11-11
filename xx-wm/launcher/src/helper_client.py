@@ -367,6 +367,34 @@ def get_firewall_state(on_done: ResultCallback) -> None:
     _call_helper('GetFirewallState', None, _on_reply)
 
 
+def set_wake_alarm(epoch: int, on_done: ResultCallback) -> None:
+    """Arm the RTC to wake a suspended phone at absolute ``epoch`` seconds
+    (the helper allows 5 s .. 48 h ahead and owns a single wake).
+
+    ``on_done(True, None)`` on success, ``(False, error)`` otherwise.
+    """
+    try:
+        Gio, GLib = _gio()
+        params = GLib.Variant('(t)', (max(0, int(epoch)),))
+    except ImportError as err:
+        on_done(False, 'D-Bus unavailable: %s' % err)
+        return
+    except (TypeError, ValueError, OverflowError):
+        on_done(False, 'wake time is not a number: %r' % (epoch,))
+        return
+    _call_helper('SetWakeAlarm', params,
+                 lambda ok, _result: on_done(ok, None if ok else _result))
+
+
+def clear_wake_alarm(on_done: ResultCallback) -> None:
+    """Drop the helper's RTC wake (a wake another program set is kept).
+
+    ``on_done(True, None)`` on success, ``(False, error)`` otherwise.
+    """
+    _call_helper('ClearWakeAlarm', None,
+                 lambda ok, _result: on_done(ok, None if ok else _result))
+
+
 # ------------------------------------------------------------- PIN store
 #
 # The PIN hash lives root-side (HasPin/VerifyPin/SetPin/ClearPin, scoped to

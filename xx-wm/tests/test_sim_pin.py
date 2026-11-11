@@ -402,3 +402,85 @@ def test_monitor_default_routes_to_sim_pin(monkeypatch):
 ])
 def test_lock_rule(props, locked):
     assert modem_monitor.sim_lock_info(MODEM, props).locked is locked
+
+
+# ------------------------------------------- lock screen + settings hooks
+
+def _unlock_harness(on_unlock):
+    return SimpleNamespace(
+        _fail_count=2, _lockout_src=None, _open_shade_after_unlock=False,
+        _config=SimpleNamespace(clear_lockout_state=lambda: None),
+        _on_unlock=lambda: None, _on_open_shade=lambda: None,
+        set_visible=lambda visible: on_unlock(visible))
+
+
+def test_unlock_shows_deferred_prompt_at_once(monkeypatch):
+    lock_screen = pytest.importorskip('lock_screen')
+    ctl, views, _sends, timers, state = _controller(shell_locked=True)
+    monkeypatch.setattr(sim_pin, '_controller', ctl)
+    ctl.handle(_info())
+    assert views == [] and len(timers) == 1
+    harness = _unlock_harness(
+        lambda visible: state.__setitem__('locked', bool(visible)))
+    lock_screen.LockScreen._unlock(harness)
+    # Shown by the unlock itself, not by the 2 s deferred poll.
+    assert len(views) == 1
+
+
+def test_unlock_survives_sim_pin_import_failure(monkeypatch):
+    import sys
+    lock_screen = pytest.importorskip('lock_screen')
+    monkeypatch.setitem(sys.modules, 'sim_pin', None)  # import raises
+    hidden = []
+    harness = _unlock_harness(hidden.append)
+    lock_screen.LockScreen._unlock(harness)
+    assert hidden == [False] and harness._fail_count == 0
+
+
+def test_locked_summary(monkeypatch):
+    monkeypatch.setattr(sim_pin, '_controller', None)
+    assert sim_pin.locked_summary() is None
+    ctl, views, _s, _t, _st = _controller()
+    monkeypatch.setattr(sim_pin, '_controller', ctl)
+    assert sim_pin.locked_summary() is None
+    ctl.handle(_info(lock=4, retries=10))
+    views[0].later()                          # dismissed still counts
+    assert sim_pin.locked_summary() == 'SIM PUK required'
+    ctl.handle(_info(lock=4, locked=False))
+    assert sim_pin.locked_summary() is None
+
+
+class _Row:
+    def __init__(self, title, subtitle, on_activate):
+        self.title, self.subtitle = title, subtitle
+        self.on_activate = on_activate
+        self.visible = True
+
+    def set_visible(self, visible):
+        self.visible = bool(visible)
+
+
+def test_settings_row_reopens_a_dismissed_prompt(monkeypatch):
+    import settings_page
+    fake_ui = SimpleNamespace(
+        nav_row=lambda title, subtitle='', on_activate=None: _Row(
+            title, subtitle, on_activate),
+        set_subtitle=lambda row, text: setattr(row, 'subtitle', text),
+        group=lambda caption, rows: [caption, list(rows)])
+    monkeypatch.setattr(settings_page, 'ui', fake_ui)
+    ctl, views, _s, _t, _st = _controller()
+    monkeypatch.setattr(sim_pin, '_controller', ctl)
+    win = SimpleNamespace(config=SimpleNamespace(data={}))
+    section = settings_page.MobileSection()
+    _caption, rows = section.build(win)
+    sim_row = rows[0]
+    assert sim_row.title == 'SIM PIN' and not sim_row.visible
+    ctl.handle(_info())
+    views[0].later()
+    section.refresh(win)
+    assert sim_row.visible and sim_row.subtitle == 'SIM PIN required'
+    sim_row.on_activate(sim_row)
+    assert len(views) == 2 and ctl.visible
+    ctl.handle(_info(locked=False))
+    section.refresh(win)
+    assert not sim_row.visible

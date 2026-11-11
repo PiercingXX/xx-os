@@ -73,7 +73,7 @@ if [ "$DRY_RUN" = 1 ]; then
     echo "[dry-run] ssh $TARGET mktemp -d for a private staging dir"
     echo "[dry-run] rsync $RSYNC_FLAGS $REPO_DIR/launcher/src/ ${TARGET}:<staging>/"
     echo "[dry-run] rsync $RSYNC_FLAGS $REPO_DIR/../common/xx_ui/ ${TARGET}:<staging>/xx_ui/"
-    echo "[dry-run] rsync -az $REPO_DIR/launcher/data/wayland.xml $REPO_DIR/launcher/data/wlr-foreign-toplevel-management-unstable-v1.xml $REPO_DIR/launcher/data/wlr-output-power-management-unstable-v1.xml $REPO_DIR/launcher/data/virtual-pointer-unstable-v1.xml $REPO_DIR/launcher/data/wlr-screencopy-unstable-v1.xml ${TARGET}:<staging>/"
+    echo "[dry-run] rsync -az $REPO_DIR/launcher/data/wayland.xml $REPO_DIR/launcher/data/wlr-foreign-toplevel-management-unstable-v1.xml $REPO_DIR/launcher/data/wlr-output-power-management-unstable-v1.xml $REPO_DIR/launcher/data/virtual-pointer-unstable-v1.xml $REPO_DIR/launcher/data/wlr-screencopy-unstable-v1.xml $REPO_DIR/launcher/data/phosh-private.xml ${TARGET}:<staging>/"
     echo "[dry-run] ssh $TARGET sudo rsync -a --chown=root:root <staging>/ ${DEST}/"
     echo "[dry-run] restart: systemctl --user restart xx-wm if active, else SIGUSR1 unique python3 /usr/share/xx-wm/main.py (wrapper respawns)"
     exit 0
@@ -105,6 +105,7 @@ rsync -az "$REPO_DIR/launcher/data/wayland.xml" \
     "$REPO_DIR/launcher/data/wlr-output-power-management-unstable-v1.xml" \
     "$REPO_DIR/launcher/data/virtual-pointer-unstable-v1.xml" \
     "$REPO_DIR/launcher/data/wlr-screencopy-unstable-v1.xml" \
+    "$REPO_DIR/launcher/data/phosh-private.xml" \
     "${TARGET}:${STAGE}/" || exit 1
 
 # Datadir rsync is without --delete: --delete would wipe phoc.ini, sounds,

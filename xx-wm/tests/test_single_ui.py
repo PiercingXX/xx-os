@@ -32,14 +32,20 @@ def test_reactivation_presents_the_existing_wizard(monkeypatch):
     for name in ('drop_portal_opt_out', 'IPCServer', '_setup_logind',
                  'NotificationDaemon'):
         monkeypatch.setattr(main, name, lambda *a, **k: None, raising=False)
+    import config
     import font_theme
     monkeypatch.setattr(font_theme, 'apply_global_font', lambda *_a: None)
+    monkeypatch.setattr(config, 'ShellConfig', lambda: types.SimpleNamespace(
+        font_family='', pin_hash=None))
     app = types.SimpleNamespace(
         _shell=None, _wizard=None,
         props=types.SimpleNamespace(active_window=None),
         _on_ipc_command=None, _on_sleep=None,
         _on_notification=None, _on_notification_closed=None,
         _wizard_done=lambda: None, _show_shell=lambda: None)
+    for name in ('_start_first_boot', '_present_wizard'):
+        setattr(app, name, types.MethodType(
+            getattr(main.XXWMApplication, name), app))
     main.XXWMApplication.do_activate(app)
     main.XXWMApplication.do_activate(app)
     main.XXWMApplication.do_activate(app)

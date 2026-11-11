@@ -86,6 +86,7 @@ class XXWMApplication(Adw.Application):
         self._xxdb = None
         self._screensaver = None
         self._auto_suspend = None
+        self._wizard_lock = None
         self._banner = None
         from focus_mode import HeldNotifications
         self._held_notifications = HeldNotifications()
@@ -99,6 +100,7 @@ class XXWMApplication(Adw.Application):
         # window, so each activation stacked a new first-boot wizard or
         # shell (the Librem showed ~16 wizards that "wouldn't close").
         existing = (self._shell or self._wizard
+                    or getattr(self, '_wizard_lock', None)
                     or self.props.active_window)
         if existing is not None:
             _log.info('activate: UI already up, presenting it')
@@ -120,11 +122,67 @@ class XXWMApplication(Adw.Application):
         )
 
         if FirstBootWizard.is_needed():
-            self._wizard = FirstBootWizard(on_complete=self._wizard_done)
-            self._wizard.set_application(self)
-            self._wizard.present()
+            self._start_first_boot()
         else:
             self._show_shell()
+
+    def _start_first_boot(self) -> None:
+        """First-boot wizard. A wizard cut short after its PIN step (crash,
+        reboot, deploy respawn) comes back behind the lock screen: the PIN
+        is entered before setup continues, phoc's shield (-S) lowers onto
+        the lock rather than the wizard, and the wizard then skips its PIN
+        step, so it can never overwrite the PIN."""
+        from config import ShellConfig
+        try:
+            pin_set = ShellConfig().pin_hash is not None
+        except Exception:
+            pin_set = False
+        if pin_set and self._lock_before_wizard():
+            return
+        self._present_wizard()
+
+    def _present_wizard(self) -> None:
+        self._wizard = FirstBootWizard(on_complete=self._wizard_done)
+        self._wizard.set_application(self)
+        self._wizard.present()
+
+    def _lock_before_wizard(self) -> bool:
+        """Show a standalone lock ahead of the resumed wizard; True when
+        it is up (the wizard follows on unlock). The phoc report waits for
+        the lock surface to map, exactly like window._lock_at_startup."""
+        from config import ShellConfig
+        from lock_screen import LockScreen, _shell_state
+        reporter = _shell_state()
+        if reporter is not None:
+            reporter.require_lock(True)
+        try:
+            lock = LockScreen(on_unlock=self._wizard_unlocked,
+                              config=ShellConfig())
+            lock.set_application(self)
+            lock.present()
+            lock.on_shown()
+        except Exception as exc:
+            # The shield stays up (lock required, never mapped), so phoc
+            # keeps the wizard covered, and it skips its PIN step: the
+            # PIN cannot be replaced from there.
+            _log.error('first-boot lock failed: %s', exc)
+            return False
+        finally:
+            if reporter is not None:
+                reporter.note_shell_ready()
+        self._wizard_lock = lock
+        _log.info('first boot resumed with a PIN set: locked first')
+        return True
+
+    def _wizard_unlocked(self) -> None:
+        """LockScreen on_unlock (before it hides itself): carry on with
+        setup, then drop the one-off lock window."""
+        lock = getattr(self, '_wizard_lock', None)
+        self._wizard_lock = None
+        if self._wizard is None and self._shell is None:
+            self._present_wizard()
+        if lock is not None:
+            GLib.idle_add(lambda: (lock.destroy(), False)[1])
 
     def _wizard_done(self) -> None:
         self._wizard = None
@@ -336,8 +394,9 @@ class XXWMApplication(Adw.Application):
         except Exception as exc:
             _log.warning('screensaver service unavailable: %s', exc)
         try:
-            from auto_suspend import AutoSuspendController
+            from auto_suspend import AutoSuspendController, HelperRtcWake
             shell = self._shell
+            rtc = HelperRtcWake()
             self._auto_suspend = AutoSuspendController(
                 config=shell.config,
                 is_blanked=self._display_blanked,
@@ -346,6 +405,8 @@ class XXWMApplication(Adw.Application):
                 media_playing=self._media_playing,
                 charging=self._on_charger,
                 debug_clients=self._xxdb_clients,
+                rtc_wake=rtc.arm,
+                rtc_clear=rtc.clear,
             )
         except Exception as exc:
             _log.warning('automatic suspend unavailable: %s', exc)

@@ -18,9 +18,19 @@ Every bus name in XX-Linux-Phone, who owns it, and who calls it. Rules that appl
 | `io.piercingxx.XXEmail.Daemon` | (actions only) | | `xx-email --daemon-tick` (systemd timer) | timer | notification actions |
 | `io.piercingxx.XXShare1` | `/io/piercingxx/XXShare` | `io.piercingxx.XXShare1` | `xx-share --service` | systemd user unit | xx-share UI |
 | `io.piercingxx.Captions1` | `/io/piercingxx/Captions1` | `io.piercingxx.Captions1` | `python -m xx_captions --serve` | activatable | caption overlay, shell Captions tile |
-| `io.piercingxx.XXWM.Helper1` (**system bus**) | `/io/piercingxx/XXWM/Helper1` | `io.piercingxx.XXWM.Helper1` | root helper (polkit) | system activation | shell (charge limit, per-app network, freeze) |
+| `io.piercingxx.XXWM.Helper1` (**system bus**) | `/io/piercingxx/XXWM/Helper1` | `io.piercingxx.XXWM.Helper1` | root helper (polkit) | system activation | shell (charge limit, per-app network, freeze, firewall, services, lock PIN, RTC wake for alarms); methods below |
+| `org.freedesktop.ScreenSaver` | `/org/freedesktop/ScreenSaver` and `/ScreenSaver` | `org.freedesktop.ScreenSaver` | xx-wm shell (`screensaver_service.py`), only when nobody else owns it | with the shell | phoc (forwards Wayland idle inhibitors), Firefox, mpv, Flatpak/X11 apps (`Inhibit`, `UnInhibit`, `GetActive`, `GetActiveTime`, `SimulateUserActivity`, `ActiveChanged`) |
 | `io.piercingxx.XXRadio.Player` | `/io/piercingxx/XXRadio/Player` | `io.piercingxx.XXRadio.Player1` | `xx-radio --player-service` | activatable, idle exit | xx-radio window (`Play`, `Enqueue`, `Snapshot`, `Changed`) |
 | `org.mpris.MediaPlayer2.xx_radio` | `/org/mpris/MediaPlayer2` | `org.mpris.MediaPlayer2` + `.Player` + `io.piercingxx.XXAuto.Actions1` | `xx-radio --player-service` | with the Player name | shade, lock screen, media keys, xx-auto (Like/Dislike) |
+
+## `io.piercingxx.XXWM.Helper1` methods (shell → root helper, system bus)
+
+Full table, polkit actions and confinement: [xx-wm/docs/helper.md](../xx-wm/docs/helper.md). Every call is async from `helper_client.py`.
+
+- Polkit-checked (`allow_active`, a few `auth_admin_keep`): `SetChargeLimit(u)`, `SetAppNetwork(s, b)`, `FreezeCgroup(s, b)`, `CleanSystem(as) → as`, `ReadLog(s) → s`, `RefreshPackageIndex()`, `UpgradeSystem() → s`, `RemovePackage(s)`, `ManageService(s, s)`, `SetRfkill(s, b)`, `SetPowerProfile(s)`, `SetInboundPreset(s, b)`, `SetInboundAllowed(as)`, `SetFirewallEnabled(b)`.
+- RTC wake (`…wake-alarm`, `allow_active=yes`): `SetWakeAlarm(t epoch)` arms `/sys/class/rtc/rtc0/wakealarm` for an absolute epoch 5 s – 48 h ahead (one helper-owned wake; another program's pending wake is never overwritten); `ClearWakeAlarm()` clears it if it is still ours. Automatic suspend arms it a minute before the next xx-clock alarm/timer.
+- Lock PIN (no polkit: the caller's bus uid selects its own record): `HasPin() → b`, `VerifyPin(s pin) → (b matched, u retry_after, b has_pin)`, `SetPin(s old, s new) → (b done, u retry_after)`, `ClearPin(s old) → (b done, u retry_after)`. scrypt hashes in `/var/lib/xx-wm-helper/pin/<uid>.json` (0600), lockout enforced root-side; PIN text is never logged.
+- Unauthenticated probes: `GetCapabilities() → a{sv}`, `GetFirewallState() → a{sv}`.
 
 ## `io.piercingxx.XXRadio.Player1` methods (window ↔ player service)
 

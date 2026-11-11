@@ -515,24 +515,98 @@ class TestController:
         assert timers.delays() == [auto_suspend.MODEM_CHECK_DELAY_S]
 
     def test_rtc_wake_lets_armed_alarm_through(self):
-        wakes = []
+        wakes, clears = [], []
         ctl, timers, rec, state = _controller(
-            rtc_wake=lambda at: wakes.append(at) or True)
+            rtc_wake=lambda at, cb: wakes.append((at, cb)),
+            rtc_clear=lambda: clears.append(1))
         state['alarm'] = auto_suspend.AlarmInfo(True, 1_000_000 + 3600_000,
                                                 False)
         ctl.note_blank(True)
         timers.fire(60)
+        # Suspend waits for the helper's answer.
+        assert rec['suspends'] == [] and ctl.in_flight
+        assert [at for at, _cb in wakes] == [
+            (1_000_000 + 3600_000) // 1000 - auto_suspend.RTC_WAKE_LEAD_S]
+        wakes[0][1](True)
         assert len(rec['suspends']) == 1
-        assert wakes == [(1_000_000 + 3600_000) / 1000.0
-                         - auto_suspend.ALARM_GUARD_S]
+        rec['suspends'][0](True, '')
+        ctl.note_resumed()
+        assert clears == [1]
+        ctl.note_resumed()                       # cleared once only
+        assert clears == [1]
 
-    def test_rtc_wake_failure_blocks(self):
-        ctl, timers, rec, state = _controller(rtc_wake=lambda at: False)
+    def test_rtc_wake_failure_falls_back_to_blocking(self):
+        ctl, timers, rec, state = _controller(
+            rtc_wake=lambda at, cb: cb(False))
         state['alarm'] = auto_suspend.AlarmInfo(True, 1_000_000 + 3600_000,
                                                 False)
         ctl.note_blank(True)
         timers.fire(60)
         assert rec['suspends'] == [] and timers.delays() == [10]
+        assert not ctl.in_flight
+        assert ctl._last_blockers == ['alarm armed (RTC wake failed)']
+
+    def test_rtc_wake_raising_falls_back(self):
+        def boom(at, cb):
+            raise RuntimeError('no bus')
+        ctl, timers, rec, state = _controller(rtc_wake=boom)
+        state['alarm'] = auto_suspend.AlarmInfo(True, 1_000_000 + 3600_000,
+                                                False)
+        ctl.note_blank(True)
+        timers.fire(60)
+        assert rec['suspends'] == [] and timers.delays() == [10]
+
+    def test_rtc_wake_not_needed_without_alarm(self):
+        wakes = []
+        ctl, timers, rec, _st = _controller(
+            rtc_wake=lambda at, cb: wakes.append(at))
+        ctl.note_blank(True)
+        timers.fire(60)
+        assert wakes == [] and len(rec['suspends']) == 1
+
+    def test_alarm_soon_blocks_even_with_rtc(self):
+        wakes = []
+        ctl, timers, rec, state = _controller(
+            rtc_wake=lambda at, cb: wakes.append(at))
+        state['alarm'] = auto_suspend.AlarmInfo(True, 1_000_000 + 90_000,
+                                                False)
+        ctl.note_blank(True)
+        timers.fire(60)
+        assert wakes == [] and rec['suspends'] == []
+
+    def test_wake_during_arming_clears_and_never_suspends(self):
+        wakes, clears = [], []
+        ctl, timers, rec, state = _controller(
+            rtc_wake=lambda at, cb: wakes.append(cb),
+            rtc_clear=lambda: clears.append(1))
+        state['alarm'] = auto_suspend.AlarmInfo(True, 1_000_000 + 3600_000,
+                                                False)
+        ctl.note_blank(True)
+        timers.fire(60)
+        state['blanked'] = False
+        ctl.note_blank(False)
+        wakes[0](True)                           # late helper reply
+        assert rec['suspends'] == [] and clears == [1]
+
+    def test_refused_suspend_clears_rtc(self):
+        clears = []
+        ctl, timers, rec, state = _controller(
+            rtc_wake=lambda at, cb: cb(True),
+            rtc_clear=lambda: clears.append(1))
+        state['alarm'] = auto_suspend.AlarmInfo(True, 1_000_000 + 3600_000,
+                                                False)
+        ctl.note_blank(True)
+        timers.fire(60)
+        rec['suspends'][0](False, 'Operation inhibited')
+        assert clears == [1] and timers.delays() == [45]
+
+    def test_rtc_wake_time_capped(self):
+        now = 1_000_000_000
+        far = now + 5 * 86400_000
+        assert auto_suspend.rtc_wake_time(far, now) \
+            == now // 1000 + auto_suspend.RTC_WAKE_MAX_AHEAD_S
+        assert auto_suspend.rtc_wake_time(now + 3600_000, now) \
+            == now // 1000 + 3600 - auto_suspend.RTC_WAKE_LEAD_S
 
     def test_probe_exceptions_fail_soft(self):
         def boom():
@@ -543,6 +617,51 @@ class TestController:
         timers.fire(60)
         assert len(rec['suspends']) == 1
 
+
+class FakeHelperClient:
+    HELPER_NOT_INSTALLED = 'helper not installed'
+
+    def __init__(self, result=(True, None)):
+        self.result = result
+        self.calls = []
+
+    def set_wake_alarm(self, epoch, cb):
+        self.calls.append(('set', epoch))
+        cb(*self.result)
+
+    def clear_wake_alarm(self, cb):
+        self.calls.append(('clear',))
+        cb(True, None)
+
+
+class TestHelperRtcWake:
+    def test_arm_and_clear_go_through_helper(self):
+        client = FakeHelperClient()
+        rtc = auto_suspend.HelperRtcWake(client)
+        got = []
+        rtc.arm(1_800_000_000, got.append)
+        rtc.clear()
+        assert got == [True]
+        assert client.calls == [('set', 1_800_000_000), ('clear',)]
+
+    def test_not_installed_is_remembered(self):
+        client = FakeHelperClient((False, 'helper not installed'))
+        rtc = auto_suspend.HelperRtcWake(client)
+        got = []
+        rtc.arm(1, got.append)
+        rtc.arm(2, got.append)
+        rtc.clear()
+        assert got == [False, False] and rtc.unavailable
+        assert client.calls == [('set', 1)]
+
+    def test_other_errors_retry(self):
+        client = FakeHelperClient((False, 'RTC wake alarm already set'))
+        rtc = auto_suspend.HelperRtcWake(client)
+        got = []
+        rtc.arm(1, got.append)
+        rtc.arm(2, got.append)
+        assert got == [False, False] and not rtc.unavailable
+        assert len(client.calls) == 2
 
 # ------------------------------------------------------------ the tile
 

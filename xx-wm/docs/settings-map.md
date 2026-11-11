@@ -25,7 +25,8 @@ The rules (owner, "minimal"):
   - `wifi`: Wi-Fi switch (state in its subtitle; Start network service
     while NetworkManager is down), Networks (scan results, Scan, Add
     hidden), Saved networks
-  - `mobile`: Access point (APN)
+  - `mobile`: SIM PIN (only while a SIM is PIN/PUK-locked; reopens a
+    prompt dismissed with Later), Access point (APN)
 - **Connected devices**
   - `bluetooth`: Bluetooth switch (Unblock and Start service while
     blocked or down), Devices (known and found, Scan)
@@ -44,7 +45,9 @@ The rules (owner, "minimal"):
   - `recording`: Screen recording (status; the Record tile runs it)
 - **Battery**
   - `battery`: level, health, cycles, temperature, voltage
-  - `standby`: Battery saver, App standby
+  - `standby`: Battery saver, App standby, Automatic suspend (Suspend
+    when screen is off: Off / 1 / 5 / 15 min; Caffeine turns off: after
+    30 min / 1 hour / 2 hours / when turned off)
   - `charging`: Charge limit
   - `batteryuse`: Battery use since full charge
 - **Apps**

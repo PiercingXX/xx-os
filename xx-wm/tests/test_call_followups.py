@@ -234,3 +234,41 @@ def test_classify_dial_without_xx_phone_stays_a_call(monkeypatch):
 
     monkeypatch.setattr(builtins, '__import__', _no_xx_phone)
     assert dialer.classify_dial('*100#') == 'call'
+
+
+# ------------------------------------------- GNOME Calls leaving the bus
+
+def test_end_notices_return_after_gnome_calls_leaves(monkeypatch):
+    owner = {'present': True}
+    monkeypatch.setattr(modem_monitor, 'bus_name_has_owner',
+                        lambda _n: owner['present'])
+    win, shown = _win()
+    ui = SimpleNamespace(render_snapshot=lambda *a, **k: None,
+                         _minimized=False)
+    win._sync_call_inhibit = lambda _c: None
+    win._ensure_call_surfaces = lambda: (ui, None)
+    win.is_locked = lambda: False
+    win._screen_tracked = {}
+    wiring = CallWiring(win)
+    wiring._on_calls_changed([_call('/c/1', '+15550001111', 4)])
+    assert win._calls_owner_warned is True
+    _last_ended(monkeypatch, _info(5, path='/c/1'))
+    wiring._show_end_reason()
+    assert shown['toast'] == []              # Calls shows its own reason
+    owner['present'] = False                 # GNOME Calls quit
+    wiring._on_calls_changed([_call('/c/2', '+15550002222', 4)])
+    assert win._calls_owner_warned is False
+    _last_ended(monkeypatch, _info(5, path='/c/2'))
+    wiring._show_end_reason()
+    assert shown['toast'] == ['Busy']
+
+
+def test_incoming_probe_resets_owner_flag(monkeypatch):
+    dnd = SimpleNamespace(note_call=lambda _n: None, is_active=lambda: False,
+                          is_exception=lambda _n: False)
+    win, _events, _verdicts = _incoming_win(monkeypatch, dnd)
+    win._calls_owner_warned = True           # seen earlier this session
+    wiring = CallWiring(win)
+    monkeypatch.setattr(wiring, '_verdict_is_stale', lambda _n: False)
+    wiring._on_call_incoming('Unknown', '+15550004444')
+    assert win._calls_owner_warned is False

@@ -88,7 +88,8 @@ def _wizard():
         _stack=_FakeStack(),
     )
     for name in ('_mark_keyboard_card', '_on_keyboard_card',
-                 '_on_keyboard_next', '_apply_keyboard'):
+                 '_on_keyboard_next', '_apply_keyboard',
+                 '_after_keyboard_step'):
         setattr(wiz, name, types.MethodType(getattr(cls, name), wiz))
     return wiz
 
