@@ -479,6 +479,37 @@ class TestChangePin:
         assert not ok
         assert 'ock' in msg.lower()
 
+    def test_clock_reset_does_not_block_change_for_years(self, tmp_path):
+        """A lockout saved in 2026 must not refuse a PIN change when the
+        phone boots with its clock back at 1970 (no RTC battery)."""
+        import settings_lock as lock
+        import time as _time
+        cfg = self._configured(tmp_path)
+        now = _time.time()
+        cfg.set_lockout_state(5, now + 300, start=now + 10 * 365 * 86400)
+        ok, _msg = lock.change_pin(cfg, '1234', '5678', '5678')
+        assert ok
+
+    def test_far_future_deadline_capped_to_what_fails_earn(self, tmp_path):
+        import settings_lock as lock
+        from lock_lines import _lockout_secs
+        import time as _time
+        cfg = self._configured(tmp_path)
+        now = _time.time()
+        # Deadline decades out (clock jumped back after the lockout began),
+        # but the cap still blocks only for what 5 fails earn.
+        cfg.set_lockout_state(5, now + 50 * 365 * 86400, start=now - 1)
+        assert 0 < lock._lockout_remaining(cfg) <= _lockout_secs(5)
+
+    def test_wrong_pin_records_start(self, tmp_path):
+        import settings_lock as lock
+        cfg = self._configured(tmp_path)
+        for _ in range(5):
+            lock.change_pin(cfg, '0000', '5678', '5678')
+        fails, until = cfg.get_lockout_state()
+        if until > 0:
+            assert cfg.get_lockout_start() > 0
+
     def test_no_pin_digits_logged(self, tmp_path, caplog):
         import settings_lock as lock
         cfg = self._configured(tmp_path)

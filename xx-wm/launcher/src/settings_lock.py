@@ -16,12 +16,19 @@ import settings_ui as ui
 _MAX_PIN = 64
 
 
-def _lockout_until(config) -> float:
+def _lockout_remaining(config) -> int:
+    """Seconds left on the persisted lockout, by the lock screen's rule:
+    never more than the fail count earns, and nothing when the wall clock
+    went back before the lockout started — an RTC reset must not block a
+    PIN change for years."""
     try:
-        _fails, until = config.get_lockout_state()
-        return max(0.0, float(until))
+        from lock_lines import resume_lockout_secs
+        fails, until = config.get_lockout_state()
+        start = config.get_lockout_start()
+        secs = resume_lockout_secs(fails, until, start, time.time())
     except Exception:
-        return 0.0
+        return 0
+    return secs or 0
 
 
 def _note_wrong_pin(config, fail_count: int) -> None:
@@ -32,7 +39,8 @@ def _note_wrong_pin(config, fail_count: int) -> None:
         secs = 0
     try:
         if secs > 0:
-            config.set_lockout_state(fail_count, time.time() + secs)
+            now = time.time()
+            config.set_lockout_state(fail_count, now + secs, start=now)
         else:
             config.set_lockout_state(fail_count, 0.0)
     except Exception:
@@ -60,7 +68,7 @@ def change_pin(config, current: str, new: str,
     the lockout like the lock screen does; success clears it. Never
     logs — PIN digits must not reach any log.
     """
-    if _lockout_until(config) > time.time():
+    if _lockout_remaining(config) > 0:
         return False, 'Locked out — try again when the timer ends.'
     try:
         correct = config.verify_pin(current)

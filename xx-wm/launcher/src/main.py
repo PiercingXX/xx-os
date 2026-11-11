@@ -18,6 +18,17 @@ from window import ShellWindow
 
 _log = get_logger('main')
 
+# Ceiling on holding a suspend for the lock screen's first paint: a blanked
+# output may never paint, and logind gives up after InhibitDelayMaxSec (5 s).
+_SLEEP_DELAY_SAFETY_MS = 1000
+
+
+def gesture_silenced_while_blanked(command: str, blanked: bool) -> bool:
+    """Gesture verbs (lisgd and the bottom strip) are dropped while the
+    display is blanked: touch stays live until the auto-lock fires, so a
+    pocket swipe would otherwise go home or open recents unseen."""
+    return blanked and command.startswith('gesture.')
+
 
 def drop_layer_shell_preload(environ=os.environ) -> None:
     """Keep the gtk4-layer-shell LD_PRELOAD out of every app the shell
@@ -98,7 +109,9 @@ class XXWMApplication(Adw.Application):
         apply_global_font(ShellConfig().font_family)
 
         self._ipc = IPCServer(self._on_ipc_command)
-        _setup_logind(self._on_sleep)
+        # The delay inhibitor rides along: suspend waits until the lock
+        # screen is drawn (see _on_sleep).
+        self._sleep_delay = _setup_logind(self._on_sleep)
         self._notif_daemon = NotificationDaemon(
             on_notify=self._on_notification,
             on_close=self._on_notification_closed,
@@ -172,7 +185,9 @@ class XXWMApplication(Adw.Application):
         from hud import Hud
         # Same live-config rule as window.py's own PowerMenu: without it this
         # instance keeps snapshot theming while hot reloads reach the rest.
-        self._power_menu = PowerMenu(config=self._shell.config, on_lock=self._shell._show_lock_screen)
+        self._power_menu = PowerMenu(config=self._shell.config,
+                                     on_lock=self._shell._show_lock_screen,
+                                     call_live=self._shell._call_live)
         self._power_menu.set_application(self)
         # Volume/brightness HUD overlay (plan T3/T4): flashes a level on the
         # layer-shell window after a hardware key press. Silent no-op when GTK
@@ -280,7 +295,7 @@ class XXWMApplication(Adw.Application):
             return
         from bottom_gesture import HOME, NEXT, PREVIOUS, SWITCHER, verb_for
         if outcome in (PREVIOUS, NEXT):
-            if not shell.is_locked():
+            if not shell.is_locked() and not self._display_blanked():
                 switched = shell.switch_adjacent_app(outcome)
                 _log.info('bottom gesture: %s -> %s', outcome,
                           'switched' if switched else 'no neighbour')
@@ -298,6 +313,14 @@ class XXWMApplication(Adw.Application):
         if verb:
             _log.info('bottom gesture: %s -> %s', outcome, verb)
             self._on_ipc_command(verb)
+
+    def _display_blanked(self) -> bool:
+        """The DisplayManager's own blank state; False before it exists."""
+        display_mgr = getattr(self, '_display_mgr', None)
+        try:
+            return bool(getattr(display_mgr, 'blanked', False))
+        except Exception:
+            return False
 
     def _replay_pending_ipc(self) -> None:
         """Run IPC verbs queued before the first present, in arrival order."""
@@ -576,6 +599,11 @@ class XXWMApplication(Adw.Application):
                 and self._ipc_silenced_while_locked(command)):
             _log.info('IPC command %s ignored while locked', command)
             return
+        if gesture_silenced_while_blanked(command, self._display_blanked()):
+            # Touch stays live on a dark-but-unlocked screen (auto-lock
+            # pending): pocket swipes must not go home, open recents, etc.
+            _log.info('IPC command %s ignored while blanked', command)
+            return
         if suppress_during_tour(command, getattr(self, '_tour_visible', False)):
             return
         if command == 'lock':
@@ -790,15 +818,78 @@ class XXWMApplication(Adw.Application):
             self._xxdb.request_disable()
 
     def _on_sleep(self, sleeping: bool) -> None:
+        """logind PrepareForSleep. Going down: lock, and let the delay
+        inhibitor go only once the lock surface has drawn, so resume never
+        flashes the unlocked session. Coming back: re-take the inhibitor
+        for the next suspend."""
+        delay = getattr(self, '_sleep_delay', None)
         if sleeping and self._shell:
             _log.info('system suspending — locking screen')
-            GLib.idle_add(self._shell._show_lock_screen)
-        elif not sleeping:
+            GLib.idle_add(self._lock_for_sleep)
+        elif sleeping:
+            # No shell yet (first-boot wizard): nothing to lock.
+            if delay is not None:
+                delay.release()
+        else:
+            if delay is not None:
+                delay.acquire()
             try:
                 from settings_display import refresh_night_scheduler
                 refresh_night_scheduler('resume')
             except Exception as exc:
                 _log.warning('night schedule resume failed: %s', exc)
+
+    def _lock_for_sleep(self) -> bool:
+        """Show the lock, then release the sleep delay after its first
+        paint (or a short safety timeout: a blanked output may never paint,
+        and logind only waits InhibitDelayMaxSec anyway)."""
+        shell = self._shell
+        already_locked = False
+        try:
+            already_locked = bool(shell.is_locked())
+        except Exception:
+            pass
+        try:
+            shell._show_lock_screen()
+        except Exception as exc:
+            _log.warning('lock before suspend failed: %s', exc)
+            already_locked = True   # nothing will paint; do not hold sleep
+        if already_locked:
+            self._release_sleep_delay()
+            return GLib.SOURCE_REMOVE
+        lock = getattr(shell, '_lock_screen', None)
+        clock = None
+        try:
+            clock = lock.get_frame_clock() if lock is not None else None
+        except Exception:
+            clock = None
+        if clock is not None:
+            handler = {}
+
+            def _after_paint(_clock) -> None:
+                try:
+                    clock.disconnect(handler['id'])
+                except Exception:
+                    pass
+                self._release_sleep_delay()
+
+            try:
+                handler['id'] = clock.connect('after-paint', _after_paint)
+                lock.queue_draw()
+            except Exception:
+                clock = None
+        if clock is None:
+            GLib.idle_add(self._release_sleep_delay)
+        GLib.timeout_add(_SLEEP_DELAY_SAFETY_MS, self._release_sleep_delay)
+        return GLib.SOURCE_REMOVE
+
+    def _release_sleep_delay(self) -> bool:
+        """Let a pending suspend proceed. Idempotent: the paint hook and
+        the safety timeout both land here."""
+        delay = getattr(self, '_sleep_delay', None)
+        if delay is not None:
+            delay.release()
+        return GLib.SOURCE_REMOVE
 
     def _on_saver_power_changed(self, saver_on: bool) -> None:
         """Battery saver selects the power-saver profile (and back)."""
@@ -861,7 +952,10 @@ def _make_usage_tracker(config) -> object | None:
         return None
 
 
-def _setup_logind(on_sleep_callback: object) -> None:
+def _setup_logind(on_sleep_callback: object) -> object | None:
+    """Subscribe to PrepareForSleep and take a logind 'delay' sleep
+    inhibitor, returned so _on_sleep can release it once the lock screen
+    is drawn. None without a system bus (fails soft)."""
     try:
         bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
         bus.signal_subscribe(
@@ -877,6 +971,16 @@ def _setup_logind(on_sleep_callback: object) -> None:
         _log.info('subscribed to logind PrepareForSleep')
     except GLib.Error as e:
         _log.warning('could not subscribe to logind: %s', e)
+        return None
+    try:
+        from display_manager import LogindInhibitor
+        delay = LogindInhibitor(
+            'sleep', 'Lock screen before suspend', 'delay', bus=bus)
+        delay.acquire()
+        return delay
+    except Exception as e:
+        _log.warning('logind sleep delay unavailable: %s', e)
+        return None
 
 
 def main(argv: list[str] | None = None) -> int:

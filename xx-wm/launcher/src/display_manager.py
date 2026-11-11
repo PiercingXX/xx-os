@@ -25,6 +25,7 @@ Hardware shortcuts (handled via evdev):
   - Power + Volume Down simultaneously → on_screenshot()
   - Volume Up / Down                   → +5% / -5% media volume
   - Media/headset keys (press only)    → on_media_key('play-pause'/'next'/'previous')
+  - KEY_WAKEUP (tap-to-wake panels)    → wake (press only, any node)
   - Touch                              → idle reset only (never wakes: pocket safety)
 """
 from __future__ import annotations
@@ -57,6 +58,7 @@ ABS_MT_TRACKING_ID = 57   # touch-down when value >= 0
 KEY_POWER     = 116
 KEY_VOLUMEDOWN = 114
 KEY_VOLUMEUP   = 115
+KEY_WAKEUP     = 143   # double-tap-to-wake panels report this, not a touch
 KEY_NEXTSONG     = 163
 KEY_PLAYPAUSE    = 164
 KEY_PREVIOUSSONG = 165
@@ -99,8 +101,8 @@ def filter_evdev_data(
     Decodes the complete events in data (a trailing partial event is left
     for the caller to buffer) and returns only the (path, type, code, value)
     tuples the manager acts on: power/volume keys on any node, EV_KEY
-    presses on the fingerprint node, media/headset key presses on any node,
-    and touch-downs (ABS_MT_TRACKING_ID >= 0) throttled to one post per
+    presses on the fingerprint node, media/headset and KEY_WAKEUP presses
+    on any node, and touch-downs (ABS_MT_TRACKING_ID >= 0) throttled to one post per
     _TOUCH_POST_MIN_GAP_MS per device. Media keys post press-downs only:
     releases and auto-repeats carry no state and would double-toggle.
     Everything else — EV_SYN, EV_MSC, absolute motion, key releases
@@ -115,7 +117,8 @@ def filter_evdev_data(
             if (code in (KEY_POWER, KEY_VOLUMEUP, KEY_VOLUMEDOWN)
                     or (path == fp_node and value == 1)):
                 wanted.append((path, ev_type, code, value))
-            elif code in _MEDIA_KEY_ACTIONS and value == 1:
+            elif ((code in _MEDIA_KEY_ACTIONS or code == KEY_WAKEUP)
+                    and value == 1):
                 wanted.append((path, ev_type, code, value))
         elif (ev_type == EV_ABS and code == ABS_MT_TRACKING_ID
                 and value >= 0):
@@ -267,6 +270,100 @@ def _get_volume_pct() -> int:
 
 
 # ---------------------------------------------------------------------------
+# logind inhibitor
+# ---------------------------------------------------------------------------
+
+_LOGIN1 = 'org.freedesktop.login1'
+_LOGIN1_PATH = '/org/freedesktop/login1'
+_LOGIN1_MANAGER = 'org.freedesktop.login1.Manager'
+
+
+class LogindInhibitor:
+    """One logind Inhibit() lock, taken asynchronously and held as an fd.
+
+    logind keeps the inhibitor while the fd is open; closing it releases.
+    acquire() never blocks (the D-Bus call is async) and fails soft: with no
+    system bus or no logind the inhibitor simply stays unheld. A release()
+    that lands while the call is still in flight closes the late fd on
+    arrival, so acquire/release may be called in any order.
+    """
+
+    def __init__(self, what: str, why: str, mode: str,
+                 bus: object | None = None) -> None:
+        self._what = what
+        self._why = why
+        self._mode = mode
+        self._bus = bus
+        self._fd: int | None = None
+        self._pending = False
+        self._wanted = False
+
+    @property
+    def held(self) -> bool:
+        return self._fd is not None
+
+    def acquire(self) -> None:
+        self._wanted = True
+        if self._fd is not None or self._pending:
+            return
+        try:
+            bus = self._get_bus()
+            params, reply_type, flags = self._call_args()
+            self._pending = True
+            bus.call_with_unix_fd_list(
+                _LOGIN1, _LOGIN1_PATH, _LOGIN1_MANAGER, 'Inhibit',
+                params, reply_type, flags, -1, None, None,
+                self._on_reply, None)
+        except Exception as exc:
+            self._pending = False
+            log.warning('logind %s inhibitor unavailable: %s',
+                        self._mode, exc)
+
+    def release(self) -> None:
+        self._wanted = False
+        fd, self._fd = self._fd, None
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def _get_bus(self) -> object:
+        if self._bus is None:
+            from gi.repository import Gio
+            # The system bus connection is process-shared and already open
+            # (main.py subscribes PrepareForSleep at activate), so this
+            # returns the cached singleton without a round trip.
+            self._bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        return self._bus
+
+    def _call_args(self) -> tuple:
+        """(parameters, reply type, call flags) for Manager.Inhibit."""
+        from gi.repository import Gio, GLib
+        return (GLib.Variant('(ssss)',
+                             (self._what, 'XX-WM', self._why, self._mode)),
+                GLib.VariantType.new('(h)'),
+                Gio.DBusCallFlags.NONE)
+
+    def _on_reply(self, bus, result, _user_data=None) -> None:
+        self._pending = False
+        try:
+            reply, fd_list = bus.call_with_unix_fd_list_finish(result)
+            fd = fd_list.get(reply.unpack()[0])
+        except Exception as exc:
+            log.warning('logind %s inhibitor refused: %s', self._mode, exc)
+            return
+        if not self._wanted:
+            # Released while the call was in flight: drop it at once.
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            return
+        self._fd = fd
+
+
+# ---------------------------------------------------------------------------
 # DisplayManager
 # ---------------------------------------------------------------------------
 
@@ -314,6 +411,11 @@ class DisplayManager:
         # Idle inhibitors (reason strings, e.g. an active call): while any is
         # held the idle timer never blanks the display.
         self._inhibitors: set[str] = set()
+        # Sleep blockers (reason strings, e.g. a live call): while any is
+        # held a logind 'block' sleep inhibitor stays open, so neither the
+        # power menu nor a stray systemctl suspend drops the call.
+        self._sleep_blockers: set[str] = set()
+        self._sleep_block: LogindInhibitor | None = None
 
         self._saved_brightness: int   = 200
         self._idle_src: int | None    = None
@@ -369,6 +471,11 @@ class DisplayManager:
     # Public
     # ------------------------------------------------------------------
 
+    @property
+    def blanked(self) -> bool:
+        """Whether the display is currently blanked (our own state)."""
+        return self._blanked
+
     def wake(self) -> None:
         """Wake the display if blanked, else just push the idle timer out."""
         if self._blanked:
@@ -383,6 +490,29 @@ class DisplayManager:
             self._inhibitors.add(reason)
         else:
             self._inhibitors.discard(reason)
+
+    def inhibit_sleep(self, reason: str, active: bool) -> None:
+        """Hold or release a named system-sleep blocker (e.g. a live call).
+        The first held reason takes a logind Inhibit('sleep', 'block') fd;
+        releasing the last one closes it. Never raises."""
+        blockers = getattr(self, '_sleep_blockers', None)
+        if blockers is None:
+            blockers = self._sleep_blockers = set()
+        if active:
+            blockers.add(reason)
+        else:
+            blockers.discard(reason)
+        block = getattr(self, '_sleep_block', None)
+        try:
+            if blockers:
+                if block is None:
+                    block = self._sleep_block = LogindInhibitor(
+                        'sleep', 'Call in progress', 'block')
+                block.acquire()
+            elif block is not None:
+                block.release()
+        except Exception as exc:
+            log.warning('sleep blocker update failed: %s', exc)
 
     def reset_idle(self) -> None:
         if self._idle_src is not None:
@@ -638,6 +768,18 @@ class DisplayManager:
                         callback(_MEDIA_KEY_ACTIONS[code])
                     except Exception:
                         pass
+            return GLib.SOURCE_REMOVE
+
+        # --- Tap-to-wake panel: the controller's double-tap gesture
+        # arrives as KEY_WAKEUP, a deliberate wake (the panel firmware
+        # filters pocket brushes), so it wakes like the power key but
+        # never blanks. Press only.
+        if ev_type == EV_KEY and code == KEY_WAKEUP:
+            if value == 1:
+                if self._blanked:
+                    self._wake()
+                else:
+                    self.reset_idle()
             return GLib.SOURCE_REMOVE
 
         # --- Fingerprint touch → wake if off, else try auth ---

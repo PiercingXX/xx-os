@@ -183,7 +183,8 @@ SWIPE_DOWN_ACTIONS = ('notifications', 'web_search', 'disabled')
 # it, 'system' follows the desktop color-scheme.
 APPEARANCE_MODES = ('theme', 'light', 'dark', 'system')
 
-# Escalating-lockout resume point (fail count + wall-clock lockout-until).
+# Escalating-lockout resume point (fail count + wall-clock lockout-until,
+# plus the wall-clock start so a clock jump back can be detected).
 # Private device-local state: kept out of backups and restores.
 _LOCKOUT_STATE_KEY = 'lock_screen_lockout'
 
@@ -450,11 +451,27 @@ class ShellConfig:
             return (0, 0.0)
         return (fails, until)
 
-    def set_lockout_state(self, fails: int, until: float) -> None:
-        self.data[_LOCKOUT_STATE_KEY] = {
+    def get_lockout_start(self) -> float:
+        """Wall-clock epoch the persisted lockout started, 0.0 when unknown
+        (state written before the start was recorded, or no lockout).
+        Corrupt values fail open to 0.0 like get_lockout_state."""
+        raw = self.data.get(_LOCKOUT_STATE_KEY)
+        if not isinstance(raw, dict):
+            return 0.0
+        try:
+            return max(0.0, float(raw.get('start', 0.0)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def set_lockout_state(self, fails: int, until: float,
+                          start: float | None = None) -> None:
+        state = {
             'fails': max(0, int(fails)),
             'until': max(0.0, float(until)),
         }
+        if start is not None:
+            state['start'] = max(0.0, float(start))
+        self.data[_LOCKOUT_STATE_KEY] = state
         self.save()
 
     def clear_lockout_state(self) -> None:

@@ -71,31 +71,48 @@ class ConfirmState:
         self.pending = None
 
 
-def suspend_visible(can_suspend: str | None) -> bool:
+def suspend_visible(can_suspend: str | None, call_live: bool = False) -> bool:
     """Whether the Suspend row shows for a login1 CanSuspend value.
 
     CanSuspend is a Manager method, not a property, answering 'yes'/'no'/
     'challenge'/'na'. The row stays visible until the probe answers (None);
     'yes' and 'challenge' (auth-gated, still offered) keep it — 'no', 'na'
-    and failures hide it.
+    and failures hide it. A live call hides it whatever the probe says:
+    suspending would drop the call.
     """
+    if call_live:
+        return False
     if can_suspend is None:
         return True
     return can_suspend in ('yes', 'challenge')
 
 
-def visible_power_rows(can_suspend: str | None) -> list[str]:
+def visible_power_rows(can_suspend: str | None,
+                       call_live: bool = False) -> list[str]:
     """Row keys in display order for the current CanSuspend probe value.
 
     Lock, Restart, Power off and Cancel always show; Suspend joins them
-    only while the probe is unanswered (None) or 'yes'/'challenge'. Pure,
-    so headless tests pin the exact rows the menu renders at 320x640.
+    only while the probe is unanswered (None) or 'yes'/'challenge', and
+    never during a live call. Pure, so headless tests pin the exact rows
+    the menu renders at 320x640.
     """
     rows = ['lock']
-    if suspend_visible(can_suspend):
+    if suspend_visible(can_suspend, call_live):
         rows.append('suspend')
     rows.extend(('reboot', 'poweroff', 'cancel'))
     return rows
+
+
+def _menu_call_live(menu) -> bool:
+    """The menu's injected live-call probe; False when none is wired or
+    it fails (the probe must never break the menu)."""
+    probe = getattr(menu, '_call_live', None)
+    if not callable(probe):
+        return False
+    try:
+        return bool(probe())
+    except Exception:
+        return False
 
 
 def query_can_suspend_async(on_done: Callable[[str | None], None],
@@ -228,7 +245,8 @@ class PowerMenu(Gtk.Window):
     """
 
     def __init__(self, config: ShellConfig | None = None,
-                 on_lock: Callable[[], None] | None = None) -> None:
+                 on_lock: Callable[[], None] | None = None,
+                 call_live: Callable[[], bool] | None = None) -> None:
         super().__init__()
         self.set_decorated(False)
         self.set_resizable(False)
@@ -251,6 +269,9 @@ class PowerMenu(Gtk.Window):
         # surface; the fallback keeps direct no-arg construction working.
         self._config = config if config is not None else ShellConfig()
         self._on_lock = on_lock
+        # Live-call probe: Suspend hides (and refuses) while it reads True.
+        self._call_live = call_live
+        self._can_suspend: str | None = None
         self._confirm = ConfirmState()
         self._confirm_timeout: int | None = None
         self._theme_provider = Gtk.CssProvider()
@@ -358,6 +379,8 @@ class PowerMenu(Gtk.Window):
         return scrim
 
     def show_menu(self) -> None:
+        # A call may have started or ended since the last open.
+        self._on_can_suspend(getattr(self, '_can_suspend', None))
         self.set_visible(True)
         self.present()
 
@@ -425,11 +448,17 @@ class PowerMenu(Gtk.Window):
         return False
 
     def _on_can_suspend(self, can_suspend: str | None) -> None:
+        self._can_suspend = can_suspend
         self._suspend_row.set_visible(
-            'suspend' in visible_power_rows(can_suspend))
+            'suspend' in visible_power_rows(can_suspend,
+                                            _menu_call_live(self)))
 
     def _execute(self, cmd: str) -> None:
         self._dismiss()
+        if cmd == 'suspend' and _menu_call_live(self):
+            # The menu was opened before the call arrived: still refuse.
+            _log.info('suspend refused: call in progress')
+            return
         power_action_async(cmd, on_done=self._on_power_result)
 
     def _on_power_result(self, ok: bool, message: str) -> None:

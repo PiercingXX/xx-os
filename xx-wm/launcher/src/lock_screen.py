@@ -24,7 +24,14 @@ if _LAYER_SHELL:
     from gi.repository import Gtk4LayerShell as LayerShell
 
 from config import DANGER_RED, WARNING_ORANGE, ShellConfig, ThemePreset
-from lock_lines import _FAIL_THRESHOLD, _lockout_secs, lock_screen_lines
+from lock_lines import (
+    _FAIL_THRESHOLD,
+    _lockout_secs,
+    lock_screen_lines,
+    release_velocity,
+    resume_lockout_secs,
+    swipe_unlocks,
+)
 from media_controls import MediaCard
 
 import smart_lock
@@ -206,7 +213,7 @@ _KEYPAD: list[tuple[str, str]] = [
 ]
 
 _MAX_PIN = 64
-_SWIPE_UNLOCK_VELOCITY = -300
+_DRAG_SAMPLES_MAX = 16   # recent (time, y) points kept for the release speed
 
 _KEYPAD_SPACING = 8
 _KEY_SIZE_MIN = 56
@@ -416,6 +423,7 @@ class LockScreen(Gtk.Window):
         self._pin         = ''
         self._fail_count  = 0
         self._lockout_src: int | None = None
+        self._drag_samples: list[tuple[float, float]] = []
         self._fp_running  = False
         self._keypad_btns: list[Gtk.Button] = []
         self._key_widgets: list[Gtk.Widget] = []
@@ -626,11 +634,16 @@ class LockScreen(Gtk.Window):
         grid.attach(top_pane, 0, 0, 1, 1)
         grid.attach(bot_pane, 0, 1, 1, 2)
 
-        # Upward swipe: no PIN → unlock directly; PIN set → reveal the keypad
-        swipe = Gtk.GestureSwipe.new()
-        swipe.set_touch_only(False)
-        swipe.connect('swipe', self._on_swipe)
-        root.add_controller(swipe)
+        # Upward swipe: no PIN → unlock directly; PIN set → reveal the keypad.
+        # A drag, not a bare GestureSwipe: velocity alone let a 10 px pocket
+        # flick unlock. lock_lines.swipe_unlocks decides on travel,
+        # direction and release speed together.
+        drag = Gtk.GestureDrag.new()
+        drag.set_touch_only(False)
+        drag.connect('drag-begin', self._on_drag_begin)
+        drag.connect('drag-update', self._on_drag_update)
+        drag.connect('drag-end', self._on_drag_end)
+        root.add_controller(drag)
 
         root.append(grid)
         # The status bar hides on the lock screen, so the lock keeps the
@@ -676,8 +689,31 @@ class LockScreen(Gtk.Window):
         for widget in self._key_widgets:
             widget.set_size_request(size, height)
 
-    def _on_swipe(self, _gesture: Gtk.GestureSwipe, _vx: float, vy: float) -> None:
-        if vy < _SWIPE_UNLOCK_VELOCITY:
+    def _note_drag_sample(self, dy: float) -> None:
+        samples = self._drag_samples
+        samples.append((GLib.get_monotonic_time() / 1_000_000, dy))
+        if len(samples) > _DRAG_SAMPLES_MAX:
+            del samples[:-_DRAG_SAMPLES_MAX]
+
+    def _on_drag_begin(self, _gesture: Gtk.GestureDrag,
+                       _x: float, _y: float) -> None:
+        self._drag_samples = []
+        self._note_drag_sample(0.0)
+
+    def _on_drag_update(self, _gesture: Gtk.GestureDrag,
+                        _dx: float, dy: float) -> None:
+        self._note_drag_sample(dy)
+
+    def _on_drag_end(self, _gesture: Gtk.GestureDrag,
+                     dx: float, dy: float) -> None:
+        self._note_drag_sample(dy)
+        velocity_y = release_velocity(self._drag_samples)
+        self._drag_samples = []
+        try:
+            height = self.get_height()
+        except Exception:
+            height = 0
+        if swipe_unlocks(dx, dy, velocity_y, height):
             self._swipe_up()
 
     def _swipe_up(self) -> None:
@@ -1179,21 +1215,40 @@ class LockScreen(Gtk.Window):
                 )
 
     def _persist_lockout_state(self, until: float) -> None:
+        # A running lockout also records its wall-clock start, so a resume
+        # can tell a clock jump back from a genuinely pending lockout.
         try:
-            self._config.set_lockout_state(self._fail_count, until)
+            if until > 0:
+                self._config.set_lockout_state(
+                    self._fail_count, until, start=time.time())
+            else:
+                self._config.set_lockout_state(self._fail_count, until)
         except Exception:
             pass
 
     def _resume_lockout_state(self) -> None:
         """A shell restart must not reset the escalating lockout: pick up
-        the persisted fail count and re-arm any still-running lockout."""
+        the persisted fail count and re-arm any still-running lockout —
+        never longer than the fail count earns (an RTC reset to 1970 would
+        otherwise lock the keypad for decades), and not at all when the
+        clock now reads before the lockout started (the count stays)."""
         try:
             fails, until = self._config.get_lockout_state()
         except Exception:
             return
+        try:
+            start = float(self._config.get_lockout_start())
+        except Exception:
+            start = 0.0
         self._fail_count = fails
-        if fails > 0 and until - time.time() > 0:
-            self._start_lockout(int(until - time.time()))
+        secs = resume_lockout_secs(fails, until, start, time.time())
+        if secs is None:
+            try:
+                self._config.set_lockout_state(fails, 0.0)
+            except Exception:
+                pass
+        elif secs > 0:
+            self._start_lockout(secs)
 
     def _unlock(self) -> None:
         self._fail_count = 0

@@ -286,8 +286,9 @@ class CallWiring:
             pass
 
     def _sync_call_inhibit(self, calls: list) -> None:
-        """Hold the display awake while any call is non-terminated; the
-        blank-driven auto-lock consults the same snapshot and stands down."""
+        """Hold the display awake and block system sleep while any call is
+        non-terminated; the blank-driven auto-lock consults the same
+        snapshot and stands down."""
         win = self._win
         try:
             from modem_monitor import _STATE_TERMINATED
@@ -297,6 +298,14 @@ class CallWiring:
         display_mgr = getattr(win, '_display_mgr', None)
         if display_mgr is not None:
             display_mgr.inhibit_idle('call', live)
+            # And hold off system sleep (logind 'block' inhibitor) for the
+            # whole call: suspend would drop the modem audio path.
+            inhibit_sleep = getattr(display_mgr, 'inhibit_sleep', None)
+            if callable(inhibit_sleep):
+                try:
+                    inhibit_sleep('call', live)
+                except Exception:
+                    pass
         # A blank during the call skipped the auto-lock; arm it now that the
         # last call is gone, or the phone stays unlocked in the pocket.
         was_live = getattr(win, '_call_was_live', False)

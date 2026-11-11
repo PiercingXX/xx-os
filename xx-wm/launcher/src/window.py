@@ -1787,7 +1787,8 @@ class ShellWindow(Adw.ApplicationWindow):
         elif self._power_menu is None:
             from power_menu import PowerMenu
             self._power_menu = PowerMenu(
-                config=self.config, on_lock=self._show_lock_screen)
+                config=self.config, on_lock=self._show_lock_screen,
+                call_live=self._call_live)
             self._power_menu.set_application(self.get_application())
             # Same current-preset rule as _open_dialer.
             self._power_menu.apply_theme(resolve_appearance_preset(self.config))
