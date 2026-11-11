@@ -357,3 +357,155 @@ def as_you_type(text: str, country: str | None = None) -> str:
     except Exception:
         return entered
     return shown if shown and shown.strip() else entered
+
+
+# -- matching ---------------------------------------------------------------
+#
+# One "same number?" rule for every surface that compares two numbers
+# (DnD exceptions, caller ID, the SMS blocklist and starred senders, the
+# contacts lookup index). Port of libcutiephonenumber's ``locallyEqualTo``
+# and GNOME Calls' contact query: libphonenumber's EXACT_MATCH counts, an
+# NSN_MATCH counts only when nothing says the country codes disagree, and a
+# shorter number that is just the tail of a longer one (SHORT_NSN_MATCH,
+# the old "last 7 digits" rule) never counts: 614-555-0142 and
+# 312-555-0142 are two different people.
+
+#: A number with at most this many digits is a short code (``911``,
+#: ``22395``): it matches only the same digits, never the tail of a longer
+#: number.
+SHORT_CODE_MAX_DIGITS = 6
+
+#: Without the library a national number may still match an international
+#: one by its tail, but only when the national side carries at least this
+#: many digits and the extra digits fit a country calling code.
+_FALLBACK_MIN_TAIL = 8
+_FALLBACK_MAX_PREFIX = 3
+
+
+def _match_country(country: str | None) -> str:
+    """The region national numbers are read in for matching: ``country``
+    when given, else the last auto-resolved user country, else the
+    locale. Never blocks (no ModemManager call), so it is safe on the
+    GTK main loop."""
+    if country is not None:
+        return country_iso(country, None, None)
+    with _lock:
+        cached = _auto_country
+    if cached is not None and cached[0]:
+        return cached[0]
+    return _iso_from_locale(os.environ)
+
+
+def _dial_form(text: str) -> str:
+    """Digits, keeping a leading ``+`` (all libphonenumber needs)."""
+    digits = "".join(c for c in text if c.isdigit())
+    return ("+" + digits) if text.startswith("+") else digits
+
+
+def _identity(text: str) -> str:
+    """Comparison key for a non-number sender (``AMAZON``, ``*86``)."""
+    return "".join(text.split()).casefold()
+
+
+def _fallback_match(a: str, b: str) -> bool:
+    """No-library rule: the same digits once the international prefix
+    (``+``, ``00``) or a national trunk ``0`` is dropped, or a
+    national number that is an international one minus a 1-3 digit
+    country code. A bare 7-digit tail never matches."""
+    def strip(form: str) -> tuple[str, bool]:
+        if form.startswith("+"):
+            return form[1:], True
+        if form.startswith("00"):
+            return form[2:], True
+        return (form[1:] if form.startswith("0") else form), False
+
+    da, intl_a = strip(a)
+    db, intl_b = strip(b)
+    if not da or not db:
+        return False
+    if da == db:
+        return True
+    if intl_a and intl_b:
+        return False
+    shorter, longer = (da, db) if len(da) <= len(db) else (db, da)
+    extra = len(longer) - len(shorter)
+    return (len(shorter) >= _FALLBACK_MIN_TAIL
+            and 1 <= extra <= _FALLBACK_MAX_PREFIX
+            and longer.endswith(shorter))
+
+
+def _library_match(lib, a: str, b: str, iso: str) -> bool:
+    match = lib.MatchType
+    if iso:
+        try:
+            first = lib.parse(a, iso)
+            second = lib.parse(b, iso)
+        except Exception:
+            first = second = None
+        if first is not None and second is not None:
+            # Both carry a country code now, so only EXACT_MATCH can
+            # come back for the same number; NSN_MATCH would mean the
+            # country codes differ.
+            return lib.is_number_match(first, second) == match.EXACT_MATCH
+    verdict = lib.is_number_match(a, b)
+    if verdict == match.EXACT_MATCH:
+        return True
+    if iso:
+        return False
+    # No home region to read the national side in: an NSN_MATCH has
+    # nothing contradicting it (Cutie's "both country codes unknown"),
+    # and neither does a stored digits-only "16145550142".
+    return verdict == match.NSN_MATCH or _fallback_match(a, b)
+
+
+def numbers_match(a: str | None, b: str | None,
+                  country: str | None = None) -> bool:
+    """True when ``a`` and ``b`` are the same number for a user in
+    ``country`` (ISO 3166 alpha-2; the user's country when omitted).
+
+    ``+16145550142``, ``(614) 555-0142`` and ``1 614 555 0142`` match in
+    the US; ``614-555-0142`` and ``312-555-0142`` never do, and neither
+    do ``555-0142`` and either of them. Short codes (``22395``, ``911``)
+    match only the same digits; alphanumeric senders and ``*``/``#``
+    codes match only the same text, ignoring case and spaces. Never
+    raises, never blocks: without the ``phonenumbers`` library a
+    conservative digit rule stands in.
+    """
+    text_a = (a or "").strip() if isinstance(a, str) else ""
+    text_b = (b or "").strip() if isinstance(b, str) else ""
+    if not text_a or not text_b:
+        return False
+    if not (_looks_like_number(text_a) and _looks_like_number(text_b)):
+        if _looks_like_number(text_a) or _looks_like_number(text_b):
+            return False
+        key = _identity(text_a)
+        return bool(key) and key == _identity(text_b)
+    form_a, form_b = _dial_form(text_a), _dial_form(text_b)
+    digits_a, digits_b = form_a.lstrip("+"), form_b.lstrip("+")
+    if digits_a == digits_b:
+        return True
+    if min(len(digits_a), len(digits_b)) <= SHORT_CODE_MAX_DIGITS:
+        return False
+    lib = _engine()
+    if lib is not None:
+        try:
+            return bool(_library_match(lib, form_a, form_b,
+                                       _match_country(country)))
+        except Exception:
+            pass
+    return _fallback_match(form_a, form_b)
+
+
+# -- DTMF -------------------------------------------------------------------
+
+#: The sixteen DTMF tones ModemManager's Call.SendDtmf accepts.
+DTMF_TONES = "0123456789*#ABCD"
+
+
+def dtmf_tone(digit: str | None) -> str | None:
+    """The single DTMF tone ``digit`` names (``a``-``d`` upper-cased,
+    surrounding space ignored), or None for anything else: no ``+``,
+    ``,``/``p`` pauses, letters or multi-character strings ever reach
+    the modem. One rule for the shell's in-call keypad and xx-dialer."""
+    tone = digit.strip().upper() if isinstance(digit, str) else ""
+    return tone if len(tone) == 1 and tone in DTMF_TONES else None

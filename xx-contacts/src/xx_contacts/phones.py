@@ -9,10 +9,14 @@ its country calling code for national numbers written in the region's usual
 shapes (currently the NANP 10-digit / 11-digit-leading-1 forms for region
 US/CA; other regions accept an explicit ``+``/``00`` form only).
 
-Lookup index: digits-suffix match. A query must carry at least 7 digits to
-match anything. Ambiguity resolves exact E.164 first, then the longest
-matching digit suffix; remaining ties break deterministically by
-(uid, digits) so repeated lookups agree.
+Lookup index: the shared ``xx_phone.numbers_match`` rule decides whether
+two numbers are the same (libphonenumber EXACT match, or NSN match when
+nothing says the country codes differ). Sharing the last 7 digits is never
+enough: 614-555-0142 and 312-555-0142 are two people. The last 7 digits
+only bucket candidates. A query must carry at least 7 digits to match
+anything. Ambiguity resolves exact E.164 first, then identical digits;
+remaining ties break deterministically by (uid, digits) so repeated
+lookups agree.
 """
 
 from __future__ import annotations
@@ -21,6 +25,16 @@ import re
 from dataclasses import dataclass
 
 MIN_MATCH_DIGITS = 7
+
+
+def _same_number(stored: str, query: str, region: str) -> bool:
+    """The shared xx_phone matcher; identical digits when it is missing."""
+    try:
+        import xx_phone
+    except Exception:
+        stored_digits = digits_of(stored)
+        return bool(stored_digits) and stored_digits == digits_of(query)
+    return xx_phone.numbers_match(stored, query, region)
 
 COUNTRY_CALLING_CODES: dict[str, str] = {
     "US": "1",
@@ -97,6 +111,7 @@ class IndexedNumber:
     tags: tuple[str, ...] = ()
     digits: str = ""
     e164: str | None = None
+    raw: str = ""
 
 
 @dataclass
@@ -121,7 +136,7 @@ class LookupIndex:
         self._by_uid: dict[str, list[IndexedNumber]] = {}
         self._by_e164: dict[str, list[IndexedNumber]] = {}
         self._by_digits: dict[str, list[IndexedNumber]] = {}
-        self._suffixes: dict[str, list[IndexedNumber]] = {}
+        self._tails: dict[str, list[IndexedNumber]] = {}
 
     @property
     def default_region(self) -> str:
@@ -132,8 +147,8 @@ class LookupIndex:
             self._by_e164.setdefault(entry.e164, []).append(entry)
         if entry.digits:
             self._by_digits.setdefault(entry.digits, []).append(entry)
-            for width in range(MIN_MATCH_DIGITS, len(entry.digits) + 1):
-                self._suffixes.setdefault(entry.digits[-width:], []).append(entry)
+            self._tails.setdefault(entry.digits[-MIN_MATCH_DIGITS:],
+                                   []).append(entry)
 
     def _untrack(self, entry: IndexedNumber) -> None:
         for table, key in ((self._by_e164, entry.e164),
@@ -146,14 +161,13 @@ class LookupIndex:
             else:
                 table.pop(key, None)
         if entry.digits:
-            for width in range(MIN_MATCH_DIGITS, len(entry.digits) + 1):
-                suffix = entry.digits[-width:]
-                kept = [e for e in self._suffixes.get(suffix, [])
-                        if e.uid != entry.uid]
-                if kept:
-                    self._suffixes[suffix] = kept
-                else:
-                    self._suffixes.pop(suffix, None)
+            tail = entry.digits[-MIN_MATCH_DIGITS:]
+            kept = [e for e in self._tails.get(tail, [])
+                    if e.uid != entry.uid]
+            if kept:
+                self._tails[tail] = kept
+            else:
+                self._tails.pop(tail, None)
 
     def upsert(self, uid: str, display_name: str,
                numbers: list[tuple[str, str | None, str]],
@@ -165,11 +179,12 @@ class LookupIndex:
         """
         self.remove(uid)
         entries: list[IndexedNumber] = []
-        for _raw, e164, digits in numbers:
+        for raw, e164, digits in numbers:
             if not digits:
                 continue
             entry = IndexedNumber(uid=uid, display_name=display_name,
-                                  tags=tuple(tags), digits=digits, e164=e164)
+                                  tags=tuple(tags), digits=digits, e164=e164,
+                                  raw=raw or "")
             entries.append(entry)
             self._track(entry)
         self._by_uid[uid] = entries
@@ -183,15 +198,15 @@ class LookupIndex:
         self._by_uid.clear()
         self._by_e164.clear()
         self._by_digits.clear()
-        self._suffixes.clear()
+        self._tails.clear()
         for uid, display_name, numbers, tags in rows:
             entries: list[IndexedNumber] = []
-            for _raw, e164, digits in numbers:
+            for raw, e164, digits in numbers:
                 if not digits:
                     continue
                 entry = IndexedNumber(uid=uid, display_name=display_name,
                                       tags=tuple(tags), digits=digits,
-                                      e164=e164)
+                                      e164=e164, raw=raw or "")
                 entries.append(entry)
                 self._track(entry)
             self._by_uid[uid] = entries
@@ -207,15 +222,15 @@ class LookupIndex:
                 winner = sorted(exact, key=lambda e: (e.uid, e.digits))[0]
                 return LookupResult(winner.uid, winner.display_name,
                                     winner.tags)
-        limit = min(len(query_digits), 15)
-        for width in range(limit, MIN_MATCH_DIGITS - 1, -1):
-            candidates = self._suffixes.get(query_digits[-width:])
-            if candidates:
-                winner = sorted(candidates,
-                                key=lambda e: (e.uid, e.digits))[0]
-                return LookupResult(winner.uid, winner.display_name,
-                                    winner.tags)
-        return None
+        candidates = self._tails.get(query_digits[-MIN_MATCH_DIGITS:], [])
+        hits = [e for e in candidates
+                if _same_number(e.e164 or e.raw or e.digits, number or "",
+                                self._default_region)]
+        if not hits:
+            return None
+        winner = sorted(hits, key=lambda e: (e.digits != query_digits,
+                                             e.uid, e.digits))[0]
+        return LookupResult(winner.uid, winner.display_name, winner.tags)
 
     @property
     def contact_count(self) -> int:

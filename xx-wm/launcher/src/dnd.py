@@ -9,7 +9,9 @@ notification daemon and call UI can consult it.
 
 The schedule matcher is the shared xx_phone rule (common/xx_phone),
 also used by Focus Mode and xx-email. Malformed entries are skipped
-with a warning, never raise.
+with a warning, never raise. Numbers compare through the shared
+xx_phone.numbers_match rule (whole number, never the last 7 digits),
+so a starred 614-555-0142 does not let 312-555-0142 ring through.
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ from config import ShellConfig
 from shell_log import get_logger
 
 try:
+    from xx_phone import numbers_match as _shared_numbers_match
     from xx_phone.schedules import parse_hhmm
     from xx_phone.schedules import schedule_matches as _shared_schedule_matches
 except ImportError:
@@ -30,6 +33,7 @@ except ImportError:
     _common_dir = Path(__file__).resolve().parents[3] / 'common'
     if _common_dir.is_dir() and str(_common_dir) not in sys.path:
         sys.path.insert(0, str(_common_dir))
+    from xx_phone import numbers_match as _shared_numbers_match
     from xx_phone.schedules import parse_hhmm
     from xx_phone.schedules import schedule_matches as _shared_schedule_matches
 
@@ -39,16 +43,18 @@ REPEAT_CALLER_WINDOW = 15 * 60
 
 
 def normalize_number(number: str) -> str:
-    """Digits only; '+1 (555) 010-2222' and '5550102222' compare equal by tail."""
+    """Digits only (a leading '+' is dropped); for display/keys, not matching."""
     return re.sub(r'[^\d]', '', number or '')
 
 
 def numbers_match(a: str, b: str) -> bool:
-    na, nb = normalize_number(a), normalize_number(b)
-    if not na or not nb:
-        return False
-    tail = min(7, len(na), len(nb))
-    return na[-tail:] == nb[-tail:]
+    """Same number? The shared xx_phone rule: '+1 (614) 555-0142' and
+    '6145550142' match; '3125550142' and a bare '5550142' do not."""
+    try:
+        return bool(_shared_numbers_match(a, b))
+    except Exception:
+        na, nb = normalize_number(a), normalize_number(b)
+        return bool(na) and na == nb
 
 
 def schedule_matches(schedules, now: datetime) -> bool:
@@ -149,7 +155,9 @@ class DndState:
         when = _time.time() if when is None else when
         cutoff = when - REPEAT_CALLER_WINDOW
         self._recent_calls = [(n, t) for n, t in self._recent_calls if t > cutoff]
-        self._recent_calls.append((normalize_number(number), when))
+        # Kept as dialled ('+' and all) so the shared matcher can tell
+        # a country code from a national number.
+        self._recent_calls.append(((number or '').strip(), when))
 
     def is_exception(self, number: str, when: float | None = None) -> bool:
         """True if this call should ring through DnD: starred contact, or the
@@ -158,8 +166,7 @@ class DndState:
         if self.is_starred(number):
             return True
         cutoff = when - REPEAT_CALLER_WINDOW
-        wanted = normalize_number(number)
         return any(
-            t > cutoff and n and numbers_match(n, wanted)
+            t > cutoff and n and numbers_match(n, number)
             for n, t in self._recent_calls
         )

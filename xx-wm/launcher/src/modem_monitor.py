@@ -11,6 +11,14 @@ so this monitor subscribes to those (plus Modem.Messaging Added for SMS)
 and fetches each call's properties asynchronously. The remote Number
 often arrives after the first ring, so every call also gets a
 PropertiesChanged subscription to pick up late fields.
+
+ModemManager itself can restart (crash, package upgrade, modem reset): the
+monitor watches its system-bus name, forgets every modem and call when it
+vanishes (ending any call surface through the normal ended path, so no
+ghost call screen stays up) and re-enumerates when it comes back. Calls
+that reach TERMINATED are removed from ModemManager with Voice.DeleteCall
+(GNOME Calls does the same), and the terminate reason is kept as a short
+text on the call (``CallInfo.end_reason``, :func:`last_ended_call`).
 """
 from __future__ import annotations
 
@@ -50,6 +58,30 @@ _LIVE_STATES = frozenset({
     _STATE_ACTIVE, _STATE_HELD, _STATE_WAITING,
 })
 
+#: MMCallStateReason to the short text shown/logged when a call ends
+#: (GNOME Calls' STATE_REASON_MAP, shortened for a phone surface).
+_END_REASONS = {
+    0: 'Call ended',
+    1: 'Call ended',
+    2: 'Call ended',
+    3: 'Call ended',
+    4: 'Call ended',
+    5: 'Busy',
+    6: 'Network error',
+    7: 'Audio setup failed',
+    8: 'Call transferred',
+    9: 'Call deflected',
+}
+
+
+def end_reason_text(reason) -> str:
+    """Short text for an MMCallStateReason code (``5`` reads 'Busy');
+    unknown codes read 'Call ended'."""
+    try:
+        return _END_REASONS.get(int(reason), 'Call ended')
+    except (TypeError, ValueError):
+        return 'Call ended'
+
 _CALL_TIMEOUT_MS = 5_000
 _ENUM_TIMEOUT_MS = 8_000
 _OWNER_PROBE_TIMEOUT_MS = 500
@@ -69,6 +101,8 @@ class CallInfo:
     direction: int = 0
     state: int = 0
     started_at: float | None = None
+    state_reason: int = 0
+    end_reason: str = ''
 
 
 CallState = CallInfo
@@ -93,6 +127,16 @@ def _err_message(err: Exception) -> str:
     return getattr(err, 'message', None) or str(err)
 
 
+def last_ended_call() -> CallInfo | None:
+    """The most recently terminated call (``end_reason`` filled in, e.g.
+    'Busy'), or None. For the call-ended path: the legacy ``on_ended``
+    callback carries no arguments."""
+    if _last_monitor is None:
+        return None
+    ended = _last_monitor._last_ended
+    return replace(ended) if ended is not None else None
+
+
 def active_call_path() -> str | None:
     """Object path of the preferred live call, if any (incoming ringing
     first, then active, then any other non-terminated call)."""
@@ -102,6 +146,12 @@ def active_call_path() -> str | None:
 
 
 CallResultCallback = Callable[[bool, str | None], None]
+
+
+def _consult_check_number(number: str, on_verdict) -> None:
+    """Dialer CheckNumber consult (call_screen), fail-open to ring."""
+    from call_screen import consult_check_number
+    consult_check_number(number, on_verdict)
 
 
 def accept_call(call_path: str, on_done: CallResultCallback) -> None:
@@ -402,6 +452,11 @@ class ModemMonitor:
         self._announced_active: set[str] = set()
         self._ended_announced = False
         self._active_call_path: str | None = None
+        self._screened_waiting: set[str] = set()
+        self._last_ended: CallInfo | None = None
+        self._mm_watch: int | None = None
+        self._mm_owner: str | None = None
+        self._mm_vanished = False
         global _last_monitor
         _last_monitor = self
         GLib.idle_add(self._init_bus)
@@ -440,7 +495,51 @@ class ModemMonitor:
             self._enumerate()
         except GLib.Error as err:
             get_logger('modem_monitor').warning('system bus unavailable: %s', err)
+            return False
+        self._watch_modem_manager()
         return False
+
+    def _watch_modem_manager(self) -> None:
+        """Follow ModemManager's bus name: a restart drops every object
+        path we hold, so vanish forgets them and appear re-enumerates."""
+        if self._mm_watch is not None:
+            return
+        try:
+            self._mm_watch = Gio.bus_watch_name(
+                Gio.BusType.SYSTEM, _MM1, Gio.BusNameWatcherFlags.NONE,
+                self._on_mm_appeared, self._on_mm_vanished)
+        except Exception as err:  # noqa: BLE001 - optional robustness only
+            from shell_log import get_logger
+            get_logger('modem_monitor').warning(
+                'cannot watch %s: %s', _MM1, _err_message(err))
+
+    def _on_mm_appeared(self, _conn, _name, owner) -> None:
+        previous, self._mm_owner = self._mm_owner, owner
+        if previous is not None and previous != owner:
+            # A new instance without a vanish in between (fast restart):
+            # every path the old one handed out is dead.
+            self._forget_modem_manager()
+            self._mm_vanished = True
+        if self._mm_vanished:
+            self._mm_vanished = False
+            self._enumerate()
+
+    def _on_mm_vanished(self, _conn, _name) -> None:
+        self._mm_owner = None
+        self._mm_vanished = True
+        self._forget_modem_manager()
+
+    def _forget_modem_manager(self) -> None:
+        """Drop every modem and call: each call leaves through _drop_call,
+        so the snapshot empties and on_ended fires once (call UI closes)."""
+        from shell_log import get_logger
+        if self._calls or self._modems:
+            get_logger('modem_monitor').warning(
+                'ModemManager went away; dropping %d call(s), %d modem(s)',
+                len(self._calls), len(self._modems))
+        self._modems.clear()
+        for call_path in list(self._calls) + list(self._fetching):
+            self._drop_call(call_path)
 
     # ------------------------------------------------------------- tracking
 
@@ -520,6 +619,10 @@ class ModemMonitor:
                 'GetAll on %s failed: %s', call_path, _err_message(err))
             self._fetching.discard(call_path)
             return
+        if call_path not in self._fetching and call_path not in self._calls:
+            # Dropped while the fetch was in flight (CallDeleted, or
+            # ModemManager went away): never resurrect a dead path.
+            return
         self._fetching.discard(call_path)
         try:
             direction = int(props.get('Direction', 0))
@@ -527,8 +630,18 @@ class ModemMonitor:
         except (TypeError, ValueError):
             direction, state = 0, 0
         number = _strip_tel(str(props.get('Number', '')))
+        try:
+            reason = int(props.get('StateReason', 0))
+        except (TypeError, ValueError):
+            reason = 0
         if state == _STATE_TERMINATED:
-            self._drop_call(call_path)
+            # Ended before we looked, or a leftover found at enumerate:
+            # ModemManager keeps it until someone deletes it.
+            tracked = self._calls.get(call_path)
+            if tracked is not None:
+                tracked.state_reason = reason
+            self._delete_call(call_path)
+            self._drop_call(call_path, terminated=True)
             return
         call = self._calls.get(call_path)
         if call is None:
@@ -537,10 +650,13 @@ class ModemMonitor:
         call.direction = direction
         call.state = state
         call.number = number
+        call.state_reason = reason
         self._subscribe_call(call_path)
         self._ended_announced = False
         if direction == _DIR_INCOMING and state == _STATE_RINGING_IN:
             self._announce_incoming(call_path)
+        elif direction == _DIR_INCOMING and state == _STATE_WAITING:
+            self._screen_waiting(call_path)
         if state == _STATE_ACTIVE:
             self._announce_active(call_path)
         self._refresh_active_path()
@@ -567,20 +683,83 @@ class ModemMonitor:
             for sub_id in sub_ids:
                 self._bus.signal_unsubscribe(sub_id)
 
-    def _drop_call(self, call_path: str) -> None:
+    def _drop_call(self, call_path: str, terminated: bool = False) -> None:
         tracked = self._calls.pop(call_path, None)
         self._fetching.discard(call_path)
         self._call_modem.pop(call_path, None)
         self._announced_incoming.discard(call_path)
         self._announced_active.discard(call_path)
+        self._screened_waiting.discard(call_path)
         self._drop_subscription(call_path)
         if tracked is None:
             return
+        if terminated:
+            tracked.state = _STATE_TERMINATED
+            tracked.end_reason = end_reason_text(tracked.state_reason)
+            self._last_ended = tracked
+            if tracked.state_reason not in (0, 1, 2, 3, 4):
+                from shell_log import get_logger
+                get_logger('modem_monitor').info(
+                    'call %s ended: %s', call_path, tracked.end_reason)
         self._refresh_active_path()
         self._emit_changed()
         if not self._calls and not self._ended_announced:
             self._ended_announced = True
             GLib.idle_add(self._on_ended)
+
+    def _delete_call(self, call_path: str) -> None:
+        """Voice.DeleteCall for a TERMINATED call (fire-and-forget: another
+        client may already have deleted it, and errors change nothing)."""
+        modem_path = self._call_modem.get(call_path)
+        if modem_path is None or self._bus is None:
+            return
+
+        def _on_deleted(conn, result) -> None:
+            try:
+                conn.call_finish(result)
+            except Exception:  # noqa: BLE001 - already gone is fine
+                pass
+
+        try:
+            self._bus.call(
+                _MM1, modem_path, _VOICE_IFACE, 'DeleteCall',
+                GLib.Variant('(o)', (call_path,)), None,
+                Gio.DBusCallFlags.NONE, _CALL_TIMEOUT_MS, None, _on_deleted,
+            )
+        except Exception:  # noqa: BLE001 - best effort cleanup
+            pass
+
+    def _screen_waiting(self, call_path: str) -> None:
+        """Consult the dialer policy (CheckNumber) for a second incoming
+        call that arrives WAITING. It never passes RINGING_IN while the
+        first call is up, so the ringing path would never screen it. The
+        waiting banner stays the UI; a block verdict hangs up only this
+        call (Call.Hangup on its own path, never Voice.HangupAll), and a
+        verdict that lands after the call was answered, promoted to
+        ringing (screened there) or renumbered is ignored."""
+        if (call_path in self._screened_waiting
+                or call_path in self._announced_incoming):
+            return
+        call = self._calls.get(call_path)
+        if call is None:
+            return
+        self._screened_waiting.add(call_path)
+        number = call.number
+
+        def _on_verdict(verdict: str, reason: str) -> None:
+            current = self._calls.get(call_path)
+            if (current is None or current.state != _STATE_WAITING
+                    or current.number != number or verdict != 'block'):
+                return
+            from shell_log import get_logger
+            get_logger('modem_monitor').info(
+                'blocked waiting call from %s (%s)', number or 'withheld', reason)
+            hangup_call(call_path, lambda _ok, _err: None)
+
+        try:
+            _consult_check_number(number, _on_verdict)
+        except Exception:  # noqa: BLE001 - screening fails open (rings)
+            pass
 
     def _announce_incoming(self, call_path: str) -> None:
         if call_path in self._announced_incoming:
@@ -643,7 +822,7 @@ class ModemMonitor:
     def _on_call_state_changed(
         self, _conn, _sender, call_path, _iface, _sig, params, _ud,
     ) -> None:
-        _old, new_state, _reason = params.unpack()
+        _old, new_state, reason = params.unpack()
         call = self._calls.get(call_path)
         if call is None:
             return
@@ -651,11 +830,16 @@ class ModemMonitor:
             new_state = int(new_state)
         except (TypeError, ValueError):
             return
+        try:
+            call.state_reason = int(reason)
+        except (TypeError, ValueError):
+            pass
         call.state = new_state
         if new_state == _STATE_ACTIVE:
             self._announce_active(call_path)
         elif new_state == _STATE_TERMINATED:
-            self._drop_call(call_path)
+            self._delete_call(call_path)
+            self._drop_call(call_path, terminated=True)
             return
         elif (new_state == _STATE_RINGING_IN
                 and call.direction == _DIR_INCOMING):
@@ -663,6 +847,9 @@ class ModemMonitor:
             # passed through the initial fetch announcement: screen it
             # (consult) and ring it like any other incoming call.
             self._announce_incoming(call_path)
+        elif (new_state == _STATE_WAITING
+                and call.direction == _DIR_INCOMING):
+            self._screen_waiting(call_path)
         self._refresh_active_path()
         self._emit_changed()
 
@@ -691,6 +878,12 @@ class ModemMonitor:
                 and call_path in self._announced_incoming):
             self._announced_incoming.discard(call_path)
             self._announce_incoming(call_path)
+        elif (call.direction == _DIR_INCOMING
+                and call.state == _STATE_WAITING
+                and call_path in self._screened_waiting):
+            # Screened while withheld; the real number decides now.
+            self._screened_waiting.discard(call_path)
+            self._screen_waiting(call_path)
         self._emit_changed()
 
     def _on_interfaces_added(

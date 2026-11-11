@@ -544,26 +544,26 @@ class TestPlatformMatch:
     """Port of ``PlatformSmsImportTest`` over the pure matchers."""
 
     def _known(self):
-        return [backup.KnownMessage("15550100", 1000000, "hello"),
-                backup.KnownMessage("15550100", 2000000, "again")]
+        return [backup.KnownMessage("16145550100", 1000000, "hello"),
+                backup.KnownMessage("16145550100", 2000000, "again")]
 
     def test_a_row_already_held_within_the_window_is_not_missing(self):
-        rows = [backup.PlatformRow("+1 555 0100", 1000000 + 90000, 1, "hello", True),
-                backup.PlatformRow("5550100", 1000000 - 90000, 1, "hello", True)]
+        rows = [backup.PlatformRow("+1 614 555 0100", 1000000 + 90000, 1, "hello", True),
+                backup.PlatformRow("6145550100", 1000000 - 90000, 1, "hello", True)]
         assert backup.find_missing(rows, self._known()) == []
 
     def test_a_new_body_a_far_off_timestamp_or_a_new_number_is_missing(self):
-        new_body = backup.PlatformRow("+15550100", 1000000, 1, "different", False)
-        far_off = backup.PlatformRow("+15550100", 1000000 + backup.MATCH_WINDOW_MS + 1,
+        new_body = backup.PlatformRow("+16145550100", 1000000, 1, "different", False)
+        far_off = backup.PlatformRow("+16145550100", 1000000 + backup.MATCH_WINDOW_MS + 1,
                                      1, "hello", False)
-        new_number = backup.PlatformRow("+15550199", 1000000, 2, "hello", True)
+        new_number = backup.PlatformRow("+16145550199", 1000000, 2, "hello", True)
         assert backup.find_missing([new_body, far_off, new_number],
                                    self._known()) == [new_body, far_off, new_number]
 
     def test_an_imported_dup_is_removed_while_original_and_singles_stay(self):
         moment = 1000000
         late = moment + backup.IMPORTED_ID_GAP_MS + 10000
-        participants = {1: "15550100", 2: "5550100"}
+        participants = {1: "16145550100", 2: "6145550100"}
         original = backup.StoredMessage(moment + 5, 1, "SMS", moment, "hello")
         imported_dup = backup.StoredMessage(late, 2, "SMS", moment + 1000, "hello")
         imported_single = backup.StoredMessage(late + 1, 1, "SMS",

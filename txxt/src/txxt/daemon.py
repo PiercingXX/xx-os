@@ -30,6 +30,7 @@ helpers) or as armed async calls; worker results return via
 from __future__ import annotations
 
 import fcntl
+import json
 import logging
 import os
 import threading
@@ -58,6 +59,10 @@ log = logging.getLogger("txxt-daemon")
 LOCK_NAME = "txxt-daemon.lock"
 RETRY_PUMP_MS = 5_000
 RECONCILE_META_KEY = "last_reconcile_millis"
+#: When each modem row stuck in RECEIVING was first seen (JSON
+#: ``{"<path>\t<timestamp>": epoch_seconds}``), for the rows whose own
+#: timestamp cannot date them (missing, or ahead of a wrong clock).
+RECEIVING_SEEN_META_KEY = "receiving_first_seen"
 
 RETRY_BASE_DELAY_MS = 5_000
 RETRY_MAX_DELAY_MS = 15 * 60 * 1000
@@ -438,6 +443,50 @@ def _match_ids(
             continue
         matched.append(row_id)
     return matched
+
+
+def _receiving_key(path: str, stamp: str) -> str:
+    # The modem reuses paths after a delete; the timestamp tells a new
+    # row on an old path apart.
+    return f"{path}\t{stamp}"
+
+
+def triage_receiving(records, blanks, now_s: float, seen: dict):
+    """Split the modem store for the startup reconcile.
+
+    Rows still RECEIVING may get their remaining parts any moment and stay
+    untouched (``fresh`` paths, for the live path to watch) until
+    :func:`mm_client.receiving_expired` gives up on them; an expired one
+    with text imports what it has and is deleted through the normal
+    save-then-delete reconcile, a blank expired one is just deleted.
+
+    Returns ``(to_reconcile, delete_blank_paths, fresh_paths, seen)``,
+    ``seen`` holding first-seen times for the rows still waiting.
+    """
+    to_reconcile = []
+    delete_blank = []
+    fresh = []
+    still_seen = {}
+    stuck = [(record.path, record.timestamp, record) for record in records
+             if record.state == mm_client.STATE_RECEIVING]
+    stuck += [(path, stamp, None) for path, stamp in blanks]
+    for record in records:
+        if record.state != mm_client.STATE_RECEIVING:
+            to_reconcile.append(record)
+    for path, stamp, record in stuck:
+        key = _receiving_key(path, stamp)
+        try:
+            first = float(seen.get(key, now_s))
+        except (TypeError, ValueError):
+            first = now_s
+        if not mm_client.receiving_expired(stamp, now_s, first):
+            still_seen[key] = first
+            fresh.append(path)
+        elif record is not None:
+            to_reconcile.append(record)
+        else:
+            delete_blank.append(path)
+    return to_reconcile, delete_blank, fresh, still_seen
 
 
 def reconcile_records(records, store, delete_fn) -> ReconcileCounts:
@@ -836,6 +885,24 @@ class InboundPipeline:
     def conversation_for_notification(self, notification_id: int) -> int | None:
         return self._notification_map.get(notification_id)
 
+    def close_notifications(self, conversation_id: int) -> int:
+        """Close every card this daemon posted for ``conversation_id``
+        (the thread was read: opened or marked read) and forget their
+        ids. Blocking (worker threads); returns how many were closed."""
+        ids = [nid for nid, cid in self._notification_map.items()
+               if cid == conversation_id]
+        closed = 0
+        for notification_id in ids:
+            self._notification_map.pop(notification_id, None)
+            if self._notify_bus is None:
+                continue
+            try:
+                if notify.close_notification(self._notify_bus, notification_id):
+                    closed += 1
+            except Exception:
+                pass
+        return closed
+
     def _auto_reply_config(self) -> tuple[bool, dict]:
         if self._settings is None:
             return False, {}
@@ -1006,6 +1073,8 @@ class Daemon:
         # stack overlapping pumps that resend the same queued row.
         self._pump_lock = threading.Lock()
         self._dbus_connection = None
+        self._mm_owner: str | None = None
+        self._mm_vanished = False
 
     def _drop_modem_path(self) -> None:
         """Forget the cached modem path so the next operation re-resolves.
@@ -1025,17 +1094,31 @@ class Daemon:
         modem = mm_client.resolve_modem_path(bus) if bus is not None else None
         self._modem_path = modem
         if bus is not None and modem is not None:
-            records = mm_client.list_records(bus, modem) or []
+            records, blanks = mm_client.list_store(bus, modem) or ([], [])
+            fresh = []
             with self._modem_lock:
+                records, expired_blank, fresh, seen = triage_receiving(
+                    records, blanks, time.time(), self._receiving_seen(),
+                )
                 merged = reconcile_records(
                     records, self._store,
                     lambda path: mm_client.delete_sms(bus, modem, path),
                 )
+                for path in expired_blank:
+                    if mm_client.delete_sms(bus, modem, path):
+                        merged.deleted += 1
+                    else:
+                        merged.delete_failed += 1
+                self._safe(self._store.set_meta, RECEIVING_SEEN_META_KEY,
+                           json.dumps(seen, sort_keys=True))
             total.imported += merged.imported
             total.deleted += merged.deleted
             total.delete_failed += merged.delete_failed
             total.already_known += merged.already_known
             total.flagged_recovered += merged.flagged_recovered
+            for path in fresh:
+                # Still arriving: the live path waits for RECEIVED.
+                self._watch_receiving(path)
         session = self._safe(self._session_bus_fn)
         if session is not None:
             adapter = mm_client.MmsAdapter(session)
@@ -1063,6 +1146,41 @@ class Daemon:
             except Exception:
                 pass
         return total
+
+    def _receiving_seen(self) -> dict:
+        raw = self._safe(self._store.get_meta, RECEIVING_SEEN_META_KEY)
+        try:
+            seen = json.loads(raw) if raw else {}
+        except ValueError:
+            return {}
+        return seen if isinstance(seen, dict) else {}
+
+    def _watch_receiving(self, sms_path: str) -> None:
+        try:
+            self._executor.submit(self._fetch_and_handle, sms_path)
+        except RuntimeError:
+            pass  # executor shut down
+
+    # -- ModemManager restarts (main loop) --
+
+    def on_mm_appeared(self, _conn, _name, owner) -> None:
+        """A new ModemManager has every SMS the old one held (the SIM
+        store) but announces them as stored, not received: reconcile."""
+        previous, self._mm_owner = self._mm_owner, owner
+        if previous is not None and previous != owner:
+            self._mm_vanished = True
+        if self._mm_vanished:
+            self._mm_vanished = False
+            self._drop_modem_path()
+            try:
+                self._executor.submit(self._startup_and_log)
+            except RuntimeError:
+                pass
+
+    def on_mm_vanished(self, _conn, _name) -> None:
+        self._mm_owner = None
+        self._mm_vanished = True
+        self._drop_modem_path()
 
     def pump_retry(self) -> ReconcileCounts:
         """Send every due queued SMS/MMS (worker thread); successes mark
@@ -1449,11 +1567,23 @@ class Daemon:
         )
 
     def _do_open_and_reply(self, invocation, conversation_id: int) -> None:
+        opened = False
         try:
-            open_thread(conversation_id)
+            opened = open_thread(conversation_id)
         except Exception as exc:
             log.warning("open thread %s failed: %s", conversation_id, exc)
+        if opened:
+            self._close_thread_notifications(conversation_id)
         self._idle_add(invocation.return_value, GLib.Variant("()", ()))
+
+    def _close_thread_notifications(self, conversation_id: int) -> None:
+        """The thread is being read (opened in the UI, or MarkRead): its
+        cards leave the shade."""
+        try:
+            self._pipeline.close_notifications(int(conversation_id))
+        except Exception as exc:
+            log.warning("closing notifications for %s failed: %s",
+                        conversation_id, exc)
 
     def handle_notification_action(self, notification_id: int, action_key: str) -> bool:
         """Shell action-target entry: open the thread for a posted card.
@@ -1474,10 +1604,14 @@ class Daemon:
         if conversation_id is None:
             return False
         try:
-            open_thread(conversation_id)
+            opened = open_thread(conversation_id)
         except Exception as exc:
             log.warning("notification action %s failed: %s", notification_id, exc)
             return False
+        if opened:
+            # Only once the thread is really on screen: a UI that failed
+            # to open must not take the reminder away.
+            self._close_thread_notifications(conversation_id)
         return True
 
     def _do_notification_action_and_reply(
@@ -1506,6 +1640,7 @@ class Daemon:
                 f"mark read failed: {exc}",
             )
             return
+        self._close_thread_notifications(conversation_id)
         self._emit_store_changed(conversation_id)
         self._idle_add(invocation.return_value, GLib.Variant("()", ()))
 
@@ -1829,6 +1964,13 @@ class Daemon:
                 )
             except Exception as err:
                 log.warning("messaging subscribe failed: %s", err)
+            try:
+                Gio.bus_watch_name(
+                    Gio.BusType.SYSTEM, mm_client.MM_BUS_NAME,
+                    Gio.BusNameWatcherFlags.NONE,
+                    self.on_mm_appeared, self.on_mm_vanished)
+            except Exception as err:
+                log.warning("ModemManager watch failed: %s", err)
         session = self._safe(self._session_bus_fn)
         if session is not None:
             try:

@@ -71,10 +71,21 @@ def test_short_codes_below_seven_digits_are_not_suffix_matched():
     assert not matches("123456", "+1555123123456")
 
 
-def test_exactly_seven_digits_can_suffix_match_a_country_coded_form():
-    assert matches("+15551234567", "1234567")
-    assert matches("1234567", "+15551234567")
+def test_a_bare_seven_digit_tail_is_a_different_sender():
+    assert not matches("+15551234567", "1234567")
+    assert not matches("1234567", "+15551234567")
     assert not matches("+15551234567", "234567")
+
+
+def test_other_area_code_sharing_seven_digits_is_a_different_sender():
+    assert not matches("+16145550142", "+13125550142")
+    assert not matches("(614) 555-0142", "312-555-0142")
+    assert matches("(614) 555-0142", "+1 614 555 0142")
+
+
+def test_region_reads_the_national_side():
+    assert matches("+442079460958", "020 7946 0958", region="GB")
+    assert not matches("+442079460958", "020 7946 0958", region="US")
 
 
 def test_email_addresses_match_exactly_ignoring_case():

@@ -24,6 +24,15 @@ import pytest
 
 import contacts
 
+
+@pytest.fixture(autouse=True)
+def _match_in_the_us(monkeypatch):
+    """Number matching reads national numbers in the user's country;
+    pin it so the suite does not depend on the developer's locale."""
+    import xx_phone
+    monkeypatch.setattr(xx_phone, '_auto_country', ('US', 0.0))
+
+
 SRC = Path(__file__).parent.parent / 'launcher' / 'src'
 
 XX_CONTACTS = next(
@@ -146,6 +155,17 @@ class TestLocalFallback:
         assert book.search('') == []
         assert len(book.all) == 2
         assert book.starred_numbers() == []
+
+    def test_lookup_never_matches_on_the_last_seven_digits(
+            self, monkeypatch, tmp_path):
+        book = _local_book(monkeypatch, tmp_path, [
+            ('Columbus Friend', ['+1 614 555 0142']),
+            ('Chicago Friend', ['(312) 555-0199'])])
+        assert book.lookup_number('312-555-0142') is None
+        assert book.lookup_number('+13125550142') is None
+        assert book.lookup_number('5550142') is None
+        assert book.lookup_number('614.555.0142') == 'Columbus Friend'
+        assert book.lookup_number('+13125550199') == 'Chicago Friend'
 
     def test_empty_home_without_service(self, monkeypatch, tmp_path):
         book = _local_book(monkeypatch, tmp_path)

@@ -8,7 +8,8 @@ ringer and no incoming surface.
 
 Every operation resolves the modem from the ObjectManager on each use
 — modems re-index after resets, so a cached path or a hardcoded index
-breaks. All bus calls follow the shell's async Gio discipline (tuple
+breaks. The tracked modems and calls follow ModemManager's bus name: a
+restart drops them all (an empty snapshot) and re-enumerates. All bus calls follow the shell's async Gio discipline (tuple
 replies via ``reply.unpack()[0]``, two-arg callbacks, seven-arg signal
 handlers, ``reply_type`` always ``None``).
 """
@@ -17,6 +18,8 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, replace
+
+import xx_phone
 
 MM1 = "org.freedesktop.ModemManager1"
 MM1_PATH = "/org/freedesktop/ModemManager1"
@@ -163,6 +166,9 @@ class VoiceClient:
         self._call_modem: dict[str, str] = {}
         self._subs: dict[str, list] = {}
         self._voice_subs: dict[str, list] = {}
+        self._mm_watch = None
+        self._mm_owner: str | None = None
+        self._mm_vanished = False
 
     # ---- lifecycle ---------------------------------------------------
 
@@ -191,9 +197,69 @@ class VoiceClient:
         self._gio = gio
         self._glib = glib
         self._enumerate()
+        self._watch_modem_manager()
         return True
 
+    def _watch_modem_manager(self) -> None:
+        """Follow ModemManager's system-bus name (Cutie's NameOwnerChanged
+        rule): every path the old instance handed out dies with it."""
+        if self._mm_watch is not None or self._gio is None:
+            return
+        try:
+            self._mm_watch = self._gio.bus_watch_name(
+                self._gio.BusType.SYSTEM, MM1,
+                self._gio.BusNameWatcherFlags.NONE,
+                self._on_mm_appeared, self._on_mm_vanished)
+        except Exception:
+            self._mm_watch = None
+
+    def _on_mm_appeared(self, _conn, _name, owner) -> None:
+        previous, self._mm_owner = self._mm_owner, owner
+        if previous is not None and previous != owner:
+            self._forget_modem_manager()
+            self._mm_vanished = True
+        if self._mm_vanished:
+            self._mm_vanished = False
+            self._enumerate()
+
+    def _on_mm_vanished(self, _conn, _name) -> None:
+        self._mm_owner = None
+        self._mm_vanished = True
+        self._forget_modem_manager()
+
+    def _forget_modem_manager(self) -> None:
+        """Drop every modem, call and per-path subscription."""
+        bus = self._bus
+        if bus is not None:
+            for sub_ids in self._voice_subs.values():
+                for sub_id in sub_ids:
+                    try:
+                        bus.signal_unsubscribe(sub_id)
+                    except Exception:
+                        pass
+        self._voice_subs = {}
+        self._modems = {}
+        had_calls = bool(self._calls)
+        for call_path in list(self._calls) + list(self._fetching):
+            if bus is not None:
+                for sub_id in self._subs.pop(call_path, []):
+                    try:
+                        bus.signal_unsubscribe(sub_id)
+                    except Exception:
+                        pass
+            self._calls.pop(call_path, None)
+        self._fetching = set()
+        self._call_modem = {}
+        if had_calls:
+            self._emit_changed()
+
     def stop(self) -> None:
+        if self._mm_watch is not None and self._gio is not None:
+            try:
+                self._gio.bus_unwatch_name(self._mm_watch)
+            except Exception:
+                pass
+        self._mm_watch = None
         bus = self._bus
         if bus is not None:
             for sub_ids in list(self._subs.values()) \
@@ -284,8 +350,9 @@ class VoiceClient:
         self._call_method(call_path, "Unhold", None, on_done)
 
     def send_dtmf(self, call_path: str, digit: str, on_done) -> None:
-        tone = (digit or "").strip()
-        if len(tone) != 1 or tone not in "0123456789*#ABCD":
+        # The shared xx_phone rule (also the shell's in-call keypad).
+        tone = xx_phone.dtmf_tone(digit)
+        if tone is None:
             self._idle(on_done, False, "invalid DTMF digit: %r" % (digit,))
             return
         params = self._glib.Variant("(s)", (tone,))
@@ -466,6 +533,8 @@ class VoiceClient:
         except Exception:
             self._fetching.discard(call_path)
             return
+        if call_path not in self._fetching and call_path not in self._calls:
+            return  # dropped while in flight (deleted, or MM went away)
         self._fetching.discard(call_path)
         try:
             direction = int(props.get("Direction", 0))

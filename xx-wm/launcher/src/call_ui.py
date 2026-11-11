@@ -802,15 +802,35 @@ def _default_hold_accept(modem_path: str, on_done: CallResultCallback) -> None:
         _fail(getattr(err, 'message', None) or str(err))
 
 
+_DTMF_TONES = '0123456789*#ABCD'
+
+
+def dtmf_tone(digit) -> str | None:
+    """The one DTMF tone ``digit`` names, else None: the shared xx_phone
+    rule (same as xx-dialer), so nothing but 0-9 * # A-D reaches
+    Call.SendDtmf."""
+    try:
+        from xx_phone import dtmf_tone as shared
+    except ImportError:
+        tone = digit.strip().upper() if isinstance(digit, str) else ''
+        return tone if len(tone) == 1 and tone in _DTMF_TONES else None
+    return shared(digit)
+
+
 def _default_dtmf(call_path: str, digit: str, on_done: CallResultCallback) -> None:
-    """Asynchronously SendDtmf on a live call; same contract as accept_call."""
+    """Asynchronously SendDtmf on a live call; same contract as accept_call.
+    Anything but one DTMF tone fails at once, never reaching the modem."""
     from shell_log import get_logger
 
     def _fail(message: str) -> None:
         get_logger('call_ui').warning(
-            'SendDtmf %s on %s failed: %s', digit, call_path, message)
+            'SendDtmf %r on %s failed: %s', digit, call_path, message)
         on_done(False, message)
 
+    tone = dtmf_tone(digit)
+    if tone is None:
+        _fail('invalid DTMF digit: %r' % (digit,))
+        return
     try:
         bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
     except Exception as err:
@@ -832,7 +852,7 @@ def _default_dtmf(call_path: str, digit: str, on_done: CallResultCallback) -> No
         from modem_monitor import _CALL_IFACE, _MM1
         bus.call(
             _MM1, call_path, _CALL_IFACE, 'SendDtmf',
-            GLib.Variant('(s)', (digit,)), None,
+            GLib.Variant('(s)', (tone,)), None,
             Gio.DBusCallFlags.NONE, 5_000, None, _on_sent,
         )
     except GLib.Error as err:

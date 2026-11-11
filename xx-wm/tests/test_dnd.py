@@ -11,6 +11,14 @@ from config import ShellConfig
 from dnd import DndState, normalize_number, numbers_match, schedule_matches
 
 
+@pytest.fixture(autouse=True)
+def _match_in_the_us(monkeypatch):
+    """Number matching reads national numbers in the user's country;
+    pin it so the suite does not depend on the developer's locale."""
+    import xx_phone
+    monkeypatch.setattr(xx_phone, '_auto_country', ('US', 0.0))
+
+
 @pytest.fixture
 def dnd(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
@@ -151,6 +159,12 @@ class TestRepeatCaller:
         dnd.note_call('+1 (555) 010-2222', when=t0)
         assert dnd.is_exception('5550102222', when=t0 + 60)
 
+    def test_other_area_code_same_seven_digits_is_not_exception(self, dnd):
+        t0 = 1_000_000.0
+        dnd.note_call('+16145550142', when=t0)
+        assert not dnd.is_exception('+13125550142', when=t0 + 60)
+        assert dnd.is_exception('(614) 555-0142', when=t0 + 60)
+
     def test_different_number_is_not_exception(self, dnd):
         t0 = 1_000_000.0
         dnd.note_call('+15550102222', when=t0)
@@ -158,6 +172,12 @@ class TestRepeatCaller:
 
 
 class TestStarred:
+    def test_starred_does_not_cover_another_area_code(self, dnd):
+        dnd.set_starred('+1 614 555 0142', True)
+        assert not dnd.is_exception('+13125550142', when=1.0)
+        assert not dnd.is_starred('312-555-0142')
+        assert dnd.is_starred('614-555-0142')
+
     def test_starred_always_exception(self, dnd):
         dnd.set_starred('+1 555 010 2222', True)
         assert dnd.is_exception('5550102222', when=1.0)
@@ -176,3 +196,8 @@ class TestNormalization:
     def test_match_tail(self):
         assert numbers_match('+15550102222', '5550102222')
         assert not numbers_match('', '5550102222')
+
+    def test_last_seven_digits_alone_never_match(self):
+        assert not numbers_match('+16145550142', '+13125550142')
+        assert not numbers_match('6145550142', '(312) 555-0142')
+        assert not numbers_match('5550142', '+16145550142')

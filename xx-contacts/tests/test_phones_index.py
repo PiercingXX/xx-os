@@ -80,12 +80,35 @@ def test_exact_e164_beats_longer_suffix():
     assert hit is not None and hit.uid == "uid-short"
 
 
-def test_longest_suffix_wins():
+def test_whole_number_picks_the_right_area_code():
     index = LookupIndex()
     index.upsert("uid-a", "A", [_entry("a", "+1 202 555 0100")], ())
     index.upsert("uid-b", "B", [_entry("b", "+1 303 555 0100")], ())
-    hit = index.lookup("02025550100")
+    hit = index.lookup("1 202 555 0100")
     assert hit is not None and hit.uid == "uid-a"
+    hit = index.lookup("(303) 555-0100")
+    assert hit is not None and hit.uid == "uid-b"
+
+
+def test_shared_last_seven_digits_is_another_person():
+    index = LookupIndex()
+    index.upsert("uid-cbus", "Columbus", [_entry("c", "+1 614 555 0142")], ())
+    index.upsert("uid-local", "Local", [_entry("l", "555-0199")], ())
+    assert index.lookup("312-555-0142") is None
+    assert index.lookup("+13125550142") is None
+    assert index.lookup("5550142") is None
+    assert index.lookup("+1 614 555 0199") is None
+    assert index.lookup("614.555.0142").uid == "uid-cbus"
+
+
+def test_region_decides_national_numbers():
+    index = LookupIndex("GB")
+    index.upsert("uid-uk", "London", [_entry("u", "+44 20 7946 0958", "GB")],
+                 ())
+    index.upsert("uid-us", "Seattle", [_entry("s", "+1 206 794 0958", "GB")],
+                 ())
+    assert index.lookup("020 7946 0958").uid == "uid-uk"
+    assert index.lookup("2067940958") is None
 
 
 def test_tie_break_is_deterministic():
@@ -102,11 +125,12 @@ def test_incremental_upsert_and_remove():
     index = _index()
     assert index.lookup("5550100").uid == "uid-ada"
     index.upsert("uid-ada", "Ada Lovelace", [_entry("u1", "+1 555 9999")], ())
-    assert index.lookup("5550100").uid == "uid-grace"
+    assert index.lookup("5550100") is None
+    assert index.lookup("2025550100").uid == "uid-grace"
     assert index.lookup("5559999").uid == "uid-ada"
     index.remove("uid-ada")
     assert index.lookup("5559999") is None
-    assert index.lookup("5550100").uid == "uid-grace"
+    assert index.lookup("2025550100").uid == "uid-grace"
     assert index.contact_count == 1
 
 

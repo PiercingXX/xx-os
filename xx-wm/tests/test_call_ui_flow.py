@@ -414,3 +414,44 @@ class TestCallBar:
         bar = _make_call_bar()
         bar.show_bar('')
         assert bar._label.get_text() == 'In call'
+
+
+class _DtmfBus:
+    def __init__(self):
+        self.sent = []
+
+    def call(self, bus_name, path, iface, method, params, *rest):
+        self.sent.append((path, method, params))
+
+
+def _dtmf_seams(monkeypatch):
+    bus = _DtmfBus()
+    monkeypatch.setattr(call_ui.Gio, 'bus_get_sync', lambda *a, **k: bus)
+    monkeypatch.setattr(call_ui.GLib, 'Variant',
+                        lambda fmt, value: (fmt, value))
+    return bus
+
+
+def test_dtmf_tone_is_the_shared_filter():
+    for tone in '0123456789*#ABCD':
+        assert call_ui.dtmf_tone(tone) == tone
+    assert call_ui.dtmf_tone('b') == 'B'
+    for bad in ('+', ',', 'p', 'x', '12', '', None):
+        assert call_ui.dtmf_tone(bad) is None
+
+
+def test_default_dtmf_never_sends_an_invalid_digit(monkeypatch):
+    bus = _dtmf_seams(monkeypatch)
+    results = []
+    for bad in ('+', 'p', '55', ''):
+        call_ui._default_dtmf('/Call/1', bad,
+                              lambda ok, err: results.append((ok, err)))
+    assert bus.sent == []
+    assert [ok for ok, _err in results] == [False] * 4
+    assert results[0][1] == "invalid DTMF digit: '+'"
+
+
+def test_default_dtmf_sends_the_normalized_tone(monkeypatch):
+    bus = _dtmf_seams(monkeypatch)
+    call_ui._default_dtmf('/Call/1', ' d ', lambda ok, err: None)
+    assert bus.sent == [('/Call/1', 'SendDtmf', ('(s)', ('D',)))]

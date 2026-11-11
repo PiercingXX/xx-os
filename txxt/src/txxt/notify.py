@@ -10,6 +10,8 @@ daemon or any compliant daemon renders):
 - Every message notification carries a ``Reply`` action. Freedesktop
   notifications have no text entry, so invoking it opens the thread in
   the UI (``daemon.open_thread``) where the reply is composed and sent.
+- Cards for a thread are closed (``CloseNotification``) once the thread
+  is read, so the shade never keeps messages the user already saw.
 - Sound only when the alert style is sound (``sound-name`` hint);
   silent otherwise (``suppress-sound`` hint). Vibrate is a daemon-level
   feedbackd concern, not a notification hint.
@@ -107,6 +109,21 @@ def notify_send(
         return int(reply.unpack()[0])
     except Exception:
         return None
+
+
+def close_notification(bus, notification_id: int, timeout_ms: int = 5_000) -> bool:
+    """Blocking ``CloseNotification`` (worker threads only). False when the
+    server refused or is gone; an id it already dropped is not an error
+    per the spec, so a dismissed card closes quietly."""
+    try:
+        bus.call_sync(
+            NOTIF_BUS_NAME, NOTIF_OBJECT_PATH, NOTIF_IFACE, "CloseNotification",
+            GLib.Variant("(u)", (int(notification_id),)),
+            None, Gio.DBusCallFlags.NONE, timeout_ms, None,
+        )
+    except Exception:
+        return False
+    return True
 
 
 def _hint_variant(value: object) -> GLib.Variant:

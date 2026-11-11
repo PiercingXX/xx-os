@@ -373,3 +373,80 @@ def test_hold_and_accept_holds_active_then_accepts_waiting():
                if c["method"] in ("Hold", "Accept")]
     assert ordered == ["Hold", "Accept"]
     assert results == [True]
+
+
+def test_send_dtmf_uses_the_shared_filter():
+    client, bus, _mm, _calls, _states = _wired()
+    results = []
+    for bad in ("+", ",", "12", ""):
+        client.send_dtmf(CALL_1, bad, lambda ok, d: results.append(ok))
+    client.send_dtmf(CALL_1, "d", lambda ok, d: results.append(ok))
+    bus.drain()
+    assert results == [False, False, False, False, True]
+    sent = [c["params"] for c in bus.calls if c["method"] == "SendDtmf"]
+    assert sent == [("D",)]
+
+
+class _Watch:
+    def __init__(self):
+        self.args = None
+        self.unwatched = []
+
+    def watch(self, bus_type, name, flags, appeared, vanished):
+        self.args = (bus_type, name, appeared, vanished)
+        return 7
+
+
+def _watched():
+    watch = _Watch()
+    mm = FakeMM1()
+    mm.add_modem(MODEM_A, with_voice=True)
+    mm.add_call(CALL_1, modem.CALL_STATE_ACTIVE,
+                modem.CALL_DIRECTION_INCOMING, "tel:+14155550100")
+    bus = FakeBus(mm)
+    gio = FakeGio(bus)
+    gio.BusNameWatcherFlags = type("W", (), {"NONE": 0})
+    gio.bus_watch_name = watch.watch
+    gio.bus_unwatch_name = watch.unwatched.append
+    seen = []
+    client = VoiceClient(on_calls=seen.append, bus=bus, gio=gio,
+                         glib=FakeGlib(), spawn=lambda fn: fn(),
+                         idle=lambda fn, *a: fn(*a))
+    assert client.start()
+    bus.drain()
+    return client, bus, mm, watch, seen
+
+
+def test_modem_manager_restart_drops_and_re_enumerates():
+    client, bus, mm, watch, seen = _watched()
+    assert watch.args[:2] == ("system", modem.MM1)
+    appeared, vanished = watch.args[2], watch.args[3]
+    appeared(None, modem.MM1, ":1.5")
+    assert [c["method"] for c in bus.calls].count("GetManagedObjects") == 1
+    assert [c.path for c in client.calls()] == [CALL_1]
+    vanished(None, modem.MM1)
+    assert client.calls() == []
+    assert client.modem_path() is None
+    assert seen[-1] == []
+    assert client._voice_subs == {} and client._subs == {}
+    appeared(None, modem.MM1, ":1.9")
+    bus.drain()
+    assert [c["method"] for c in bus.calls].count("GetManagedObjects") == 2
+    assert client.modem_path() == MODEM_A
+    assert [c.path for c in client.calls()] == [CALL_1]
+
+
+def test_new_owner_without_vanish_resets_too():
+    client, bus, _mm, watch, seen = _watched()
+    appeared = watch.args[2]
+    appeared(None, modem.MM1, ":1.5")
+    appeared(None, modem.MM1, ":1.6")
+    assert seen[-1] == []
+    bus.drain()
+    assert [c.path for c in client.calls()] == [CALL_1]
+
+
+def test_stop_unwatches_modem_manager():
+    client, _bus, _mm, watch, _seen = _watched()
+    client.stop()
+    assert watch.unwatched == [7]

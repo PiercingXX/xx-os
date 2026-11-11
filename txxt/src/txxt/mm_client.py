@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import gi
 
@@ -80,9 +81,51 @@ IO_TIMEOUT_MS = 15_000
 #: Polls before an ``Added`` announcement with a stuck RECEIVING state
 #: gives up (the row stays in the modem store for the next reconcile).
 MAX_RECEIVE_POLLS = 10
+
+#: A multipart SMS still RECEIVING a week after its timestamp will never
+#: get its missing parts, and stuck rows fill the modem/SIM store until
+#: new SMS silently stop arriving (Chatty ``RECIEVE_TIMEOUT_SECONDS``,
+#: chatty-mm-account.c). The startup reconcile imports what text it has
+#: and deletes it after this long.
+RECEIVING_TIMEOUT_S = 7 * 24 * 60 * 60
+#: The same limit for a row with no usable timestamp, counted from when
+#: txxt first saw it (Chatty's 3-day ``..._UNKNOWN_RECEIVE_TIME``).
+RECEIVING_TIMEOUT_UNKNOWN_S = 3 * 24 * 60 * 60
 #: First re-poll delay; doubles per attempt up to :data:`MAX_POLL_DELAY_S`.
 POLL_BASE_DELAY_S = 1.0
 MAX_POLL_DELAY_S = 8.0
+
+
+def timestamp_seconds(stamp: str) -> float | None:
+    """MM ``Timestamp`` (ISO-8601) as epoch seconds, None when unusable."""
+    text = (stamp or "").strip()
+    if not text:
+        return None
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.timestamp()
+
+
+def receiving_expired(stamp: str, now_s: float, first_seen_s: float) -> bool:
+    """Whether a row stuck in RECEIVING should be given up on.
+
+    Port of Chatty's ``mm_account_check_state``: a week after the SMS
+    timestamp, or three days after txxt first saw a row without one. A
+    timestamp later than now means this clock is wrong (a dead RTC reads
+    1970), so the week counts from first sight instead of never ending.
+    """
+    sent = timestamp_seconds(stamp)
+    if sent is None:
+        return now_s - first_seen_s >= RECEIVING_TIMEOUT_UNKNOWN_S
+    if now_s >= sent + RECEIVING_TIMEOUT_S:
+        return True
+    if now_s > sent:
+        return False
+    return now_s - first_seen_s >= RECEIVING_TIMEOUT_S
 
 
 def receive_backoff(attempt: int) -> float:
@@ -312,6 +355,38 @@ def delete_sms_after_import(
     return True
 
 
+def list_store(
+    bus, modem_path: str, timeout_ms: int = ENUM_TIMEOUT_MS
+) -> tuple[list[SmsRecord], list[tuple[str, str]]] | None:
+    """Full modem store: ``(records, blank_receiving)``.
+
+    ``records`` as :func:`list_records`; ``blank_receiving`` holds
+    ``(path, timestamp)`` for RECEIVING rows with no number or text yet,
+    which never become a record but still take a store slot (the
+    startup reconcile deletes them once they are stuck for good).
+    """
+    paths = list_sms_paths(bus, modem_path, timeout_ms)
+    if paths is None:
+        return None
+    records = []
+    blanks = []
+    for sms_path in paths:
+        props = get_sms_properties(bus, sms_path, timeout_ms)
+        if props is None:
+            continue
+        record = record_from_props(sms_path, props)
+        if record is not None:
+            records.append(record)
+            continue
+        try:
+            state = int(props.get("State", STATE_RECEIVED))
+        except (TypeError, ValueError):
+            state = STATE_RECEIVED
+        if state == STATE_RECEIVING:
+            blanks.append((str(sms_path), str(props.get("Timestamp", ""))))
+    return records, blanks
+
+
 def list_records(
     bus, modem_path: str, timeout_ms: int = ENUM_TIMEOUT_MS
 ) -> list[SmsRecord] | None:
@@ -320,18 +395,8 @@ def list_records(
     None on transport failure; half-written rows are skipped row by row
     so one corrupt object never fails the whole reconcile.
     """
-    paths = list_sms_paths(bus, modem_path, timeout_ms)
-    if paths is None:
-        return None
-    records = []
-    for sms_path in paths:
-        props = get_sms_properties(bus, sms_path, timeout_ms)
-        if props is None:
-            continue
-        record = record_from_props(sms_path, props)
-        if record is not None:
-            records.append(record)
-    return records
+    listed = list_store(bus, modem_path, timeout_ms)
+    return None if listed is None else listed[0]
 
 
 def wait_received(poll_props, sleep, max_polls: int = MAX_RECEIVE_POLLS) -> dict | None:

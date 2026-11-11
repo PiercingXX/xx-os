@@ -19,7 +19,7 @@ def _big_index(count=5000):
 def test_lookup_over_5000_contacts_under_5ms():
     index = _big_index()
     assert index.contact_count == 5000
-    queries = [f"555{seq:07d}"[-7:] for seq in range(0, 5000, 25)]
+    queries = [f"555{seq:07d}" for seq in range(0, 5000, 25)]
     assert len(queries) == 200
     worst = 0.0
     started = time.perf_counter()

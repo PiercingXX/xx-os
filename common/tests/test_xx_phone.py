@@ -194,3 +194,77 @@ def test_display_country_prefers_live_country_then_fallback(monkeypatch):
     assert xx_phone.display_country(None) == ""
     monkeypatch.setattr(xx_phone, "_auto_country", None)
     assert xx_phone.display_country("") == ""
+
+
+# -- numbers_match ----------------------------------------------------------
+
+
+def test_same_number_written_differently_matches():
+    assert xx_phone.numbers_match("+16145550142", "(614) 555-0142", "US")
+    assert xx_phone.numbers_match("1 614 555 0142", "+1 614-555-0142", "US")
+    assert xx_phone.numbers_match("+442079460958", "020 7946 0958", "GB")
+    assert xx_phone.numbers_match("+442079460958", "0044 20 7946 0958", "GB")
+
+
+def test_cross_area_code_numbers_sharing_seven_digits_never_match():
+    assert not xx_phone.numbers_match("6145550142", "3125550142", "US")
+    assert not xx_phone.numbers_match("+16145550142", "+13125550142", "US")
+    assert not xx_phone.numbers_match("+16145550142", "(312) 555-0142", "")
+
+
+def test_a_bare_seven_digit_tail_never_matches_a_full_number():
+    assert not xx_phone.numbers_match("5550142", "+16145550142", "US")
+    assert not xx_phone.numbers_match("+16145550142", "555-0142", "US")
+
+
+def test_national_number_matches_only_in_its_own_country():
+    assert not xx_phone.numbers_match("+442079460958", "02079460958", "US")
+    assert not xx_phone.numbers_match("+16145550142", "+446145550142", "US")
+
+
+def test_unknown_country_still_matches_a_country_coded_form():
+    assert xx_phone.numbers_match("+16145550142", "6145550142", "")
+
+
+def test_short_codes_match_only_the_same_digits():
+    assert xx_phone.numbers_match("22395", "22395", "US")
+    assert not xx_phone.numbers_match("911", "6145550911", "US")
+    assert not xx_phone.numbers_match("40404", "+16145540404", "US")
+
+
+def test_alphanumeric_senders_and_codes_match_by_text():
+    assert xx_phone.numbers_match("AMAZON", "amazon", "US")
+    assert xx_phone.numbers_match("*86", "*86", "US")
+    assert not xx_phone.numbers_match("AMAZON", "VERIFY", "US")
+    assert not xx_phone.numbers_match("AMAZON", "6145550142", "US")
+    assert not xx_phone.numbers_match("", "", "US")
+    assert not xx_phone.numbers_match(None, "6145550142", "US")
+
+
+def test_matching_without_the_library_keeps_a_safe_rule(monkeypatch):
+    monkeypatch.setattr(xx_phone, "_phonenumbers", None)
+    monkeypatch.setattr(xx_phone, "_phonenumbers_tried", True)
+    assert xx_phone.numbers_match("+16145550142", "(614) 555-0142", "US")
+    assert xx_phone.numbers_match("+442079460958", "020 7946 0958", "GB")
+    assert not xx_phone.numbers_match("6145550142", "3125550142", "US")
+    assert not xx_phone.numbers_match("5550142", "+16145550142", "US")
+    assert not xx_phone.numbers_match("+16145550142", "+446145550142", "US")
+
+
+def test_matching_never_blocks_on_the_modem(monkeypatch):
+    def _no_bus():
+        raise AssertionError("numbers_match must not ask ModemManager")
+
+    monkeypatch.setattr(xx_phone, "_auto_sources", _no_bus)
+    monkeypatch.setattr(xx_phone, "_auto_country", None)
+    monkeypatch.setenv("LC_ALL", "en_US.UTF-8")
+    assert xx_phone.numbers_match("6145550142", "+16145550142")
+
+
+def test_dtmf_tone_accepts_only_the_sixteen_tones():
+    for tone in "0123456789*#ABCD":
+        assert xx_phone.dtmf_tone(tone) == tone
+    assert xx_phone.dtmf_tone(" 5 ") == "5"
+    assert xx_phone.dtmf_tone("d") == "D"
+    for bad in ("+", ",", "p", "w", "E", "x", "12", "", " ", None, 5):
+        assert xx_phone.dtmf_tone(bad) is None, bad

@@ -23,3 +23,7 @@ def _pin_display_country(monkeypatch):
     import xx_phone
 
     monkeypatch.setattr(xx_phone, "user_country", lambda *a, **k: "")
+    # Number matching reads national numbers in the user's country
+    # (cached, else the locale); pin it to the configured US default so
+    # the suite does not depend on the developer's locale.
+    monkeypatch.setattr(xx_phone, "_auto_country", ("US", 0.0))

@@ -30,6 +30,17 @@ def _digits(number: str) -> str:
     return re.sub(r'[^\d]', '', number or '')
 
 
+def _numbers_match(a: str, b: str) -> bool:
+    """The shared xx_phone matcher (non-blocking: it never asks
+    ModemManager for the country); exact digits when it is missing."""
+    try:
+        import xx_phone
+        return bool(xx_phone.numbers_match(a, b))
+    except Exception:
+        da, db = _digits(a), _digits(b)
+        return bool(da) and da == db
+
+
 @dataclass
 class Contact:
     name: str
@@ -209,17 +220,16 @@ class ContactBook:
         return (number_hits + name_prefix_hits + name_sub_hits)[:limit]
 
     def lookup_number(self, number: str) -> str | None:
-        """Return the contact name for a phone number, or None."""
-        stripped = re.sub(r'[^\d]', '', number)
+        """Return the contact name for a phone number, or None.
+
+        Whole-number match through the shared xx_phone rule: two
+        numbers that only share their last 7 digits are two people."""
+        stripped = re.sub(r'[^\d]', '', number or '')
         if not stripped:
             return None
         for c in self._visible_contacts():
             for n in c.numbers:
-                ns = re.sub(r'[^\d]', '', n)
-                if not ns:
-                    continue
-                tail = min(7, len(stripped), len(ns))
-                if stripped[-tail:] == ns[-tail:]:
+                if _numbers_match(n, number):
                     return c.name or None
         return None
 

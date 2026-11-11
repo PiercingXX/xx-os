@@ -22,9 +22,9 @@ from __future__ import annotations
 
 import re
 
-#: Minimum digits the SHORTER side must carry for a suffix match to count.
-#: Short codes (5-6 digits) and emergency numbers stay below it, so a stored
-#: "911" never suffix-matches an unrelated longer number.
+#: Numbers at least this long are compared by the shared
+#: ``xx_phone.numbers_match`` rule; shorter ones (short codes, ``911``)
+#: only match the same digits, never as the tail of a longer number.
 MIN_SUFFIX_DIGITS = 7
 
 #: Country calling codes known for display/E.164 derivation (mirrors
@@ -81,14 +81,24 @@ def conversation_key(address: str) -> str:
     return ""
 
 
-def matches(a: str, b: str) -> bool:
+def _number_form(address: str) -> str:
+    """Digits, keeping a leading ``+`` so a country code stays one."""
+    trimmed = (address or "").strip()
+    digits = digits_of(trimmed)
+    return ("+" + digits) if trimmed.startswith("+") else digits
+
+
+def matches(a: str, b: str, region: str | None = None) -> bool:
     """True when ``a`` and ``b`` refer to the same sender.
 
     Emails compare by exact normalised equality (and never match a bare
-    number). Phone numbers compare by digit equality with suffix tolerance
-    for a country code on one side, gated by :data:`MIN_SUFFIX_DIGITS`.
-    Alphanumeric senders compare by exact key equality. An address with no
-    identity never matches anything.
+    number). Phone numbers compare as whole numbers through the shared
+    ``xx_phone.numbers_match`` rule (a country code on one side is fine;
+    sharing only the last 7 digits is a different sender), read in
+    ``region`` or the user's country. Short codes below
+    :data:`MIN_SUFFIX_DIGITS` match only the same digits. Alphanumeric
+    senders compare by exact key equality. An address with no identity
+    never matches anything.
     """
     ka = conversation_key(a)
     kb = conversation_key(b)
@@ -108,10 +118,11 @@ def matches(a: str, b: str) -> bool:
         return False
     if da == db:
         return True
-    shorter, longer = (da, db) if len(da) <= len(db) else (db, da)
-    if len(shorter) < MIN_SUFFIX_DIGITS:
+    if min(len(da), len(db)) < MIN_SUFFIX_DIGITS:
         return False
-    return longer.endswith(shorter)
+    import xx_phone
+
+    return xx_phone.numbers_match(_number_form(a), _number_form(b), region)
 
 
 def digits_of(raw: str | None) -> str:
