@@ -302,3 +302,102 @@ def test_single_app_still_renders_a_card(
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+# ---- card swipe-up dismiss (Lomiri SpreadDelegateInputArea.qml) ----------
+
+def _card_drag(points):
+    """Linear (t_ms, dy) drag, one sample per 10 ms like a touchscreen."""
+    samples = [(float(points[0][0]), float(points[0][1]))]
+    for (t0, y0), (t1, y1) in zip(points, points[1:]):
+        steps = max(1, int((t1 - t0) // 10))
+        for i in range(1, steps + 1):
+            f = i / steps
+            samples.append((t0 + (t1 - t0) * f, y0 + (y1 - y0) * f))
+    return samples
+
+
+CARD_H = 870.0  # FLX1-ish recents card
+
+
+def test_short_fast_flick_dismisses() -> None:
+    # 90 px in 60 ms: 1500 px/s past 64 px. The old fixed 120 px missed it.
+    assert app_switcher.should_dismiss_card(_card_drag([(0, 0), (60, -90)]), CARD_H)
+
+
+def test_fast_flick_too_short_does_not_dismiss() -> None:
+    assert not app_switcher.should_dismiss_card(
+        _card_drag([(0, 0), (30, -50)]), CARD_H)
+
+
+def test_slow_drag_needs_half_the_card() -> None:
+    # 200 px at 100 px/s, then still: the old fixed 120 px killed this.
+    slow = _card_drag([(0, 0), (2000, -200), (2200, -200)])
+    assert not app_switcher.should_dismiss_card(slow, CARD_H)
+    far = _card_drag([(0, 0), (4500, -450), (4700, -450)])
+    assert app_switcher.should_dismiss_card(far, CARD_H)
+
+
+def test_flick_then_stop_does_not_dismiss() -> None:
+    # Fast start, then held before letting go: the release speed is ~0.
+    drag = _card_drag([(0, 0), (60, -150), (300, -150)])
+    assert app_switcher.card_dismiss_speed(drag) == pytest.approx(0.0)
+    assert not app_switcher.should_dismiss_card(drag, CARD_H)
+
+
+def test_pull_back_down_does_not_dismiss() -> None:
+    drag = _card_drag([(0, 0), (60, -150), (120, -100)])
+    assert app_switcher.card_dismiss_speed(drag) < 0
+    assert not app_switcher.should_dismiss_card(drag, CARD_H)
+
+
+def test_downward_drag_never_dismisses() -> None:
+    assert not app_switcher.should_dismiss_card(
+        _card_drag([(0, 0), (60, 600)]), CARD_H)
+
+
+def test_speed_averages_the_last_50_ms() -> None:
+    drag = [(0.0, 0.0), (10.0, -100.0), (100.0, -100.0), (130.0, -130.0),
+            (160.0, -160.0)]
+    # Only the last two moves (1 px/ms) are in the 50 ms window.
+    assert app_switcher.card_dismiss_speed(drag) == pytest.approx(1000.0)
+    # Sparse reports: the latest two samples still count.
+    sparse = [(0.0, 0.0), (200.0, -100.0), (400.0, -300.0)]
+    assert app_switcher.card_dismiss_speed(sparse) == pytest.approx(750.0)
+
+
+def test_dismiss_constants_match_lomiri() -> None:
+    assert app_switcher._DISMISS_SPEED == pytest.approx(320.0)
+    assert app_switcher._DISMISS_MIN_TRAVEL == pytest.approx(64.0)
+    assert app_switcher._DISMISS_SPEED_WINDOW_MS == pytest.approx(50.0)
+
+
+def test_empty_and_single_sample() -> None:
+    assert not app_switcher.should_dismiss_card([], CARD_H)
+    assert app_switcher.card_dismiss_speed([(0.0, -10.0)]) == 0.0
+
+
+def test_drag_end_uses_the_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The window's drag-end handler kills via should_dismiss_card, not a
+    fixed distance (unbound method on a hand-built namespace)."""
+    import types
+    killed, rebuilt = [], []
+    fake = types.SimpleNamespace(
+        _card_swiping=True,
+        _card_drag=_card_drag([(0, 0), (60, -90)])[:-1],
+        _kill_app=killed.append,
+        _rebuild_cards=lambda: rebuilt.append(True),
+        _card_pixel_size=app_switcher.AppSwitcher._card_pixel_size,
+    )
+    gesture = types.SimpleNamespace(get_current_event_time=lambda: 60)
+    card = types.SimpleNamespace(get_height=lambda: CARD_H)
+    fake._event_ms = app_switcher.AppSwitcher._event_ms
+    app_switcher.AppSwitcher._on_card_drag_end(fake, -90.0, 'app', gesture, card)
+    assert killed == ['app'] and rebuilt == []
+    assert fake._card_drag == []
+
+    fake._card_swiping = True
+    fake._card_drag = _card_drag([(0, 0), (2000, -200)])[:-1]
+    gesture = types.SimpleNamespace(get_current_event_time=lambda: 2200)
+    app_switcher.AppSwitcher._on_card_drag_end(fake, -200.0, 'app2', gesture, card)
+    assert killed == ['app'] and rebuilt == [True]

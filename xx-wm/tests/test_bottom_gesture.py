@@ -188,7 +188,48 @@ class TestClassifier:
         assert bg.release_speed(samples) < 0.1
         assert bg.classify_release(samples, 1000) == bg.SWITCHER
 
+    def test_pull_up_then_back_down_cancels(self, bg):
+        # Up 200 px, then dragged back down to 60 px: the owner changed
+        # their mind. Was HOME (still above HOME_MIN_FRAC at release).
+        live, out = _swipe(bg, [(0, 0, 0), (200, 0, -200), (300, 0, -60)])
+        assert (live, out) == (None, None)
+
+    def test_reversal_past_a_quarter_cancels_the_switcher_too(self, bg):
+        live, out = _swipe(bg, [(0, 0, 0), (1500, 0, -400), (1700, 0, -300)])
+        assert (live, out) == (None, None)
+
+    def test_slow_drift_down_is_not_a_reversal(self, bg):
+        # 0.25 px/ms back down: under the reverse speed, outcome stands.
+        live, out = _swipe(bg, [(0, 0, 0), (1500, 0, -400), (1700, 0, -350)])
+        assert (live, out) == (None, bg.SWITCHER)
+
+    def test_down_then_up_again_is_not_a_reversal(self, bg):
+        # Came back down, then flicked up again at the end: home.
+        live, out = _swipe(bg, [(0, 0, 0), (150, 0, -200), (250, 0, -80),
+                                (320, 0, -200)])
+        assert (live, out) == (None, bg.HOME)
+
+    def test_reversal_needs_every_tail_move_downward(self, bg):
+        samples = _drag([(0, 0, 0), (200, 0, -200), (300, 0, -60)])
+        assert bg.is_reversal(samples, 1000)
+        # One upward wobble inside the tail: not a clean reversal.
+        t, dx, dy = samples[-2]
+        samples[-2] = (t, dx, dy - 40)
+        assert not bg.is_reversal(samples, 1000)
+
+    def test_reverse_speed_is_a_third_of_the_flick(self, bg):
+        th = bg.thresholds(1000)
+        assert th.reverse_speed == pytest.approx(th.flick_speed / 3)
+        assert 4 <= bg.REVERSE_SAMPLES <= 8
+
+    def test_pause_then_pull_back_keeps_the_live_switcher(self, bg):
+        # Recents already opened on the pause; the release fires nothing.
+        live, out = _swipe(bg, [(0, 0, 0), (250, 0, -160), (700, 0, -160),
+                                (800, 0, -40)])
+        assert (live, out) == (bg.SWITCHER, None)
+
     def test_empty_inputs(self, bg):
+        assert bg.is_reversal([], 1000) is False
         assert bg.classify_release([], 1000) is None
         assert bg.is_pause([], 100, 1000) is False
         assert bg.release_speed([]) == 0.0
@@ -410,7 +451,7 @@ class TestVisibility:
 # ---- main wiring ---------------------------------------------------------
 
 class TestMainWiring:
-    def _app(self, switcher_visible=False, locked=False):
+    def _app(self, switcher_visible=False, locked=False, blanked=False):
         import main
         from gesture_config import GestureConfig
         fired, switched = [], []
@@ -421,7 +462,8 @@ class TestMainWiring:
             _switcher=types.SimpleNamespace(
                 get_visible=lambda: switcher_visible))
         app = types.SimpleNamespace(
-            _shell=shell, _on_ipc_command=fired.append)
+            _shell=shell, _on_ipc_command=fired.append,
+            _display_blanked=lambda: blanked)
         return main.XXWMApplication._on_bottom_gesture, app, fired, switched
 
     def test_home_and_switcher_go_through_ipc(self, bg):
@@ -444,6 +486,11 @@ class TestMainWiring:
     def test_sideways_does_nothing_while_locked(self, bg):
         handler, app, _, switched = self._app(locked=True)
         handler(app, bg.PREVIOUS)
+        assert switched == []
+
+    def test_sideways_does_nothing_while_blanked(self, bg):
+        handler, app, _, switched = self._app(blanked=True)
+        handler(app, bg.NEXT)
         assert switched == []
 
     def test_start_wires_the_strip(self, bg, monkeypatch):

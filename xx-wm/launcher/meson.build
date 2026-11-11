@@ -370,6 +370,24 @@ install_data(
   install_dir: join_paths(get_option('datadir'), 'xdg-desktop-portal'),
 )
 
+# Session-scoped GSettings defaults ([schema:XX-WM] groups, applied only
+# while XDG_CURRENT_DESKTOP lists XX-WM): the on-screen keyboard rises in
+# apps. 00_ so distro overrides still win, like Phosh's own file.
+install_data(
+  'data/gschema/00_io.piercingxx.XXWM.gschema.override',
+  install_dir: join_paths(get_option('datadir'), 'glib-2.0', 'schemas'),
+)
+# Overrides only take effect once the schema cache is rebuilt. Staged
+# (DESTDIR) installs leave that to the package's own trigger.
+glib_compile_schemas = find_program('glib-compile-schemas', required: false)
+if glib_compile_schemas.found()
+  meson.add_install_script(
+    glib_compile_schemas,
+    join_paths(datadir_abs, 'glib-2.0', 'schemas'),
+    skip_if_destdir: true,
+  )
+endif
+
 # OpenRC init script (for OpenRC-based images; postmarketOS default images
 # are OpenRC). configure_file so command= uses the meson libexecdir (Arch
 # often ships /usr/lib, not /usr/libexec). The build output must NOT be

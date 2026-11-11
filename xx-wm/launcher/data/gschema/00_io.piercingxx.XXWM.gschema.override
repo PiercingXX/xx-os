@@ -1,0 +1,10 @@
+# Defaults for the XX-WM session only. Each group is scoped with
+# ":XX-WM", so GLib applies it only while XDG_CURRENT_DESKTOP lists XX-WM
+# (xx-wm.desktop DesktopNames, xx-wm-session's default): GNOME, GDM and
+# Phosh never see these. A value the owner set in dconf still wins.
+
+# squeekboard and xx-keyboard (phosh-osk-stevia) only rise for an app's
+# text field when this is true (the key defaults to false). Phosh ships
+# the same default for its own session (00_mobi.Phosh.gschema.override).
+[org.gnome.desktop.a11y.applications:XX-WM]
+screen-keyboard-enabled=true

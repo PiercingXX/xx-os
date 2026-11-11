@@ -603,6 +603,22 @@ detect_phoc_device() {
         echo "furiphone-flx1"
         return 0
     done
+    # Halium (FuriOS on the FLX1) often exposes no DRM node at all: the
+    # panel sits behind the Android hwcomposer. Fall back to the device
+    # tree model, then the FuriOS release markers (Flick's install.sh
+    # does the same). XX_WM_DEVICE_ROOT is a test hook (default /).
+    _root=${XX_WM_DEVICE_ROOT:-}
+    if [ -r "$_root/proc/device-tree/model" ] && \
+       tr -d '\000' < "$_root/proc/device-tree/model" 2>/dev/null | \
+           grep -qiE 'flx1|furilabs'; then
+        echo "furiphone-flx1"
+        return 0
+    fi
+    if [ -f "$_root/etc/furios-release" ] || \
+       grep -qiE '^ID="?furios' "$_root/etc/os-release" 2>/dev/null; then
+        echo "furiphone-flx1"
+        return 0
+    fi
     echo ""
     return 0
 }

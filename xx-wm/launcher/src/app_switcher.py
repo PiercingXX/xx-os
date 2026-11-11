@@ -118,7 +118,12 @@ window.switcher-window {{
 }}
 """
 
-_SWIPE_DISMISS_THRESHOLD = 120  # px upward drag to dismiss a card
+# Card swipe-up closes the app (Lomiri SpreadDelegateInputArea.qml): a
+# quick flick past a short travel, or any drag past half the card. A
+# fixed distance alone missed short fast flicks and closed on slow ones.
+_DISMISS_SPEED = 320.0        # px/s upward (Lomiri 40 gu/s)
+_DISMISS_MIN_TRAVEL = 64.0    # px a flick must still travel (8 gu)
+_DISMISS_SPEED_WINDOW_MS = 50.0  # speed averaged over this window
 _SHEET_CLOSE_DY = 100  # px downward drag to close recents (resume the app)
 # No open apps shows nothing under the caption (owner: no empty-state
 # lines); a swipe down or a tap on the dim still closes recents.
@@ -129,6 +134,39 @@ _CARD_HEIGHT_FRAC = 0.68
 _CARD_FALLBACK = (280, 420)
 
 _APP_NAME_CACHE: dict[str, str] = {}
+
+
+def card_dismiss_speed(samples) -> float:
+    """Upward speed (px/s) at the end of a card drag. ``samples`` are
+    (t_ms, dy) with dy negative upward; each move's speed is taken
+    against the sample before it and averaged over the moves in the last
+    _DISMISS_SPEED_WINDOW_MS, always keeping the latest two samples."""
+    if len(samples) < 2:
+        return 0.0
+    t_last = float(samples[-1][0])
+    start = max(1, len(samples) - 2)
+    while start > 1 and t_last - float(samples[start - 1][0]) <= _DISMISS_SPEED_WINDOW_MS:
+        start -= 1
+    speeds = []
+    for prev, cur in zip(samples[start - 1:], samples[start:]):
+        span = max(1.0, float(cur[0]) - float(prev[0]))
+        speeds.append(-(float(cur[1]) - float(prev[1])) / span)
+    return sum(speeds) / len(speeds) * 1000.0
+
+
+def should_dismiss_card(samples, card_height: float) -> bool:
+    """True when a released card drag closes the app: an upward flick
+    faster than _DISMISS_SPEED that travelled past _DISMISS_MIN_TRAVEL,
+    or an upward drag past half the card's height at any speed."""
+    if not samples:
+        return False
+    travel = -float(samples[-1][1])
+    if travel <= 0:
+        return False
+    if card_height > 0 and travel > float(card_height) / 2.0:
+        return True
+    return (travel > _DISMISS_MIN_TRAVEL
+            and card_dismiss_speed(samples) > _DISMISS_SPEED)
 
 
 def resolve_app_name(app_id: str) -> str:
@@ -271,6 +309,7 @@ class AppSwitcher(_AppSwitcherBase):
         self._thumbs = thumbnails
         self._apps: list[AppInfo] = []
         self._card_swiping = False
+        self._card_drag: list[tuple[float, float]] = []
         self._laid_out: tuple[int, int] | None = None
         self._scroller: object | None = None
 
@@ -580,28 +619,60 @@ class AppSwitcher(_AppSwitcherBase):
 
         drag = Gtk.GestureDrag()
         drag.connect(
+            'drag-begin',
+            lambda g, _x, _y: self._on_card_drag_begin(g),
+        )
+        drag.connect(
             'drag-update',
             lambda g, _dx, dy, card=outer: self._on_card_drag(g, card, dy),
         )
         drag.connect(
             'drag-end',
-            lambda _g, _dx, dy, a=app: self._on_card_drag_end(dy, a),
+            lambda g, _dx, dy, a=app, card=outer: self._on_card_drag_end(
+                dy, a, g, card),
         )
         outer.add_controller(drag)
 
         return outer
 
+    @staticmethod
+    def _event_ms(gesture: object) -> float:
+        """Timestamp (ms) of the event being handled, for the dismiss
+        speed; the monotonic clock when the gesture has none."""
+        try:
+            t = int(gesture.get_current_event_time())
+        except Exception:
+            t = 0
+        if t > 0:
+            return float(t)
+        import time
+        return time.monotonic() * 1000.0
+
+    def _on_card_drag_begin(self, gesture: Gtk.GestureDrag) -> None:
+        self._card_drag = [(self._event_ms(gesture), 0.0)]
+
     def _on_card_drag(self, gesture: Gtk.GestureDrag, card: Gtk.Box, dy: float) -> None:
+        self._card_drag.append((self._event_ms(gesture), float(dy)))
         if dy < -20:
             self._card_swiping = True
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
         if dy < 0:
             card.set_margin_bottom(max(0, int(abs(dy))))
 
-    def _on_card_drag_end(self, dy: float, app: AppInfo) -> None:
+    def _on_card_drag_end(self, dy: float, app: AppInfo,
+                          gesture: object = None, card: object = None) -> None:
         swiping = self._card_swiping
         self._card_swiping = False
-        if dy < -_SWIPE_DISMISS_THRESHOLD:
+        samples = self._card_drag
+        self._card_drag = []
+        samples.append((self._event_ms(gesture), float(dy)))
+        try:
+            height = float(card.get_height()) if card is not None else 0.0
+        except Exception:
+            height = 0.0
+        if height <= 0:
+            height = float(self._card_pixel_size(0, 0)[1])
+        if should_dismiss_card(samples, height):
             self._kill_app(app)
         elif swiping:
             self._rebuild_cards()

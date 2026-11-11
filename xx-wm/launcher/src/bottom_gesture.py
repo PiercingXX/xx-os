@@ -11,6 +11,7 @@ Android behaviour:
   for PAUSE_MS, or release slowly past
   SLOW_RELEASE_FRAC                          -> switcher (swipe_up_long)
   sideways swipe along the bottom edge       -> previous / next open app
+  swipe up, then drag back down and let go   -> nothing (cancel)
 
 The verbs come from gestures.json through gesture_bindings.resolve_verb,
 the same mapping lisgd's bindings use, so a rebound slot behaves the same
@@ -89,6 +90,12 @@ SLOP_FRAC = 0.015          # "still" / tap wobble                   [15 px, 2.2 
 # Upward release speed (output heights per second) at or above which a
 # release is a flick, i.e. home whatever its length.          [900 px/s]
 FLICK_SPEED_FRAC = 0.9
+# Downward release speed (output heights per second) past which a drag
+# whose last REVERSE_SAMPLES moves all went back down is a cancel, not
+# home: the owner changed their mind (Lomiri Stage.qml / Launcher.qml
+# one-way check). A third of the flick speed.                  [300 px/s]
+REVERSE_SPEED_FRAC = FLICK_SPEED_FRAC / 3.0
+REVERSE_SAMPLES = 5        # ~50 ms of touch reports at 100 Hz
 
 PAUSE_MS = 250             # finger nearly still this long -> recents
 VELOCITY_WINDOW_MS = 80    # release speed is measured over the last 80 ms
@@ -116,6 +123,7 @@ class Thresholds(NamedTuple):
     side_min: float
     slop: float
     flick_speed: float  # px per ms
+    reverse_speed: float  # px per ms, downward
 
 
 def thresholds(height: float) -> Thresholds:
@@ -128,6 +136,7 @@ def thresholds(height: float) -> Thresholds:
         side_min=h * SIDE_MIN_FRAC,
         slop=h * SLOP_FRAC,
         flick_speed=h * FLICK_SPEED_FRAC / 1000.0,
+        reverse_speed=h * REVERSE_SPEED_FRAC / 1000.0,
     )
 
 
@@ -189,10 +198,23 @@ def is_pause(samples, now_ms: float, height: float) -> bool:
                for s in window)
 
 
+def is_reversal(samples, height: float, t_end: float | None = None) -> bool:
+    """True when the finger came back down at the end of the drag: each
+    of the last REVERSE_SAMPLES moves went down (or held) and the release
+    speed is downward past the reverse threshold. Pull up, drag back
+    down, let go -> cancel."""
+    if len(samples) <= REVERSE_SAMPLES:
+        return False
+    tail = samples[-(REVERSE_SAMPLES + 1):]
+    if any(_up(b) > _up(a) for a, b in zip(tail, tail[1:])):
+        return False
+    return release_speed(samples, t_end) <= -thresholds(height).reverse_speed
+
+
 def classify_release(samples, height: float,
                      t_end: float | None = None) -> str | None:
     """Outcome of a drag released at the last sample: HOME, SWITCHER,
-    PREVIOUS, NEXT, TAP, or None (too short / ambiguous)."""
+    PREVIOUS, NEXT, TAP, or None (too short / ambiguous / reversed)."""
     if not samples:
         return None
     th = thresholds(height)
@@ -204,6 +226,8 @@ def classify_release(samples, height: float,
         # Finger moved right: the app to the left in recents.
         return PREVIOUS if dx > 0 else NEXT
     if up < th.home_min or abs(dx) > up:
+        return None
+    if is_reversal(samples, height, t_end):
         return None
     if release_speed(samples, t_end) >= th.flick_speed:
         return HOME

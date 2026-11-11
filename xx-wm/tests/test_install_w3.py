@@ -472,9 +472,64 @@ def test_unattended_no_device_no_detection_fails(tmp_path):
     env['DEVICE_ARG'] = ''
     env['XX_WM_SYSFS_DRM'] = str(tmp_path / 'empty-drm')
     (tmp_path / 'empty-drm').mkdir()
+    env['XX_WM_DEVICE_ROOT'] = str(tmp_path / 'empty-root')
+    (tmp_path / 'empty-root').mkdir()
     proc = _run_funcs(_UNATTENDED_FUNCS, 'do_unattended', tmp_path, env)
     assert proc.returncode != 0
     assert 'no --device given' in proc.stderr
+
+
+# --- FLX1 on Halium: no DRM node (Flick install.sh) ---------------------------
+
+def _detect(tmp_path, files):
+    """detect_phoc_device against an empty DRM tree and a fake root."""
+    drm = tmp_path / 'drm'
+    drm.mkdir()
+    root = tmp_path / 'root'
+    for rel, data in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    root.mkdir(exist_ok=True)
+    proc = _run_funcs(['detect_phoc_device'], 'detect_phoc_device', tmp_path,
+                      {'XX_WM_SYSFS_DRM': str(drm),
+                       'XX_WM_DEVICE_ROOT': str(root)})
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout.strip()
+
+
+@pytest.mark.parametrize('files', [
+    {'proc/device-tree/model': b'FuriLabs FLX1\x00'},
+    {'proc/device-tree/model': b'MT6789V/CD flx1\x00'},
+    {'etc/furios-release': b'FuriOS 2.0\n'},
+    {'etc/os-release': b'NAME="FuriOS"\nID=furios\nID_LIKE=debian\n'},
+    {'etc/os-release': b'ID="furios"\n'},
+])
+def test_flx1_detected_without_drm(tmp_path, files):
+    assert _detect(tmp_path, files) == 'furiphone-flx1'
+
+
+@pytest.mark.parametrize('files', [
+    {},
+    {'proc/device-tree/model': b'Fairphone 5\x00'},
+    {'etc/os-release': b'ID=debian\nID_LIKE=furios-ish\n'},
+])
+def test_other_devices_stay_undetected(tmp_path, files):
+    assert _detect(tmp_path, files) == ''
+
+
+def test_drm_match_wins_over_furios_markers(tmp_path):
+    # A DSI-1 panel's mode still decides first.
+    drm = tmp_path / 'drm' / 'card0-DSI-1'
+    drm.mkdir(parents=True)
+    (drm / 'modes').write_text('1080x2340\n')
+    root = tmp_path / 'root' / 'etc'
+    root.mkdir(parents=True)
+    (root / 'furios-release').write_text('FuriOS\n')
+    proc = _run_funcs(['detect_phoc_device'], 'detect_phoc_device', tmp_path,
+                      {'XX_WM_SYSFS_DRM': str(tmp_path / 'drm'),
+                       'XX_WM_DEVICE_ROOT': str(tmp_path / 'root')})
+    assert proc.stdout.strip() == 'fairphone-5'
 
 
 # --- 7. input group on every path ----------------------------------------------
