@@ -254,6 +254,11 @@ class PeopleController:
         if not target:
             self._notice("This contact has no number to call.")
             return
+        from xx_dialer import ui_ussd
+
+        if ui_ussd.route_special(target, self._deps.voice, None,
+                                 self._notice):
+            return
         voice = self._deps.voice
         if voice is None:
             self._notice("No modem is available to place the call.")

@@ -257,6 +257,32 @@ def place_emergency_call(number: str, extra: object = None) -> tuple[bool, str]:
         return False, str(err)
 
 
+def classify_dial(raw: str) -> str:
+    """'imei', 'ussd' or 'call' via the shared xx_phone detector (the one
+    the xx-dialer app uses). Without xx_phone everything stays a call."""
+    try:
+        from xx_phone import mmi
+        return mmi.classify(raw)
+    except Exception:
+        return 'call'
+
+
+def _monitor_bus():
+    """The modem monitor's live system-bus connection, or None (the sheet
+    then connects asynchronously itself)."""
+    try:
+        from modem_monitor import _last_monitor
+        return _last_monitor._bus if _last_monitor is not None else None
+    except Exception:
+        return None
+
+
+def _attach_osk(entry) -> None:
+    from osk import attach, set_visible
+    attach(entry, on_show=lambda: set_visible(True),
+           on_hide=lambda: set_visible(False))
+
+
 class Dialer(Gtk.Window):
     """Standalone dialer window — numeric keypad + contact search + call via ModemManager."""
 
@@ -503,7 +529,33 @@ class Dialer(Gtk.Window):
     def _on_call(self, _btn: Gtk.Button) -> None:
         if not self._digits:
             return
+        kind = classify_dial(self._digits)
+        if kind == 'imei':
+            self._show_imei()
+            return
+        if kind == 'ussd':
+            self._start_ussd(self._digits)
+            return
         self._initiate_call(self._digits)
+
+    def _show_imei(self) -> None:
+        """*#06#: the IMEI, read locally (never sent to the network)."""
+        try:
+            from xx_phone import ussd_dialog
+            ussd_dialog.open_imei_dialog(parent=self, bus=_monitor_bus())
+        except Exception as err:
+            self._set_status(f'IMEI unavailable: {err}')
+
+    def _start_ussd(self, code: str) -> None:
+        """USSD/MMI code: Modem3gpp.Ussd.Initiate with the reply sheet,
+        never a voice call."""
+        try:
+            from xx_phone import ussd_dialog
+            ussd_dialog.open_ussd_dialog(
+                code, parent=self, bus=_monitor_bus(),
+                attach_entry=_attach_osk)
+        except Exception as err:
+            self._set_status(f'Code not sent: {err}')
 
     def _initiate_call(self, number: str) -> None:
         self._set_status(f'Calling {self._format_number(number)}…')

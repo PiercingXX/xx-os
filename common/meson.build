@@ -19,5 +19,7 @@ python.install_sources(
   'xx_phone/__init__.py',
   'xx_phone/schedules.py',
   'xx_phone/weather.py',
+  'xx_phone/mmi.py',
+  'xx_phone/ussd_dialog.py',
   subdir: 'xx_phone',
 )

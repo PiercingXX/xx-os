@@ -65,3 +65,11 @@ app spec, so a second app on `xx_music` never collides.
 ## External services the suite uses
 
 ModemManager (system), mmsd-tng (session, `org.ofono.mms`), feedbackd (`org.sigxcpu.Feedback`), callaudiod (`org.mobian_project.CallAudio`), iio-sensor-proxy, GeoClue2, UPower, logind, BlueZ, NetworkManager, xdg-desktop-portal, PipeWire.
+
+## ModemManager calls (system bus, `org.freedesktop.ModemManager1`)
+
+All async (`bus.call` + callback, never `call_sync` on the GTK loop); every caller fails soft without a modem.
+
+- **USSD / MMI** (`common/xx_phone/mmi.py`, sheet in `xx_phone/ussd_dialog.py`; used by the shell dialer and xx-dialer's keypad/people/recents). `mmi.classify()` sends `*#06#` to a local IMEI sheet (`GetManagedObjects` → `Modem.Modem3gpp.Imei`, else `Modem.EquipmentIdentifier`). Other USSD-shaped codes (`*`/`#`/`**`/`##`/`*#` … `#`, digits and `*` only — GNOME Calls' rule) go to `Modem.Modem3gpp.Ussd`: `Get State` → `Cancel` when ACTIVE(2)/USER_RESPONSE(3) → `Initiate(s) → s`; `Respond(s) → s` while State is USER_RESPONSE; `Cancel` on dismiss. Replies also arrive as raw `PropertiesChanged` (arg0 = the Ussd interface) for `State`/`NetworkRequest`/`NetworkNotification`, deduped against the method reply per user action. Supplementary-service MMI codes such as `**21*number#` (call forwarding) are **not** interpreted locally: like GNOME Calls they go to `Initiate` and the network handles them. Codes with `+` (e.g. `*21*+49…#`) are dialed as calls, as in GNOME Calls.
+- **SIM PIN / PUK** (`xx-wm/launcher/src/modem_monitor.py` → `sim_pin.py`). The monitor keeps `Modem.State`/`UnlockRequired`/`UnlockRetries`/`Sim` from `GetManagedObjects`, `Modem.StateChanged(i,i,u)` and `PropertiesChanged` (arg0 = `…Modem`). Locked = State LOCKED(2) and UnlockRequired ≠ NONE(1) (phosh's rule). The prompt calls `Sim.SendPin(s)` or, for PUK-type locks, `Sim.SendPuk(s puk, s new_pin)` on the modem's `Sim` path. Digits are never logged. A modem reaching REGISTERED(8) re-runs `Voice.ListCalls` (catch-up for calls missed while registering). Interfaces added to a known modem path after unlock (Voice, Ussd) are merged, not replaced.
+- **Calls**: `Voice.CreateCall`/`Call.Start`/`Accept`/`Hangup`/`Voice.DeleteCall`; `Call.StateChanged` reason → end notice ('Busy', 'Network error', 'Audio setup failed').

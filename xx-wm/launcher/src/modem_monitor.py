@@ -19,6 +19,15 @@ ghost call screen stays up) and re-enumerates when it comes back. Calls
 that reach TERMINATED are removed from ModemManager with Voice.DeleteCall
 (GNOME Calls does the same), and the terminate reason is kept as a short
 text on the call (``CallInfo.end_reason``, :func:`last_ended_call`).
+
+Modem state: every modem's ``Modem.State`` / ``UnlockRequired`` /
+``UnlockRetries`` are kept from GetManagedObjects and followed through
+``Modem.StateChanged`` and the Modem ``PropertiesChanged``. A SIM that
+needs a PIN/PUK (State LOCKED) is reported as a :class:`SimLockInfo` to
+``on_sim_lock`` (default: the shell's ``sim_pin`` prompt); the same report
+with ``locked=False`` withdraws it. When a modem reaches REGISTERED the
+monitor re-lists its calls (catch-up for a call that rang while it was
+still registering — sxmo's modem hook does the same sweep).
 """
 from __future__ import annotations
 
@@ -35,6 +44,7 @@ _VOICE_IFACE = 'org.freedesktop.ModemManager1.Modem.Voice'
 _MSG_IFACE = 'org.freedesktop.ModemManager1.Modem.Messaging'
 _CALL_IFACE = 'org.freedesktop.ModemManager1.Call'
 _SMS_IFACE = 'org.freedesktop.ModemManager1.Sms'
+_SIM_IFACE = 'org.freedesktop.ModemManager1.Sim'
 _OBJMGR_IFACE = 'org.freedesktop.DBus.ObjectManager'
 _PROPS_IFACE = 'org.freedesktop.DBus.Properties'
 _DBUS_IFACE = 'org.freedesktop.DBus'
@@ -53,6 +63,13 @@ _STATE_ACTIVE = 4
 _STATE_HELD = 5
 _STATE_WAITING = 6
 _STATE_TERMINATED = 7
+
+#: MMModemState values the monitor acts on.
+_MODEM_STATE_FAILED = -1
+_MODEM_STATE_LOCKED = 2
+_MODEM_STATE_REGISTERED = 8
+#: MMModemLock NONE: no PIN/PUK needed.
+_LOCK_NONE = 1
 _LIVE_STATES = frozenset({
     _STATE_DIALING, _STATE_RINGING_OUT, _STATE_RINGING_IN,
     _STATE_ACTIVE, _STATE_HELD, _STATE_WAITING,
@@ -103,9 +120,93 @@ class CallInfo:
     started_at: float | None = None
     state_reason: int = 0
     end_reason: str = ''
+    ended_at: float | None = None
 
 
 CallState = CallInfo
+
+
+@dataclass
+class SimLockInfo:
+    """Lock state of one modem's SIM: ``unlock_required`` is the
+    MMModemLock code (2 SIM PIN, 4 SIM PUK, ...), ``retries`` the
+    UnlockRetries map (lock code → attempts left), ``sim_path`` the
+    modem's Sim object for SendPin/SendPuk."""
+
+    modem_path: str
+    sim_path: str = ''
+    state: int = 0
+    unlock_required: int = 0
+    retries: dict | None = None
+    locked: bool = False
+
+    def retries_left(self) -> int | None:
+        """Attempts left for the current lock, None when unknown."""
+        try:
+            value = (self.retries or {}).get(self.unlock_required)
+            return None if value is None else int(value)
+        except (TypeError, ValueError, AttributeError):
+            return None
+
+
+def sim_lock_info(modem_path: str, props: dict) -> SimLockInfo:
+    """SimLockInfo from Modem interface properties. Locked means State
+    LOCKED with a lock other than NONE (phosh-wwan-mm's rule); a modem
+    still probing (lock UNKNOWN) only counts once it reports LOCKED."""
+    props = props or {}
+
+    def _int(key, default=0):
+        try:
+            return int(props.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    state = _int('State')
+    lock = _int('UnlockRequired')
+    retries: dict = {}
+    try:
+        for key, value in dict(props.get('UnlockRetries') or {}).items():
+            retries[int(key)] = int(value)
+    except (TypeError, ValueError, AttributeError):
+        retries = {}
+    sim = str(props.get('Sim') or '')
+    if sim == '/':
+        sim = ''
+    locked = state == _MODEM_STATE_LOCKED and lock != _LOCK_NONE
+    return SimLockInfo(modem_path=modem_path, sim_path=sim, state=state,
+                       unlock_required=lock, retries=retries, locked=locked)
+
+
+def _modem_iface_props(interfaces) -> dict:
+    """The Modem interface's properties from an ObjectManager entry
+    (``{iface: {prop: value}}``); {} for any other shape."""
+    if not isinstance(interfaces, dict):
+        return {}
+    props = interfaces.get(_MODEM_IFACE)
+    return props if isinstance(props, dict) else {}
+
+
+def _default_sim_handler(info: SimLockInfo) -> None:
+    """Route a lock report to the shell's SIM PIN prompt (sim_pin.py);
+    a missing or broken prompt never takes the call monitor down."""
+    try:
+        import sim_pin
+        sim_pin.handle_lock(info)
+    except Exception as err:  # noqa: BLE001 - optional surface
+        from shell_log import get_logger
+        get_logger('modem_monitor').warning('SIM prompt unavailable: %s', err)
+
+
+def current_sim_locks() -> list[SimLockInfo]:
+    """Every modem whose SIM currently needs a PIN/PUK (for a settings
+    entry that re-opens a dismissed prompt)."""
+    monitor = _last_monitor
+    if monitor is None:
+        return []
+    return [info for info in (
+        sim_lock_info(path, props)
+        for path, props in sorted(monitor._modem_props.items()))
+        if info.locked]
 
 
 # MM1 Number property returns the remote party URI (tel:+1234567890)
@@ -436,12 +537,16 @@ class ModemMonitor:
         *,
         on_calls_changed: Callable[[list[CallInfo]], None] | None = None,
         on_sms: Callable[[str, str], None] | None = None,
+        on_sim_lock: Callable[[SimLockInfo], None] | None = None,
     ) -> None:
         self._on_incoming = on_incoming or (lambda _c, _n: None)
         self._on_answered = on_answered or (lambda _c, _n: None)
         self._on_ended = on_ended or (lambda: None)
         self._on_calls_changed = on_calls_changed
         self._on_sms = on_sms
+        self._on_sim_lock = on_sim_lock or _default_sim_handler
+        self._modem_props: dict[str, dict] = {}
+        self._lock_seen: dict[str, tuple] = {}
         self._bus: Gio.DBusConnection | None = None
         self._calls: dict[str, CallInfo] = {}
         self._fetching: set[str] = set()
@@ -481,6 +586,16 @@ class ModemMonitor:
                 _MM1, _MSG_IFACE, 'Added', None,
                 None, Gio.DBusSignalFlags.NONE,
                 self._on_messaging_added, None,
+            )
+            self._bus.signal_subscribe(
+                _MM1, _MODEM_IFACE, 'StateChanged', None,
+                None, Gio.DBusSignalFlags.NONE,
+                self._on_modem_state_changed, None,
+            )
+            self._bus.signal_subscribe(
+                _MM1, _PROPS_IFACE, 'PropertiesChanged', None,
+                _MODEM_IFACE, Gio.DBusSignalFlags.NONE,
+                self._on_modem_properties_changed, None,
             )
             self._bus.signal_subscribe(
                 _MM1, _OBJMGR_IFACE, 'InterfacesAdded', _MM1_PATH,
@@ -538,6 +653,8 @@ class ModemMonitor:
                 'ModemManager went away; dropping %d call(s), %d modem(s)',
                 len(self._calls), len(self._modems))
         self._modems.clear()
+        for modem_path in list(self._modem_props):
+            self._forget_modem_state(modem_path)
         for call_path in list(self._calls) + list(self._fetching):
             self._drop_call(call_path)
 
@@ -571,6 +688,8 @@ class ModemMonitor:
         for obj_path, interfaces in objects.items():
             if _MODEM_IFACE in interfaces:
                 self._modems[obj_path] = set(interfaces)
+                self._update_modem_props(
+                    obj_path, _modem_iface_props(interfaces), replace_all=True)
         for modem_path, ifaces in self._modems.items():
             if _VOICE_IFACE in ifaces:
                 self._list_calls(modem_path)
@@ -696,6 +815,7 @@ class ModemMonitor:
         if terminated:
             tracked.state = _STATE_TERMINATED
             tracked.end_reason = end_reason_text(tracked.state_reason)
+            tracked.ended_at = time.monotonic()
             self._last_ended = tracked
             if tracked.state_reason not in (0, 1, 2, 3, 4):
                 from shell_log import get_logger
@@ -892,10 +1012,17 @@ class ModemMonitor:
         # Only Modem objects travel the ObjectManager; a re-probed modem
         # re-indexes, so re-attach and adopt whatever calls it already has.
         obj_path, interfaces = params.unpack()
-        if _MODEM_IFACE not in interfaces:
+        known = self._modems.get(obj_path)
+        if known is None and _MODEM_IFACE not in interfaces:
             return
-        self._modems[obj_path] = set(interfaces)
-        if _VOICE_IFACE in interfaces:
+        # A modem that finishes initialising after a SIM unlock gains
+        # Voice/Messaging/Ussd on the SAME path: merge, never replace.
+        had_voice = known is not None and _VOICE_IFACE in known
+        self._modems[obj_path] = (known or set()) | set(interfaces)
+        if _MODEM_IFACE in interfaces:
+            self._update_modem_props(
+                obj_path, _modem_iface_props(interfaces), replace_all=True)
+        if _VOICE_IFACE in interfaces and not had_voice:
             self._list_calls(obj_path)
 
     def _on_interfaces_removed(
@@ -903,10 +1030,93 @@ class ModemMonitor:
     ) -> None:
         obj_path, removed = params.unpack()
         if _MODEM_IFACE not in removed:
+            known = self._modems.get(obj_path)
+            if known is not None:
+                known.difference_update(removed)
             return
         self._modems.pop(obj_path, None)
+        self._forget_modem_state(obj_path)
         for call_path in [p for p, m in self._call_modem.items() if m == obj_path]:
             self._drop_call(call_path)
+
+    # ---------------------------------------------------------- modem state
+
+    def _update_modem_props(self, modem_path: str, props,
+                            replace_all: bool = False) -> None:
+        try:
+            fresh = dict(props or {})
+        except (TypeError, ValueError):
+            fresh = {}
+        if replace_all or modem_path not in self._modem_props:
+            self._modem_props[modem_path] = fresh
+        else:
+            self._modem_props[modem_path].update(fresh)
+        self._evaluate_lock(modem_path)
+
+    def _forget_modem_state(self, modem_path: str) -> None:
+        """A modem went away: withdraw its SIM prompt if one was up."""
+        self._modem_props.pop(modem_path, None)
+        seen = self._lock_seen.pop(modem_path, None)
+        if seen is not None and seen[0]:
+            GLib.idle_add(self._on_sim_lock,
+                          SimLockInfo(modem_path=modem_path))
+
+    def _evaluate_lock(self, modem_path: str) -> None:
+        """Report the modem's lock state when it changed (locked, lock
+        kind or attempts left). A modem that was never locked is not
+        reported: no prompt to withdraw."""
+        info = sim_lock_info(modem_path, self._modem_props.get(modem_path, {}))
+        key = (info.locked, info.unlock_required if info.locked else 0,
+               info.retries_left() if info.locked else None,
+               info.sim_path if info.locked else '')
+        previous = self._lock_seen.get(modem_path)
+        if previous == key:
+            return
+        self._lock_seen[modem_path] = key
+        if not info.locked and (previous is None or not previous[0]):
+            return
+        from shell_log import get_logger
+        get_logger('modem_monitor').info(
+            'modem %s SIM %s (lock %d)', modem_path,
+            'locked' if info.locked else 'unlocked', info.unlock_required)
+        GLib.idle_add(self._on_sim_lock, info)
+
+    def _on_modem_state_changed(
+        self, _conn, _sender, modem_path, _iface, _sig, params, _ud,
+    ) -> None:
+        try:
+            old, new, _reason = params.unpack()
+            old, new = int(old), int(new)
+        except (TypeError, ValueError):
+            return
+        modem_path = str(modem_path)
+        if modem_path not in self._modem_props and modem_path not in self._modems:
+            return
+        self._update_modem_props(modem_path, {'State': new})
+        if (new >= _MODEM_STATE_REGISTERED > old
+                and _VOICE_IFACE in self._modems.get(modem_path, set())):
+            # Registered (again): sweep for calls that arrived while the
+            # modem was still coming up (sxmo_hook_modem.sh catch-up).
+            self._list_calls(modem_path)
+
+    def _on_modem_properties_changed(
+        self, _conn, _sender, modem_path, _iface, _sig, params, _ud,
+    ) -> None:
+        try:
+            unpacked = params.unpack()
+            iface_name, changed = unpacked[0], dict(unpacked[1])
+        except (TypeError, ValueError, IndexError):
+            return
+        if iface_name != _MODEM_IFACE:
+            return
+        modem_path = str(modem_path)
+        if modem_path not in self._modems:
+            return
+        relevant = {key: changed[key] for key in
+                    ('State', 'UnlockRequired', 'UnlockRetries', 'Sim')
+                    if key in changed}
+        if relevant:
+            self._update_modem_props(modem_path, relevant)
 
     def _on_messaging_added(
         self, _conn, _sender, _modem_path, _iface, _sig, params, _ud,

@@ -56,6 +56,7 @@ install_data(
     'src/xx_dialer/ui_rules.py',
     'src/xx_dialer/ui_people.py',
     'src/xx_dialer/ui_setup.py',
+    'src/xx_dialer/ui_ussd.py',
   ],
   install_dir: join_paths(app_datadir, 'xx_dialer'),
 )

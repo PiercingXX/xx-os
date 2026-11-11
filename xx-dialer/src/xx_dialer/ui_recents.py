@@ -292,6 +292,11 @@ class RecentsController:
         self.place(number)
 
     def place(self, number: str) -> None:
+        from xx_dialer import ui_ussd
+
+        if ui_ussd.route_special(number, self._deps.voice, None,
+                                 self._notice):
+            return
         voice = self._deps.voice
         if voice is None:
             self._notice("No modem is available to place the call.")

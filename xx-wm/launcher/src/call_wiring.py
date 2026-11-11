@@ -15,6 +15,49 @@ UNKNOWN_RING_REASONS = frozenset({
 })
 
 
+#: MMCallStateReason codes of an ordinary end (unknown, started, new,
+#: accepted, terminated): no end notice for these.
+_NORMAL_END_REASONS = frozenset({0, 1, 2, 3, 4})
+_REASON_REFUSED_OR_BUSY = 5
+#: An end notice older than this belongs to an earlier call.
+_END_NOTICE_MAX_AGE_S = 10.0
+
+
+def end_reason_notice(info, now: float | None = None) -> str | None:
+    """Short text to show when a call ended abnormally ('Busy', 'Network
+    error', 'Audio setup failed', ...), None for a normal hang-up. 'Busy'
+    (REFUSED_OR_BUSY) only reads true for a call we placed: on an
+    incoming call it means the caller gave up or we declined."""
+    if info is None:
+        return None
+    try:
+        reason = int(getattr(info, 'state_reason', 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if reason in _NORMAL_END_REASONS:
+        return None
+    if reason == _REASON_REFUSED_OR_BUSY:
+        try:
+            if int(getattr(info, 'direction', 0)) != 2:
+                return None
+        except (TypeError, ValueError):
+            return None
+    ended_at = getattr(info, 'ended_at', None)
+    if ended_at is not None:
+        import time as _time
+        current = _time.monotonic() if now is None else now
+        if current - float(ended_at) > _END_NOTICE_MAX_AGE_S:
+            return None
+    text = getattr(info, 'end_reason', '') or ''
+    if not text:
+        try:
+            from modem_monitor import end_reason_text
+            text = end_reason_text(reason)
+        except Exception:
+            return None
+    return text
+
+
 def ringer_tone_for(verdict: str, reason: str) -> str:
     """Sound file for a ringing verdict: the unknown-caller tone when
     the dialer's screening verdict says the caller is unknown but
@@ -90,11 +133,20 @@ class CallWiring:
                     '%s owns the session bus; leaving calls to it', CALLS_BUS_NAME)
             return
         call_ui, _bar = win._ensure_call_surfaces()
-        # DnD exception check runs before this call is recorded so the
-        # 15-minute repeat window looks at prior calls; the ringer itself
-        # starts only in the verdict callback (ring + DnD exception).
-        win.dnd_state.note_call(number)
         raw = number if isinstance(number, str) else ''
+        # DnD exception check runs before this call is recorded so the
+        # 15-minute repeat window looks at prior calls only (checked after
+        # note_call, every call matched itself and rang through DnD); the
+        # ringer itself starts only in the verdict callback.
+        try:
+            dnd_exception = bool(win.dnd_state.is_exception(raw))
+        except Exception:
+            dnd_exception = True
+        # A waiting call promoted to ringing was already recorded when it
+        # arrived WAITING (_note_waiting_calls): never count it twice.
+        noted = getattr(win, '_dnd_waiting_noted', None)
+        if not (raw and isinstance(noted, dict) and raw in noted.values()):
+            win.dnd_state.note_call(number)
         import time as _time
         now_ms = int(_time.time() * 1000)
         try:
@@ -163,7 +215,7 @@ class CallWiring:
                 return
             try:
                 rings_now = (not win.dnd_state.is_active()
-                             or win.dnd_state.is_exception(raw))
+                             or dnd_exception)
             except Exception:
                 rings_now = True
             if rings_now and win.config.sound_ringtone:
@@ -403,6 +455,7 @@ class CallWiring:
                         '%s owns the session bus; leaving calls to it',
                         CALLS_BUS_NAME)
                 return
+            self._note_waiting_calls(calls)
             call_ui, _bar = win._ensure_call_surfaces()
         except Exception as err:
             from shell_log import get_logger
@@ -431,6 +484,80 @@ class CallWiring:
             from shell_log import get_logger
             get_logger('window').warning(
                 'locked outgoing present failed: %s', err)
+
+    def _note_waiting_calls(self, calls: list) -> None:
+        """Record call-waiting arrivals for the DnD repeat-caller rule.
+
+        A second incoming call arrives WAITING and never passes the
+        ringing path (_on_call_incoming), so it was never noted: a caller
+        who tried twice during another call did not count as a repeat.
+        Each waiting call is noted once per path (again once a withheld
+        number resolves); the ringing path skips a promoted one."""
+        win = self._win
+        try:
+            from modem_monitor import _DIR_INCOMING, _STATE_WAITING
+        except Exception:
+            _DIR_INCOMING, _STATE_WAITING = 1, 6
+        noted = getattr(win, '_dnd_waiting_noted', None)
+        if not isinstance(noted, dict):
+            noted = {}
+            win._dnd_waiting_noted = noted
+        current = set()
+        for call in calls or []:
+            path = getattr(call, 'path', None)
+            if path is None:
+                continue
+            current.add(path)
+            number = getattr(call, 'number', '') or ''
+            if path in noted and (noted[path] or not number):
+                continue
+            try:
+                waiting = (int(getattr(call, 'direction', 0)) == _DIR_INCOMING
+                           and int(getattr(call, 'state', 0)) == _STATE_WAITING)
+            except (TypeError, ValueError):
+                waiting = False
+            if not waiting:
+                continue
+            try:
+                win.dnd_state.note_call(number)
+            except Exception:
+                pass
+            noted[path] = number
+        for path in [p for p in noted if p not in current]:
+            del noted[path]
+
+    def _show_end_reason(self) -> None:
+        """Brief notice when the call that just ended did not end
+        normally ('Busy', 'Network error', 'Audio setup failed'): on the
+        dialer's status line when it is open, else the shell toast."""
+        win = self._win
+        if getattr(win, '_calls_owner_warned', False):
+            return  # GNOME Calls owns calls (and shows its own reason)
+        try:
+            from modem_monitor import last_ended_call
+            info = last_ended_call()
+        except Exception:
+            return
+        text = end_reason_notice(info)
+        if not text:
+            return
+        key = (getattr(info, 'path', None), getattr(info, 'ended_at', None))
+        if getattr(win, '_end_reason_shown', None) == key:
+            return
+        win._end_reason_shown = key
+        dialer = getattr(win, '_dialer', None)
+        try:
+            if dialer is not None and dialer.get_visible():
+                dialer._set_status(text)
+                return
+        except Exception:
+            pass
+        show = getattr(win, '_show_status', None)
+        if callable(show):
+            try:
+                show(text)
+            except Exception:
+                pass
 
     def _on_call_answered(self, caller: str, number: str) -> None:
         import sound
@@ -482,6 +609,7 @@ class CallWiring:
                 pass
         if win._call_bar is not None:
             win._call_bar.hide_bar()
+        self._show_end_reason()
 
     def _on_sms_received(self, number: str, text: str) -> None:
         from modem_monitor import (

@@ -23,7 +23,7 @@ from gi.repository import Adw, Gdk, Gio, Gtk, Pango  # noqa: E402
 
 from xx_ui import widgets  # noqa: E402
 import xx_phone  # noqa: E402
-from xx_dialer import contacts_client, policy, t9  # noqa: E402
+from xx_dialer import contacts_client, policy, t9, ui_ussd  # noqa: E402
 from xx_dialer.store import Store  # noqa: E402
 
 MAX_MATCHES = 6
@@ -74,7 +74,12 @@ def resolve_voicemail_number(config: dict) -> str | None:
 
 
 def dial_target(raw: str) -> str:
-    """What actually gets dialed: normalized, or the raw input as-is."""
+    """What actually gets dialed: normalized, or the raw input as-is.
+    A dial string with ``*`` or ``#`` (``#31#number`` caller-ID prefix)
+    is kept as typed minus whitespace: normalizing would strip the
+    service code and dial a different number."""
+    if raw and ("*" in raw or "#" in raw):
+        return "".join(raw.split())
     return policy.normalize_number(raw) or raw
 
 
@@ -283,6 +288,11 @@ class KeypadView:
 
     def _on_call_click(self, _button: Gtk.Button | None = None) -> None:
         if not self.buffer.can_call:
+            return
+        # USSD/MMI codes and *#06# open the code sheet, never a call:
+        # classify the raw entry, before normalizing strips * and #.
+        if ui_ussd.route_special(self.buffer.digits, self.deps.voice,
+                                 self._root, self._notice):
             return
         self.place(dial_target(self.buffer.digits))
 
