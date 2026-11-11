@@ -339,6 +339,8 @@ _TILE_SETTINGS_SECTIONS = {
     'night': 'display',
     'tailscale': 'services',
     'nope': 'nope',
+    # Caffeine's auto-off sits with Automatic suspend on the Battery page.
+    'caffeine': 'standby',
 }
 
 
@@ -1017,6 +1019,26 @@ def _set_saver_state(value: bool) -> None:
         pass
 
 
+def _get_caffeine_state() -> bool | None:
+    """Caffeine (keep the screen on): the shared idle-inhibit hub's
+    'caffeine' reason. Pure in-process state, never a bus call."""
+    try:
+        from idle_inhibit import get_hub
+        return bool(get_hub().caffeine_active())
+    except Exception:
+        return None
+
+
+def _set_caffeine_state(value: bool, config: object = None) -> None:
+    """Toggle Caffeine; on, it ends itself after `caffeine_minutes`
+    (default 60, 0 = until off), on lock, and when the screen goes off."""
+    try:
+        from idle_inhibit import caffeine_minutes, get_hub
+        get_hub().set_caffeine(bool(value), caffeine_minutes(config))
+    except Exception:
+        pass
+
+
 _TILES: list[_TileDef] = [
     _TileDef('wifi',     'WiFi',     lambda: _nm_get('WirelessEnabled'), lambda v: _nm_set('WirelessEnabled', v), 1),
     _TileDef('bt',       'BT',       _bluez_get,                          _bluez_set,                              1),
@@ -1027,6 +1049,7 @@ _TILES: list[_TileDef] = [
     _TileDef('focus',    'Focus',    lambda: None,                        lambda _v: None,                         2),
     _TileDef('nope',     'Nope',     lambda: None,                        lambda _v: None,                         2),
     _TileDef('saver',    'Saver',    _get_saver_state,                    _set_saver_state,                        2),
+    _TileDef('caffeine', 'Caffeine', _get_caffeine_state,                 _set_caffeine_state,                     2),
     _TileDef('record',   'Record',   _get_record_state,                   _set_record_state,                     2),
     _TileDef('captions', 'Captions', lambda: None,                        lambda _v: None,                         2),
     _TileDef('auto_br',  'Auto',     lambda: None,                        lambda _v: None,                         2),
@@ -1214,6 +1237,12 @@ class QuickActionsPanel(Gtk.Box):
                     get_state=lambda: bool(self._focus.is_active()),
                     set_state=lambda v: self._focus.set_enabled(v),
                 )
+            if tile.key == 'caffeine':
+                # Always available (no hardware); the auto-off reads the
+                # panel's live config.
+                tile = tile._replace(
+                    set_state=lambda v: _set_caffeine_state(
+                        v, getattr(self, '_config', None)))
             if tile.key == 'nope':
                 if getattr(self, '_nope', None) is None:
                     continue

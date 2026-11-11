@@ -3,6 +3,9 @@
 Saver toggle, auto-on threshold, what the saver does, the freeze timeout
 (5/15/30 min or never), per-app never-freeze exemptions picked from the
 drawer, the built-in exemptions (read-only), and the live frozen count.
+Then Automatic suspend (``suspend_after``: Off / 1 / 5 / 15 min after the
+screen goes off, auto_suspend.py) and the Caffeine tile's auto-off
+(``caffeine_minutes``).
 """
 from __future__ import annotations
 
@@ -12,6 +15,38 @@ import settings_ui as ui
 TIMEOUT_CHOICES = ((5, '5 min'), (15, '15 min'), (30, '30 min'),
                    (0, 'Never'))
 THRESHOLD_CHOICES = (10, 15, 20, 25)
+# (seconds, label) — mirrors auto_suspend.SUSPEND_AFTER_CHOICES.
+SUSPEND_CHOICES = ((0, 'Off'), (60, '1 min'), (300, '5 min'),
+                   (900, '15 min'))
+CAFFEINE_CHOICES = (30, 60, 120, 0)
+SUSPEND_NOTE = ('Never during a call, playing media, Caffeine, or an app '
+                'keeping the screen on. An armed alarm keeps the phone '
+                'awake: a suspended phone cannot wake for it yet.')
+
+
+def suspend_after(win) -> int:
+    try:
+        from auto_suspend import suspend_after_secs
+        return suspend_after_secs(getattr(win, 'config', None))
+    except Exception:
+        return 0
+
+
+def caffeine_minutes(win) -> int:
+    try:
+        from idle_inhibit import caffeine_minutes as minutes
+        return minutes(getattr(win, 'config', None))
+    except Exception:
+        return 60
+
+
+def caffeine_label(minutes: int) -> str:
+    if minutes <= 0:
+        return 'When turned off'
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return 'After %d hour%s' % (hours, '' if hours == 1 else 's')
+    return 'After %d min' % minutes
 
 
 def _cfg(win, name: str, default):
@@ -124,10 +159,70 @@ class StandbySection(settings_page._Section):
             if labels else None)
         win._standby_exempt_box = standby_group[1]
         self._render_exempt(win)
-        return saver_group + standby_group
+        return saver_group + standby_group + self._build_suspend(win)
+
+    # -- automatic suspend + caffeine ------------------------------------
+
+    def _build_suspend(self, win) -> list:
+        self._suspend_box = ui.nav_row(
+            'Suspend when screen is off', '',
+            lambda r: self._pick_suspend(win, r))
+        self._caffeine_box = ui.nav_row(
+            'Caffeine turns off', '',
+            lambda r: self._pick_caffeine(win, r))
+        self._render_suspend(win)
+        return ui.group(
+            'Automatic suspend', [self._suspend_box, self._caffeine_box],
+            note=SUSPEND_NOTE)
+
+    def _render_suspend(self, win) -> None:
+        secs = suspend_after(win)
+        try:
+            from auto_suspend import suspend_after_label
+            label = suspend_after_label(secs)
+        except Exception:
+            label = 'Off' if secs <= 0 else '%d s' % secs
+        ui.set_subtitle(getattr(self, '_suspend_box', None),
+                        label if secs <= 0 else 'After %s' % label)
+        ui.set_subtitle(getattr(self, '_caffeine_box', None),
+                        caffeine_label(caffeine_minutes(win)))
+
+    def _pick_suspend(self, win, anchor) -> None:
+        actions = getattr(win, 'item_actions', None)
+        if actions is None:
+            return
+        actions._show_action_menu(
+            anchor, 'Suspend after',
+            [(label, lambda secs=secs: self._set_suspend(win, secs))
+             for secs, label in SUSPEND_CHOICES])
+
+    def _set_suspend(self, win, secs: int) -> None:
+        try:
+            win.config.set('suspend_after', int(secs))
+        except Exception:
+            pass
+        self._render_suspend(win)
+
+    def _pick_caffeine(self, win, anchor) -> None:
+        actions = getattr(win, 'item_actions', None)
+        if actions is None:
+            return
+        actions._show_action_menu(
+            anchor, 'Caffeine turns off',
+            [(caffeine_label(minutes),
+              lambda minutes=minutes: self._set_caffeine(win, minutes))
+             for minutes in CAFFEINE_CHOICES])
+
+    def _set_caffeine(self, win, minutes: int) -> None:
+        try:
+            win.config.set('caffeine_minutes', int(minutes))
+        except Exception:
+            pass
+        self._render_suspend(win)
 
     def refresh(self, win) -> None:
         self._sync_switches(win)
+        self._render_suspend(win)
         self._render_threshold(win)
         self._render_timeout(win)
         self._render_exempt(win)

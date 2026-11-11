@@ -768,7 +768,7 @@ class TestStandbySection:
         widgets = self._section().build(win)
         titles = [w.label_text() for w in widgets
                   if 'xx-set-caption' in w.classes]
-        assert titles == ['BATTERY SAVER', 'APP STANDBY']
+        assert titles == ['BATTERY SAVER', 'APP STANDBY', 'AUTOMATIC SUSPEND']
         assert [w for w in widgets if 'xx-set-card' in w.classes]
 
     def test_saver_effects_and_builtins_listed(self, fake_gtk):

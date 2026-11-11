@@ -224,6 +224,43 @@ action was invoked in the last 60 s. On devices where systemd is not the
 user manager (OpenRC) there are no scopes: pids are recorded and freezing
 degrades to per-process SIGSTOP/SIGCONT.
 
+### Keeping the screen on & automatic suspend
+
+The shell owns `org.freedesktop.ScreenSaver` on the session bus (both
+`/org/freedesktop/ScreenSaver` and `/ScreenSaver`): `Inhibit(app, reason)
+→ cookie`, `UnInhibit(cookie)`, `GetActive` (display blanked),
+`GetActiveTime`, `SimulateUserActivity` (wakes a blank display) and the
+`ActiveChanged` signal. phoc forwards every Wayland idle inhibitor (video
+players, browsers) to this name, so playing video no longer blanks. A
+held cookie keeps the screen from idle-blanking; cookies are dropped
+when the app that took them leaves the bus. Under a host session that
+already owns the name (GNOME, Plasma) the shell leaves it alone.
+
+The **Caffeine** quick tile (expanded tier) keeps the screen on the same
+way. It turns itself off when the screen goes off (power key, lock) and
+after `caffeine_minutes`. Long-press opens Settings → Battery.
+
+Automatic suspend (Settings → Battery → Automatic suspend) suspends the
+phone through logind once the screen has been off for `suspend_after`
+seconds. It re-checks right before every attempt and backs off (10 s,
+doubling, at most 45 s) while any of these hold: the screen is on, a
+call is live, any idle inhibitor (ScreenSaver cookie, Caffeine, a call),
+an MPRIS player is Playing, the phone is charging (unless
+`suspend_when_charging`), the file `$XDG_RUNTIME_DIR/xx-wm/no-suspend`
+exists, a wireless-debugging client is connected, or xx-clock has an
+alarm/timer ringing, due within 2 minutes, or armed at all. The last one
+is because nothing can wake a suspended phone for an alarm yet: user
+systemd timers ignore `WakeSystem=` and the RTC wake alarm is root-only.
+If logind refuses (an inhibitor, policy), it logs and tries again 45 s
+later. After a resume with the screen still off it waits 30 s before the
+next attempt, and logs a ModemManager check.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `suspend_after` | int | `0` | Seconds the screen must be off before automatic suspend; `0` = off. Settings offers Off / 1 / 5 / 15 min. Off by default: modem and RTC wake sources are unverified on the target devices, and armed alarms can't wake a suspended phone yet. |
+| `suspend_when_charging` | bool | `false` | Allow automatic suspend while charging. When it's `false`, charging blocks it, so a phone on the charger stays reachable. |
+| `caffeine_minutes` | int | `60` | Caffeine auto-off in minutes (Settings: 30 / 60 / 120 / when turned off); `0` keeps it on until turned off, locked or the screen goes off. Clamped 0..1440. |
+
 ### Privacy indicators & per-app permissions
 
 Android/GrapheneOS parity for the three sensitive capabilities. The home

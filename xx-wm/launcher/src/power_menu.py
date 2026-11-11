@@ -399,6 +399,12 @@ class PowerMenu(Gtk.Window):
             note_explicit_lock()
         except Exception:
             pass
+        # Locking ends Caffeine (keep-screen-on is for the session at hand).
+        try:
+            from idle_inhibit import get_hub
+            get_hub().clear_caffeine('lock')
+        except Exception:
+            pass
         if self._on_lock is not None:
             try:
                 self._on_lock()

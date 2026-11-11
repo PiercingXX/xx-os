@@ -491,6 +491,12 @@ class DisplayManager:
         else:
             self._inhibitors.discard(reason)
 
+    @property
+    def idle_inhibitors(self) -> frozenset:
+        """Currently held idle-inhibit reasons ('call', 'screensaver',
+        'caffeine', …) — read by automatic suspend as blockers."""
+        return frozenset(getattr(self, '_inhibitors', ()) or ())
+
     def inhibit_sleep(self, reason: str, active: bool) -> None:
         """Hold or release a named system-sleep blocker (e.g. a live call).
         The first held reason takes a logind Inhibit('sleep', 'block') fd;

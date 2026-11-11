@@ -84,6 +84,8 @@ class XXWMApplication(Adw.Application):
         self._standby = None
         self._privacy_monitor = None
         self._xxdb = None
+        self._screensaver = None
+        self._auto_suspend = None
         self._banner = None
         from focus_mode import HeldNotifications
         self._held_notifications = HeldNotifications()
@@ -217,6 +219,7 @@ class XXWMApplication(Adw.Application):
             on_media_key=self._mpris.handle_media_key,
         )
         self._shell._display_mgr = self._display_mgr
+        self._start_idle_services()
         # Screen capture wiring: screenshot/record notifications reach the
         # shade through the live shell; blank state feeds the recorder's
         # auto-stop so recordings never run against a dark screen.
@@ -313,6 +316,68 @@ class XXWMApplication(Adw.Application):
         if verb:
             _log.info('bottom gesture: %s -> %s', outcome, verb)
             self._on_ipc_command(verb)
+
+    def _start_idle_services(self) -> None:
+        """Idle inhibit (org.freedesktop.ScreenSaver + the Caffeine tile)
+        and blank-driven automatic suspend. Each piece fails soft: the
+        shell runs without them, exactly as before they existed."""
+        from idle_inhibit import REASON_SCREENSAVER, get_hub
+        hub = get_hub()
+        hub.attach(self._display_mgr)
+        try:
+            from screensaver_service import ScreenSaverService
+            self._screensaver = ScreenSaverService(
+                on_inhibit_changed=lambda held: hub.set(
+                    REASON_SCREENSAVER, held),
+                is_blanked=self._display_blanked,
+                on_user_activity=hub.wake,
+            )
+            self._screensaver.start()
+        except Exception as exc:
+            _log.warning('screensaver service unavailable: %s', exc)
+        try:
+            from auto_suspend import AutoSuspendController
+            shell = self._shell
+            self._auto_suspend = AutoSuspendController(
+                config=shell.config,
+                is_blanked=self._display_blanked,
+                call_live=shell._call_live,
+                inhibit_reasons=self._idle_reasons,
+                media_playing=self._media_playing,
+                charging=self._on_charger,
+                debug_clients=self._xxdb_clients,
+            )
+        except Exception as exc:
+            _log.warning('automatic suspend unavailable: %s', exc)
+
+    def _idle_reasons(self) -> set:
+        """Every held idle inhibitor: the hub's (screensaver, caffeine)
+        plus the DisplayManager's own (an active call)."""
+        from idle_inhibit import get_hub
+        reasons = set(get_hub().active_reasons())
+        display_mgr = getattr(self, '_display_mgr', None)
+        reasons |= set(getattr(display_mgr, 'idle_inhibitors', ()) or ())
+        return reasons
+
+    def _media_playing(self) -> bool:
+        mpris = getattr(self, '_mpris', None)
+        if mpris is None:
+            return False
+        return any(getattr(p, 'status', '') == 'Playing'
+                   for p in mpris.players())
+
+    def _on_charger(self) -> bool:
+        """Charging per the standby controller's cached UPower read (its
+        refresh worker keeps it current; never a bus call here)."""
+        battery = getattr(getattr(self, '_standby', None), '_battery', None)
+        try:
+            return bool(battery[1])
+        except (TypeError, IndexError):
+            return False
+
+    def _xxdb_clients(self) -> int:
+        return int(getattr(getattr(self, '_xxdb', None), 'active_clients',
+                           0) or 0)
 
     def _display_blanked(self) -> bool:
         """The DisplayManager's own blank state; False before it exists."""
@@ -723,6 +788,7 @@ class XXWMApplication(Adw.Application):
             _log.warning('capture blank hook failed: %s', exc)
         if self._shell is not None:
             self._shell.on_blank_changed(blanked)
+        self._idle_blank_hooks(blanked)
         if not blanked:
             try:
                 from settings_display import refresh_night_scheduler
@@ -747,6 +813,25 @@ class XXWMApplication(Adw.Application):
                 tracker.on_blank_changed(blanked)
             except Exception as exc:
                 _log.warning('usage stats blank hook failed: %s', exc)
+
+    def _idle_blank_hooks(self, blanked: bool) -> None:
+        """Screen off ends Caffeine, ScreenSaver.ActiveChanged follows the
+        display, and automatic suspend arms (blank) or cancels (wake)."""
+        if blanked:
+            try:
+                from idle_inhibit import get_hub
+                get_hub().clear_caffeine('screen off')
+            except Exception as exc:
+                _log.warning('caffeine blank hook failed: %s', exc)
+        for name, method in (('_screensaver', 'set_active'),
+                             ('_auto_suspend', 'note_blank')):
+            target = getattr(self, name, None)
+            if target is None:
+                continue
+            try:
+                getattr(target, method)(blanked)
+            except Exception as exc:
+                _log.warning('%s blank hook failed: %s', name, exc)
 
     # -- wireless debugging (xxdb) --------------------------------------
 
@@ -833,6 +918,12 @@ class XXWMApplication(Adw.Application):
         else:
             if delay is not None:
                 delay.acquire()
+            auto = getattr(self, '_auto_suspend', None)
+            if auto is not None:
+                try:
+                    auto.note_resumed()
+                except Exception as exc:
+                    _log.warning('auto-suspend resume hook failed: %s', exc)
             try:
                 from settings_display import refresh_night_scheduler
                 refresh_night_scheduler('resume')
@@ -919,6 +1010,12 @@ class XXWMApplication(Adw.Application):
             _log.warning('session power re-apply failed: %s', exc)
 
     def do_shutdown(self) -> None:
+        screensaver = getattr(self, '_screensaver', None)
+        if screensaver is not None:
+            try:
+                screensaver.stop()
+            except Exception:
+                pass
         standby = getattr(self, '_standby', None)
         if standby is not None:
             try:
