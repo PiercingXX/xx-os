@@ -7,7 +7,6 @@ sibling file that imported them against fake gi seams cannot leak in.
 import importlib.util
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 

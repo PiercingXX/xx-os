@@ -345,6 +345,12 @@ class _FakeListBox:
         row._sibs = self.rows
         self.rows.append(row)
 
+    def insert(self, row, position):
+        row._sibs = self.rows
+        if position < 0 or position > len(self.rows):
+            position = len(self.rows)
+        self.rows.insert(position, row)
+
     def remove(self, row):
         self.rows.remove(row)
 

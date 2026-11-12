@@ -513,6 +513,8 @@ def group_notification_runs(notifs: list) -> list[list]:
 
 
 _SWIPE_DISMISS_THRESHOLD = 140  # pixels to trigger dismiss
+# History beyond this many rows drops its oldest (resident rows stay).
+_MAX_SHADE_ROWS = 100
 _SHEET_CLOSE_DY = 100  # px upward drag to close the shade
 
 
@@ -1153,17 +1155,44 @@ class NotificationShade(Gtk.Window):
         actions: list | None = None,
         hints: dict | None = None,
     ) -> None:
-        self.dismiss(notif_id, notify_daemon=False)
+        self._drop_rows({notif_id})
         notif = Notification(notif_id, app_name, summary, body, desktop_entry,
                              actions, hints)
         self._notifications.insert(0, notif)
-        self._rebuild_list()
+        row = self._make_row(notif)
+        self._row_map()[notif_id] = row
+        self.list_box.insert(row, 0)
+        overflow = len(self._notifications) - _MAX_SHADE_ROWS
+        if overflow > 0:
+            oldest = [n.id for n in reversed(self._notifications)
+                      if not bool((n.hints or {}).get('resident', False))]
+            self._drop_rows(set(oldest[:overflow]))
+        self._sync_rows()
 
     def dismiss(self, notif_id: int, notify_daemon: bool = True) -> None:
-        self._notifications = [n for n in self._notifications if n.id != notif_id]
-        self._rebuild_list()
+        if self._drop_rows({notif_id}):
+            self._sync_rows()
         if notify_daemon:
             self._notify_daemon_of_dismissal(notif_id)
+
+    def _row_map(self) -> dict:
+        rows = getattr(self, '_rows', None)
+        if rows is None:
+            rows = self._rows = {}
+        return rows
+
+    def _drop_rows(self, ids: set) -> bool:
+        """Remove these notifications and their rows; True if any went."""
+        if not ids or not any(n.id in ids for n in self._notifications):
+            return False
+        self._notifications = [n for n in self._notifications
+                               if n.id not in ids]
+        rows = self._row_map()
+        for notif_id in ids:
+            row = rows.pop(notif_id, None)
+            if row is not None:
+                self.list_box.remove(row)
+        return True
 
     def close_app_notifications(self, app_id: str) -> list[int]:
         """Drop every live row owned by an app id (the Disable-for… mute
@@ -1189,12 +1218,11 @@ class NotificationShade(Gtk.Window):
         except Exception:
             pass
 
-    def _rebuild_list(self) -> None:
-        child = self.list_box.get_first_child()
-        while child is not None:
-            nxt = child.get_next_sibling()
-            self.list_box.remove(child)
-            child = nxt
+    def _sync_rows(self) -> None:
+        """Count, section visibility and which row heads its app group.
+
+        Rows are inserted and removed one at a time; only this cheap pass
+        runs over the list, never a rebuild."""
         total = len(self._notifications)
         for widget in getattr(self, '_notif_section', ()):
             try:
@@ -1208,15 +1236,21 @@ class NotificationShade(Gtk.Window):
                 count.set_visible(total > 0)
             except Exception:
                 pass
+        rows = self._row_map()
         for group in group_notification_runs(self._notifications):
-            first = True
-            for notif in group:
-                self.list_box.append(
-                    self._make_row(notif, show_app_header=first))
-                first = False
+            for index, notif in enumerate(group):
+                header = getattr(rows.get(notif.id), 'xx_header', None)
+                if header is not None:
+                    header.set_visible(index == 0)
 
-    def _make_row(self, notif: Notification,
-                  show_app_header: bool = True) -> Gtk.ListBoxRow:
+    def _refresh_row_times(self) -> None:
+        rows = self._row_map()
+        for notif in self._notifications:
+            label = getattr(rows.get(notif.id), 'xx_time', None)
+            if label is not None:
+                label.set_text(format_rel_time(notif.timestamp))
+
+    def _make_row(self, notif: Notification) -> Gtk.ListBoxRow:
         title_label = Gtk.Label(label=notif.summary, xalign=0, wrap=True, max_width_chars=36)
         title_label.add_css_class('notif-title')
         _clamp_lines(title_label, 2)
@@ -1225,20 +1259,20 @@ class NotificationShade(Gtk.Window):
         content.add_css_class('notif-content')
         content.set_hexpand(True)
         # First row of each same-app run carries the shared app label plus
-        # the relative age; the rows grouped under it show summary/body only.
-        if show_app_header:
-            header = Gtk.Box(
-                orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            header.set_hexpand(True)
-            app_label = Gtk.Label(label=notif.app_name.upper(), xalign=0)
-            app_label.add_css_class('notif-app')
-            app_label.set_hexpand(True)
-            time_label = Gtk.Label(
-                label=format_rel_time(notif.timestamp), xalign=1)
-            time_label.add_css_class('notif-time')
-            header.append(app_label)
-            header.append(time_label)
-            content.append(header)
+        # the relative age; the rows grouped under it show summary/body only
+        # (_sync_rows hides their header).
+        header = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header.set_hexpand(True)
+        app_label = Gtk.Label(label=notif.app_name.upper(), xalign=0)
+        app_label.add_css_class('notif-app')
+        app_label.set_hexpand(True)
+        time_label = Gtk.Label(
+            label=format_rel_time(notif.timestamp), xalign=1)
+        time_label.add_css_class('notif-time')
+        header.append(app_label)
+        header.append(time_label)
+        content.append(header)
         content.append(title_label)
 
         if notif.body.strip():
@@ -1304,6 +1338,8 @@ class NotificationShade(Gtk.Window):
 
         row = Gtk.ListBoxRow(selectable=False, activatable=False)
         row.set_child(row_box)
+        row.xx_header = header
+        row.xx_time = time_label
         return row
 
     def _run_action(self, callback: object, notif_id: int) -> None:
@@ -1439,6 +1475,7 @@ class NotificationShade(Gtk.Window):
                 pass
             self._hide_timer_id = None
         self._refresh_datetime()
+        self._refresh_row_times()
         if self._clock_timer_id is None:
             self._clock_timer_id = GLib.timeout_add_seconds(10, self._refresh_datetime)
         try:
@@ -1494,9 +1531,8 @@ class NotificationShade(Gtk.Window):
         # an app event the user can clear.
         removed = [n.id for n in self._notifications
                    if not bool((n.hints or {}).get('resident', False))]
-        self._notifications = [n for n in self._notifications
-                               if n.id not in removed]
-        self._rebuild_list()
+        if self._drop_rows(set(removed)):
+            self._sync_rows()
         for notif_id in removed:
             self._notify_daemon_of_dismissal(notif_id)
 

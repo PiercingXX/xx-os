@@ -338,6 +338,12 @@ class _FakeListBox:
         row._sibs = self.rows
         self.rows.append(row)
 
+    def insert(self, row, position):
+        row._sibs = self.rows
+        if position < 0 or position > len(self.rows):
+            position = len(self.rows)
+        self.rows.insert(position, row)
+
     def remove(self, row):
         self.rows.remove(row)
 
@@ -839,7 +845,8 @@ class TestShadeNotificationList:
     def _row_header_labels(self, row):
         content = row.child.children[0]
         headers = [c for c in content.children
-                   if isinstance(c, _FakeBox) and len(c.children) == 2]
+                   if isinstance(c, _FakeBox) and len(c.children) == 2
+                   and c.visible is not False]
         texts = []
         for header in headers:
             texts.extend(lbl.label_text for lbl in header.children)
@@ -884,6 +891,36 @@ class TestShadeNotificationList:
         shade._build_content()
         assert shade.list_box.placeholder is None
         assert len(shade._notif_section) == 2
+
+    def test_history_is_capped_resident_rows_stay(self, monkeypatch):
+        shade = self._shade(monkeypatch)
+        shade.add_notification(1, 'System', 'Debugging on', '',
+                               hints={'resident': True})
+        for nid in range(2, 152):
+            shade.add_notification(nid, f'App{nid % 3}', f'S{nid}', '')
+        assert len(shade._notifications) == 100
+        assert len(shade.list_box.rows) == 100
+        ids = [n.id for n in shade._notifications]
+        assert 1 in ids
+        assert ids[0] == 151 and 53 in ids and 52 not in ids
+        assert len(shade._rows) == 100
+
+    def test_rows_are_mutated_not_rebuilt(self, monkeypatch):
+        shade = self._shade(monkeypatch)
+        for nid in (1, 2, 3):
+            shade.add_notification(nid, 'Signal', f'S{nid}', '')
+        kept = list(shade.list_box.rows)
+        shade.add_notification(4, 'Bank', 'S4', '')
+        assert shade.list_box.rows[1:] == kept
+        shade.dismiss(2)
+        assert shade.list_box.rows == [shade.list_box.rows[0],
+                                       kept[0], kept[2]]
+        before = list(shade.list_box.rows)
+        shade.dismiss(999)
+        assert shade.list_box.rows == before
+        # A replacement removes its old row and adds one at the top.
+        shade.add_notification(3, 'Signal', 'S3 again', '')
+        assert shade.list_box.rows[1:] == [before[0], before[2]]
 
     def test_dismiss_keeps_grouping_honest(self, monkeypatch):
         shade = self._shade(monkeypatch)
