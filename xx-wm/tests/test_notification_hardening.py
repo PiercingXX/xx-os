@@ -380,5 +380,120 @@ class TestFocusHolds:
         assert len(app._shell.shown) == 1
 
 
+class _NotifBox:
+    def __init__(self) -> None:
+        self.children: list = []
+
+    def get_first_child(self):
+        return self.children[0] if self.children else None
+
+    def remove(self, child):
+        self.children.remove(child)
+
+    def append(self, child):
+        child.parent = self
+        self.children.append(child)
+
+
+class _LineButton:
+    def __init__(self, label=''):
+        self.label = label
+        self.parent = None
+
+    def add_css_class(self, _css):
+        pass
+
+    def connect(self, *_args):
+        return 1
+
+    def get_next_sibling(self):
+        siblings = self.parent.children
+        index = siblings.index(self)
+        return siblings[index + 1] if index + 1 < len(siblings) else None
+
+
+class _Lock:
+    """The lock screen's notification list, run through the real
+    LockScreen methods against a recording box."""
+
+    def __init__(self, notifications, mode='summary', dnd=False):
+        import types
+        self._notif_box = _NotifBox()
+        self._get_notifications = notifications
+        self._config = types.SimpleNamespace(lock_screen_notifications=mode)
+        self._dnd = dnd
+        self.visible = True
+
+    def _dnd_active(self):
+        return self._dnd
+
+    def get_visible(self):
+        return self.visible
+
+    def refresh_notifications(self):
+        import lock_screen
+        lock_screen.LockScreen.refresh_notifications(self)
+
+    def _refresh_notifications(self):
+        import lock_screen
+        lock_screen.LockScreen._refresh_notifications(self)
+
+    def _on_notification_tapped(self):
+        pass
+
+    def lines(self):
+        return [c.label for c in self._notif_box.children]
+
+
+class TestLockListWhileLocked:
+    @pytest.fixture(autouse=True)
+    def _fake_button(self, monkeypatch):
+        import lock_screen
+        monkeypatch.setattr(lock_screen.Gtk, 'Button', _LineButton,
+                            raising=False)
+
+    def _app(self, lock, locked=True):
+        import types
+        app = _app()
+        rows: list = []
+
+        def add(*args):
+            rows.insert(0, (args[1], args[2], args[0]))
+
+        def dismiss(notif_id, notify_daemon=True):
+            rows[:] = [r for r in rows if r[2] != notif_id]
+
+        shade = types.SimpleNamespace(add_notification=add, dismiss=dismiss)
+        lock._get_notifications = lambda: [(a, s) for a, s, _ in rows]
+        app._shell = _shell(_ensure_shade=lambda: shade, _shade=shade,
+                            _lock_screen=lock, is_locked=lambda: locked)
+        return app
+
+    def test_arrival_and_withdrawal_show_while_locked(self):
+        lock = _Lock(None)
+        app = self._app(lock)
+        app._on_notification(4, 'Chat', 'Lunch?', 'B', 'org.x.Chat', {})
+        assert lock.lines() == ['Chat \u2014 Lunch?']
+        app._on_notification_closed(4)
+        assert lock.lines() == []
+
+    def test_privacy_setting_still_applies(self):
+        lock = _Lock(None, mode='count')
+        app = self._app(lock)
+        app._on_notification(4, 'Chat', 'Lunch?', 'B', 'org.x.Chat', {})
+        app._on_notification(5, 'Mail', 'Invoice', 'B', 'org.x.Mail', {})
+        assert lock.lines() == ['2 notifications']
+        off = _Lock(None, mode='off')
+        app = self._app(off)
+        app._on_notification(4, 'Chat', 'Lunch?', 'B', 'org.x.Chat', {})
+        assert off.lines() == []
+
+    def test_unlocked_leaves_the_lock_list_alone(self):
+        lock = _Lock(None)
+        app = self._app(lock, locked=False)
+        app._on_notification(4, 'Chat', 'Lunch?', 'B', 'org.x.Chat', {})
+        assert lock.lines() == []
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

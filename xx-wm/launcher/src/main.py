@@ -713,6 +713,7 @@ class XXWMApplication(Adw.Application):
             notif_id, app_name, summary, body, desktop_entry,
             actions if actions is not None else [],
             hints if isinstance(hints, dict) else None)
+        self._refresh_lock_notifications()
 
         self._maybe_banner(
             notif_id, app_name, summary, body, desktop_entry,
@@ -807,7 +808,21 @@ class XXWMApplication(Adw.Application):
             return True
         for held in self._held_notifications.release_all():
             self._shell._ensure_shade().add_notification(*held)
+        self._refresh_lock_notifications()
         return True
+
+    def _refresh_lock_notifications(self) -> None:
+        """The lock-screen list follows the shade while locked."""
+        if self._shell is None or not self._banner_locked():
+            return
+        lock = getattr(self._shell, '_lock_screen', None)
+        refresh = getattr(lock, 'refresh_notifications', None)
+        if not callable(refresh):
+            return
+        try:
+            refresh()
+        except Exception as exc:
+            _log.warning('lock screen notification refresh failed: %s', exc)
 
     def _on_notification_closed(self, notif_id: int) -> None:
         # Withdrawn while Focus held it: never deliver it later as a ghost.
@@ -824,6 +839,7 @@ class XXWMApplication(Adw.Application):
         if shade is not None:
             # Daemon-driven removal: never echo back over D-Bus.
             shade.dismiss(notif_id, notify_daemon=False)
+            self._refresh_lock_notifications()
 
     # IPC verbs that must not open other surfaces while the lock screen
     # is up. `lock` stays allowed (idempotent re-lock); shade/switcher

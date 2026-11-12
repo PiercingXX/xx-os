@@ -1293,6 +1293,11 @@ class LockScreen(Gtk.Window):
             except Exception:
                 pass
 
+    def refresh_notifications(self) -> None:
+        """Re-read the list while locked, so arrivals and withdrawals show
+        without waiting for the next lock (privacy mode and DnD apply)."""
+        self._refresh_notifications()
+
     def _refresh_notifications(self) -> None:
         child = self._notif_box.get_first_child()
         while child is not None:
