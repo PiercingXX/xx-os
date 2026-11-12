@@ -104,6 +104,7 @@ tile (expanded tier, hidden while `wf-recorder` is absent) records to
 |---|---|---|---|
 | `dnd_enabled` | bool | `false` | Manual toggle. Notifications collect silently; only exceptions ring. |
 | `dnd_schedules` | list | `[]` | `{days: [0-6 Monday-first], start: "HH:MM", end: "HH:MM"}`; overnight ranges wrap. |
+| `dnd_schedule_off_until` | float | `0.0` | Set when DnD is turned off during a scheduled session: the schedule stays off until this epoch (the session's end). Turning DnD on clears it. Transient, excluded from backups. |
 | `dnd_starred_numbers` | list | `[]` | Numbers that always ring through (star contacts by long-pressing a dialer suggestion). Repeat callers (twice within 15 min) also ring. |
 
 ### Focus Mode
@@ -114,6 +115,7 @@ tile (expanded tier, hidden while `wf-recorder` is absent) records to
 | `focus_apps` | list | `[]` | App ids to pause (or use the drawer long-press "Focus: pause this app"). |
 | `focus_schedules` | list | `[]` | Same shape as `dnd_schedules`. |
 | `focus_break_until` | float | `0.0` | Break deadline (set by "Take a break" 5/10/15 min); transient, excluded from backups. |
+| `focus_schedule_off_until` | float | `0.0` | Like `dnd_schedule_off_until`, for Focus. Transient, excluded from backups. |
 
 ### Nope-Mode
 

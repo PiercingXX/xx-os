@@ -495,5 +495,145 @@ class TestLockListWhileLocked:
         assert lock.lines() == []
 
 
+# -- DnD / Focus tiles against a schedule -------------------------------------
+
+def _cfg(**data):
+    import types
+    return types.SimpleNamespace(data=dict(data), save=lambda: None)
+
+
+def _mon(hour, minute=0, week=0):
+    from datetime import datetime, timedelta
+    return datetime(2026, 11, 9, hour, minute) + timedelta(weeks=week)
+
+
+_WORKDAY = [{'days': [0, 1, 2, 3, 4], 'start': '09:00', 'end': '17:00'}]
+_ALL_DAY = [{'days': list(range(7)), 'start': '00:00', 'end': '12:00'},
+            {'days': list(range(7)), 'start': '12:00', 'end': '00:00'}]
+
+
+class TestScheduledSessionEnds:
+    def test_dnd_off_ends_the_current_session_only(self):
+        from dnd import DndState
+        dnd = DndState(_cfg(dnd_schedules=_WORKDAY))
+        assert dnd.is_active(_mon(12))
+        dnd.set_enabled(False, now=_mon(12))
+        assert not dnd.is_active(_mon(12))
+        assert not dnd.is_active(_mon(16, 59))
+        assert dnd.is_active(_mon(9, 30).replace(day=10))
+        dnd.set_enabled(True, now=_mon(12))
+        assert dnd._config.data['dnd_schedule_off_until'] == 0.0
+
+    def test_focus_off_ends_touching_windows_as_one_session(self):
+        from focus_mode import FocusState
+        windows = [{'days': [0], 'start': '09:00', 'end': '12:00'},
+                   {'days': [0], 'start': '12:00', 'end': '17:00'}]
+        focus = FocusState(_cfg(focus_schedules=windows))
+        assert focus.is_active(_mon(10), now_ts=0.0)
+        focus.set_enabled(False, now=_mon(10))
+        assert not focus.is_active(_mon(13), now_ts=0.0)
+        assert focus.is_active(_mon(10, week=1), now_ts=0.0)
+
+    def test_off_outside_a_schedule_skips_nothing(self):
+        from dnd import DndState
+        dnd = DndState(_cfg(dnd_schedules=_WORKDAY, dnd_enabled=True))
+        dnd.set_enabled(False, now=_mon(18))
+        assert dnd._config.data['dnd_schedule_off_until'] == 0.0
+        assert dnd.is_active(_mon(9, 30, week=1))
+
+
+class _TileBtn:
+    def __init__(self, active):
+        self.active = active
+        self.css: list = []
+
+    def set_active(self, value):
+        self.active = value
+
+    def get_active(self):
+        return self.active
+
+    def add_css_class(self, css):
+        if css not in self.css:
+            self.css.append(css)
+
+    def remove_css_class(self, css):
+        if css in self.css:
+            self.css.remove(css)
+
+
+class _TileLabel:
+    text = ''
+
+    def set_text(self, text):
+        self.text = text
+
+
+class _NoHardware(dict):
+    def __contains__(self, _key):
+        return True
+
+    def __getitem__(self, _key):
+        return False
+
+
+class _PanelSelf:
+    """Runs the real QuickActionsPanel methods on a plain object: the
+    panel is a Gtk widget, which needs a display to construct."""
+
+    def __getattr__(self, name):
+        import quick_actions
+        attr = getattr(quick_actions.QuickActionsPanel, name)
+        return attr.__get__(self) if callable(attr) else attr
+
+
+def _panel(key, dnd=None, focus=None, nope=None):
+    from types import SimpleNamespace
+    panel = _PanelSelf()
+    panel._dnd = dnd
+    panel._focus = focus
+    panel._nope = nope
+    panel._on_nope_changed = None
+    panel._hw_gate_cache = _NoHardware()
+    off = SimpleNamespace(available=lambda: False, is_active=lambda: False)
+    panel._als = off
+    panel._location = off
+    panel._tile_buttons = {key: _TileBtn(True)}
+    panel._state_labels = {key: _TileLabel()}
+    panel._tile_state = {key: True}
+    panel._tile_details = {}
+    panel._updating = False
+    panel.refresh_states = lambda *a, **k: None
+    tile = next(t for t in panel._tiles(include_slow_gates=False)
+                if t.key == key)
+    return panel, tile
+
+
+class TestTilesEndScheduledSessions:
+    def _tap_off(self, panel, tile):
+        btn = panel._tile_buttons[tile.key]
+        btn.set_active(False)
+        panel._on_tile_toggled(btn, tile)
+        return btn
+
+    def test_dnd_tile_turns_a_scheduled_session_off(self):
+        from dnd import DndState
+        dnd = DndState(_cfg(dnd_schedules=_ALL_DAY))
+        assert dnd.is_active()
+        panel, tile = _panel('dnd', dnd=dnd)
+        btn = self._tap_off(panel, tile)
+        assert not dnd.is_active()
+        assert btn.active is False and 'active' not in btn.css
+
+    def test_focus_tile_turns_a_scheduled_session_off(self):
+        from focus_mode import FocusState
+        focus = FocusState(_cfg(focus_schedules=_ALL_DAY))
+        assert focus.is_active()
+        panel, tile = _panel('focus', focus=focus)
+        btn = self._tap_off(panel, tile)
+        assert not focus.is_active()
+        assert btn.active is False
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

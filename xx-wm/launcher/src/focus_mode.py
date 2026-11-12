@@ -14,7 +14,7 @@ from datetime import datetime
 
 from app_names import fallback_app_name
 from config import ShellConfig, same_app_id
-from dnd import schedule_matches
+from dnd import schedule_matches, schedule_skipped, scheduled_session_end
 
 BREAK_MINUTES = (5, 10, 15)
 
@@ -31,8 +31,12 @@ class FocusState:
     def enabled(self) -> bool:
         return bool(self._config.data.get('focus_enabled', False))
 
-    def set_enabled(self, enabled: bool) -> None:
+    def set_enabled(self, enabled: bool, now: datetime | None = None) -> None:
+        """Off also ends a scheduled session in progress; on clears that."""
         self._config.data['focus_enabled'] = bool(enabled)
+        self._config.data['focus_schedule_off_until'] = (
+            0.0 if enabled else scheduled_session_end(
+                self.schedules, now or datetime.now()))
         if not enabled:
             self._config.data['focus_break_until'] = 0.0
         self._config.save()
@@ -101,7 +105,11 @@ class FocusState:
             return False
         if self.enabled:
             return True
-        return schedule_matches(self.schedules, now or datetime.now())
+        now = now or datetime.now()
+        if schedule_skipped(
+                self._config.data.get('focus_schedule_off_until'), now):
+            return False
+        return schedule_matches(self.schedules, now)
 
     def is_paused_app(self, app_id: str | None,
                       now: datetime | None = None,

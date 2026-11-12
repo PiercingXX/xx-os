@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 import time as _time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config import ShellConfig
 from shell_log import get_logger
@@ -105,6 +105,35 @@ def schedule_matches(schedules, now: datetime) -> bool:
         return False
 
 
+def scheduled_session_end(schedules, now: datetime) -> float:
+    """Epoch at which the scheduled session covering `now` ends (windows
+    that touch or overlap count as one session); 0.0 when none covers.
+
+    Turning DnD or Focus off inside a schedule skips the rest of that
+    session; the next one starts as usual."""
+    if not schedule_matches(schedules, now):
+        return 0.0
+    from nope_mode import next_schedule_end
+    at = now
+    for _ in range(8):
+        end = next_schedule_end(schedules, at)
+        if end is None or end <= at:
+            break
+        at = end
+        if not schedule_matches(schedules, at):
+            return at.timestamp()
+    if at > now:
+        return at.timestamp()
+    return (now + timedelta(days=1)).timestamp()
+
+
+def schedule_skipped(skip_until: object, now: datetime) -> bool:
+    try:
+        return now.timestamp() < float(skip_until or 0.0)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return False
+
+
 class DndState:
     """Config-backed DnD state plus repeat-caller tracking (in-memory)."""
 
@@ -116,8 +145,12 @@ class DndState:
     def enabled(self) -> bool:
         return bool(self._config.data.get('dnd_enabled', False))
 
-    def set_enabled(self, enabled: bool) -> None:
+    def set_enabled(self, enabled: bool, now: datetime | None = None) -> None:
+        """Off also ends a scheduled session in progress; on clears that."""
         self._config.data['dnd_enabled'] = bool(enabled)
+        self._config.data['dnd_schedule_off_until'] = (
+            0.0 if enabled else scheduled_session_end(
+                self.schedules, now or datetime.now()))
         self._config.save()
 
     @property
@@ -163,7 +196,11 @@ class DndState:
     def is_active(self, now: datetime | None = None) -> bool:
         if self.enabled:
             return True
-        return schedule_matches(self.schedules, now or datetime.now())
+        now = now or datetime.now()
+        if schedule_skipped(
+                self._config.data.get('dnd_schedule_off_until'), now):
+            return False
+        return schedule_matches(self.schedules, now)
 
     # -- call exceptions ---------------------------------------------------
 

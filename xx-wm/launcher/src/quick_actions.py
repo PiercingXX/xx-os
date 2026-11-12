@@ -1555,6 +1555,15 @@ class QuickActionsPanel(Gtk.Box):
             # (starting/error), never the requested toggle.
             self._refresh_captions_ui()
             return
+        if tile.key in ('dnd', 'focus', 'nope'):
+            # Derived states: a schedule or Nope's break budget can keep
+            # one on, so paint what the state reads now, not the request.
+            try:
+                actual = bool(tile.get_state())
+            except Exception:
+                actual = new_state
+            self._apply_tile_state(tile.key, actual)
+            return
         if tile.key == 'tailscale':
             # up/down finish on a worker; show progress (dashed WORKING
             # border), then the real state
