@@ -138,7 +138,7 @@ class TestBatteryHealth:
         props = {
             'Energy': 40.0, 'EnergyFull': 45.0,
             'EnergyFullDesign': 50.0, 'ChargeCycles': 123,
-            'Temperature': 301.0, 'Voltage': 4.1,
+            'Temperature': 27.9, 'Voltage': 4.1,
             'Percentage': 89, 'State': 2,
         }
         health = dev.format_battery_health(props)
@@ -146,6 +146,13 @@ class TestBatteryHealth:
         assert health['cycles'] == '123'
         assert health['temperature'] == '27.9°C'
         assert health['voltage'] == '4.1 V'
+
+    def test_temperature_is_already_celsius(self):
+        import settings_device as dev
+        health = dev.format_battery_health({'Temperature': 30.0})
+        assert health['temperature'] == '30.0°C'
+        assert dev.format_battery_health(
+            {'Temperature': 0.0})['temperature'] == 'Unknown'
 
     def test_health_degrades_without_design_energy(self):
         import settings_device as dev

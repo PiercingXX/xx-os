@@ -330,7 +330,9 @@ def format_battery_health(props: dict | None) -> dict[str, str]:
         pass
     temp = props.get('Temperature')
     try:
-        out['temperature'] = '%.1f°C' % (float(temp) - 273.15)
+        # UPower reports Celsius, and 0 when the battery has no sensor.
+        if float(temp) != 0.0:
+            out['temperature'] = '%.1f°C' % float(temp)
     except (TypeError, ValueError):
         pass
     voltage = props.get('Voltage')
