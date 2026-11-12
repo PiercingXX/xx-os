@@ -117,19 +117,34 @@ the service refuses those with InvalidArgs without contacting polkit.
 - `SetAppNetwork`/`FreezeCgroup` accept only canonical absolute paths
   under `/sys/fs/cgroup/user.slice/user-<caller uid>.slice/` — `..`,
   redundant separators, trailing slashes, NUL bytes, other users'
-  slices, and symlink escapes are all rejected as NotAuthorized.
-- nftables is driven exclusively through argv lists (`nft add table
-  inet xxwm`, our own `output` chain + one
-  `socket cgroupv2 level N "rel/path" drop` rule per blocked cgroup,
-  reconciled by flush + re-add). Only our chain is ever flushed; other
-  tables are untouched. No `shell=True` anywhere in the daemon.
+  slices, and symlink escapes are all rejected as NotAuthorized. Every
+  component below the slice must match `[A-Za-z0-9_.:@-]+` (no quotes,
+  spaces, `;`, braces, backslashes or newlines), and a path to block or
+  freeze must be an existing directory.
+- No caller string is ever nft grammar, and nft never sees argv
+  rulesets. The per-app table is one script on nft's stdin
+  (`add table inet xxwm; delete table inet xxwm; table inet xxwm {…}`
+  with an `output` chain and one `socket cgroupv2 level N "rel/path"
+  drop` rule per blocked cgroup). nft applies stdin as a single
+  transaction: if it refuses, the previous table stays live, so
+  existing blocks never fall away. Text, not JSON, because nft's JSON
+  parser has no `socket cgroupv2`; the path literal holds only the
+  validated characters. Other tables are untouched, and there is no
+  `shell=True` anywhere in the daemon.
+- nft's stderr goes to the helper's own log, never into a D-Bus error
+  (it can echo input back); callers get a fixed message.
 - The match level is the cgroup's depth below the cgroup2 mount, and
-  the match path is mount-relative, double-quoted inside its argv
-  element so systemd escapes survive nft's parsing.
+  the match path is mount-relative.
+- Blocked scopes carry the app's pid, so they go stale when the app
+  exits. Every apply drops paths whose directory is gone or that no
+  longer validate, and persists only what was applied; the shell blocks
+  again on each launch of a denied app.
 - Freeze state is transient and never persisted; charge limit, power
   profile and the blocked set are re-applied at boot by `--apply-saved`
   (each leg reports errors independently so one failure cannot skip
-  the other).
+  the other). Persisted blocked paths are validated again there, for
+  the uid their own slice names; tampered or stale entries are dropped,
+  never handed to nft.
 - `CleanSystem` accepts only its fixed allowlist (`apk-cache`,
   `paccache-keep`, `paccache-uninstalled`, `apt-clean`,
   `journal-vacuum`) as argv lists — never a package removal, never a

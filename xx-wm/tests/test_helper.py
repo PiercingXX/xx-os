@@ -45,16 +45,19 @@ def layout(tmp_path):
 
 
 class FakeRun:
-    """Recording stand-in for subprocess.run: argv lists only, no shell."""
+    """Recording stand-in for subprocess.run: argv lists only, no shell;
+    rulesets arrive on stdin through ``input``."""
 
     def __init__(self):
         self.cmds = []
+        self.inputs = []
 
-    def __call__(self, argv):
+    def __call__(self, argv, input=None):
         assert isinstance(argv, list), argv
         assert argv and all(isinstance(a, str) for a in argv), argv
         assert 'shell=True' not in repr(argv)
         self.cmds.append(list(argv))
+        self.inputs.append(input)
         return SimpleNamespace(returncode=0, stdout='', stderr='')
 
 
@@ -164,33 +167,26 @@ def test_app_cgroup_rejects_symlink_escape(layout, tmp_path):
 
 def _block_rule(layout, leaf=APP):
     rel = 'user.slice/user-%d.slice/%s' % (UID, leaf)
-    return ['nft', 'add', 'rule', 'inet', 'xxwm', 'output',
-            'socket', 'cgroupv2', 'level', '3', '"%s"' % rel, 'drop']
+    return 'socket cgroupv2 level 3 "%s" drop' % rel
 
 
 def test_set_app_network_block_and_unblock(layout):
     run = FakeRun()
     core = make_core(layout, run)
     assert core.set_app_network(app_path(layout), False, UID) is False
-    assert run.cmds[:4] == [
-        ['nft', 'add', 'table', 'inet', 'xxwm'],
-        ['nft', 'add', 'chain', 'inet', 'xxwm', 'output',
-         '{', 'type', 'filter', 'hook', 'output', 'priority', '0',
-         ';', 'policy', 'accept', ';', '}'],
-        ['nft', 'flush', 'chain', 'inet', 'xxwm', 'output'],
-        _block_rule(layout),
-    ]
+    assert run.cmds == [['nft', '-f', '-']]
+    script = run.inputs[0]
+    assert script.startswith('add table inet xxwm\n'
+                             'delete table inet xxwm\n'
+                             'table inet xxwm {\n')
+    assert 'type filter hook output priority 0; policy accept;' in script
+    assert _block_rule(layout) in script
     assert json.loads(Path(layout.state).read_text())['blocked'] == [
         app_path(layout)]
-    n = len(run.cmds)
     assert core.set_app_network(app_path(layout), True, UID) is True
-    assert run.cmds[n:] == [
-        ['nft', 'add', 'table', 'inet', 'xxwm'],
-        ['nft', 'add', 'chain', 'inet', 'xxwm', 'output',
-         '{', 'type', 'filter', 'hook', 'output', 'priority', '0',
-         ';', 'policy', 'accept', ';', '}'],
-        ['nft', 'flush', 'chain', 'inet', 'xxwm', 'output'],
-    ]
+    assert run.cmds[1:] == [['nft', '-f', '-']]
+    assert 'socket cgroupv2' not in run.inputs[1]
+    assert 'chain output' in run.inputs[1]
     assert json.loads(Path(layout.state).read_text())['blocked'] == []
 
 
@@ -201,7 +197,7 @@ def test_set_app_network_rejects_other_uid(layout):
 
 
 def test_nft_failure_surfaces_as_failed(layout):
-    def failing(argv):
+    def failing(argv, input=None):
         return SimpleNamespace(returncode=1, stdout='',
                                stderr='Error: boom\n')
 
@@ -209,7 +205,7 @@ def test_nft_failure_surfaces_as_failed(layout):
         make_core(layout, failing).set_app_network(
             app_path(layout), False, UID)
     assert exc.value.dbus_name == helper.ERROR_FAILED
-    assert 'boom' in str(exc.value)
+    assert 'boom' not in str(exc.value)
 
 
 def test_nft_level_from_path_depth(layout):
@@ -270,7 +266,8 @@ def test_apply_saved_reapplies_charge_and_blocks(layout):
     assert applied['blocked'] == [app_path(layout)]
     assert Path(layout.sysfs, 'class/power_supply/BAT0',
                 'charge_control_end_threshold').read_text() == '75\n'
-    assert run2.cmds[-1] == _block_rule(layout)
+    assert run2.cmds[-1] == ['nft', '-f', '-']
+    assert _block_rule(layout) in run2.inputs[-1]
 
 
 def test_apply_saved_collects_errors_per_leg(layout):
@@ -279,7 +276,7 @@ def test_apply_saved_collects_errors_per_leg(layout):
     (Path(layout.sysfs, 'class/power_supply/BAT0',
           'charge_control_end_threshold').write_text('100\n'))
 
-    def failing(argv):
+    def failing(argv, input=None):
         return SimpleNamespace(returncode=1, stdout='', stderr='no nft\n')
 
     core = make_core(layout, failing)

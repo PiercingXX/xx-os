@@ -7,7 +7,8 @@ to this service through :mod:`helper_client`.
 
 Only ``Gio``/``GLib`` (imported lazily so the pure logic below stays
 importable without PyGObject) and the standard library are used: no
-``shell=True`` anywhere, ``nft`` is always invoked with argv lists.
+``shell=True`` anywhere. Rulesets reach ``nft`` on stdin as one
+transaction, never as argv grammar.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import argparse
 import json
 import os
 import posixpath
+import re
 import shutil
 import subprocess
 import sys
@@ -119,6 +121,13 @@ NFT_IN_TABLE = 'xx_wm'
 NFT_IN_CHAIN = 'input'
 
 NFT_IN_TABLE_LEGACY = 'xxwm-inbound'
+
+# Every cgroup path component below the user slice must match this
+# before it may appear inside an nft string literal: no quotes, spaces,
+# separators, braces, backslashes or newlines can reach nft's lexer.
+_CGROUP_COMPONENT_RE = re.compile(r'[A-Za-z0-9_.:@\-]+')
+_CGROUP_REL_RE = re.compile(r'[A-Za-z0-9_.:@\-]+(?:/[A-Za-z0-9_.:@\-]+)*')
+_USER_SLICE_RE = re.compile(r'user\.slice/user-([0-9]+)\.slice(?:/|$)')
 
 INBOUND_FILE_NAME = 'inbound.json'
 NFT_DROPIN_DIR = '/etc/nftables.d'
@@ -380,9 +389,10 @@ def clamp_charge_limit(percent: int) -> int:
     return max(CHARGE_MIN, min(CHARGE_MAX, value))
 
 
-def _default_run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+def _default_run(argv: list[str],
+                 input: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        argv, capture_output=True, text=True, timeout=30,
+        argv, input=input, capture_output=True, text=True, timeout=30,
     )
 
 
@@ -426,7 +436,8 @@ class HelperCore:
     ``sysfs``/``cgroup_root``/``mounts_file``/``state_file``/``nft_bin``
     exist so tests can point the helper at tmp dirs and a fake ``nft``;
     in production they keep their defaults. ``run`` replaces
-    :func:`subprocess.run` (same argv-list contract, no shell) for short
+    :func:`subprocess.run` (same argv-list contract, no shell; rulesets
+    go in through its ``input`` keyword as nft's stdin) for short
     commands; ``spawn(argv, on_exit)`` starts the long package jobs.
     """
 
@@ -537,14 +548,18 @@ class HelperCore:
     def user_slice_prefix(self, uid: int) -> str:
         return '%s/user.slice/user-%d.slice' % (self.cgroup_root, uid)
 
-    def validate_app_cgroup(self, path: str, uid: int) -> str:
+    def validate_app_cgroup(self, path: str, uid: int, *,
+                            must_exist: bool = True) -> str:
         """Confine ``path`` to the caller's own user slice.
 
         Anything malformed (non-absolute, ``..``, redundant separators,
         trailing slash, NUL) or outside
         ``<cgroup>/user.slice/user-<uid>.slice/`` raises NotAuthorized —
-        from the caller's perspective it is simply not permitted. Symlinks
-        are resolved too so a link inside the slice cannot point out.
+        from the caller's perspective it is simply not permitted. Every
+        component below the slice must match ``[A-Za-z0-9_.:@-]+`` and,
+        unless ``must_exist`` is False (dropping a block), the path must
+        be an existing directory. Symlinks are resolved too so a link
+        inside the slice cannot point out.
         """
         prefix = self.user_slice_prefix(int(uid))
         if not isinstance(path, str) or not path or '\x00' in path:
@@ -555,11 +570,35 @@ class HelperCore:
             raise _denied('cgroup path is not canonical: %r' % (path,))
         if path != prefix and not path.startswith(prefix + '/'):
             raise _denied('cgroup path outside your user slice: %r' % (path,))
+        below = path[len(prefix) + 1:]
+        if below and not all(_CGROUP_COMPONENT_RE.fullmatch(part)
+                             for part in below.split('/')):
+            raise _denied('cgroup path has unsupported characters: %r'
+                          % (path,))
+        if must_exist and not os.path.isdir(path):
+            raise _denied('cgroup path does not exist: %r' % (path,))
         real = os.path.realpath(path)
         real_prefix = os.path.realpath(prefix)
         if real != real_prefix and not real.startswith(real_prefix + '/'):
             raise _denied('cgroup path escapes your user slice: %r' % (path,))
         return path
+
+    def revalidate_blocked(self, path: object) -> str | None:
+        """A persisted blocked path that still passes validation for the
+        uid its own user slice names, else None (malformed, outside
+        every user slice, or the scope is gone)."""
+        if not isinstance(path, str):
+            return None
+        root = self.cgroup_root.rstrip('/') + '/'
+        if not path.startswith(root):
+            return None
+        match = _USER_SLICE_RE.match(path[len(root):])
+        if match is None:
+            return None
+        try:
+            return self.validate_app_cgroup(path, int(match.group(1)))
+        except (HelperError, ValueError):
+            return None
 
     # ------------------------------------------------------------------ nft
 
@@ -573,11 +612,24 @@ class HelperCore:
         return max(1, len(PurePosixPath(rel).parts))
 
     def cgroup_nft_match(self, path: str) -> str:
-        """Match string for ``path``: relative to the cgroup2 mount (as the
-        kernel reports it) and double-quoted inside the argv element so
-        systemd-style escapes (``\\\\x2d``) survive nft's own parsing."""
+        """Quoted nft string literal for ``path``, relative to the cgroup2
+        mount (as the kernel reports it). Refuses anything outside the
+        validated character set, so the literal can never end early."""
         rel = posixpath.relpath(path, self.cgroup_root)
+        if _CGROUP_REL_RE.fullmatch(rel) is None:
+            raise _denied('cgroup path has unsupported characters: %r'
+                          % (path,))
         return '"%s"' % rel
+
+    def _nft_failed(self, what: str, proc) -> HelperError:
+        """Log nft's stderr for the journal; the caller only ever gets a
+        fixed message, never text nft echoed back from its input."""
+        stderr = (getattr(proc, 'stderr', '') or '').strip()
+        if stderr:
+            print('xx-wm-helper: nft %s: %s' % (what, stderr[:400]),
+                  file=sys.stderr)
+        return _failed('nft refused the %s (exit %d)'
+                       % (what, getattr(proc, 'returncode', 1)))
 
     def _nft(self, argv: list[str], *, allow_exists: bool = False) -> str:
         cmd = [self.nft_bin] + argv
@@ -590,34 +642,70 @@ class HelperCore:
             if allow_exists and ('already exists' in stderr
                                  or 'File exists' in stderr):
                 return ''
-            raise _failed('nft %s: %s' % (
-                ' '.join(argv), stderr.strip() or 'exit %d' % proc.returncode))
+            raise self._nft_failed(' '.join(argv[:2]) or 'command', proc)
         return getattr(proc, 'stdout', '') or ''
 
-    def apply_blocked(self, blocked: list[str]) -> None:
-        """Reconcile the ``inet xxwm`` table with ``blocked`` cgroup paths:
-        ensure table + output chain, flush our chain, add one drop rule
-        per path. Our chain is the only thing flushed — other tables are
-        never touched."""
-        self._nft(['add', 'table', NFT_FAMILY, NFT_TABLE], allow_exists=True)
-        self._nft([
-            'add', 'chain', NFT_FAMILY, NFT_TABLE, NFT_CHAIN,
-            '{', 'type', 'filter', 'hook', 'output', 'priority', '0',
-            ';', 'policy', 'accept', ';', '}',
-        ], allow_exists=True)
-        self._nft(['flush', 'chain', NFT_FAMILY, NFT_TABLE, NFT_CHAIN])
+    def _nft_stdin(self, flags: list[str], data: str, what: str) -> None:
+        """Feed one ruleset to ``nft <flags> -f -``. nft applies the whole
+        input as a single transaction, so a failure changes nothing."""
+        try:
+            proc = self._run([self.nft_bin] + flags + ['-f', '-'],
+                             input=data)
+        except OSError as err:
+            raise _failed('nft failed to start: %s' % err) from None
+        if proc.returncode != 0:
+            raise self._nft_failed(what, proc)
+
+    def render_blocked_nft(self, blocked) -> str:
+        """The ``inet xxwm`` table as one nft script: add-then-delete
+        replaces the table whole, then one drop rule per blocked path.
+
+        Text, not JSON: nft's JSON parser has no ``socket cgroupv2``
+        (only transparent, mark and wildcard), so the path goes in as a
+        string literal that :meth:`cgroup_nft_match` has restricted."""
+        lines = ['add table %s %s' % (NFT_FAMILY, NFT_TABLE),
+                 'delete table %s %s' % (NFT_FAMILY, NFT_TABLE),
+                 'table %s %s {' % (NFT_FAMILY, NFT_TABLE),
+                 '    chain %s {' % NFT_CHAIN,
+                 '        type filter hook output priority 0; '
+                 'policy accept;']
         for path in sorted(blocked):
-            self._nft([
-                'add', 'rule', NFT_FAMILY, NFT_TABLE, NFT_CHAIN,
-                'socket', 'cgroupv2', 'level',
-                str(self.cgroup_nft_level(path)),
-                self.cgroup_nft_match(path), 'drop',
-            ])
+            lines.append('        socket cgroupv2 level %d %s drop'
+                         % (self.cgroup_nft_level(path),
+                            self.cgroup_nft_match(path)))
+        lines += ['    }', '}']
+        return '\n'.join(lines) + '\n'
+
+    def apply_blocked(self, blocked) -> list[str]:
+        """Replace the ``inet xxwm`` table with drop rules for ``blocked``
+        in one transaction and return the paths actually applied.
+
+        Paths whose scope is gone (the app exited, or no user slice yet
+        at boot) or that no longer validate are dropped first. If nft
+        still refuses (a scope vanished in between), the previous table
+        stays live, so existing blocks never fall away, and one retry
+        runs with the re-checked set. Other tables are never touched."""
+        live = sorted({p for p in map(self.revalidate_blocked, blocked)
+                       if p})
+        try:
+            self._nft_stdin([], self.render_blocked_nft(live),
+                            'per-app block table')
+        except HelperError:
+            again = sorted({p for p in map(self.revalidate_blocked, live)
+                            if p})
+            if again == live:
+                raise
+            live = again
+            self._nft_stdin([], self.render_blocked_nft(live),
+                            'per-app block table')
+        return live
 
     def set_app_network(self, cgroup_path: str, allowed: bool, uid: int) -> bool:
         """Block (``allowed`` False) or unblock a caller-owned app cgroup,
-        then persist the blocked set and re-apply the nft chain."""
-        path = self.validate_app_cgroup(cgroup_path, uid)
+        then re-apply the nft table and persist what is live. When nft
+        refuses, nothing is persisted and the previous table stays."""
+        path = self.validate_app_cgroup(cgroup_path, uid,
+                                        must_exist=not allowed)
         if not self.nft_available():
             raise _failed('nftables not available')
         state = self.load_state()
@@ -626,8 +714,10 @@ class HelperCore:
             blocked.remove(path)
         elif not allowed and path not in blocked:
             blocked.append(path)
-        state['blocked'] = sorted(blocked)
-        self.apply_blocked(state['blocked'])
+        live = self.apply_blocked(blocked)
+        if not allowed and path not in live:
+            raise _failed('the app is no longer running')
+        state['blocked'] = live
         self.save_state(state)
         return bool(allowed)
 
@@ -1415,7 +1505,9 @@ class HelperCore:
     def apply_saved(self) -> dict:
         """Boot re-apply: charge limit, power profile, then the nft blocked
         set, then the inbound preset set. One leg failing must not skip
-        the others, so errors are collected and reported together."""
+        the others, so errors are collected and reported together.
+        Persisted blocked paths are validated again (a tampered or stale
+        entry is dropped, never handed to nft) and the pruned set saved."""
         state = self.load_state()
         applied: dict = {'charge_limit': None, 'power_profile': None,
                          'blocked': [], 'errors': []}
@@ -1437,8 +1529,12 @@ class HelperCore:
                 applied['errors'].append('nftables not available')
             else:
                 try:
-                    self.apply_blocked(blocked)
-                    applied['blocked'] = sorted(blocked)
+                    live = self.apply_blocked(blocked)
+                    applied['blocked'] = live
+                    if live != sorted(blocked):
+                        fresh = self.load_state()
+                        fresh['blocked'] = live
+                        self.save_state(fresh)
                 except HelperError as err:
                     applied['errors'].append(str(err))
         inbound = self.load_inbound()
