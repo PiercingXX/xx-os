@@ -607,6 +607,16 @@ def back_key_target(over_apps: bool, manager: object | None) -> str | None:
     return 'waydroid' if app_id.lower().startswith('waydroid') else 'app'
 
 
+def _focused_app_id(win) -> str | None:
+    """app_id of the focused app window, None when none is (or focus
+    can't be read)."""
+    manager = getattr(win, '_toplevel_manager', None)
+    try:
+        return manager.activated_app_id() if manager is not None else None
+    except Exception:
+        return None
+
+
 def _set_osk_visible(visible: bool) -> None:
     """Toggle squeekboard's visibility over D-Bus (headless seam for 20.1).
 
@@ -733,6 +743,7 @@ class ShellWindow(Adw.ApplicationWindow):
         self._thumb_captured_at: dict[str, float] = {}
         self._output_capture = None
         self._raised_for_settings = False
+        self._settings_return_page = 'home'
         self._layer_is_top = False
         self._search_restore_bottom = False
 
@@ -2008,11 +2019,23 @@ class ShellWindow(Adw.ApplicationWindow):
         Settings is a stack page of the BOTTOM launcher window. present()
         alone leaves it under the app; hopping to TOP is what makes the
         shade Settings button (and the drawer row) actually appear.
-        Leaving settings drops back to BOTTOM so the user is not trapped
-        on a TOP overlay that needs a hard reboot to escape.
+        Leaving settings returns where it was opened from: the shell page
+        it covered when the shell was on screen, else (opened over an app,
+        e.g. from the shade) back down to BOTTOM so the app shows again and
+        the user is not trapped on a TOP overlay.
         """
         self._disarm_search_keyboard()
-        self._raised_for_settings = True
+        try:
+            page = self.stack.get_visible_child_name()
+        except Exception:
+            page = None
+        if page != 'settings':
+            over_apps = bool(getattr(self, '_over_apps', False))
+            shell_visible = over_apps or not _focused_app_id(self)
+            self._settings_return_page = (
+                page if shell_visible and page in ('home', 'apps')
+                else 'home')
+            self._raised_for_settings = not over_apps
         self.stack.set_visible_child_name('settings')
         self.present_over_apps()
         if section is not None:
@@ -2024,8 +2047,10 @@ class ShellWindow(Adw.ApplicationWindow):
     def _leave_settings(self) -> None:
         self._disarm_search_keyboard()
         if self.stack.get_visible_child_name() == 'settings':
+            target = getattr(self, '_settings_return_page', None) or 'home'
+            self._settings_return_page = 'home'
             self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_RIGHT)
-            self.stack.set_visible_child_name('home')
+            self.stack.set_visible_child_name(target)
         # The next visit starts at the category menu.
         inner = getattr(self, '_settings_stack', None)
         if inner is not None:
