@@ -112,8 +112,25 @@ pkg_install gnome-calculator
 # Package per distro, its service under the running init, then make this
 # user the Tailscale operator so the shade tile toggles it without root.
 # Sign-in happens from the tile (it opens the login page).
+# Downloads are pinned: bump a version and its sums together.
+# The apt keyring is key 2596A99EAAB33821893C0A79458CA832957F5868.
+TS_KEYRING_SHA256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
+TS_VERSION=1.104.6
+TS_SHA256_ARM64=d0e4f297da3c428d02162c6235b9948e4ddc245c64502b7b05647da9b96a0971
+TS_SHA256_ARM=98be19a248544f0d7809b71c2b6c3d1cb200aa347d3d0a47d9034dec5a26fc69
+TS_SHA256_AMD64=82a85429f733e52fd1a95dedb2c8dd8cd46d6603504e566a56b1779c9a7a4809
+
 ts_systemd() { [ -d /run/systemd/system ]; }
 ts_curl() { command -v curl >/dev/null 2>&1 || pkg_install curl ca-certificates; }
+
+sha256_is() {
+    # sha256_is <file> <expected sum>
+    command -v sha256sum >/dev/null 2>&1 || { echo "warn: no sha256sum to check $1" >&2; return 1; }
+    _sum=$(sha256sum "$1" | cut -d' ' -f1)
+    [ "$_sum" = "$2" ] && return 0
+    echo "warn: checksum mismatch for $1 (got $_sum, expected $2)" >&2
+    return 1
+}
 
 ts_apt_repo() {
     # Debian/Ubuntu and derivatives (FuriOS, Mobian, PureOS) through
@@ -135,8 +152,11 @@ ts_apt_repo() {
         [ -n "$_ts_code" ] || continue
         _ts_base="https://pkgs.tailscale.com/stable/$_ts_dist/$_ts_code"
         curl -fsSL "$_ts_base.noarmor.gpg" >"$_ts_key" 2>/dev/null || continue
+        sha256_is "$_ts_key" "$TS_KEYRING_SHA256" || {
+            echo "warn: Tailscale repo key is not the pinned one; not adding the repo" >&2; break; }
         $SUDO install -m 644 "$_ts_key" /usr/share/keyrings/tailscale-archive-keyring.gpg
-        curl -fsSL "$_ts_base.tailscale-keyring.list" | $SUDO tee /etc/apt/sources.list.d/tailscale.list >/dev/null
+        echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/$_ts_dist $_ts_code main" |
+            $SUDO tee /etc/apt/sources.list.d/tailscale.list >/dev/null
         $SUDO apt-get update -qq && $SUDO apt-get install -y tailscale && { rm -f "$_ts_key"; return 0; }
     done
     rm -f "$_ts_key"
@@ -144,21 +164,23 @@ ts_apt_repo() {
 }
 
 ts_static() {
-    # Last resort: Tailscale's static build, newest version from its index.
+    # Last resort: Tailscale's static build at TS_VERSION.
     case "$(uname -m)" in
-        aarch64|arm64) _ts_arch=arm64 ;;
-        armv7*|armv6*) _ts_arch=arm ;;
-        x86_64) _ts_arch=amd64 ;;
+        aarch64|arm64) _ts_arch=arm64; _ts_sha=$TS_SHA256_ARM64 ;;
+        armv7*|armv6*) _ts_arch=arm; _ts_sha=$TS_SHA256_ARM ;;
+        x86_64) _ts_arch=amd64; _ts_sha=$TS_SHA256_AMD64 ;;
         *) echo "warn: no Tailscale build for $(uname -m)" >&2; return 1 ;;
     esac
     ts_curl
-    _ts_ver=$(curl -fsSL 'https://pkgs.tailscale.com/stable/?mode=json' |
-        sed -n 's/.*"TarballsVersion": *"\([^"]*\)".*/\1/p')
-    [ -n "$_ts_ver" ] || { echo "warn: Tailscale version lookup failed" >&2; return 1; }
-    _ts_dir="tailscale_${_ts_ver}_${_ts_arch}"
+    _ts_dir="tailscale_${TS_VERSION}_${_ts_arch}"
     _ts_tmp=$(mktemp -d)
-    curl -fsSL "https://pkgs.tailscale.com/stable/${_ts_dir}.tgz" | tar xz -C "$_ts_tmp" || {
+    curl -fsSL -o "$_ts_tmp/$_ts_dir.tgz" "https://pkgs.tailscale.com/stable/${_ts_dir}.tgz" || {
         echo "warn: Tailscale download failed" >&2; rm -rf "$_ts_tmp"; return 1; }
+    sha256_is "$_ts_tmp/$_ts_dir.tgz" "$_ts_sha" || {
+        echo "warn: $_ts_dir.tgz is not the pinned build; not installing it" >&2
+        rm -rf "$_ts_tmp"; return 1; }
+    tar xzf "$_ts_tmp/$_ts_dir.tgz" -C "$_ts_tmp" || {
+        echo "warn: Tailscale unpack failed" >&2; rm -rf "$_ts_tmp"; return 1; }
     $SUDO install -m 755 "$_ts_tmp/$_ts_dir/tailscale" "$_ts_tmp/$_ts_dir/tailscaled" /usr/local/bin/
     if ts_systemd; then
         sed 's|/usr/sbin/tailscaled|/usr/local/bin/tailscaled|g' \
