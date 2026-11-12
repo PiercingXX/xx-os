@@ -70,6 +70,17 @@ GLYPHS: dict[str, list[tuple[str, str]]] = {
                   'stroke')],
     'power': [('M12 3v8M7.1 6.3a7.5 7.5 0 1 0 9.8 0', 'stroke')],
     'expand': [('M6 9l6 6 6-6', 'stroke')],
+    # Thin chevrons: Settings rows, the Settings back bar, the calendar.
+    'forward': [('M9 5.5l6.5 6.5-6.5 6.5', 'stroke')],
+    'back': [('M15 5.5L8.5 12l6.5 6.5', 'stroke')],
+    # Media transport (filled, like every player's keys)
+    'play': [('M8 5.6V18.4Q8 19.3 8.8 18.8L18.6 12.7Q19.4 12 18.6 11.3'
+              'L8.8 5.2Q8 4.7 8 5.6Z', 'fill')],
+    'pause': [('M6.5 5.5H10.3V18.5H6.5ZM13.7 5.5H17.5V18.5H13.7Z', 'fill')],
+    'prev': [('M5.5 6H7.5V18H5.5ZM18.5 6.9V17.1Q18.5 18 17.7 17.5L9.9 12.6'
+              'Q9.1 12 9.9 11.4L17.7 6.5Q18.5 6 18.5 6.9Z', 'fill')],
+    'next': [('M18.5 6H16.5V18H18.5ZM5.5 6.9V17.1Q5.5 18 6.3 17.5L14.1 12.6'
+              'Q14.9 12 14.1 11.4L6.3 6.5Q5.5 6 5.5 6.9Z', 'fill')],
     'collapse': [('M6 15l6-6 6 6', 'stroke')],
     'brightness': [('M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z'
                     'M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2'
