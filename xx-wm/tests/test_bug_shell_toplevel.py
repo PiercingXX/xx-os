@@ -335,5 +335,88 @@ class TestResyncReplay:
         assert shell.stack.page == 'home'
 
 
+class _ThreadDisplay:
+    """Display stand-in for the wayland thread: no fd, records teardown."""
+
+    def __init__(self) -> None:
+        self.disconnect_threads: list[threading.Thread] = []
+
+    def flush(self) -> None:
+        pass
+
+    def dispatch(self, block: bool = False) -> None:
+        pass
+
+    def disconnect(self) -> None:
+        self.disconnect_threads.append(threading.current_thread())
+
+
+def _threaded_backend(display):
+    import os
+    import queue
+    import toplevel_manager
+    backend = toplevel_manager.WaylandToplevelBackend.__new__(
+        toplevel_manager.WaylandToplevelBackend)
+    backend._display = display
+    backend._closing = False
+    backend._requests = queue.Queue()
+    backend._handles = {}
+    backend._teardown_lock = threading.Lock()
+    backend._torn_down = False
+    backend._wakeup_r, backend._wakeup_w = os.pipe()
+    os.set_blocking(backend._wakeup_r, False)
+    backend._thread = threading.Thread(target=backend._thread_loop, daemon=True)
+    return backend
+
+
+class TestWaylandThreadOwnsTeardown:
+    def test_shutdown_lets_the_thread_disconnect(self, monkeypatch) -> None:
+        import select as select_mod
+        import toplevel_manager
+        timeouts = []
+        real_select = select_mod.select
+
+        def _select(r, w, x, *timeout):
+            timeouts.append(timeout)
+            return real_select(r, w, x, *timeout)
+
+        monkeypatch.setattr(toplevel_manager.select, 'select', _select)
+        display = _ThreadDisplay()
+        backend = _threaded_backend(display)
+        thread = backend._thread
+        thread.start()
+        while not timeouts:
+            pass
+        backend.shutdown()
+        thread.join(2)
+        assert not thread.is_alive()
+        assert display.disconnect_threads == [thread]
+        assert backend._wakeup_r is None and backend._wakeup_w is None
+        assert all(t == () for t in timeouts)
+
+    def test_shutdown_without_thread_tears_down_inline(self) -> None:
+        display = _ThreadDisplay()
+        backend = _threaded_backend(display)
+        backend.shutdown()
+        backend.shutdown()
+        assert display.disconnect_threads == [threading.current_thread()]
+        assert backend._wakeup_w is None
+
+    def test_only_eagain_is_retried(self) -> None:
+        import errno
+        import toplevel_manager
+        backend = toplevel_manager.WaylandToplevelBackend.__new__(
+            toplevel_manager.WaylandToplevelBackend)
+        backend._closing = False
+        assert not backend._dispatch_error_is_fatal(
+            OSError(errno.EAGAIN, 'Resource temporarily unavailable'))
+        assert not backend._dispatch_error_is_fatal(
+            RuntimeError('Failed with error: 11'))
+        assert backend._dispatch_error_is_fatal(
+            RuntimeError('Failed with error: 110'))
+        assert backend._dispatch_error_is_fatal(
+            RuntimeError('protocol error 211 on object 11'))
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

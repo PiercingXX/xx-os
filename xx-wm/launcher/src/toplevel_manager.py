@@ -13,9 +13,11 @@ instead of crashing, so the switcher can still show "No open apps".
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import queue
+import re
 import select
 import struct
 import threading
@@ -145,6 +147,20 @@ class Toplevel:
     activated: bool = False
 
 
+# pywayland reports a failed dispatch as "Failed with error: <errno>".
+_EAGAIN_TEXT = re.compile(r'(?:error:|Errno)\s*%d\b' % errno.EAGAIN)
+
+
+def _is_eagain(exc: BaseException) -> bool:
+    """True for "try again" from a non-blocking dispatch, and nothing else
+    (a protocol error whose text happens to contain 11 is not EAGAIN)."""
+    if getattr(exc, 'errno', None) in (errno.EAGAIN, errno.EWOULDBLOCK):
+        return True
+    msg = str(exc)
+    return ('EAGAIN' in msg.upper() or _EAGAIN_TEXT.search(msg) is not None
+            or 'temporarily unavailable' in msg.lower())
+
+
 def _is_filtered(app_id: str) -> bool:
     if app_id == _OWN_APP_ID:
         return True
@@ -199,6 +215,8 @@ class WaylandToplevelBackend:
         self._requests: queue.Queue = queue.Queue()
         self._wakeup_r: int | None = None
         self._wakeup_w: int | None = None
+        self._teardown_lock = threading.Lock()
+        self._torn_down = False
         self._connect()
 
     def _connect(self) -> None:
@@ -248,7 +266,7 @@ class WaylandToplevelBackend:
         msg = str(exc)
         if 'destroyed' in msg.lower():
             return True
-        if '11' in msg or 'EAGAIN' in msg.upper():
+        if _is_eagain(exc):
             return False
         if 'has no event' in msg:
             log.warning('wayland event skipped: %s', exc)
@@ -282,6 +300,15 @@ class WaylandToplevelBackend:
         return self._dispatch_pending()
 
     def _thread_loop(self) -> None:
+        # The thread owns the display and the pipe: it tears them down when
+        # it leaves the loop, never while it may be in select or dispatch.
+        try:
+            self._run_loop()
+        finally:
+            self._closing = True
+            self._teardown()
+
+    def _run_loop(self) -> None:
         self._flush_display()
         wl_fd = self._wayland_fd()
         while not self._closing:
@@ -299,7 +326,8 @@ class WaylandToplevelBackend:
                     return
                 continue
             try:
-                ready, _, _ = select.select(fds, [], [], 0.25)
+                # No timeout: activate/close and shutdown write the pipe.
+                ready, _, _ = select.select(fds, [], [])
             except Exception as exc:  # noqa: BLE001
                 log.error('wayland thread select failed: %s', exc)
                 return
@@ -334,7 +362,7 @@ class WaylandToplevelBackend:
             self._display.dispatch(block=False)
         except Exception as exc:  # noqa: BLE001
             msg = str(exc)
-            if '11' in msg or 'EAGAIN' in msg.upper():
+            if _is_eagain(exc):
                 pass
             elif 'has no event' in msg:
                 log.warning('wayland event skipped: %s', exc)
@@ -494,13 +522,16 @@ class WaylandToplevelBackend:
             log.warning('toplevel %s %r failed: %s', op, handle, exc)
 
     def _wakeup(self) -> None:
-        if self._wakeup_w is None:
-            self._drain_requests()
-            return
-        try:
-            os.write(self._wakeup_w, b'\0')
-        except OSError:
-            pass
+        # Under the teardown lock so a closed (and reused) fd is never written.
+        with self._teardown_lock:
+            fd = self._wakeup_w
+            if fd is not None:
+                try:
+                    os.write(fd, b'\0')
+                except OSError:
+                    pass
+                return
+        self._drain_requests()
 
     def activate(self, handle: object) -> None:
         self._requests.put(('activate', handle))
@@ -512,21 +543,32 @@ class WaylandToplevelBackend:
 
     def shutdown(self) -> None:
         self._closing = True
-        self._wakeup()
-        try:
-            disconnect = getattr(self._display, 'disconnect', None)
-            if callable(disconnect):
-                disconnect()
-        except Exception:
-            pass
-        for attr in ('_wakeup_r', '_wakeup_w'):
-            fd = getattr(self, attr)
-            if fd is not None:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-                setattr(self, attr, None)
+        thread = self._thread
+        if (thread is not None and thread.is_alive()
+                and thread is not threading.current_thread()):
+            self._wakeup()
+            return
+        self._teardown()
+
+    def _teardown(self) -> None:
+        with self._teardown_lock:
+            if self._torn_down:
+                return
+            self._torn_down = True
+            try:
+                disconnect = getattr(self._display, 'disconnect', None)
+                if callable(disconnect):
+                    disconnect()
+            except Exception:
+                pass
+            for attr in ('_wakeup_r', '_wakeup_w'):
+                fd = getattr(self, attr)
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    setattr(self, attr, None)
 
 
 class DeferredWaylandBackend:
