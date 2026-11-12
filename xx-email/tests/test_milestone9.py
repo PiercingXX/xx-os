@@ -12,7 +12,6 @@ it skips when gtk4-broadwayd is missing.
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -531,71 +530,25 @@ def test_settings_hooks_cover_accounts_logs_and_backup():
 _DRIVER = str(Path(__file__).parent / "settings_broadway_driver.py")
 
 
-def _socket_path(display: str) -> str:
-    runtime = os.environ.get("XDG_RUNTIME_DIR",
-                             f"/run/user/{os.getuid()}")
-    return os.path.join(runtime, f"broadway{int(display[1:]) + 1}.socket")
-
-
-def _display_live(display: str) -> bool:
-    path = _socket_path(display)
-    if not os.path.exists(path):
-        return False
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(2)
-            sock.connect(path)
-    except OSError:
-        return False
-    return True
-
-
 @pytest.fixture(scope="module")
-def broadway_env():
+def broadway_env(tmp_path_factory):
+    """A private gtk4-broadwayd: its socket lives in a runtime dir of its
+    own, handed to the client, so neither the host's XDG_RUNTIME_DIR nor
+    its absence (CI has no login session) decides where GTK looks."""
     if shutil.which("gtk4-broadwayd") is None:
         pytest.skip("gtk4-broadwayd is missing")
-    daemon_runtime = os.environ.get("XDG_RUNTIME_DIR",
-                                    f"/run/user/{os.getuid()}")
-    for number in range(71, 90):
-        display = f":{number}"
-        if _display_live(display):
-            continue
-        try:
-            os.makedirs(os.path.dirname(_socket_path(display)),
-                        exist_ok=True)
-        except OSError:
-            pass
-        try:
-            os.unlink(_socket_path(display))
-        except OSError:
-            pass
-        with socket.socket(socket.AF_INET,
-                           socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-        proc = subprocess.Popen(
-            ["gtk4-broadwayd", "--port", str(port), display],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        for _ in range(200):
-            if os.path.exists(_socket_path(display)):
-                break
-            import time as _time
+    from xx_testing import broadway_display
 
-            _time.sleep(0.05)
-        else:
-            proc.terminate()
-            continue
-        try:
-            yield (display, daemon_runtime)
-        finally:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except Exception:
-                proc.kill()
-        return
-    pytest.skip("no free broadway display")
+    run_dir = tmp_path_factory.mktemp("broadway-run")
+    run_dir.chmod(0o700)
+    try:
+        proc, display = broadway_display.start(run_dir=str(run_dir))
+    except RuntimeError as exc:
+        pytest.fail(f"gtk4-broadwayd did not come up: {exc}")
+    try:
+        yield (display, str(run_dir))
+    finally:
+        broadway_display.stop(proc)
 
 
 def test_every_page_fits_360x720(broadway_env):
