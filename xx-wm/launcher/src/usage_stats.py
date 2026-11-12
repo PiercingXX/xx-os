@@ -12,7 +12,13 @@ without replacing the existing subscriber, observes lock transitions via
 Writes are throttled for eMMC wear: state changes only mark days dirty,
 and files flush at most every ``FLUSH_INTERVAL_SECS`` (5 minutes) plus on
 blank and on lock. Storage is ``~/.local/share/xx-wm/usage/YYYY-MM-DD.json``
-(atomic replace, 0600), pruned to ``RETENTION_DAYS`` (35) days.
+(atomic replace, 0600), pruned to ``RETENTION_DAYS`` (35) days. The fsyncs
+run on one writer thread, never on the GTK loop.
+
+Durations come from the monotonic clock and only their placement on the
+calendar from the wall clock: phones whose RTC boots years behind jump
+forward when NTP lands, and that jump is not screen time. One span is
+capped at ``MAX_SPAN_SECS``.
 """
 
 from __future__ import annotations
@@ -21,6 +27,8 @@ import datetime
 import json
 import logging
 import os
+import queue
+import threading
 import time
 from pathlib import Path
 
@@ -28,6 +36,7 @@ log = logging.getLogger(__name__)
 
 FLUSH_INTERVAL_SECS = 300
 RETENTION_DAYS = 35
+MAX_SPAN_SECS = 12 * 3600
 
 
 def default_data_dir() -> Path:
@@ -102,14 +111,21 @@ class UsageTracker:
         flush_interval: float = FLUSH_INTERVAL_SECS,
         retention_days: int = RETENTION_DAYS,
         manager=None,
+        monotonic=None,
+        background_writes: bool = True,
     ) -> None:
         self.enabled = bool(enabled)
         self._data_dir = Path(data_dir) if data_dir is not None else default_data_dir()
         self._now = now if now is not None else time.time
+        if monotonic is None:
+            monotonic = now if now is not None else time.monotonic
+        self._mono = monotonic
+        self._background = bool(background_writes)
+        self._queue: queue.Queue | None = None
+        self._segment_mono: float | None = None
         self._flush_interval = max(0.0, float(flush_interval))
         self._retention_days = max(1, int(retention_days))
         self._current_app: str | None = None
-        self._segment_start: float | None = None
         self._blanked = False
         self._locked = False
         self._days: dict[datetime.date, _DayData] = {}
@@ -121,10 +137,7 @@ class UsageTracker:
         if manager is not None:
             self.attach_manager(manager)
         if self.enabled:
-            try:
-                self._prune(self._now())
-            except Exception as exc:  # noqa: BLE001 - pruning is best-effort
-                log.warning('usage stats prune failed: %s', exc)
+            self._submit([], self._now())
 
     def attach_manager(self, manager) -> None:
         """Subscribe to a ToplevelManager's activation changes."""
@@ -135,8 +148,7 @@ class UsageTracker:
             current = None
         if current:
             self._current_app = str(current)
-            if self._countable():
-                self._segment_start = self._now()
+            self._open_segment(self._now())
 
     def _countable(self) -> bool:
         return (
@@ -149,6 +161,10 @@ class UsageTracker:
     def _at(self, now: float | None) -> float:
         return now if now is not None else self._now()
 
+    def _mono_at(self, now: float | None) -> float:
+        # An explicit stamp (tests, replays) stands for both clocks.
+        return now if now is not None else self._mono()
+
     # -- event inputs ----------------------------------------------------
 
     def on_activated_changed(self, app_id: str | None, now: float | None = None) -> None:
@@ -156,11 +172,11 @@ class UsageTracker:
         ts = self._at(now)
         if not self.enabled:
             self._current_app = str(app_id) if app_id else None
-            self._segment_start = None
+            self._segment_mono = None
             return
-        self._close_segment(ts)
+        self._close_segment(ts, now)
         self._current_app = str(app_id) if app_id else None
-        self._open_segment(ts)
+        self._open_segment(ts, now)
         self._maybe_flush(ts)
 
     def on_blank_changed(self, blanked: bool, now: float | None = None) -> None:
@@ -170,8 +186,8 @@ class UsageTracker:
         self._blanked = blanked
         if not self.enabled:
             return
-        self._close_segment(ts)
-        self._open_segment(ts)
+        self._close_segment(ts, now)
+        self._open_segment(ts, now)
         if blanked:
             self.flush(now=ts, force=True)
         else:
@@ -185,18 +201,18 @@ class UsageTracker:
         self._locked = locked
         if not self.enabled:
             return
-        self._close_segment(ts)
+        self._close_segment(ts, now)
         if locked and not was:
-            self._open_segment(ts)
+            self._open_segment(ts, now)
             self.flush(now=ts, force=True)
         elif was and not locked:
             day = _day_of(ts)
             self._record(day).unlocks += 1
             self._dirty.add(day)
-            self._open_segment(ts)
+            self._open_segment(ts, now)
             self._maybe_flush(ts)
         else:
-            self._open_segment(ts)
+            self._open_segment(ts, now)
 
     def note_notification(self, app_id: str, now: float | None = None) -> None:
         """Count one delivered notification for app_id (id only, no content)."""
@@ -211,17 +227,20 @@ class UsageTracker:
 
     # -- accounting ------------------------------------------------------
 
-    def _close_segment(self, ts: float) -> None:
-        start = self._segment_start
+    def _close_segment(self, ts: float, now: float | None = None) -> None:
+        start = self._segment_mono
         app = self._current_app
-        self._segment_start = None
-        if start is None or app is None or ts <= start:
+        self._segment_mono = None
+        if start is None or app is None:
             return
-        self._add_span(app, start, ts)
+        secs = min(self._mono_at(now) - start, MAX_SPAN_SECS)
+        if secs <= 0:
+            return
+        self._add_span(app, ts - secs, ts)
 
-    def _open_segment(self, ts: float) -> None:
-        if self._countable() and self._segment_start is None:
-            self._segment_start = ts
+    def _open_segment(self, ts: float, now: float | None = None) -> None:
+        if self._countable() and self._segment_mono is None:
+            self._segment_mono = self._mono_at(now)
 
     def _add_span(self, app_id: str, start: float, end: float) -> None:
         cursor = start
@@ -254,8 +273,8 @@ class UsageTracker:
         if not self.enabled:
             return {}
         ts = self._at(now)
-        self._close_segment(ts)
-        self._open_segment(ts)
+        self._close_segment(ts, now)
+        self._open_segment(ts, now)
         return dict(self._record(normalize_date(day)).apps)
 
     def week(
@@ -267,8 +286,8 @@ class UsageTracker:
         if not self.enabled:
             return [(end - datetime.timedelta(days=i), 0) for i in range(6, -1, -1)]
         ts = self._at(now)
-        self._close_segment(ts)
-        self._open_segment(ts)
+        self._close_segment(ts, now)
+        self._open_segment(ts, now)
         out: list[tuple[datetime.date, int]] = []
         for i in range(6, -1, -1):
             current = end - datetime.timedelta(days=i)
@@ -282,8 +301,8 @@ class UsageTracker:
         if not self.enabled:
             return 0
         ts = self._at(now)
-        self._close_segment(ts)
-        self._open_segment(ts)
+        self._close_segment(ts, now)
+        self._open_segment(ts, now)
         return self._record(normalize_date(day)).unlocks
 
     def notifications(
@@ -294,8 +313,8 @@ class UsageTracker:
         if not self.enabled:
             return {}
         ts = self._at(now)
-        self._close_segment(ts)
-        self._open_segment(ts)
+        self._close_segment(ts, now)
+        self._open_segment(ts, now)
         return dict(self._record(normalize_date(day)).notifications)
 
     def flush(self, now: float | None = None, force: bool = False) -> bool:
@@ -303,20 +322,55 @@ class UsageTracker:
         if not self.enabled:
             return False
         ts = self._at(now)
-        self._close_segment(ts)
-        self._open_segment(ts)
+        self._close_segment(ts, now)
+        self._open_segment(ts, now)
         if not self._dirty:
             return False
-        if not force and ts - self._last_flush < self._flush_interval:
+        if not force and abs(ts - self._last_flush) < self._flush_interval:
             return False
+        writes = []
         for day in sorted(self._dirty):
             record = self._days.get(day)
             if record is not None:
-                self._write_day(day, record)
+                writes.append((day, record.to_dict()))
         self._dirty.clear()
-        self._prune(ts)
+        self._submit(writes, ts)
         self._last_flush = ts
         return True
+
+    def _submit(self, writes: list, ts: float) -> None:
+        if not self._background:
+            self._write_and_prune(writes, ts)
+            return
+        if self._queue is None:
+            self._queue = queue.Queue()
+            threading.Thread(target=self._writer, name='usage-stats-writer',
+                             daemon=True).start()
+        self._queue.put((writes, ts))
+
+    def _writer(self) -> None:
+        q = self._queue
+        while True:
+            writes, ts = q.get()
+            try:
+                self._write_and_prune(writes, ts)
+            except Exception as exc:  # noqa: BLE001 - keep the writer alive
+                log.warning('usage stats write failed: %s', exc)
+            finally:
+                q.task_done()
+
+    def wait_writes(self) -> None:
+        """Block until queued writes landed (shutdown, tests)."""
+        if self._queue is not None:
+            self._queue.join()
+
+    def _write_and_prune(self, writes: list, ts: float) -> None:
+        for day, payload in writes:
+            self._write_day(day, payload)
+        try:
+            self._prune(ts)
+        except Exception as exc:  # noqa: BLE001 - pruning is best-effort
+            log.warning('usage stats prune failed: %s', exc)
 
     def _maybe_flush(self, ts: float) -> None:
         if self._dirty:
@@ -334,9 +388,9 @@ class UsageTracker:
             return _DayData()
         return _DayData.from_dict(raw)
 
-    def _write_day(self, day: datetime.date, record: _DayData) -> None:
+    def _write_day(self, day: datetime.date, record: dict) -> None:
         path = self._file_for(day)
-        payload = json.dumps(record.to_dict(), indent=2, sort_keys=True) + '\n'
+        payload = json.dumps(record, indent=2, sort_keys=True) + '\n'
         try:
             self._data_dir.mkdir(parents=True, exist_ok=True)
             tmp_path = path.with_name(path.name + '.tmp')

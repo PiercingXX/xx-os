@@ -314,7 +314,9 @@ class UpdateChecker:
         now = time.time()
         if now < self._config.update_snooze_until:
             return
-        if now - self._config.update_last_check < CHECK_INTERVAL:
+        # A stamp from the future (saved while the RTC ran ahead) is due
+        # now; otherwise it would hold every check until the clock got there.
+        if 0 <= now - self._config.update_last_check < CHECK_INTERVAL:
             return
         self._start_check(self._report_scheduled)
 

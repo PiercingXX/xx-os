@@ -44,8 +44,57 @@ def _noon_today() -> float:
 
 
 def _tracker(tmp_path: Path, clock: Clock, **kwargs) -> UsageTracker:
+    kwargs.setdefault('background_writes', False)
     return UsageTracker(
         data_dir=tmp_path / 'usage', now=clock, **kwargs)
+
+
+# -- wall-clock jumps and the writer thread -------------------------------
+
+
+def test_wall_clock_jump_is_not_screen_time(tmp_path: Path) -> None:
+    wall = Clock(_noon_today() - 30 * 86400)
+    mono = Clock(1000.0)
+    tracker = _tracker(tmp_path, wall, monotonic=mono)
+    tracker.on_activated_changed('org.a.App')
+    mono.advance(60)
+    wall.advance(30 * 86400 + 60)
+    tracker.on_activated_changed(None)
+    assert tracker.daily_totals(datetime.date.today()) == {'org.a.App': 60}
+    assert len(tracker._days) == 1
+
+
+def test_one_span_is_capped(tmp_path: Path) -> None:
+    wall = Clock(_noon_today() - 20 * 3600)
+    mono = Clock(0.0)
+    tracker = _tracker(tmp_path, wall, monotonic=mono)
+    tracker.on_activated_changed('org.a.App')
+    mono.advance(20 * 3600)
+    wall.advance(20 * 3600)
+    tracker.on_activated_changed(None)
+    total = sum(sum(day.apps.values()) for day in tracker._days.values())
+    assert total == 12 * 3600
+
+
+def test_flush_writes_off_the_calling_thread(tmp_path: Path, monkeypatch) -> None:
+    import threading
+    import usage_stats
+    clock = Clock(_noon_today())
+    tracker = UsageTracker(data_dir=tmp_path / 'usage', now=clock)
+    threads = []
+    real = usage_stats.UsageTracker._write_day
+
+    def _spy(self, day, record):
+        threads.append(threading.current_thread())
+        real(self, day, record)
+
+    monkeypatch.setattr(usage_stats.UsageTracker, '_write_day', _spy)
+    tracker.on_activated_changed('org.a.App')
+    clock.advance(30)
+    tracker.flush(force=True)
+    tracker.wait_writes()
+    assert threads and threading.current_thread() not in threads
+    assert (tmp_path / 'usage' / (datetime.date.today().isoformat() + '.json')).exists()
 
 
 # -- state-array decoding -------------------------------------------------

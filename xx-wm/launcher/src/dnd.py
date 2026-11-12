@@ -205,7 +205,7 @@ class DndState:
     # -- call exceptions ---------------------------------------------------
 
     def note_call(self, number: str, when: float | None = None) -> None:
-        when = _time.time() if when is None else when
+        when = _time.monotonic() if when is None else when
         cutoff = when - REPEAT_CALLER_WINDOW
         self._recent_calls = [(n, t) for n, t in self._recent_calls if t > cutoff]
         # Kept as dialled ('+' and all) so the shared matcher can tell
@@ -215,7 +215,7 @@ class DndState:
     def is_exception(self, number: str, when: float | None = None) -> bool:
         """True if this call should ring through DnD: starred contact, or the
         same number already called within the last 15 minutes."""
-        when = _time.time() if when is None else when
+        when = _time.monotonic() if when is None else when
         if self.is_starred(number):
             return True
         cutoff = when - REPEAT_CALLER_WINDOW

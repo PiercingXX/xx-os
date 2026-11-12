@@ -154,6 +154,17 @@ class TestRepeatCaller:
         dnd.note_call('+15550102222', when=t0)
         assert not dnd.is_exception('+15550102222', when=t0 + 16 * 60)
 
+    def test_window_ignores_wall_clock_jumps(self, dnd, monkeypatch):
+        import dnd as dnd_mod
+        wall = [1_000_000.0]
+        mono = [500.0]
+        monkeypatch.setattr(dnd_mod._time, 'time', lambda: wall[0])
+        monkeypatch.setattr(dnd_mod._time, 'monotonic', lambda: mono[0])
+        dnd.note_call('+15550102222')
+        wall[0] += 30 * 86400
+        mono[0] += 60
+        assert dnd.is_exception('+15550102222')
+
     def test_number_formatting_variants_match(self, dnd):
         t0 = 1_000_000.0
         dnd.note_call('+1 (555) 010-2222', when=t0)

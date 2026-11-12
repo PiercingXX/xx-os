@@ -615,6 +615,26 @@ class TestCheckerUnknown:
         checker._report_scheduled(0)
         assert fired == []
 
+    def test_stamp_from_the_future_is_due(self, monkeypatch):
+        config = _FakeUpdateConfig()
+        config.update_last_check = 4_000_000_000.0
+        checker = update_checker.UpdateChecker(config, lambda count: None)
+        started = []
+        monkeypatch.setattr(checker, '_start_check', started.append)
+        monkeypatch.setattr(update_checker.time, 'time', lambda: 1_800_000_000.0)
+        checker.maybe_check()
+        assert started
+
+    def test_recent_stamp_is_not_due(self, monkeypatch):
+        config = _FakeUpdateConfig()
+        config.update_last_check = 1_800_000_000.0 - 60
+        checker = update_checker.UpdateChecker(config, lambda count: None)
+        started = []
+        monkeypatch.setattr(checker, '_start_check', started.append)
+        monkeypatch.setattr(update_checker.time, 'time', lambda: 1_800_000_000.0)
+        checker.maybe_check()
+        assert not started
+
     def test_scheduled_count_notifies(self):
         config = _FakeUpdateConfig()
         fired: list = []
