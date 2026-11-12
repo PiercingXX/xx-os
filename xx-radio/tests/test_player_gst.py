@@ -110,10 +110,14 @@ def test_seek_lands_exactly_and_hides_the_flush(tmp_path):
     seen: dict = {}
 
     def on_timing() -> None:
+        # Right after the flush a slow machine can still answer the
+        # position query with "unknown" (None); wait for a real value.
         if seen.get("asked") and not player._seeking \
                 and "landed" not in seen:
-            seen["landed"] = player.position_ns()
-            landed.set()
+            position = player.position_ns()
+            if position is not None:
+                seen["landed"] = position
+                landed.set()
 
     player._on_timing = on_timing
     try:
