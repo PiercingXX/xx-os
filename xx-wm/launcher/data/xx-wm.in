@@ -160,8 +160,11 @@ _xx_session_begin() {
         return 0
     fi
     if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+        # GSK_RENDERER (set per device by xx-wm-session) reaches
+        # D-Bus-activated apps too.
         dbus-update-activation-environment --systemd \
             WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE DISPLAY \
+            ${GSK_RENDERER:+GSK_RENDERER} \
             2>/dev/null || true
     fi
     # Pulls graphical-session.target in through BindsTo, which

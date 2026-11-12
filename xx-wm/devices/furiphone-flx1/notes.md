@@ -28,3 +28,27 @@ Per-device phoc.ini fragment: `launcher/data/phoc/furiphone-flx1.ini` (output `H
 - [ ] GTK4/gtk4-layer-shell availability on FuriOS repos
 - [ ] Output name, evdev nodes, IIO sensors (same checklist as other devices)
 - [ ] Android app container ("vd") interaction with a non-Phosh shell
+
+## Startup cost (review P3, 2026-11-12)
+
+Seen on `main` before: shell RSS 170 MB and 24 threads two minutes after
+boot, `vkCreateWaylandSurfaceKHR(): VK_ERROR_EXTENSION_NOT_PRESENT` at every
+start, and two `StartServiceByName for org.freedesktop.impl.portal.desktop.gtk:
+Timeout was reached` lines.
+
+- **Renderer.** `xx-wm-session` sets `GSK_RENDERER=ngl` when libhybris is
+  installed (`libhybris-common.so*` under `/usr/lib`), unless the variable is
+  already set; the wrapper passes it on to D-Bus-activated apps. Check: the
+  shell's `/proc/<pid>/environ` has it, the Vulkan line is gone from
+  `~/.local/share/xx-wm/stderr.log`, and RSS and threads against the numbers
+  above. If FuriOS ships libhybris under another name nothing changes: set
+  `GSK_RENDERER=ngl` in the login environment instead.
+- **Portal timeout.** The shell runs with `GDK_DEBUG=no-portals`; the timeout
+  is the portal broker waiting for its GTK backend, which an app's first
+  Settings read triggers. Still to check here: `systemctl --user status
+  xx-wm-session.target graphical-session.target xdg-desktop-portal
+  xdg-desktop-portal-gtk`, `journalctl --user -b -u xdg-desktop-portal-gtk`,
+  and the time from a drawer tap to a GTK app's first frame, cold and warm.
+  If the backend starts but slowly, start the portals from
+  `_xx_session_begin` (`--no-block`) so no app launch waits for them; if it
+  never starts, fix the unit ordering first.

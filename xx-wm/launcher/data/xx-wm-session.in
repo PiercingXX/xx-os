@@ -39,6 +39,24 @@ unset _qt_plugin
 # Marks the real session — enables session-only behavior (app preloading)
 export XX_WM_SESSION=1
 
+# GTK 4 tries Vulkan before GL. On Halium phones (libhybris; the FLX1)
+# the Vulkan driver loads but has no Wayland surface support: every GTK
+# process (the shell and each app) loads it, logs vkCreateWaylandSurfaceKHR
+# VK_ERROR_EXTENSION_NOT_PRESENT and only then falls back to GL. Ask for
+# GL up front there. Mainline devices keep GTK's own choice, and a
+# GSK_RENDERER already set (greetd, ~/.profile) always wins.
+_xx_libhybris() {
+    for _xx_lib in "${XX_WM_LIB_ROOT:-}"/usr/lib/libhybris-common.so* \
+                   "${XX_WM_LIB_ROOT:-}"/usr/lib/*/libhybris-common.so*; do
+        [ -e "$_xx_lib" ] && return 0
+    done
+    return 1
+}
+if [ -z "${GSK_RENDERER:-}" ] && _xx_libhybris; then
+    GSK_RENDERER=ngl
+    export GSK_RENDERER
+fi
+
 # Desktop/session identity for portals and D-Bus activation: greetd and
 # bare `phoc` launches may not set these, and xdg-desktop-portal picks
 # xx-wm-portals.conf by the lowercased XDG_CURRENT_DESKTOP.
