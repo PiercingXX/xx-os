@@ -357,8 +357,23 @@ download_nerd_font_fallback() {
         echo "warn: Nerd Font zip checksum mismatch (got $_got_sha, expected $_zip_sha) — not installing it" >&2
         return 0
     fi
-    unzip -o -j "$_tmpzip" -d "$_fontdir" >/dev/null 2>&1 || \
+    # Unpacked aside first so scripts/uninstall.sh can remove exactly
+    # these files later (.xx-wm-fonts lists them).
+    _tmpfonts=$(mktemp -d) || {
+        rm -f "$_tmpzip"
+        return 0
+    }
+    if unzip -o -j "$_tmpzip" -d "$_tmpfonts" >/dev/null 2>&1; then
+        for _font in "$_tmpfonts"/*; do
+            [ -f "$_font" ] || continue
+            _name=$(basename "$_font")
+            mv -f "$_font" "$_fontdir/$_name" && \
+                printf '%s\n' "$_name" >> "$_fontdir/.xx-wm-fonts"
+        done
+    else
         echo "warn: Nerd Font unzip failed" >&2
+    fi
+    rm -rf "$_tmpfonts"
     rm -f "$_tmpzip"
     return 0
 }
@@ -730,6 +745,11 @@ add_input_group() {
             return 1
         }
     echo "Added '$user' to the input group — re-login (or reboot) for it to take effect."
+    # scripts/uninstall.sh takes the user back out only when we added them.
+    _g_dir=$(_xx_state_dir)
+    $SUDO mkdir -p "$_g_dir" 2>/dev/null && \
+        printf '%s\n' "$user" | $SUDO tee -a "$_g_dir/input-group-added" >/dev/null 2>&1
+    return 0
 }
 
 # --- post-install refresh (install_refresh) ---------------------------------

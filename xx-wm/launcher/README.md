@@ -99,6 +99,14 @@ that (it installs `scripts/deploy-sync.sh` as
 dir the user owns and nothing else). `--dry-run` prints the real paths
 without touching anything. Full installs go through `scripts/install.sh`
 (whiptail menu: Install / Update / Install phone apps).
+`scripts/uninstall.sh [--dry-run] [--keep-apps]`, run from the same
+checkout, removes what install.sh and the meson installs put down (each
+project's `build/meson-logs/install-log.txt`, else a fresh meson
+configure lists the files) and undoes install.sh's changes: services,
+the logind power-key drop-ins, greetd autologin and the GDM keyboard
+(from their `.xx-wm-backup` copies), the downloaded fonts, and the
+`input` group when install.sh added it. Distro packages and your
+settings stay.
 
 ## Device checks to run first
 
