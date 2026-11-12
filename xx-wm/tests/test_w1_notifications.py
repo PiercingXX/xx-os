@@ -1213,7 +1213,7 @@ class TestBodyMarkup:
 
 # --- item 7: expiry keeps shade history --------------------------------------
 
-class TestExpiryKeepsHistory:
+class TestExpiryRemovesRow:
     def _notified(self, monkeypatch, **kwargs):
         received: list = []
         closed: list = []
@@ -1228,11 +1228,12 @@ class TestExpiryKeepsHistory:
         assert received and received[0][0] == nid
         return daemon, glib, bus, nid, closed
 
-    def test_expiry_reports_but_keeps_row(self, monkeypatch):
+    def test_expiry_reports_and_removes_row(self, monkeypatch):
         daemon, glib, bus, nid, closed = self._notified(
             monkeypatch, expire=5000, hints={})
         assert daemon._expire_notification(nid) is False
-        assert closed == []
+        glib.run_idle()
+        assert closed == [nid]
         assert len(bus.signals) == 1
         _sender, _path, _iface, name, variant = bus.signals[0]
         assert name == 'NotificationClosed'
@@ -1256,14 +1257,31 @@ class TestExpiryKeepsHistory:
         glib.run_idle()
         assert closed == [nid]
 
-    def test_shade_ignores_expiry_broadcast(self):
+    def test_shade_honors_expiry_broadcast(self):
         shade = _bare_shade(daemon=_FakeDaemon())
         shade._notifications.append(
             notification_shade.Notification(9, 'App', 'S', 'B'))
         shade._on_dbus_closed(None, None, None, None, None,
                               _FakeParams((9, 1)), None)
-        assert len(shade._notifications) == 1
+        assert shade._notifications == []
         assert shade._notif_daemon.closed == []
+
+    def test_forged_broadcast_never_drops_shell_rows(self):
+        shade = _bare_shade(daemon=_FakeDaemon())
+        for nid in (999901, 1_900_000_005):
+            shade._notifications.append(
+                notification_shade.Notification(nid, 'System', 'S', 'B'))
+            shade._on_dbus_closed(None, None, None, None, None,
+                                  _FakeParams((nid, 2)), None)
+        assert len(shade._notifications) == 2
+
+    def test_own_daemon_is_the_only_authority(self):
+        shade = _bare_shade(daemon=_FakeDaemon(owns=True))
+        shade._notifications.append(
+            notification_shade.Notification(9, 'App', 'S', 'B'))
+        shade._on_dbus_closed(None, None, None, None, None,
+                              _FakeParams((9, 2)), None)
+        assert len(shade._notifications) == 1
 
     def test_shade_honors_dismiss_broadcast(self):
         shade = _bare_shade(daemon=_FakeDaemon())

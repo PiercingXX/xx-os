@@ -192,9 +192,8 @@ class NotificationDaemon:
     suppress-sound) so DnD and sound policy can be applied downstream.
     Callbacks accepting a seventh positional argument additionally receive
     the action list as [(key, label), ...] pairs decoded from the flat
-    Notify actions array. Fires on_close(id) when CloseNotification is
-    called or a transient notification expires; a non-transient expiry
-    only emits NotificationClosed (reason 1) so the shade keeps history.
+    Notify actions array. Fires on_close(id) when the client that was
+    issued the id closes it, or when a notification expires.
     """
 
     def __init__(
@@ -290,11 +289,12 @@ class NotificationDaemon:
                     GLib.Variant('(ssss)', ('PiercingXX', 'PiercingXX', '1.0', '1.2'))
                 )
             elif method == 'Notify':
-                notif_id = self._handle_notify(params)
+                notif_id = self._handle_notify(params, sender)
                 invocation.return_value(GLib.Variant('(u)', (notif_id,)))
             elif method == 'CloseNotification':
-                notif_id = params.unpack()[0]
-                self._close_notification(conn, notif_id, _REASON_CLOSED)
+                notif_id = int(params.get_child_value(0).get_uint32())
+                if self.client_may_close(notif_id, sender):
+                    self._close_notification(conn, notif_id, _REASON_CLOSED)
                 invocation.return_value(None)
             else:
                 invocation.return_error_literal(
@@ -357,7 +357,16 @@ class NotificationDaemon:
             self._next_id = 1
         return candidate
 
-    def _handle_notify(self, params: GLib.Variant) -> int:
+    def client_may_close(self, notif_id: int, sender: str | None) -> bool:
+        """Only the client that was issued an id may close it: never an id
+        this daemon did not hand out, and never a shell-reserved row."""
+        if _is_reserved(notif_id):
+            return False
+        issued = self._issued_ids_dict()
+        return notif_id in issued and issued[notif_id] == sender
+
+    def _handle_notify(self, params: GLib.Variant,
+                       sender: str | None = None) -> int:
         parts = _notify_args(params)
         app_name = str(parts[0])
         replaces_id = int(parts[1]) if parts[1] else 0
@@ -379,14 +388,14 @@ class NotificationDaemon:
         ]
 
         issued = self._issued_ids_dict()
-        if replaces_id and replaces_id in issued:
+        if replaces_id and issued.get(replaces_id, False) == sender:
             notif_id = replaces_id
         else:
             # Client input never advances the counter: a forged replaces_id
             # used to push _next_id past 2^32 (every later Notify then
             # failed building its uint32 reply) or into shell-reserved ids.
             notif_id = self._fresh_id(issued)
-        issued[notif_id] = None
+        issued[notif_id] = sender
         while len(issued) > _MAX_STORED:
             issued.pop(next(iter(issued)))
 
@@ -419,27 +428,12 @@ class NotificationDaemon:
         return notif_id
 
     def _expire_notification(self, notif_id: int) -> bool:
+        # The app hears reason 1 and forgets the id, so the row and its
+        # actions go too: a kept row would invoke actions on a dead id.
         self._expire_timers.pop(notif_id, None)
         if not self._bus:
             return False
-        # A phone shade keeps history: expiry only reports back to the app
-        # (reason 1). Transient notifications skip history and are removed.
-        hints = self._notif_hints.get(notif_id, {})
-        if hints.get('transient', False):
-            self._notif_hints.pop(notif_id, None)
-            self._issued_ids_dict().pop(notif_id, None)
-            self._close_notification(self._bus, notif_id, _REASON_EXPIRED)
-            return False
-        try:
-            self._bus.emit_signal(
-                None,
-                _OBJ_PATH,
-                _IFACE_NAME,
-                'NotificationClosed',
-                GLib.Variant('(uu)', (notif_id, _REASON_EXPIRED)),
-            )
-        except GLib.Error:
-            pass
+        self._close_notification(self._bus, notif_id, _REASON_EXPIRED)
         return False
 
     def _close_notification(

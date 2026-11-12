@@ -127,6 +127,12 @@ def _post_to_main(callback: Callable, *args):
 # update notice, screenshot, screen-recording and wireless-debugging rows),
 # so dismissing them must not echo-close over D-Bus.
 _SHELL_INTERNAL_IDS = frozenset({999901, 999902, 999903, 999904, 999905})
+# The SMS rows the shell posts itself sit at and above this floor.
+_SHELL_ROW_FLOOR = 1_900_000_000
+
+
+def _is_shell_row(notif_id: int) -> bool:
+    return notif_id in _SHELL_INTERNAL_IDS or notif_id >= _SHELL_ROW_FLOOR
 
 _ALLOWED_BODY_TAGS = ('b', 'i', 'u')
 _ANCHOR_RE = re.compile(r'&lt;a\b.*?&gt;(.*?)&lt;/a&gt;',
@@ -999,15 +1005,22 @@ class NotificationShade(Gtk.Window):
             pass
 
     def _on_dbus_closed(self, _c, _s, _p, _i, _sig, params, _ud) -> None:
-        # Reason 1 (expired) keeps its history row: the daemon reports back
-        # to the app but the shade retains the notification.
+        # Any client can emit this signal. While our own daemon owns the
+        # name its on_close callback is the only authority, and a forged
+        # signal never reaches the shell's own rows.
+        daemon = getattr(self, '_notif_daemon', None)
         try:
-            unpacked = params.unpack()
-            if len(unpacked) > 1 and int(unpacked[1]) == 1:
+            if daemon is not None and daemon.owns_name():
                 return
-            self.dismiss(int(unpacked[0]), notify_daemon=False)
         except Exception:
             pass
+        try:
+            notif_id = int(params.unpack()[0])
+        except Exception:
+            return
+        if _is_shell_row(notif_id):
+            return
+        self.dismiss(notif_id, notify_daemon=False)
 
     def _spawn_shade_worker(self, target: Callable[[], None]):
         thread = _spawn_shade_thread(target)

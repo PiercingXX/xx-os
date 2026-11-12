@@ -135,5 +135,86 @@ class TestImageDataStaysPacked:
         assert received[0][2:4] == ('S', 'B')
 
 
+class _Invocation:
+    def __init__(self) -> None:
+        self.value = 'unset'
+        self.error = None
+
+    def return_value(self, value):
+        self.value = value
+
+    def return_error_literal(self, _domain, _code, message):
+        self.error = message
+
+
+def _call(daemon, sender, method, params):
+    inv = _Invocation()
+    daemon._on_method_call(daemon._bus, sender, '/org/freedesktop/'
+                           'Notifications', 'org.freedesktop.Notifications',
+                           method, params, inv)
+    return inv
+
+
+def _issued(daemon, glib, sender):
+    inv = _call(daemon, sender, 'Notify', _notify())
+    glib.run_idle()
+    return inv.value.unpack()[0]
+
+
+class TestCloseOnlyOwnIds:
+    def test_client_closes_its_own_id(self):
+        closed: list = []
+        _mod, daemon, glib = _daemon(on_close=closed.append)
+        nid = _issued(daemon, glib, ':1.10')
+        inv = _call(daemon, ':1.10', 'CloseNotification',
+                    Variant('(u)', (nid,)))
+        glib.run_idle()
+        assert inv.error is None
+        assert closed == [nid]
+        assert daemon._bus.signals[-1] == ('NotificationClosed', (nid, 3))
+
+    def test_other_client_cannot_close(self):
+        closed: list = []
+        _mod, daemon, glib = _daemon(on_close=closed.append)
+        nid = _issued(daemon, glib, ':1.10')
+        inv = _call(daemon, ':1.99', 'CloseNotification',
+                    Variant('(u)', (nid,)))
+        glib.run_idle()
+        assert inv.error is None
+        assert closed == []
+        assert daemon._bus.signals == []
+
+    def test_never_issued_and_shell_rows_cannot_be_closed(self):
+        closed: list = []
+        _mod, daemon, glib = _daemon(on_close=closed.append)
+        for nid in (4242, 999904, 1_900_000_001):
+            _call(daemon, ':1.10', 'CloseNotification',
+                  Variant('(u)', (nid,)))
+        glib.run_idle()
+        assert closed == []
+        assert daemon._bus.signals == []
+
+    def test_other_client_cannot_replace(self):
+        _mod, daemon, glib = _daemon()
+        nid = _issued(daemon, glib, ':1.10')
+        inv = _call(daemon, ':1.99', 'Notify', _notify(replaces=nid))
+        assert inv.value.unpack()[0] != nid
+
+
+class TestExpiryRemovesRow:
+    def test_expiry_closes_like_the_app_heard(self):
+        closed: list = []
+        _mod, daemon, glib = _daemon(on_close=closed.append)
+        nid = daemon._handle_notify(_notify(expire=5000), ':1.10')
+        glib.run_idle()
+        assert daemon._expire_timers
+        daemon._expire_notification(nid)
+        glib.run_idle()
+        assert closed == [nid]
+        assert daemon._bus.signals == [('NotificationClosed', (nid, 1))]
+        assert nid not in daemon._issued_ids
+        assert nid not in daemon._notif_hints
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
