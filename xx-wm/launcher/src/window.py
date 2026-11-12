@@ -2603,13 +2603,6 @@ class ShellWindow(Adw.ApplicationWindow):
     def _tick_status(self) -> bool:
         return _home(self)._tick_status()
 
-    def _refresh_index(self, _button: Gtk.Button | None = None) -> None:
-        self.app_index.refresh()
-        self._sync_home_labels_from_index()
-        self._home_launcher.refresh()
-        self._populate_apps(self.apps_search.get_text())
-        self._show_status('Application index rebuilt.')
-
     def _populate_apps(self, query: str = '') -> None:
         return _drawer(self)._populate_apps(query)
 

@@ -148,3 +148,24 @@ class TestHomeAlignment:
             page, labels = self._page(alignment)
             page._apply_widget_alignment()
             assert {label.xalign for label in labels.values()} == {0.5}
+
+
+class TestNoConfirmationToasts:
+    """Minimal rule: a direct action shows its result, not a toast."""
+
+    def test_web_search_launches_without_a_status_line(self, monkeypatch):
+        import drawer_page
+        from gi.repository import Gio
+        launched, statuses = [], []
+        monkeypatch.setattr(Gio.AppInfo, 'launch_default_for_uri',
+                            lambda uri, _ctx: launched.append(uri))
+        page = drawer_page.DrawerPage.__new__(drawer_page.DrawerPage)
+        page._win = types.SimpleNamespace(_show_status=statuses.append)
+        page._open_web_search('river wm')
+        assert launched and launched[0].endswith('river+wm')
+        assert statuses == []
+
+    def test_no_index_rebuilt_toast(self):
+        src = Path(__file__).parent.parent / 'launcher' / 'src' / 'window.py'
+        assert 'Application index rebuilt' not in src.read_text(
+            encoding='utf-8')

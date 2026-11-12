@@ -270,7 +270,6 @@ def open_web_search(win, query: str) -> None:
         return
     try:
         Gio.AppInfo.launch_default_for_uri(_WEB_SEARCH_URL + quote_plus(query), None)
-        win._show_status(f'Searching the web for {query}...')
     except GLib.Error as error:
         win._show_status(f'No browser available: {error.message}')
 
