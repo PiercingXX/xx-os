@@ -742,26 +742,32 @@ class CallWiring:
             win._call_bar.hide_bar()
         self._show_end_reason()
 
-    def _on_sms_received(self, number: str, text: str) -> None:
-        from modem_monitor import (
-            CHATTY_BUS_NAME, TXXT_BUS_NAME, bus_name_has_owner)
+    def _on_sms_received(self, number: str, text: str) -> bool:
+        """Post the Messages banner unless an SMS app owns messages.
+        True when the shell posted it, which tells the modem monitor to
+        delete the message from the modem store."""
+        import modem_monitor
         from shell_log import get_logger
 
         win = self._win
         # TxxT owns SMS on XX-WM devices (and posts its own notifications),
-        # so it wins over Chatty when both are present.
-        if bus_name_has_owner(TXXT_BUS_NAME):
-            if not win._txtt_owner_warned:
-                win._txtt_owner_warned = True
+        # so it wins over Chatty when both are present. An app that is
+        # installed but not running yet owns the message too: it is
+        # started and reads the modem store itself (posting here as well
+        # would notify twice).
+        for name, flag in ((modem_monitor.TXXT_BUS_NAME, '_txtt_owner_warned'),
+                           (modem_monitor.CHATTY_BUS_NAME,
+                            '_chatty_owner_warned')):
+            running = modem_monitor.bus_name_has_owner(name)
+            if not running and not modem_monitor.bus_name_activatable(name):
+                continue
+            if not running:
+                modem_monitor.start_bus_name(name)
+            if not getattr(win, flag, False):
+                setattr(win, flag, True)
                 get_logger('window').info(
-                    '%s owns the session bus; leaving SMS to it', TXXT_BUS_NAME)
-            return
-        if bus_name_has_owner(CHATTY_BUS_NAME):
-            if not win._chatty_owner_warned:
-                win._chatty_owner_warned = True
-                get_logger('window').info(
-                    '%s owns the session bus; leaving SMS to it', CHATTY_BUS_NAME)
-            return
+                    '%s owns SMS; leaving messages to it', name)
+            return False
         from contacts import shared_book, display_number
         try:
             summary = shared_book().lookup_number(number) or display_number(number)
@@ -778,6 +784,7 @@ class CallWiring:
         else:
             win._ensure_shade().add_notification(
                 notif_id, 'Messages', summary, text)
+        return True
 
     def _expand_call_ui(self) -> None:
         # CallBar's expand button: re-present the full call surface

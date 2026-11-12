@@ -581,6 +581,9 @@ _SMS_SUBMIT_PDUS = frozenset({3, 4})
 _SMS_STATE_RECEIVING = 2
 _SMS_RECEIVE_POLLS = 15
 _SMS_RECEIVE_POLL_MS = 2_000
+#: Messages the shell posted itself, remembered to drop a copy that
+#: ModemManager announces again (modem re-enable before the delete).
+_SMS_SEEN_MAX = 128
 
 
 def messaging_list(
@@ -676,6 +679,7 @@ class ModemMonitor:
         self._number_wait: dict[str, int] = {}
         self._number_waited: set[str] = set()
         self._last_ended: CallInfo | None = None
+        self._sms_seen: list[tuple] = []
         self._mm_watch: int | None = None
         self._mm_owner: str | None = None
         self._mm_vanished = False
@@ -1321,25 +1325,29 @@ class ModemMonitor:
             self._update_modem_props(modem_path, relevant)
 
     def _on_messaging_added(
-        self, _conn, _sender, _modem_path, _iface, _sig, params, _ud,
+        self, _conn, _sender, modem_path, _iface, _sig, params, _ud,
     ) -> None:
         unpacked = params.unpack()
         sms_path, received = unpacked[0], unpacked[1]
         if not received or self._on_sms is None:
             return
-        self._fetch_sms(str(sms_path), _SMS_RECEIVE_POLLS)
+        self._fetch_sms(str(sms_path), _SMS_RECEIVE_POLLS,
+                        str(modem_path) if modem_path else None)
 
-    def _fetch_sms(self, sms_path: str, polls_left: int) -> None:
+    def _fetch_sms(self, sms_path: str, polls_left: int,
+                   modem_path: str | None = None) -> None:
         if self._bus is None:
             return
         self._bus.call(
             _MM1, sms_path, _PROPS_IFACE, 'GetAll',
             GLib.Variant('(s)', (_SMS_IFACE,)), None,
             Gio.DBusCallFlags.NONE, _CALL_TIMEOUT_MS, None,
-            lambda conn, result: self._on_sms_props(sms_path, polls_left, conn, result),
+            lambda conn, result: self._on_sms_props(
+                sms_path, polls_left, conn, result, modem_path),
         )
 
-    def _on_sms_props(self, sms_path: str, polls_left: int, conn, result) -> None:
+    def _on_sms_props(self, sms_path: str, polls_left: int, conn, result,
+                      modem_path: str | None = None) -> None:
         from shell_log import get_logger
         try:
             props = dict(conn.call_finish(result).unpack()[0])
@@ -1352,10 +1360,50 @@ class ModemMonitor:
         if props.get('State') == _SMS_STATE_RECEIVING and polls_left > 0:
             GLib.timeout_add(
                 _SMS_RECEIVE_POLL_MS,
-                lambda: self._fetch_sms(sms_path, polls_left - 1) or False)
+                lambda: self._fetch_sms(
+                    sms_path, polls_left - 1, modem_path) or False)
             return
         number = _strip_tel(str(props.get('Number', '')))
         text = str(props.get('Text', ''))
         if not number or not text:
             return
-        GLib.idle_add(self._on_sms, number, text)
+        key = (number, text, str(props.get('Timestamp', '')))
+        GLib.idle_add(self._deliver_sms, sms_path, modem_path, key)
+
+    def _deliver_sms(self, sms_path: str, modem_path: str | None,
+                     key: tuple) -> bool:
+        """Hand one received SMS to ``on_sms``. When the shell posted it
+        itself (the handler returns True: no TxxT or Chatty owns SMS),
+        nothing else will ever remove it, so it is deleted from the modem
+        store; a copy of a message already posted is only deleted."""
+        if key in self._sms_seen:
+            self._delete_sms(sms_path, modem_path)
+            return False
+        number, text = key[0], key[1]
+        if self._on_sms(number, text) is True:
+            self._sms_seen.append(key)
+            del self._sms_seen[:-_SMS_SEEN_MAX]
+            self._delete_sms(sms_path, modem_path)
+        return False
+
+    def _delete_sms(self, sms_path: str, modem_path: str | None) -> None:
+        modem_path = modem_path or self.modem_path(_MSG_IFACE)
+        if modem_path is None or self._bus is None:
+            return
+
+        def _on_deleted(conn, result) -> None:
+            try:
+                conn.call_finish(result)
+            except Exception as err:  # noqa: BLE001 - logged only
+                from shell_log import get_logger
+                get_logger('modem_monitor').warning(
+                    'SMS delete failed: %s', _err_message(err))
+
+        try:
+            self._bus.call(
+                _MM1, modem_path, _MSG_IFACE, 'Delete',
+                GLib.Variant('(o)', (sms_path,)), None,
+                Gio.DBusCallFlags.NONE, _CALL_TIMEOUT_MS, None, _on_deleted,
+            )
+        except Exception:  # noqa: BLE001 - best effort cleanup
+            pass

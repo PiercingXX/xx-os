@@ -203,6 +203,68 @@ class TestScreeningWaitsForCallerId:
         assert len(timers) == 1
 
 
+SMS_A = '/org/freedesktop/ModemManager1/SMS/3'
+SMS_B = '/org/freedesktop/ModemManager1/SMS/4'
+_MSG_IFACE = 'org.freedesktop.ModemManager1.Modem.Messaging'
+
+
+def _sms_added(monitor, bus, drain, sms_path, props):
+    while bus.pending:  # an earlier Delete still awaiting its reply
+        bus.complete_next(FakeReply(()))
+    monitor._on_messaging_added(
+        None, None, MODEM, None, None, FakeParams((sms_path, True)), None)
+    bus.complete_next(FakeReply(dict(props)))
+    drain()
+
+
+_SMS_PROPS = {'Number': 'tel:+15550001111', 'Text': 'hello',
+              'Timestamp': '2026-11-12T08:00:00+00'}
+
+
+class TestSmsFallbackStore:
+    """When the shell itself posted the SMS banner (no TxxT or Chatty),
+    the message is deleted from the modem (storage would fill), and a
+    copy ModemManager announces again (modem re-enable) is not notified
+    a second time."""
+
+    def test_shell_posted_message_deleted_from_modem(self, monkeypatch):
+        bus = FakeBus()
+        monitor, _fired, _, drain = _make_monitor(bus, monkeypatch)
+        posted = []
+        monitor._on_sms = lambda n, t: posted.append((n, t)) or True
+        _sms_added(monitor, bus, drain, SMS_A, _SMS_PROPS)
+        assert posted == [('+15550001111', 'hello')]
+        assert bus.calls[-1] == (_MM1, MODEM, _MSG_IFACE, 'Delete')
+
+    def test_message_left_for_its_app_is_kept(self, monkeypatch):
+        bus = FakeBus()
+        monitor, _fired, _, drain = _make_monitor(bus, monkeypatch)
+        monitor._on_sms = lambda n, t: False
+        _sms_added(monitor, bus, drain, SMS_A, _SMS_PROPS)
+        assert 'Delete' not in [c[3] for c in bus.calls]
+
+    def test_reannounced_copy_is_not_notified_twice(self, monkeypatch):
+        bus = FakeBus()
+        monitor, _fired, _, drain = _make_monitor(bus, monkeypatch)
+        posted = []
+        monitor._on_sms = lambda n, t: posted.append((n, t)) or True
+        _sms_added(monitor, bus, drain, SMS_A, _SMS_PROPS)
+        _sms_added(monitor, bus, drain, SMS_B, _SMS_PROPS)
+        assert len(posted) == 1
+        deletes = [c for c in bus.calls if c[3] == 'Delete']
+        assert len(deletes) == 2
+
+    def test_same_text_at_another_time_is_a_new_message(self, monkeypatch):
+        bus = FakeBus()
+        monitor, _fired, _, drain = _make_monitor(bus, monkeypatch)
+        posted = []
+        monitor._on_sms = lambda n, t: posted.append((n, t)) or True
+        _sms_added(monitor, bus, drain, SMS_A, _SMS_PROPS)
+        _sms_added(monitor, bus, drain, SMS_B,
+                   dict(_SMS_PROPS, Timestamp='2026-11-12T09:00:00+00'))
+        assert len(posted) == 2
+
+
 class TestFailedStartDeletesCall:
     def test_start_failure_deletes_created_call(self, monkeypatch):
         bus = FakeBus()
