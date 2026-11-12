@@ -5,8 +5,11 @@ A fixed list, never a unit browser: state reads unprivileged (systemd
 and `rc-update show` in a worker thread); state changes go through the
 root helper's `ManageService`, whose allowlist holds exactly these
 units — xx-wm itself, dbus and logind are never touched. Stop uses the
-power-menu arm-then-confirm (two taps, the arm resetting on any other
-action); failed units list read-only.
+power-menu arm-then-confirm (two taps within ARM_SECONDS, the arm
+resetting on any other action). Stopping, restarting or disabling the
+modem, NetworkManager or BlueZ asks first with a confirm menu that says
+what goes down, and is refused while a call is live; failed units list
+read-only.
 
 The ssh row also shows its listening address and whether the daemon
 config is key-only (the helper never writes sshd_config, so enabling
@@ -21,6 +24,7 @@ its web UI in the browser.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import settings_page
@@ -91,6 +95,34 @@ USER_SERVICES: tuple = (
 
 SERVICE_ACTIONS = ('Start', 'Stop', 'Restart', 'Enable', 'Disable')
 
+PAST_TENSE = {'start': 'started', 'stop': 'stopped', 'restart': 'restarted',
+              'enable': 'enabled', 'disable': 'disabled'}
+
+ARM_SECONDS = 5.0
+
+# What a stop, restart or disable of these takes down with it.
+CRITICAL_EFFECTS = {
+    'modem': 'Calls, SMS and mobile data stop.',
+    'eg25': 'Calls, SMS and mobile data stop.',
+    'network': 'Wi-Fi and mobile data disconnect.',
+    'bluetooth': 'Bluetooth devices disconnect.',
+}
+CRITICAL_ACTIONS = ('stop', 'restart', 'disable')
+
+
+def is_critical(key: str, action: str) -> bool:
+    return key in CRITICAL_EFFECTS and action in CRITICAL_ACTIONS
+
+
+def _call_live(win) -> bool:
+    probe = getattr(win, '_call_live', None)
+    if not callable(probe):
+        return False
+    try:
+        return bool(probe())
+    except Exception:
+        return False
+
 
 def _follow_firewall(win) -> None:
     """Re-apply the feature-derived firewall set after a firewall
@@ -151,6 +183,8 @@ class ServicesSection(settings_page._Section):
         self._rows_box = None
         self._failed_box = None
         self._confirm = ConfirmState()
+        self._armed_at = 0.0
+        self._now = time.monotonic
         self._user_rows: dict = {}
         self._user_base: dict = {}
         self._user_info: dict = {}
@@ -351,7 +385,12 @@ class ServicesSection(settings_page._Section):
     def _on_service_menu(self, win, entry, anchor=None) -> None:
         actions = []
         for action in SERVICE_ACTIONS:
-            if action == 'Stop':
+            if is_critical(entry.key, action.lower()):
+                actions.append(
+                    (action,
+                     lambda a=action.lower(), e=entry,
+                     r=anchor: self._confirm_critical(win, e, a, r)))
+            elif action == 'Stop':
                 actions.append(
                     ('Stop', lambda e=entry: self._on_stop_tapped(win, e)))
             else:
@@ -404,6 +443,30 @@ class ServicesSection(settings_page._Section):
                 base = self._user_base.get(entry.key, entry.title)
                 ui.set_subtitle(row, '%s · %s' % (base, err))
 
+    def _confirm_critical(self, win, entry, action: str, anchor=None) -> None:
+        self._confirm.reset()
+        if _call_live(win):
+            win._show_status(f'Not during a call: {entry.title} stays on.')
+            return
+        label = action.capitalize()
+        win.item_actions._show_action_menu(
+            anchor or self._rows_box,
+            f'{label} {entry.title}? {CRITICAL_EFFECTS[entry.key]}',
+            [(label, lambda: self._apply(win, entry, action)),
+             ('Cancel', lambda: None)])
+
+    def _tap_arm(self, stop_key: str) -> bool:
+        """ConfirmState.tap with an expiry: a second tap more than
+        ARM_SECONDS after the first arms again instead of confirming."""
+        now = self._now()
+        if (self._confirm.pending == stop_key
+                and now - self._armed_at > ARM_SECONDS):
+            self._confirm.reset()
+        if self._confirm.tap(stop_key):
+            return True
+        self._armed_at = now
+        return False
+
     def _stop_key(self, key: str) -> str:
         return 'stop:%s' % key
 
@@ -414,10 +477,10 @@ class ServicesSection(settings_page._Section):
         return self._on_user_stop(win, 'user-stop:%s' % entry.key)
 
     def _on_stop(self, win, stop_key: str) -> str:
-        """Arm-then-confirm: the first tap arms, the second executes. The
-        arm resets on any other service action (menus close between taps,
-        so no timer can expire it). Returns 'armed' or 'confirmed'."""
-        if self._confirm.tap(stop_key):
+        """Arm-then-confirm: the first tap arms, a second within
+        ARM_SECONDS executes. The arm also resets on any other service
+        action. Returns 'armed' or 'confirmed'."""
+        if self._tap_arm(stop_key):
             _key = stop_key.split(':', 1)[1]
             entry = next((item for item in SERVICES if item.key == _key),
                          None)
@@ -432,7 +495,7 @@ class ServicesSection(settings_page._Section):
 
     def _on_user_stop(self, win, stop_key: str) -> str:
         """Arm-then-confirm for user services (same shared machine)."""
-        if self._confirm.tap(stop_key):
+        if self._tap_arm(stop_key):
             _key = stop_key.split(':', 1)[1]
             entry = next((item for item in USER_SERVICES
                           if item.key == _key), None)
@@ -448,6 +511,9 @@ class ServicesSection(settings_page._Section):
 
     def _apply(self, win, entry, action: str) -> None:
         self._confirm.reset()
+        if is_critical(entry.key, action) and _call_live(win):
+            win._show_status(f'Not during a call: {entry.title} stays on.')
+            return
         try:
             import helper_client
         except ImportError as err:
@@ -456,7 +522,8 @@ class ServicesSection(settings_page._Section):
 
         def _done(ok: bool, detail) -> None:
             if ok:
-                win._show_status(f'{entry.title}: {action}ed.')
+                win._show_status(
+                    f'{entry.title}: {PAST_TENSE.get(action, action)}.')
             else:
                 win._show_status(f'Could not {action} {entry.title}: '
                                  f'{detail}')

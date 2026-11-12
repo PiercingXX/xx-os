@@ -1623,6 +1623,82 @@ class TestServiceSectionUI:
         assert section._on_stop(win, key) == 'confirmed'
         assert calls == [('bluetooth', 'stop')]
 
+    def _manage(self, monkeypatch, section):
+        import helper_client as client
+        monkeypatch.setattr(section, 'refresh', lambda win: None)
+        calls = []
+        monkeypatch.setattr(
+            client, 'manage_service',
+            lambda name, action, on_done: (
+                calls.append((name, action)), on_done(True, None))[1])
+        return calls
+
+    def test_stop_arm_expires(self, fake_gi, monkeypatch):
+        win = _bare_win()
+        section = services.ServicesSection()
+        section.build(win)
+        calls = self._manage(monkeypatch, section)
+        clock = [100.0]
+        section._now = lambda: clock[0]
+        key = section._stop_key('ssh')
+        assert section._on_stop(win, key) == 'armed'
+        clock[0] += services.ARM_SECONDS + 1
+        assert section._on_stop(win, key) == 'armed'
+        assert calls == []
+        clock[0] += 1
+        assert section._on_stop(win, key) == 'confirmed'
+        assert calls == [('ssh', 'stop')]
+
+    def test_critical_actions_ask_first(self, fake_gi, monkeypatch):
+        win = _bare_win()
+        section = services.ServicesSection()
+        section.build(win)
+        calls = self._manage(monkeypatch, section)
+        modem = next(e for e in services.SERVICES if e.key == 'modem')
+        section._on_service_menu(win, modem)
+        _title, choices = win._menus[-1]
+        for label in ('Stop', 'Restart', 'Disable'):
+            dict(choices)[label]()
+            title, confirm = win._menus[-1]
+            assert title.startswith('%s ModemManager?' % label), title
+            assert 'Calls, SMS and mobile data stop.' in title
+            assert [lbl for lbl, _cb in confirm] == [label, 'Cancel']
+            assert calls == []
+        dict(choices)['Disable']()
+        dict(win._menus[-1][1])['Disable']()
+        assert calls == [('modem', 'disable')]
+        assert win._statuses[-1] == 'ModemManager: disabled.'
+
+    def test_critical_actions_refused_during_a_call(self, fake_gi,
+                                                    monkeypatch):
+        win = _bare_win(_call_live=lambda: True)
+        section = services.ServicesSection()
+        section.build(win)
+        calls = self._manage(monkeypatch, section)
+        network = next(e for e in services.SERVICES if e.key == 'network')
+        section._on_service_menu(win, network)
+        menus_before = len(win._menus)
+        dict(win._menus[-1][1])['Stop']()
+        assert len(win._menus) == menus_before
+        assert win._statuses[-1] == (
+            'Not during a call: NetworkManager stays on.')
+        section._apply(win, network, 'stop')
+        assert calls == []
+        section._apply(win, network, 'start')
+        assert calls == [('network', 'start')]
+        assert win._statuses[-1] == 'NetworkManager: started.'
+
+    def test_status_words_are_spelled(self, fake_gi, monkeypatch):
+        win = _bare_win()
+        section = services.ServicesSection()
+        section.build(win)
+        self._manage(monkeypatch, section)
+        box = next(e for e in services.SERVICES if e.key == 'waydroid')
+        for action, word in (('stop', 'stopped'), ('enable', 'enabled'),
+                             ('restart', 'restarted')):
+            section._apply(win, box, action)
+            assert win._statuses[-1] == 'Waydroid container: %s.' % word
+
     def test_failed_units_read_only(self, fake_gi):
         win = _bare_win()
         section = services.ServicesSection()
