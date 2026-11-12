@@ -784,18 +784,18 @@ class TestStaticContracts:
             assert (SRC / name).is_file()
 
     def test_new_modules_never_block_main_loop(self):
-        import ast
+        """Every blocking call the main-loop checker finds in these
+        modules sits in an allow-listed worker helper."""
+        import importlib.util
+        script = SRC.parent.parent / 'scripts' / 'check_mainloop_blocks.py'
+        spec = importlib.util.spec_from_file_location('cmb', script)
+        checker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(checker)
         for name in ('settings_updates.py', 'settings_apps.py',
                      'polkit_agent.py'):
-            tree = ast.parse((SRC / name).read_text(encoding='utf-8'))
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                func = node.func
-                if isinstance(func, ast.Attribute):
-                    assert func.attr not in (
-                        'run', 'check_output', 'call_sync', 'wait'), \
-                        (name, func.attr)
+            for line, kind, scope, _text in checker._iter_sites(SRC / name):
+                assert (name, scope) in checker.ALLOW, (name, line, kind)
+
 
     def test_main_starts_polkit_agent(self):
         text = (SRC / 'main.py').read_text(encoding='utf-8')
