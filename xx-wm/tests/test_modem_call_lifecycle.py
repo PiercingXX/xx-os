@@ -15,8 +15,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from test_modem_monitor_calls import (  # noqa: E402
     CALL1, CALL2, MODEM, FakeBus, FakeParams, FakeReply, _CALL_IFACE, _MM1,
-    _VOICE_IFACE, _add_call, _delete_call, _make_monitor, _ringing_props,
-    _shown, _state_changed, modem_monitor,
+    _VOICE_IFACE, _add_call, _delete_call, _make_monitor, _number_changed,
+    _ringing_props, _shown, _state_changed, modem_monitor,
 )
 
 
@@ -138,6 +138,69 @@ class TestUnknownStateCalls:
         _state_changed(monitor, drain, CALL2, modem_monitor._STATE_TERMINATED)
         assert fired['ended'] == 1
         assert monitor.calls() == []
+
+
+class TestScreeningWaitsForCallerId:
+    """Caller ID often lands after the first ring. The ringing announce
+    (which runs the shell's screening consult) and the waiting-call
+    consult hold an empty number until it arrives or 1.5 s pass, so a
+    "block hidden callers" rule never hangs up a caller whose number was
+    merely late."""
+
+    def test_ringing_waits_for_late_number(self, monkeypatch):
+        bus = FakeBus()
+        monitor, fired, _, drain = _make_monitor(bus, monkeypatch)
+        timers = _timers(monkeypatch)
+        _add_call(monitor, bus, drain, CALL1, _ringing_props(number=''))
+        assert fired['incoming'] == []
+        assert [ms for ms, _cb, _a in timers] == [1500]
+        # The silent incoming page still renders from the snapshot.
+        assert [c.path for c in monitor.calls()] == [CALL1]
+        _number_changed(monitor, drain, CALL1, 'tel:+15550001111')
+        assert fired['incoming'] == [(_shown('+15550001111'), '+15550001111')]
+        # A timer that fires anyway announces nothing twice.
+        _ms, cb, args = timers.pop()
+        cb(*args)
+        drain()
+        assert len(fired['incoming']) == 1
+
+    def test_withheld_caller_rings_after_the_wait(self, monkeypatch):
+        bus = FakeBus()
+        monitor, fired, _, drain = _make_monitor(bus, monkeypatch)
+        timers = _timers(monkeypatch)
+        _add_call(monitor, bus, drain, CALL1, _ringing_props(number=''))
+        _ms, cb, args = timers.pop()
+        cb(*args)
+        drain()
+        assert fired['incoming'] == [('', '')]
+
+    def test_wait_dropped_with_the_call(self, monkeypatch):
+        bus = FakeBus()
+        monitor, fired, _, drain = _make_monitor(bus, monkeypatch)
+        timers = _timers(monkeypatch)
+        _add_call(monitor, bus, drain, CALL1, _ringing_props(number=''))
+        _delete_call(monitor, bus, drain, CALL1)
+        _ms, cb, args = timers.pop()
+        cb(*args)
+        drain()
+        assert fired['incoming'] == []
+
+    def test_waiting_call_consult_waits_for_number(self, monkeypatch):
+        bus = FakeBus()
+        monitor, _fired, _, drain = _make_monitor(bus, monkeypatch)
+        timers = _timers(monkeypatch)
+        consults = []
+        monkeypatch.setattr(modem_monitor, '_consult_check_number',
+                            lambda number, cb: consults.append(number))
+        _add_call(monitor, bus, drain, CALL1,
+                  _ringing_props(state=modem_monitor._STATE_ACTIVE))
+        _add_call(monitor, bus, drain, CALL2,
+                  _ringing_props(number='',
+                                 state=modem_monitor._STATE_WAITING))
+        assert consults == []
+        _number_changed(monitor, drain, CALL2, 'tel:+15550002222')
+        assert consults == ['+15550002222']
+        assert len(timers) == 1
 
 
 class TestFailedStartDeletesCall:

@@ -286,10 +286,12 @@ class TestIncomingFlow:
         bus = FakeBus()
         monitor, fired, _, drain = _make_monitor(bus, monkeypatch)
         _add_call(monitor, bus, drain, CALL1, _ringing_props(number=''))
-        assert fired['incoming'] == [('', '')]
+        # Announced (and screened) only once caller ID is in, or after
+        # the short wait for it (test_modem_call_lifecycle.py).
+        assert fired['incoming'] == []
         _number_changed(monitor, drain, CALL1, 'tel:+15550001111')
-        assert fired['incoming'][-1] == (
-            _shown('+15550001111'), '+15550001111')
+        assert fired['incoming'] == [(
+            _shown('+15550001111'), '+15550001111')]
         assert monitor.calls()[0].number == '+15550001111'
 
     def test_active_transition_fires_answered_once_with_started_at(

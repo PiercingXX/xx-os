@@ -242,9 +242,24 @@ class TestWaitingCallScreening:
         on_verdict('block', 'blocklist')
         assert fired['hangups'] == []
 
+    def test_late_number_is_waited_for_before_the_consult(self, monkeypatch):
+        monitor, _b, fired, drain = self._two_calls(monkeypatch, number='')
+        assert fired['consults'] == []
+        monitor._on_call_properties_changed(
+            None, None, CALL_B, None, None,
+            FakeParams((_CALL_IFACE, {'Number': 'tel:+15550003333'}, [])),
+            None)
+        drain()
+        assert [n for n, _cb in fired['consults']] == ['+15550003333']
+
     def test_late_number_rescreens_and_drops_the_withheld_verdict(
             self, monkeypatch):
+        timers = []
+        monkeypatch.setattr(modem_monitor.GLib, 'timeout_add',
+                            lambda ms, cb, *a: timers.append((cb, a)) or 1)
         monitor, _b, fired, drain = self._two_calls(monkeypatch, number='')
+        cb, args = timers.pop()
+        cb(*args)  # caller ID never came in time: screened as withheld
         monitor._on_call_properties_changed(
             None, None, CALL_B, None, None,
             FakeParams((_CALL_IFACE, {'Number': 'tel:+15550003333'}, [])),

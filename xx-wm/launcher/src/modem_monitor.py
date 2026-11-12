@@ -105,6 +105,9 @@ _OWNER_PROBE_TIMEOUT_MS = 500
 _IO_TIMEOUT_MS = 15_000
 #: Backoff between GetAll attempts on a new call; one entry per retry.
 _FETCH_RETRY_MS = (250, 500, 1_000, 2_000)
+#: How long an incoming call with no number waits for caller ID before
+#: it is announced (and screened) as withheld.
+_CALLER_ID_WAIT_MS = 1_500
 
 _last_monitor: ModemMonitor | None = None
 
@@ -579,6 +582,8 @@ class ModemMonitor:
         self._ended_announced = True
         self._active_call_path: str | None = None
         self._screened_waiting: set[str] = set()
+        self._number_wait: dict[str, int] = {}
+        self._number_waited: set[str] = set()
         self._last_ended: CallInfo | None = None
         self._mm_watch: int | None = None
         self._mm_owner: str | None = None
@@ -859,6 +864,8 @@ class ModemMonitor:
         self._announced_incoming.discard(call_path)
         self._announced_active.discard(call_path)
         self._screened_waiting.discard(call_path)
+        self._cancel_number_wait(call_path)
+        self._number_waited.discard(call_path)
         self._drop_subscription(call_path)
         if tracked is None:
             return
@@ -913,6 +920,8 @@ class ModemMonitor:
         call = self._calls.get(call_path)
         if call is None:
             return
+        if self._await_number(call):
+            return
         self._screened_waiting.add(call_path)
         number = call.number
 
@@ -931,11 +940,50 @@ class ModemMonitor:
         except Exception:  # noqa: BLE001 - screening fails open (rings)
             pass
 
+    def _await_number(self, call: CallInfo) -> bool:
+        """True while ``call`` has no number yet and still waits for
+        caller ID (up to _CALLER_ID_WAIT_MS): screening on an empty number
+        would treat a late caller ID as a withheld caller."""
+        if call.number or call.path in self._number_waited:
+            return False
+        if call.path not in self._number_wait:
+            self._number_wait[call.path] = GLib.timeout_add(
+                _CALLER_ID_WAIT_MS, self._on_number_wait_over, call.path)
+        return True
+
+    def _cancel_number_wait(self, call_path: str) -> None:
+        source = self._number_wait.pop(call_path, None)
+        if source is not None:
+            try:
+                GLib.source_remove(source)
+            except Exception:  # noqa: BLE001 - already fired
+                pass
+
+    def _on_number_wait_over(self, call_path: str) -> bool:
+        if self._number_wait.pop(call_path, None) is None:
+            return False
+        self._number_waited.add(call_path)
+        self._screen_incoming(call_path)
+        return False
+
+    def _screen_incoming(self, call_path: str) -> None:
+        """Announce a ringing call or screen a waiting one, whichever
+        state the incoming call is in now."""
+        call = self._calls.get(call_path)
+        if call is None or call.direction != _DIR_INCOMING:
+            return
+        if call.state == _STATE_RINGING_IN:
+            self._announce_incoming(call_path)
+        elif call.state == _STATE_WAITING:
+            self._screen_waiting(call_path)
+
     def _announce_incoming(self, call_path: str) -> None:
         if call_path in self._announced_incoming:
             return
         call = self._calls.get(call_path)
         if call is None:
+            return
+        if self._await_number(call):
             return
         self._announced_incoming.add(call_path)
         caller = _display_name(call.number)
@@ -1051,7 +1099,11 @@ class ModemMonitor:
         if not number or number == call.number:
             return
         call.number = number
-        if (call.direction == _DIR_INCOMING
+        if call_path in self._number_wait:
+            self._cancel_number_wait(call_path)
+            self._number_waited.add(call_path)
+            self._screen_incoming(call_path)
+        elif (call.direction == _DIR_INCOMING
                 and call.state == _STATE_RINGING_IN
                 and call_path in self._announced_incoming):
             self._announced_incoming.discard(call_path)
