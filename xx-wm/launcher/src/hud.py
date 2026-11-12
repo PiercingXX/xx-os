@@ -238,8 +238,8 @@ if _HAS_GTK:
             and a module-level import would drag GTK requirements into
             headless contexts that import hud for its silent-absence path.
             """
-            from window import resolve_theme
-            return resolve_theme(self._config)
+            from window import resolve_appearance_preset
+            return resolve_appearance_preset(self._config)
 
         def show_volume(self, pct: int) -> None:
             """Display a volume level ('Volume N%', 'Muted' at 0)."""

@@ -864,18 +864,28 @@ class LockScreen(Gtk.Window):
                 _log.warning('hosted surface release failed: %s', exc)
 
     def _display_preset(self) -> ThemePreset:
-        """Preset this surface renders with: window.resolve_theme over the
-        shared live config, so theme == 'custom' derives its palette instead
-        of falling back to the default preset (W1-B). Lazy import: window.py
-        sits above this module in the shell stack, and a module-level import
-        would drag its GTK requirements into headless contexts that import
-        lock_screen for its pure theme_css sheet.
+        """Preset this surface renders with: window.resolve_appearance_preset
+        over the shared live config, so theme == 'custom' derives its palette
+        and appearance_mode (light/dark/system) applies, as on every other
+        surface. Lazy import: window.py sits above this module in the shell
+        stack, and a module-level import would drag its GTK requirements
+        into headless contexts that import lock_screen for its pure
+        theme_css sheet.
         """
-        from window import resolve_theme
-        return resolve_theme(self._config)
+        from window import resolve_appearance_preset
+        return resolve_appearance_preset(self._config)
 
     def apply_theme(self, preset: ThemePreset | None = None) -> None:
-        _apply_lock_theme(preset if preset is not None else self._display_preset())
+        resolved = preset if preset is not None else self._display_preset()
+        _apply_lock_theme(resolved)
+        # The lock's media card follows hot reloads too, not only the next
+        # lock.
+        media = getattr(self, '_media', None)
+        if media is not None:
+            try:
+                media.apply_theme(resolved)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Build UI

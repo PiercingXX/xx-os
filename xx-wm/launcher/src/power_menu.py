@@ -302,8 +302,21 @@ class PowerMenu(LockHosted, Gtk.Window):
         """(Re)load this surface's display-level sheet. The shell window
         passes the freshly resolved preset on hot-reload fan-out; standalone
         falls back to the injected config's own preset."""
-        data = theme_css(preset if preset is not None else self._config.theme)
+        data = theme_css(preset if preset is not None else self._display_preset())
         self._theme_provider.load_from_data(data.encode('utf-8'))
+
+    def _display_preset(self) -> ThemePreset:
+        """custom and appearance_mode resolve as on every surface; the
+        application-owned menu is themed from here before any fan-out."""
+        import sys
+        shell = sys.modules.get('window')
+        resolver = getattr(shell, 'resolve_appearance_preset', None)
+        if callable(resolver):
+            try:
+                return resolver(self._config)
+            except Exception:
+                pass
+        return self._config.theme
 
     def _build(self) -> Gtk.Widget:
         scrim = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)

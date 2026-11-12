@@ -106,6 +106,7 @@ import window  # noqa: E402  (resolve_theme comes from here, exactly once)
 # test files import window under their own fake gi and rely on getting a
 # freshly executed module (test_theme_hot_reload hygiene).
 _RESOLVE_THEME = window.resolve_theme
+_RESOLVE_APPEARANCE = window.resolve_appearance_preset
 sys.modules.pop('window', None)
 
 
@@ -145,7 +146,9 @@ def _serve_detached_resolver():
     """
     sentinel = object()
     saved = sys.modules.get('window', sentinel)
-    sys.modules['window'] = types.SimpleNamespace(resolve_theme=_RESOLVE_THEME)
+    sys.modules['window'] = types.SimpleNamespace(
+        resolve_theme=_RESOLVE_THEME,
+        resolve_appearance_preset=_RESOLVE_APPEARANCE)
     yield
     if saved is sentinel:
         sys.modules.pop('window', None)
@@ -238,6 +241,71 @@ class TestCustomThemeReachesSurfaces:
             app_switcher.AppSwitcher,
             _config_with(theme='custom', custom_background=CUSTOM_BG))
         assert surf._display_preset() is not THEME_PRESETS['amoled']
+
+
+@pytest.fixture()
+def scoped_modules():
+    """Modules imported here under this file's fake gi are dropped again,
+    so later files import them against their own gi."""
+    before = {name: sys.modules.get(name) for name in ('banner', 'power_menu')}
+    yield
+    for name, mod in before.items():
+        if mod is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = mod
+
+
+class TestAppearanceModeReachesOverlays:
+    """lock, HUD, banner and the app-owned power menu honour
+    appearance_mode like the shade and home do."""
+
+    def test_lock_follows_light_mode(self):
+        surf = _surface_with_config(
+            lock_screen.LockScreen,
+            _config_with(theme='amoled', appearance_mode='light'))
+        assert surf._display_preset() is THEME_PRESETS['paper']
+
+    def test_hud_follows_light_mode(self, hud_mod):
+        surf = _surface_with_config(
+            hud_mod._HudWindow,
+            _config_with(theme='amoled', appearance_mode='light'))
+        assert surf._display_preset() is THEME_PRESETS['paper']
+
+    def test_banner_follows_light_mode(self, scoped_modules):
+        import banner
+        if not banner._HAS_GTK:
+            src = (Path(banner.__file__).read_text(encoding='utf-8')
+                   .split('def _display_preset')[1].split('def ')[0])
+            assert 'resolve_appearance_preset' in src
+            return
+        surf = _surface_with_config(
+            banner.BannerWindow,
+            _config_with(theme='amoled', appearance_mode='light'))
+        assert surf._display_preset() is THEME_PRESETS['paper']
+
+    def test_power_menu_follows_custom_and_light(self, scoped_modules):
+        import power_menu
+        surf = _surface_with_config(
+            power_menu.PowerMenu,
+            _config_with(theme='custom', custom_background=CUSTOM_BG))
+        assert surf._display_preset().background == CUSTOM_BG
+        surf = _surface_with_config(
+            power_menu.PowerMenu,
+            _config_with(theme='amoled', appearance_mode='light'))
+        assert surf._display_preset() is THEME_PRESETS['paper']
+
+    def test_lock_hot_reload_reaches_its_media_card(self, monkeypatch):
+        applied = []
+        monkeypatch.setattr(lock_screen, '_apply_lock_theme',
+                            lambda preset: applied.append(('lock', preset)))
+        surf = _surface_with_config(lock_screen.LockScreen,
+                                    _config_with(theme='forest'))
+        surf._media = types.SimpleNamespace(
+            apply_theme=lambda preset: applied.append(('media', preset)))
+        surf.apply_theme(THEME_PRESETS['paper'])
+        assert applied == [('lock', THEME_PRESETS['paper']),
+                           ('media', THEME_PRESETS['paper'])]
 
 
 class TestFallbackAndGarbageContracts:

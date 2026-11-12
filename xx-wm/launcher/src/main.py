@@ -862,9 +862,9 @@ class XXWMApplication(Adw.Application):
             except Exception:
                 pass
             try:
-                from window import resolve_theme
+                from window import resolve_appearance_preset
                 self._banner.apply_theme(
-                    resolve_theme(self._shell.config))
+                    resolve_appearance_preset(self._shell.config))
             except Exception:
                 pass
         return self._banner

@@ -851,6 +851,16 @@ class TestMediaCard:
         card.card.apply_theme(THEME_PRESETS['amoled'])
         assert THEME_PRESETS['amoled'].foreground.encode() in first.data
 
+    def test_shade_and_lock_cards_share_one_sheet(self, card):
+        other = media_controls.MediaCard(
+            watcher=card.hw.watcher,
+            config=SimpleNamespace(theme=THEME_PRESETS['amoled']),
+            locked=True)
+        assert other._theme_provider is card.card._theme_provider
+        card.card.apply_theme(THEME_PRESETS['paper'])
+        assert THEME_PRESETS['paper'].foreground.encode() in \
+            other._theme_provider.data
+
     def test_title_ellipsizes(self, card):
         assert card.card._title._ellipsize is not None
         assert card.card._subtitle._ellipsize is not None

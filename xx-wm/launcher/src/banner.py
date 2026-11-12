@@ -400,8 +400,8 @@ if _HAS_GTK:
             self._theme_provider.load_from_data(data.encode('utf-8'))
 
         def _display_preset(self) -> ThemePreset:
-            from window import resolve_theme
-            return resolve_theme(self._config)
+            from window import resolve_appearance_preset
+            return resolve_appearance_preset(self._config)
 
         def show_notification(
             self,

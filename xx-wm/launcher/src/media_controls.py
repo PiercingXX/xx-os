@@ -662,6 +662,32 @@ def _ensure_icons() -> None:
         pass
 
 
+_card_provider = None
+
+
+def _shared_card_provider():
+    """One display-level sheet for every MediaCard (shade and lock). One
+    provider per card stacked them, and whichever card loaded last styled
+    both."""
+    global _card_provider
+    if _card_provider is not None:
+        return _card_provider
+    _card_provider = Gtk.CssProvider()
+    try:
+        display = Gdk.Display.get_default()
+    except Exception:
+        display = None
+    if display is not None:
+        try:
+            Gtk.StyleContext.add_provider_for_display(
+                display, _card_provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 2,
+            )
+        except Exception:
+            pass
+    return _card_provider
+
+
 if _HAS_GTK:
 
     class MediaCard(Gtk.Box):
@@ -694,21 +720,9 @@ if _HAS_GTK:
             self._snapshot: PlayerSnapshot | None = None
             self._pos_src: int | None = None
 
-            # Single display-level provider, reloaded by apply_theme so hot
-            # reloads never stack a provider per call.
-            self._theme_provider = Gtk.CssProvider()
-            try:
-                display = Gdk.Display.get_default()
-            except Exception:
-                display = None
-            if display is not None:
-                try:
-                    Gtk.StyleContext.add_provider_for_display(
-                        display, self._theme_provider,
-                        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 2,
-                    )
-                except Exception:
-                    pass
+            # One display-level provider shared by every card, reloaded by
+            # apply_theme so hot reloads never stack providers.
+            self._theme_provider = _shared_card_provider()
             self.apply_theme()
 
             self._title = Gtk.Label(xalign=0)
@@ -797,8 +811,14 @@ if _HAS_GTK:
             if resolved is None:
                 config = self._config
                 if config is not None:
+                    # The shell's resolver when the shell is loaded (never
+                    # imported from here: window.py sits above this module).
+                    import sys
+                    shell = sys.modules.get('window')
+                    resolver = getattr(shell, 'resolve_appearance_preset', None)
                     try:
-                        resolved = config.theme
+                        resolved = (resolver(config) if callable(resolver)
+                                    else config.theme)
                     except Exception:
                         resolved = None
             if resolved is None:
