@@ -58,9 +58,10 @@ _PROPS_IFACE = 'org.freedesktop.DBus.Properties'
 def theme_css(preset: ThemePreset) -> str:
     # Tiles render through the shared glyph-tile builder (common/xx_ui),
     # so this sheet only owns the panel chrome the design system has no
-    # component for: the slider card. Colors are the brand opacity ramp
-    # of the preset foreground (3.5% raised, 10% line, 25% shade, 80%
-    # strong) so every preset gets the same hierarchy as AMOLED.
+    # component for: the two slider rows. They sit flat on the sheet,
+    # glyph, 2 px track with a 4x20 thumb, tabular readout; colors are
+    # the brand opacity ramp of the preset foreground (16% track,
+    # 80% glyph) so every preset gets the same hierarchy as AMOLED.
     fg = preset.foreground
     return f"""
 .qa-panel {{
@@ -73,26 +74,22 @@ def theme_css(preset: ThemePreset) -> str:
     background: none;
 }}
 .qa-sliders {{
-    margin-top: 22px;
-    padding: 6px 14px;
-    border-radius: 16px;
-    background: alpha({fg}, 0.035);
-    border: 1px solid alpha({fg}, 0.10);
+    margin-top: 4px;
+    padding: 0;
+    background: none;
+    border: none;
 }}
 .qa-row {{
-    min-height: 32px;
-    padding: 2px 0;
-}}
-.qa-sliders > .qa-row + .qa-row {{
-    border-top: 1px solid alpha({fg}, 0.10);
+    min-height: 44px;
+    padding: 0;
 }}
 .qa-row-glyph {{
     color: alpha({fg}, 0.80);
-    -gtk-icon-size: 18px;
+    -gtk-icon-size: 20px;
     min-width: 20px;
 }}
 .qa-readout {{
-    font-size: 11px;
+    font-size: 12px;
     font-feature-settings: "tnum";
     color: {preset.muted};
     min-width: 28px;
@@ -107,10 +104,10 @@ def theme_css(preset: ThemePreset) -> str:
     letter-spacing: 0.12em;
     min-height: 28px;
     padding: 0 10px;
-    border-radius: 8px;
+    border-radius: 3px;
     background: none;
     box-shadow: none;
-    border: 1px solid alpha({fg}, 0.10);
+    border: 1px solid alpha({fg}, 0.16);
     color: alpha({fg}, 0.80);
 }}
 .qa-row-btn:active {{
@@ -124,12 +121,13 @@ def theme_css(preset: ThemePreset) -> str:
 .shade-slider {{
     padding: 0;
     margin: 0;
-    min-height: 28px;
+    min-height: 44px;
 }}
 .shade-slider trough {{
-    background: alpha({fg}, 0.25);
+    background: alpha({fg}, 0.16);
     min-height: 2px;
     border-radius: 1px;
+    margin: 0 2px;
     outline: none;
 }}
 .shade-slider highlight {{
@@ -144,8 +142,8 @@ def theme_css(preset: ThemePreset) -> str:
     outline: none;
     border-radius: 2px;
     min-width: 4px;
-    min-height: 18px;
-    margin: -8px 0;
+    min-height: 20px;
+    margin: -9px -2px;
 }}
 .shade-slider:disabled highlight,
 .shade-slider:disabled slider {{
@@ -1448,7 +1446,7 @@ class QuickActionsPanel(Gtk.Box):
         self.refresh_states()
 
     def _build_sliders(self) -> None:
-        # One raised card: glyph, 2 px track with a 4x18 thumb, numeric
+        # Two flat rows: glyph, 2 px track with a 4x20 thumb, numeric
         # readout. The words stay as tooltips for the glyph-only rows.
         readouts = getattr(self, '_readouts', None)
         if readouts is None:
@@ -1458,7 +1456,7 @@ class QuickActionsPanel(Gtk.Box):
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             row.add_css_class('qa-row')
             icon = Gtk.Image.new_from_icon_name(f'xx-shade-{glyph}-symbolic')
-            icon.set_pixel_size(18)
+            icon.set_pixel_size(20)
             icon.add_css_class('qa-row-glyph')
             icon.set_tooltip_text(label_text)
             slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)

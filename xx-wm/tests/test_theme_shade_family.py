@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 
-from config import DANGER_RED, THEME_PRESETS
+from config import THEME_PRESETS
 
 from _theme_contract import assert_sheets_differ_by_preset, hardcoded_leftover
 
@@ -24,10 +24,9 @@ SHEETS = {
 # quick_actions tiles moved to the shared xx-tile builder (common/xx_ui),
 # so its sheet only owns the slider rows now.
 FIELDS_PER_MODULE = {
-    'notification_shade': (
-        'background', 'foreground', 'surface', 'surface_alt', 'muted',
-        'accent',
-    ),
+    # The shade is one flat sheet in the foreground ramp: no surface
+    # fills, and no danger hover since the power button left the header.
+    'notification_shade': ('background', 'foreground', 'muted', 'accent'),
     'quick_actions': ('foreground', 'surface_alt', 'muted'),
     'power_menu': (
         'background', 'foreground', 'surface', 'surface_alt', 'muted',
@@ -77,11 +76,6 @@ def test_hardcoded_leftover_catches_hardcoding():
     # Pins the scanner itself: a deliberately hardcoded legacy literal must
     # be reported, so the sweep cannot silently rot into a no-op.
     assert hardcoded_leftover('.x { color: #f4f4f4; }', THEME_PRESETS['paper']) == {'#f4f4f4'}
-
-
-def test_danger_red_in_shade_sheet():
-    for key in THEME_PRESETS:
-        assert DANGER_RED in _sheets()['notification_shade'](THEME_PRESETS[key]), key
 
 
 def test_theme_css_is_pure_and_total():

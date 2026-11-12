@@ -153,6 +153,18 @@ def play_button_label(status: str) -> str:
     return '\u275a\u275a' if status == _STATUS_PLAYING else '\u25b6'
 
 
+# Transport glyphs: one filled set drawn for the card (launcher/src/icons).
+PREV_ICON = 'xx-shade-prev-symbolic'
+NEXT_ICON = 'xx-shade-next-symbolic'
+PLAY_ICON = 'xx-shade-play-symbolic'
+PAUSE_ICON = 'xx-shade-pause-symbolic'
+
+
+def play_button_icon(status: str) -> str:
+    """Glyph for the play button: pause while Playing, play otherwise."""
+    return PAUSE_ICON if status == _STATUS_PLAYING else PLAY_ICON
+
+
 def progress_fraction(
     length_us: int | None, position_us: int | None,
 ) -> float | None:
@@ -170,15 +182,18 @@ def progress_fraction(
 
 
 def theme_css(preset: ThemePreset) -> str:
-    # Same brand ramp as the shade around it: 3.5% raised card, 10%
-    # hairlines, 25% track, foreground fill; the accent is the focus ring.
+    # The shade's outline language: an 8 px card with the 16% hairline the
+    # tiles wear, title and source on the left, the transport on the
+    # right (bare 44 px glyph keys, play/pause the one inverted key), a
+    # 2 px progress line under it all. The accent is the focus ring.
     fg = preset.foreground
+    bg = preset.background
     return f"""
 .media-card {{
-    background: alpha({fg}, 0.035);
-    border: 1px solid alpha({fg}, 0.10);
-    border-radius: 16px;
-    padding: 14px 16px;
+    background: none;
+    border: 1px solid alpha({fg}, 0.16);
+    border-radius: 8px;
+    padding: 14px 12px 14px 16px;
 }}
 .media-title {{
     font-size: 15px;
@@ -186,37 +201,42 @@ def theme_css(preset: ThemePreset) -> str:
     color: alpha({fg}, 0.90);
 }}
 .media-sub {{
-    font-size: 11px;
+    font-size: 12px;
     letter-spacing: 0.02em;
     color: {preset.muted};
 }}
-.media-btn {{
-    font-size: 13px;
-    color: alpha({fg}, 0.80);
+button.media-btn {{
+    color: alpha({fg}, 0.90);
     background: none;
     box-shadow: none;
-    border: 1px solid alpha({fg}, 0.10);
-    border-radius: 12px;
-    /* Fixed-width keys (no theme padding) so the card fits a 320 px
-       shade; 44 px tall for the thumb. */
+    border: none;
+    border-radius: 8px;
     padding: 0;
-    min-width: 64px;
+    min-width: 44px;
     min-height: 44px;
+    -gtk-icon-size: 20px;
 }}
-.media-btn:hover {{
-    background: {preset.surface};
+button.media-btn:active {{
+    background: alpha({fg}, 0.10);
 }}
-.media-btn:active {{
-    background: {preset.surface_alt};
+button.media-btn.media-play {{
+    background: {fg};
+    color: {bg};
 }}
-.media-btn:focus-visible {{
+button.media-btn.media-play:active {{
+    background: alpha({fg}, 0.80);
+}}
+button.media-btn:focus-visible {{
     outline-color: {preset.accent};
 }}
-.media-btn:disabled {{
-    color: {preset.muted};
+button.media-btn:disabled {{
+    opacity: 0.35;
+}}
+.media-progress {{
+    margin-top: 14px;
 }}
 .media-progress trough {{
-    background: alpha({fg}, 0.25);
+    background: alpha({fg}, 0.16);
     min-height: 2px;
     border-radius: 1px;
 }}
@@ -625,14 +645,31 @@ class MprisWatcher:
         self._emit()
 
 
+def _ensure_icons() -> None:
+    """Put the shell glyph directory on the icon search path (once), so
+    the transport glyphs resolve on the lock screen too."""
+    try:
+        from pathlib import Path
+
+        display = Gdk.Display.get_default()
+        if display is None:
+            return
+        icon_theme = Gtk.IconTheme.get_for_display(display)
+        path = str(Path(__file__).with_name('icons'))
+        if path not in list(icon_theme.get_search_path() or []):
+            icon_theme.add_search_path(path)
+    except Exception:
+        pass
+
+
 if _HAS_GTK:
 
     class MediaCard(Gtk.Box):
         """Text-first now-playing card, theme-colored like every surface.
 
-        Title (ellipsized, tap to raise the player app), artist/player
-        subtitle, ‹‹ ▶/❚❚ ›› text buttons gated by the player's own
-        capabilities, and a thin progress line while Length + Position are
+        Title (ellipsized, tap to raise the player app) over the
+        artist/player line, previous / play-pause / next glyph keys on
+        the right gated by the player's own capabilities, and a thin progress line while Length + Position are
         known. Hidden entirely when no player exists. Position is polled
         once a second only while the card is visible and the track is
         Playing; the timer never runs otherwise.
@@ -645,8 +682,9 @@ if _HAS_GTK:
             config: object | None = None,
             locked: bool = False,
         ) -> None:
-            super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
             self.add_css_class('media-card')
+            _ensure_icons()
             self._watcher: MprisWatcher | None = None
             self._on_raise = on_raise
             self._config = config
@@ -686,10 +724,12 @@ if _HAS_GTK:
             self._subtitle.set_ellipsize(Pango.EllipsizeMode.END)
 
             controls = Gtk.Box(
-                orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            self._prev_btn = self._make_button('\u2039\u2039')
-            self._play_btn = self._make_button('\u25b6')
-            self._next_btn = self._make_button('\u203a\u203a')
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+            controls.set_valign(Gtk.Align.CENTER)
+            self._prev_btn = self._make_button(PREV_ICON, 'Previous')
+            self._play_btn = self._make_button(PLAY_ICON, 'Play')
+            self._play_btn.add_css_class('media-play')
+            self._next_btn = self._make_button(NEXT_ICON, 'Next')
             self._prev_btn.connect(
                 'clicked', lambda _b: self._control(ACTION_PREVIOUS))
             self._play_btn.connect(
@@ -705,9 +745,15 @@ if _HAS_GTK:
             self._progress.set_show_text(False)
             self._progress.set_visible(False)
 
-            self.append(self._title)
-            self.append(self._subtitle)
-            self.append(controls)
+            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            text.set_hexpand(True)
+            text.set_valign(Gtk.Align.CENTER)
+            text.append(self._title)
+            text.append(self._subtitle)
+            top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            top.append(text)
+            top.append(controls)
+            self.append(top)
             self.append(self._progress)
 
             self.connect('map', lambda _w: self._update_polling())
@@ -716,8 +762,10 @@ if _HAS_GTK:
             if watcher is not None:
                 self.set_watcher(watcher)
 
-        def _make_button(self, text: str) -> Gtk.Button:
-            button = Gtk.Button(label=text)
+        def _make_button(self, icon: str, tooltip: str) -> Gtk.Button:
+            button = Gtk.Button()
+            button.set_icon_name(icon)
+            button.set_tooltip_text(tooltip)
             button.add_css_class('flat')
             button.add_css_class('media-btn')
             return button
@@ -772,7 +820,8 @@ if _HAS_GTK:
             self._subtitle.set_text(
                 format_media_subtitle(snapshot.artist, snapshot.identity))
             playing = snapshot.status == _STATUS_PLAYING
-            self._play_btn.set_label(play_button_label(snapshot.status))
+            self._play_btn.set_icon_name(play_button_icon(snapshot.status))
+            self._play_btn.set_tooltip_text('Pause' if playing else 'Play')
             self._prev_btn.set_sensitive(snapshot.can_go_previous)
             self._next_btn.set_sensitive(snapshot.can_go_next)
             self._play_btn.set_sensitive(

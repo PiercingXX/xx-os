@@ -765,16 +765,19 @@ class TestShadeSurface:
         buttons = {btn.label for btn in _walk(root, _FakeButton)}
         tips = {btn.tooltip for btn in _walk(root, _FakeButton)}
         icons = {btn.icon_name for btn in _walk(root, _FakeButton)}
-        assert 'QUICK SETTINGS' in labels
+        # No caption over the tiles: a centered chevron expands them.
+        assert 'QUICK SETTINGS' not in labels
         assert 'NOTIFICATIONS' in labels
-        assert 'Quick settings' not in labels
         assert 'Notifications' not in labels
-        # Settings and Power are glyph buttons (named by tooltip); Clear
-        # all stays caps text.
-        assert 'CLEAR ALL' in buttons
-        assert {'Settings', 'Power', 'Clear all'} <= tips
-        assert {'xx-shade-settings-symbolic', 'xx-shade-power-symbolic',
-                'xx-shade-expand-symbolic'} <= icons
+        # Settings is a caps text action (text-first, never a glyph that
+        # reads as brightness); Power lives on the hardware key, so the
+        # shade has no power button. Clear all stays caps text.
+        assert {'SETTINGS', 'CLEAR ALL'} <= buttons
+        assert {'Settings', 'Clear all'} <= tips
+        assert 'Power' not in tips
+        assert 'xx-shade-expand-symbolic' in icons
+        assert 'xx-shade-power-symbolic' not in icons
+        assert 'xx-shade-settings-symbolic' not in icons
         # One dismiss set only (scrim tap, swipe, Escape): no Close button.
         assert '▲ Close' not in buttons
 
@@ -782,7 +785,7 @@ class TestShadeSurface:
         _shade, root, _outer = self._built(monkeypatch)
         headers = [lbl for lbl in _walk(root, _FakeLabel)
                    if lbl.label_text in ('QUICK SETTINGS', 'NOTIFICATIONS')]
-        assert len(headers) == 2
+        assert len(headers) == 1
         for header in headers:
             assert 'xx-section-label' in header.classes
             assert 'xx-caption' in header.classes
@@ -803,7 +806,9 @@ class TestShadeSurface:
         assert 'window.xx-wm-shade' in css
         assert 'background: transparent' in css
         assert '.shade-scrim' in css
-        assert 'alpha(#101010, 0.85)' in css
+        # One full-height sheet: the area below the content is the same
+        # opaque page color, not a dim over the app.
+        assert '.shade-scrim {\n    background: #101010;' in css
 
     def test_no_close_button_anywhere(self, monkeypatch):
         # The merge-leftover Close button is gone: the shade dismisses via

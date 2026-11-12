@@ -125,6 +125,12 @@ class _FakeWidget:
     def set_hexpand(self, value):
         self._hexpand = bool(value)
 
+    def set_valign(self, value):
+        self._valign = value
+
+    def set_tooltip_text(self, text):
+        self._tooltip = text
+
 
 class _FakeBox(_FakeWidget):
     def __init__(self, orientation=None, spacing=0, **kwargs):
@@ -160,6 +166,12 @@ class _FakeButton(_FakeWidget):
 
     def get_label(self):
         return self._label
+
+    def set_icon_name(self, name):
+        self._icon = name
+
+    def get_icon_name(self):
+        return getattr(self, '_icon', None)
 
     def set_sensitive(self, value):
         self._sensitive = bool(value)
@@ -721,7 +733,8 @@ class TestMediaCard:
         assert card.card.get_visible() is True
         assert card.card._title.get_text() == 'Song'
         assert card.card._subtitle.get_text() == 'A, B \u00b7 VLC media player'
-        assert card.card._play_btn.get_label() == '\u275a\u275a'
+        assert card.card._play_btn.get_icon_name() == \
+            media_controls.PAUSE_ICON
         assert card.card._prev_btn.is_sensitive() is True
         assert card.card._next_btn.is_sensitive() is True
         assert card.card._play_btn.is_sensitive() is True
@@ -732,7 +745,8 @@ class TestMediaCard:
         hw = card.hw
         _adopt(hw, VLC, ROOT_VLC,
                _player_props(status='Paused', nxt=False, play=False))
-        assert card.card._play_btn.get_label() == '\u25b6'
+        assert card.card._play_btn.get_icon_name() == \
+            media_controls.PLAY_ICON
         assert card.card._play_btn.is_sensitive() is False
         assert card.card._next_btn.is_sensitive() is False
         assert card.card._prev_btn.is_sensitive() is True
@@ -1003,9 +1017,10 @@ class TestMediaKeyRouting:
 
 
 class TestMediaTheme:
-    # The card sits on the shade's background and draws with the brand
-    # ramp of the foreground, so background itself never appears.
-    FIELDS = ('foreground', 'surface', 'surface_alt', 'muted', 'accent')
+    # The card is an outline on the shade's background, drawn with the
+    # brand ramp of the foreground; play/pause inverts (background glyph
+    # on a foreground key).
+    FIELDS = ('foreground', 'background', 'muted', 'accent')
 
     def test_every_preset_interpolates_all_fields(self):
         for key, preset in THEME_PRESETS.items():
@@ -1049,7 +1064,7 @@ class TestShellWiring:
         assert 'MediaCard(' in text
         header = text.index('root.append(top_header)')
         card = text.index('root.append(media_card)')
-        quick = text.index('root.append(qa_header)')
+        quick = text.index('root.append(self.quick_actions)')
         assert header < card < quick
 
     def test_shade_forwards_theme_to_card(self):

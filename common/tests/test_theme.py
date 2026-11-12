@@ -367,8 +367,10 @@ def test_glyph_tile_rules_use_the_foreground_ramp():
         muted='#AAAAAA', accent='#00FF00', font_family='Sans',
         scale=1.0, dark=True))
     base = re.search(r'button\.xx-gtile\.toggle:checked\s*\{([^}]*)\}', out)
-    assert base and 'alpha(#FAFAFA, 0.035)' in base.group(1)
-    assert 'alpha(#FAFAFA, 0.10)' in base.group(1)
+    # Off is an outline chip: no fill, a 16% foreground hairline.
+    assert base and 'background-color: transparent' in base.group(1)
+    assert 'alpha(#FAFAFA, 0.16)' in base.group(1)
+    assert 'border-radius: 8px' in base.group(1)
     assert 'dashed alpha(#FAFAFA, 0.40)' in out
     assert '.xx-gtile.attention .xx-gtile-dot' in out
     assert '#00FF00' not in out.split('.xx-gtile')[1]

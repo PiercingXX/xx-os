@@ -78,11 +78,11 @@ rejected (`error`); spin buttons at the title size; outgoing inverted
 bubbles, incoming plain text, 10 px muted timestamps, caption day
 separators between hairlines.
 
-`GlyphTile` (quick settings, 4-up at 360 px, 80 px tall, radius 14): a
-20 px symbolic glyph over a caps label and a state line. An 8-char
-label tracks tighter; one too wide for its tile (320 px, large text)
-scales down to fit, never cut. Off is the foreground ramp (3.5% fill,
-10% hairline); on inverts; `working` dashes the border at 40% while a
+`GlyphTile` (quick settings, 4-up at 360 px, 80 px tall, radius 8): a
+square-ish outline chip, a 20 px symbolic glyph over a caps label and a
+state line. An 8-char label tracks tighter; one too wide for its tile
+(320 px, large text) scales down to fit, never cut. Off is an outline
+(no fill, 16% foreground hairline); on inverts; `working` dashes the border at 40% while a
 toggle runs off-thread; `attention` adds a 6 px foreground dot and lifts
 the state line to text weight.
 `.xx-display-face` sets the brand display face (Space Mono) on clocks

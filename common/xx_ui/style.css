@@ -690,9 +690,9 @@ button.xx-tile.toggle.active:checked:dir(rtl) {
   opacity: 0.75;
 }
 
-/* ---- Glyph tiles (quick settings): the brand opacity ramp of the
-   theme's foreground over its background. Off: ink-raised (3.5%) fill,
-   10% hairline. On: inverted foreground block. Working: dashed 40%
+/* ---- Glyph tiles (quick settings): square-ish outline chips in the
+   brand opacity ramp of the theme's foreground. Off: no fill, 16%
+   hairline. On: inverted foreground block. Working: dashed 40%
    border. Attention: a foreground dot, state at text weight. ---- */
 
 button.xx-gtile,
@@ -702,10 +702,10 @@ button.xx-gtile.toggle:checked {
   min-height: 57px;
   min-width: 0;
   padding: 11px 8px 10px 10px;
-  background-color: alpha(${foreground}, 0.035);
+  background-color: transparent;
   background-image: none;
-  border: 1px solid alpha(${foreground}, 0.10);
-  border-radius: 14px;
+  border: 1px solid alpha(${foreground}, 0.16);
+  border-radius: 8px;
   box-shadow: none;
   color: alpha(${foreground}, 0.90);
   transition: none;
@@ -714,7 +714,7 @@ button.xx-gtile.toggle:checked {
 
 button.xx-gtile:hover,
 button.xx-gtile.toggle:hover {
-  background-color: alpha(${foreground}, 0.06);
+  background-color: alpha(${foreground}, 0.05);
 }
 
 button.xx-gtile:active,

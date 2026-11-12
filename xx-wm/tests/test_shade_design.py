@@ -165,7 +165,7 @@ def test_sheet_carries_the_design_ramp():
         surface_alt='#181818', border='#2f2f2f', foreground='#f4f4f4',
         muted='#9a9a9a', accent='#d8d8d8')
     css = notification_shade.theme_css(preset)
-    for stop in ('0.035', '0.10', '0.25', '0.40', '0.80', '0.90'):
+    for stop in ('0.10', '0.16', '0.25', '0.40', '0.80', '0.90'):
         assert f'alpha(#f4f4f4, {stop})' in css, stop
     assert '.shade-handle' in css
     assert 'scrolledwindow.shade-notif-card' in css
