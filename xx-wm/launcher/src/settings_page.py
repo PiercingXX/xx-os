@@ -2383,7 +2383,8 @@ class SettingsPage:
             'Updating system… (%s)' % detail)
         update_checker.run_owner_headless(
             script, self._on_owner_line,
-            lambda rc: self._on_owner_done(rc, log_path))
+            lambda rc: self._on_owner_done(rc, log_path),
+            log_path=log_path)
 
     def _execute_xx_update_alone(self) -> None:
         """No owner script: the XX-app update runs alone, in a terminal
@@ -2446,10 +2447,8 @@ class SettingsPage:
         self._refresh_updates_section()
 
     def _on_owner_line(self, line: str) -> None:
-        import settings_updates
-
-        settings_updates.append_log(
-            getattr(self, '_owner_log_path', ''), line)
+        # The worker already wrote the line to the log; this only shows
+        # the latest one, at most once a second.
         if line.strip():
             self._update_status_text(line.strip()[-120:])
 

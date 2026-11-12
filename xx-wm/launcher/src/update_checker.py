@@ -117,12 +117,18 @@ def plan_update(script_path: str, which=None) -> tuple[str, str, list[str] | Non
             'No terminal emulator found — running without prompts.', [str(path)])
 
 
-def run_owner_headless(script_path: str, on_line, on_done):
+def run_owner_headless(script_path: str, on_line, on_done,
+                       log_path: str | None = None,
+                       interval: float = 1.0, clock=time.monotonic):
     """Run the owner script with stdin detached on a worker thread.
 
-    Each stdout line streams back through on_line(line) on the main
-    loop; on_done(returncode) closes the run (-1 when the script could
-    not even start). Returns the worker thread so tests can join it."""
+    Every stdout line goes to ``log_path`` from the worker. The main
+    loop hears at most one non-blank line per ``interval`` seconds through
+    on_line(line), plus the last line before the end, so a chatty package
+    manager queues neither a status update nor a file write per line.
+    on_done(returncode) closes the run (-1 when the script could not even
+    start) after the log is closed. Returns the worker thread so tests
+    can join it."""
     def _headless_worker() -> None:
         try:
             proc = subprocess.Popen(
@@ -133,10 +139,39 @@ def run_owner_headless(script_path: str, on_line, on_done):
             _log.warning('headless update failed to start: %s', error)
             GLib.idle_add(on_done, -1)
             return
+        log = None
+        if log_path:
+            try:
+                log = open(log_path, 'a', encoding='utf-8')
+            except OSError as error:
+                _log.warning('update log unavailable: %s', error)
         assert proc.stdout is not None
-        for line in proc.stdout:
-            GLib.idle_add(on_line, line.rstrip('\n'))
-        GLib.idle_add(on_done, proc.wait())
+        last_post = None
+        held = None
+        for raw in proc.stdout:
+            line = raw.rstrip('\n')
+            if log is not None:
+                try:
+                    log.write(line + '\n')
+                except OSError:
+                    pass
+            if not line.strip():
+                continue
+            now = clock()
+            if last_post is None or now - last_post >= interval:
+                GLib.idle_add(on_line, line)
+                last_post, held = now, None
+            else:
+                held = line
+        returncode = proc.wait()
+        if held is not None:
+            GLib.idle_add(on_line, held)
+        if log is not None:
+            try:
+                log.close()
+            except OSError:
+                pass
+        GLib.idle_add(on_done, returncode)
 
     thread = threading.Thread(target=_headless_worker, daemon=True)
     thread.start()

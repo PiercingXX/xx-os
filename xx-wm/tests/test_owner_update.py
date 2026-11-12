@@ -156,6 +156,40 @@ class TestHeadlessRun:
         assert seen == ['first', 'second']
         assert done == [3]
 
+    def test_chatty_output_is_throttled_and_logged_off_thread(
+            self, tmp_path, monkeypatch):
+        import threading
+        import update_checker
+
+        main = threading.get_ident()
+        posts: list = []
+
+        class _Recording:
+            @staticmethod
+            def idle_add(func, *args):
+                posts.append(threading.get_ident())
+                func(*args)
+                return 0
+
+        monkeypatch.setattr(update_checker, 'GLib', _Recording)
+        script = tmp_path / 'update-system.sh'
+        script.write_text('#!/bin/sh\n'
+                          'i=0; while [ $i -lt 500 ]; do '
+                          'echo "line $i"; i=$((i+1)); done\n')
+        script.chmod(0o755)
+        log_path = tmp_path / 'update.log'
+        seen: list = []
+        done: list = []
+        thread = update_checker.run_owner_headless(
+            str(script), seen.append, done.append, log_path=str(log_path),
+            clock=lambda: 0.0)
+        thread.join(timeout=30)
+        assert done == [0]
+        assert seen == ['line 0', 'line 499']
+        assert len(posts) == 3 and main not in posts
+        lines = log_path.read_text(encoding='utf-8').splitlines()
+        assert len(lines) == 500 and lines[-1] == 'line 499'
+
     def test_unstartable_script_reports_minus_one(self, tmp_path,
                                                   monkeypatch):
         import update_checker
@@ -316,8 +350,9 @@ class TestExecuteOwnerUpdate:
                             lambda home=None: log_path)
         seen: dict = {}
 
-        def fake_headless(script, on_line, on_done):
+        def fake_headless(script, on_line, on_done, log_path=None):
             seen['script'] = script
+            seen['log'] = log_path
             on_line('Starting system update (alpine)...')
             on_line('  Flatpak                     ok')
             on_line('System update finished.')
@@ -327,18 +362,20 @@ class TestExecuteOwnerUpdate:
                             fake_headless)
         settings_page.SettingsPage._execute_owner_update(self, '/u.sh')
         assert seen['script'] == '/u.sh'
+        assert seen['log'] == log_path
         assert self._owner_log_path == log_path
         assert statuses[0].startswith('Updating system…')
         assert statuses[-1] == 'done'
 
-    def test_owner_line_appends_to_log(self, tmp_path):
+    def test_owner_line_only_shows_status(self, tmp_path):
         import settings_page
-        self, _statuses = self._self(tmp_path)
-        log_path = str(tmp_path / 'update-x.log')
-        self._owner_log_path = log_path
+        self, statuses = self._self(tmp_path)
+        log_path = tmp_path / 'update-x.log'
+        self._owner_log_path = str(log_path)
         settings_page.SettingsPage._on_owner_line(self, '  Flatpak   ok')
-        with open(log_path, encoding='utf-8') as handle:
-            assert 'Flatpak' in handle.read()
+        settings_page.SettingsPage._on_owner_line(self, '   ')
+        assert statuses == ['Flatpak   ok']
+        assert not log_path.exists()
 
     def _done_self(self):
         statuses: list = []
