@@ -1,0 +1,75 @@
+#!/bin/sh
+# Session launcher for XX-WM on river: the same session environment as
+# xx-wm-session (phoc), then river with xx-wm-river-init as its init.
+# river's own log goes to ~/.local/share/xx-wm/river.log.
+
+_cfg="$HOME/.config/xx-wm/config.json"
+
+_prefer_dark=$(python3 -c "
+import json, sys
+try:
+    cfg = json.load(open(sys.argv[1]))
+    print('1' if cfg.get('prefer_dark', True) else '0')
+except Exception:
+    print('1')
+" "$_cfg" 2>/dev/null || echo '1')
+if [ "$_prefer_dark" = "1" ]; then
+    export ADWAITA_COLOR_SCHEME=prefer-dark
+    export GTK_THEME=Adwaita:dark
+else
+    export ADWAITA_COLOR_SCHEME=prefer-light
+    export GTK_THEME=Adwaita
+fi
+
+for _qt_plugin in \
+    /usr/lib/qt/plugins/platformthemes/libqgtk3.so \
+    /usr/lib/*/qt5/plugins/platformthemes/libqgtk3.so \
+    /usr/lib/qt6/plugins/platformthemes/libqgtk3.so \
+    /usr/lib/*/qt6/plugins/platformthemes/libqgtk3.so; do
+    if [ -e "$_qt_plugin" ]; then
+        QT_QPA_PLATFORMTHEME=gtk3
+        export QT_QPA_PLATFORMTHEME
+        break
+    fi
+done
+unset _qt_plugin
+
+export XX_WM_SESSION=1
+: "${XDG_CURRENT_DESKTOP:=XX-WM}"
+: "${XDG_SESSION_TYPE:=wayland}"
+export XDG_CURRENT_DESKTOP XDG_SESSION_TYPE
+
+# Keyboard layout from the `keyboard_layout` config key, as in
+# xx-wm-session: river takes the hardware keymap from XKB_DEFAULT_LAYOUT,
+# xx-keyboard from the GNOME input sources.
+_keyboard_layout=$(python3 -c "
+import json, re, sys
+try:
+    layout = str(json.load(open(sys.argv[1])).get('keyboard_layout', 'us'))
+except Exception:
+    layout = 'us'
+layout = layout.strip().lower()
+if not re.match(r'^[a-z][a-z0-9-]{1,23}(\+[a-z0-9_-]{1,32})?$', layout):
+    layout = 'us'
+if layout == 'piercing-num':
+    layout = 'us'
+print(layout)
+" "$_cfg" 2>/dev/null || echo 'us')
+XKB_DEFAULT_LAYOUT=${_keyboard_layout%%+*}
+case $_keyboard_layout in
+    *+*) XKB_DEFAULT_VARIANT=${_keyboard_layout#*+}; export XKB_DEFAULT_VARIANT ;;
+esac
+export XKB_DEFAULT_LAYOUT
+if command -v gsettings >/dev/null 2>&1 && \
+   gsettings list-schemas 2>/dev/null | grep -q '^org\.gnome\.desktop\.input-sources$'; then
+    gsettings set org.gnome.desktop.input-sources sources "[('xkb', '$_keyboard_layout')]" 2>/dev/null || true
+    gsettings set org.gnome.desktop.input-sources mru-sources "[('xkb', '$_keyboard_layout')]" 2>/dev/null || true
+fi
+
+_log_dir="$HOME/.local/share/xx-wm"
+mkdir -p "$_log_dir" && chmod 700 "$_log_dir"
+_river_log="$_log_dir/river.log"
+[ -f "$_river_log" ] && mv -f "$_river_log" "$_river_log.1"
+
+_libexec=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+exec river -c "exec '$_libexec/xx-wm-river-init'" >"$_river_log" 2>&1

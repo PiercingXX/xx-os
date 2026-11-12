@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=XX-WM (river)
+Comment=XX-WM on the river compositor with the xxwm window manager
+Exec=/usr/local/libexec/xx-wm-river-session
+Type=Application
+DesktopNames=XX-WM

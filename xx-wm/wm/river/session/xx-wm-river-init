@@ -1,0 +1,50 @@
+#!/bin/sh
+# river's init for the XX-WM river session. Sets each output's scale from
+# the device's phoc.ini (the installer picked it per device), keeps xxwm
+# running as the window manager, and runs the XX-WM shell wrapper. When
+# the shell ends the session (power menu, or it keeps crashing) river is
+# stopped too, which hands the seat back to the greeter.
+_log_dir="$HOME/.local/share/xx-wm"
+_phoc_ini=${XX_WM_PHOC_INI:-/usr/share/xx-wm/phoc.ini}
+_river=$PPID
+
+# [output:NAME] sections with scale = N.
+if command -v wlr-randr >/dev/null 2>&1 && [ -r "$_phoc_ini" ]; then
+    awk -F'=' '
+        /^\[output:/ { name = $0; sub(/^\[output:/, "", name); sub(/\].*$/, "", name); next }
+        /^\[/ { name = ""; next }
+        name != "" && $1 ~ /^[ \t]*scale[ \t]*$/ {
+            v = $2; gsub(/[ \t]/, "", v); print name, v
+        }' "$_phoc_ini" |
+    while read -r _out _scale; do
+        wlr-randr --output "$_out" --scale "$_scale" 2>/dev/null || true
+    done
+fi
+
+# The window manager: restarted if it dies (river keeps every window and
+# the session lock meanwhile), given up after five quick failures.
+(
+    _fails=0
+    while kill -0 "$_river" 2>/dev/null; do
+        _start=$(date +%s)
+        xxwm >>"$_log_dir/xxwm.log" 2>&1
+        if [ $(( $(date +%s) - _start )) -lt 10 ]; then
+            _fails=$(( _fails + 1 ))
+            [ "$_fails" -ge 5 ] && break
+        else
+            _fails=0
+        fi
+        sleep 1
+    done
+) &
+
+# The shell finds xxwm by its control socket.
+_sock="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/xxwm-${WAYLAND_DISPLAY:-wayland-0}.sock"
+_i=0
+while [ ! -S "$_sock" ] && [ "$_i" -lt 50 ]; do
+    sleep 0.1
+    _i=$(( _i + 1 ))
+done
+
+xx-wm
+kill "$_river" 2>/dev/null

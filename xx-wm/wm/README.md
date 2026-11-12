@@ -112,7 +112,10 @@ own patches in `river/`:
   scale from the device's `phoc.ini` (with `wlr-randr`), keeps xxwm
   running and runs the `xx-wm` shell wrapper; when the shell ends the
   session, river stops. Logs: `~/.local/share/xx-wm/river.log` and
-  `xxwm.log`. The phoc session and Phosh are left as they are.
+  `xxwm.log`. The phoc session and Phosh are left as they are. The lock
+  on river needs the Gtk4SessionLock typelib (Debian:
+  `gir1.2-gtk4sessionlock-1.0`, which `install.sh` installs); without it
+  the shell falls back to a layer-shell lock that a shell crash drops.
 
 Patches:
 
