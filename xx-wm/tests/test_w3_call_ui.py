@@ -1327,6 +1327,18 @@ class TestPowerPressHook:
         mgr._on_event(*self._power(0))
         assert blanks == [True]
 
+    def test_press_that_silenced_a_lit_ringer_keeps_screen_on(
+            self, monkeypatch):
+        mgr, blanks, wakes = self._manager(
+            monkeypatch, on_power_press=lambda: True)
+        mgr._on_event(*self._power(1))
+        mgr._on_event(*self._power(0))
+        assert blanks == [] and wakes == []
+        mgr._on_power_press = lambda: False  # next press: ringer is quiet
+        mgr._on_event(*self._power(1))
+        mgr._on_event(*self._power(0))
+        assert blanks == [True]
+
     def test_no_hook_keeps_legacy_behavior(self, monkeypatch):
         mgr, blanks, _wakes = self._manager(monkeypatch)
         mgr._on_event(*self._power(1))

@@ -366,8 +366,10 @@ class TestIsLockedAndReassert:
         assert woken == [True]
         assert 'present' in shown
 
-    def test_incoming_call_while_unlocked_does_not_wake(
+    def test_incoming_call_while_unlocked_wakes_without_lock_present(
             self, monkeypatch):
+        # A blanked but unlocked phone must not ring dark: the display
+        # wakes either way; only the above-lock re-present is lock-only.
         monkeypatch.setitem(sys.modules, 'modem_monitor', modem_monitor)
         monkeypatch.setattr(modem_monitor, 'bus_name_has_owner',
                             lambda name: False)
@@ -386,7 +388,7 @@ class TestIsLockedAndReassert:
         shell._ensure_call_surfaces = lambda: (call_ui, None)
         window.ShellWindow._on_call_incoming(shell, 'Mom', '+15550001111')
         assert ('incoming', 'Mom', '+15550001111') in shown
-        assert woken == []
+        assert woken == [True]
         assert 'present' not in shown
 
 

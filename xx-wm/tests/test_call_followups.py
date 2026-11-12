@@ -272,3 +272,176 @@ def test_incoming_probe_resets_owner_flag(monkeypatch):
     monkeypatch.setattr(wiring, '_verdict_is_stale', lambda _n: False)
     wiring._on_call_incoming('Unknown', '+15550004444')
     assert win._calls_owner_warned is False
+
+
+# ------------------------------------- GNOME Calls owns: wake, cover the lock
+
+RINGING = modem_monitor._STATE_RINGING_IN
+
+
+def _owned_win(monkeypatch, locked, owned=True):
+    probes = []
+
+    def _probe(_name):
+        probes.append(_name)
+        return owned
+
+    monkeypatch.setattr(modem_monitor, 'bus_name_has_owner', _probe)
+    monkeypatch.setattr(modem_monitor, '_last_monitor', SimpleNamespace(
+        calls=lambda: [_call('/c/9', '+15550009999', RINGING)]))
+    import call_screen
+    consults = []
+    monkeypatch.setattr(call_screen, 'consult_check_number',
+                        lambda n, cb: consults.append(n))
+    seen = []
+    ui = SimpleNamespace(
+        show_incoming=lambda c, n, p=None: seen.append(('incoming', c, n, p)),
+        present=lambda: seen.append('present'),
+        render_snapshot=lambda calls, display_mgr=None: seen.append(
+            ('render', [c.path for c in calls])),
+        start_ringing=lambda tone='ringtone.ogg': seen.append('ring'),
+        stop_ringing=lambda: None, end_call=lambda: None,
+        _minimized=False, _surface_live=False)
+    woken = []
+    win = SimpleNamespace(
+        _calls_owner_warned=False, _call_ui=None, _call_bar=None,
+        dnd_state=SimpleNamespace(note_call=lambda n: seen.append('noted'),
+                                  is_active=lambda: False,
+                                  is_exception=lambda _n: False),
+        _ensure_call_surfaces=lambda: (ui, None),
+        is_locked=lambda: locked,
+        _display_mgr=SimpleNamespace(wake=lambda: woken.append(True),
+                                     blanked=False),
+        config=SimpleNamespace(sound_ringtone=True), _screen_pending=None,
+        _screen_tracked={}, _sync_call_inhibit=lambda _c: None)
+    return win, seen, woken, probes, consults
+
+
+def test_calls_owned_call_while_locked_wakes_and_covers_lock(monkeypatch):
+    win, seen, woken, _probes, consults = _owned_win(monkeypatch, locked=True)
+    CallWiring(win)._on_call_incoming('Unknown', '+15550009999')
+    assert woken == [True]
+    assert ('incoming', 'Unknown', '+15550009999', '/c/9') in seen
+    assert 'present' in seen
+    assert 'ring' not in seen and 'noted' not in seen  # Calls rings
+    assert consults == []
+
+
+def test_calls_owned_call_unlocked_still_wakes(monkeypatch):
+    win, seen, woken, _probes, _c = _owned_win(monkeypatch, locked=False)
+    CallWiring(win)._on_call_incoming('Unknown', '+15550009999')
+    assert woken == [True]
+    assert seen == []  # Calls' own window is reachable
+
+
+def test_calls_owned_snapshot_renders_only_while_locked(monkeypatch):
+    win, seen, _woken, _p, _c = _owned_win(monkeypatch, locked=False)
+    wiring = CallWiring(win)
+    call = _call('/c/9', '+15550009999', RINGING)
+    wiring._on_calls_changed([call])
+    assert seen == []
+    win.is_locked = lambda: True
+    wiring._on_calls_changed([call])
+    assert seen == [('render', ['/c/9'])]
+
+
+def test_ownership_decided_once_per_call(monkeypatch):
+    win, _seen, _w, probes, _c = _owned_win(monkeypatch, locked=True)
+    wiring = CallWiring(win)
+    call = _call('/c/9', '+15550009999', RINGING)
+    wiring._on_call_incoming('Unknown', '+15550009999')
+    wiring._on_calls_changed([call])
+    wiring._on_calls_changed([_call('/c/9', '+15550009999', ACTIVE)])
+    assert len(probes) == 1
+    wiring._on_calls_changed([])                       # call gone
+    wiring._on_calls_changed([_call('/c/10', '+1555', RINGING)])
+    assert len(probes) == 2                            # a new call decides anew
+
+
+def test_shell_owned_call_keeps_its_owner_when_calls_starts(monkeypatch):
+    win, seen, _w, _p, _c = _owned_win(monkeypatch, locked=False, owned=False)
+    wiring = CallWiring(win)
+    wiring._on_calls_changed([_call('/c/9', '+15550009999', RINGING)])
+    monkeypatch.setattr(modem_monitor, 'bus_name_has_owner', lambda _n: True)
+    wiring._on_calls_changed([_call('/c/9', '+15550009999', ACTIVE)])
+    assert [s for s in seen if s[0] == 'render'] == [
+        ('render', ['/c/9']), ('render', ['/c/9'])]
+
+
+def test_lock_shown_during_calls_owned_call_renders_surface(monkeypatch):
+    win, seen, _w, _p, _c = _owned_win(monkeypatch, locked=True)
+    presented = []
+    win._call_live = lambda: True
+    win._modem_monitor = SimpleNamespace(
+        calls=lambda: [_call('/c/9', '+15550009999', ACTIVE)])
+    ui = SimpleNamespace(_surface_live=False,
+                         present=lambda: presented.append(True))
+
+    def _ensure():
+        win._call_ui = ui
+        ui.render_snapshot = lambda calls, display_mgr=None: seen.append(
+            ('render', [c.path for c in calls]))
+        return ui, None
+
+    win._ensure_call_surfaces = _ensure
+    CallWiring(win)._reassert_call_ui_above_lock()
+    assert seen == [('render', ['/c/9'])]
+    assert presented == [True]
+
+
+# ------------------------------------------------ power key while ringing
+
+def _ringing_win(ringing=True, blanked=False):
+    stopped = []
+    ringer = SimpleNamespace(ringing=ringing,
+                             stop=lambda: stopped.append(True))
+    win = SimpleNamespace(
+        _call_ui=SimpleNamespace(_ringer=ringer),
+        _display_mgr=SimpleNamespace(blanked=blanked),
+        _screen_pending=None)
+    return win, stopped
+
+
+def test_power_press_while_ringing_lit_consumes(monkeypatch):
+    import sound
+    monkeypatch.setattr(sound, 'ringing', lambda: False, raising=False)
+    win, stopped = _ringing_win()
+    assert CallWiring(win).silence_ringer() is True
+    assert stopped == [True]
+
+
+def test_power_press_while_ringing_dark_wakes(monkeypatch):
+    import sound
+    monkeypatch.setattr(sound, 'ringing', lambda: False, raising=False)
+    win, stopped = _ringing_win(blanked=True)
+    assert CallWiring(win).silence_ringer() is False  # key-up wakes
+    assert stopped == [True]
+
+
+def test_power_press_without_ringing_toggles_as_usual(monkeypatch):
+    import sound
+    monkeypatch.setattr(sound, 'ringing', lambda: False, raising=False)
+    win, _stopped = _ringing_win(ringing=False)
+    assert CallWiring(win).silence_ringer() is False
+
+
+def test_late_verdict_after_power_press_does_not_ring(monkeypatch):
+    dnd = SimpleNamespace(note_call=lambda _n: None, is_active=lambda: False,
+                          is_exception=lambda _n: False)
+    win, events, verdicts = _incoming_win(monkeypatch, dnd)
+    wiring = CallWiring(win)
+    monkeypatch.setattr(wiring, '_verdict_is_stale', lambda _n: False)
+    wiring._on_call_incoming('Unknown', '+15550004444')
+    wiring.silence_ringer()
+    verdicts[-1]('ring', 'contact')
+    assert events == []
+
+
+def test_ringer_active_reads_surface_and_sound_loop(monkeypatch):
+    import sound
+    monkeypatch.setattr(sound, 'ringing', lambda: False, raising=False)
+    assert call_wiring.ringer_active(SimpleNamespace(_call_ui=None)) is False
+    win, _stopped = _ringing_win()
+    assert call_wiring.ringer_active(win) is True
+    monkeypatch.setattr(sound, 'ringing', lambda: True)
+    assert call_wiring.ringer_active(SimpleNamespace(_call_ui=None)) is True

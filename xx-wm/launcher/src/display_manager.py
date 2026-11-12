@@ -700,17 +700,19 @@ class DisplayManager:
         # --- Power button ---
         if ev_type == EV_KEY and code == KEY_POWER:
             if value == 1:  # key down
-                # A press while ringing only silences the ringer; the blank
-                # toggle still happens on key-up below. Never let the hook
-                # break power handling.
+                # A press while ringing only silences the ringer: a hook
+                # that returns True consumes the short press, so a lit
+                # ringing screen stays on. Never let the hook break power
+                # handling.
+                consumed = False
                 if self._on_power_press is not None:
                     try:
-                        self._on_power_press()
+                        consumed = self._on_power_press() is True
                     except Exception:
                         pass
                 self._power_held = True
                 self._power_long_fired = False
-                self._power_press_consumed = False
+                self._power_press_consumed = consumed
                 self._power_down_at = time.monotonic()
                 # Check Power+VolDown combo immediately
                 if self._voldown_held:

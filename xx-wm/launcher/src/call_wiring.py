@@ -107,6 +107,10 @@ class CallWiring:
             win._call_ui.set_application(win.get_application())
             # Same current-preset rule as _open_dialer.
             win._call_ui.apply_theme(resolve_theme(win.config))
+            try:
+                win._call_ui.set_lock_probe(win.is_locked)
+            except Exception:
+                pass
         if win._call_bar is None:
             win._call_bar = CallBar(on_expand=win._expand_call_ui,
                                     config=win.config)
@@ -118,28 +122,40 @@ class CallWiring:
             pass
         return win._call_ui, win._call_bar
 
-    def silence_ringer(self) -> None:
+    def silence_ringer(self) -> bool:
         """Power-key press while ringing only silences the ringer: the call
         stays live on the surface. Falls back to the sound loop when the
-        surface (or its ringer) is not up yet."""
+        surface (or its ringer) is not up yet. True when the press did
+        silence a ringing call on a lit screen: the display manager then
+        keeps the screen on instead of blanking the call away. A verdict
+        still in flight will not start the ringer afterwards."""
         win = self._win
+        was_ringing = ringer_active(win)
+        pending = getattr(win, '_screen_pending', None)
+        if isinstance(pending, dict):
+            pending['silenced'] = True
         ui = getattr(win, '_call_ui', None)
         stopper = getattr(getattr(ui, '_ringer', None), 'stop', None)
         if callable(stopper):
             stopper()
-            return
-        try:
-            import sound
-            sound.stop()
-        except Exception:
-            pass
+        else:
+            try:
+                import sound
+                sound.stop()
+            except Exception:
+                pass
+        if not was_ringing:
+            return False
+        display_mgr = getattr(win, '_display_mgr', None)
+        return not bool(getattr(display_mgr, 'blanked', False))
 
     def _calls_app_owns_calls(self) -> bool:
-        """Whether GNOME Calls owns its bus name now, probed on every call
-        event. ``_calls_owner_warned`` mirrors the last answer: set (and
-        logged once) while Calls owns the name, reset once it has left the
-        bus, so the shell's surfaces and call end notices come back for
-        the rest of the session instead of staying off for good."""
+        """Whether GNOME Calls owns its bus name now, probed once for each
+        new call (_app_owns_call). ``_calls_owner_warned`` mirrors the last
+        answer: set (and logged once) while Calls owns the name, reset once
+        it has left the bus, so the shell's surfaces and call end notices
+        come back for the rest of the session instead of staying off for
+        good."""
         from modem_monitor import CALLS_BUS_NAME, bus_name_has_owner
         from shell_log import get_logger
 
@@ -157,14 +173,93 @@ class CallWiring:
         win._calls_owner_warned = owned
         return owned
 
+    def _owners(self) -> dict:
+        win = self._win
+        owners = getattr(win, '_call_owners', None)
+        if not isinstance(owners, dict):
+            owners = {}
+            win._call_owners = owners
+        return owners
+
+    def _app_owns_call(self, path) -> bool:
+        """Whether GNOME Calls owns this call, decided once when the call
+        is first seen and kept for its lifetime (a path-less call is
+        probed each time)."""
+        if not path:
+            return self._calls_app_owns_calls()
+        owners = self._owners()
+        if path not in owners:
+            owners[path] = self._calls_app_owns_calls()
+        return bool(owners[path])
+
+    def _decide_owners(self, calls: list) -> bool:
+        """Settle ownership for every call in the snapshot (new paths
+        once, gone paths forgotten). True when every live call belongs
+        to GNOME Calls."""
+        try:
+            from modem_monitor import _STATE_TERMINATED
+        except Exception:
+            _STATE_TERMINATED = 7
+        owners = self._owners()
+        current = set()
+        app_only = None
+        for call in calls or []:
+            path = getattr(call, 'path', None)
+            if not path:
+                continue
+            current.add(path)
+            if getattr(call, 'state', None) == _STATE_TERMINATED:
+                continue
+            owned = self._app_owns_call(path)
+            app_only = owned if app_only is None else (app_only and owned)
+        for path in [p for p in owners if p not in current]:
+            del owners[path]
+        return bool(app_only)
+
+    def _incoming_call_path(self, number: str):
+        """The ringing call this announcement is about: the monitor's
+        RINGING_IN call with this number, else the active call path."""
+        try:
+            from modem_monitor import (
+                _DIR_INCOMING, _STATE_RINGING_IN, _last_monitor)
+            for call in (_last_monitor.calls() if _last_monitor else []):
+                if (call.direction == _DIR_INCOMING
+                        and call.state == _STATE_RINGING_IN
+                        and (call.number or '') == number):
+                    return call.path
+        except Exception:
+            pass
+        try:
+            from modem_monitor import active_call_path
+            return active_call_path()
+        except Exception:
+            return None
+
+    def _wake_for_call(self) -> None:
+        display_mgr = getattr(self._win, '_display_mgr', None)
+        if display_mgr is not None:
+            try:
+                display_mgr.wake()
+            except Exception:
+                pass
+
     def _on_call_incoming(self, caller: str, number: str) -> None:
         from shell_log import get_logger
 
         win = self._win
-        if self._calls_app_owns_calls():
+        raw = number if isinstance(number, str) else ''
+        path = self._incoming_call_path(raw)
+        if self._app_owns_call(path):
+            # GNOME Calls rings and screens its own calls, but its window
+            # sits under the lock: wake the screen, and while locked map
+            # the shell surface (no ringer) so the call can be answered.
+            self._wake_for_call()
+            if win.is_locked():
+                call_ui, _bar = win._ensure_call_surfaces()
+                call_ui.show_incoming(caller or 'Incoming call', raw, path)
+                call_ui.present()
             return
         call_ui, _bar = win._ensure_call_surfaces()
-        raw = number if isinstance(number, str) else ''
         # DnD exception check runs before this call is recorded so the
         # 15-minute repeat window looks at prior calls only (checked after
         # note_call, every call matched itself and rang through DnD); the
@@ -192,13 +287,10 @@ class CallWiring:
         # Caller is already the contact name when known (resolved by the
         # modem monitor); the literal fallback only shows for unknown numbers.
         call_ui.show_incoming(caller or 'Incoming call', raw)
+        # A ringing phone is never dark, locked or not; through the lock
+        # the call UI maps above it (both OVERLAY; the last mapped wins).
+        self._wake_for_call()
         if win.is_locked():
-            # An incoming call reaches the user through the lock: wake the
-            # display and map the call UI above the lock (both OVERLAY;
-            # the last mapped wins).
-            display_mgr = getattr(win, '_display_mgr', None)
-            if display_mgr is not None:
-                display_mgr.wake()
             call_ui.present()
         from call_screen import consult_check_number
 
@@ -249,6 +341,8 @@ class CallWiring:
                              or dnd_exception)
             except Exception:
                 rings_now = True
+            if pending.get('silenced'):
+                rings_now = False
             if rings_now and win.config.sound_ringtone:
                 # feedbackd first (system ringtone + silent profile),
                 # sound loop only when it is absent — owned by the
@@ -477,7 +571,7 @@ class CallWiring:
         # waiting, and the empty close. The legacy adapters stay as the
         # responsive path for their own transitions; render converges them.
         try:
-            if self._calls_app_owns_calls():
+            if self._decide_owners(calls) and not self._cover_lock():
                 return
             self._note_waiting_calls(calls)
             call_ui, _bar = win._ensure_call_surfaces()
@@ -508,6 +602,19 @@ class CallWiring:
             from shell_log import get_logger
             get_logger('window').warning(
                 'locked outgoing present failed: %s', err)
+
+    def _cover_lock(self) -> bool:
+        """For a call GNOME Calls owns, the shell surface only stands in
+        while locked (Calls' window is under the lock) and, once up,
+        stays until the call ends."""
+        win = self._win
+        try:
+            if win.is_locked():
+                return True
+        except Exception:
+            pass
+        ui = getattr(win, '_call_ui', None)
+        return bool(getattr(ui, '_surface_live', False))
 
     def _note_waiting_calls(self, calls: list) -> None:
         """Record call-waiting arrivals for the DnD repeat-caller rule.
@@ -693,5 +800,17 @@ class CallWiring:
         """A live call stays reachable: re-present the call UI above the
         lock (both are OVERLAY; the last mapped wins)."""
         win = self._win
-        if win._call_live() and win._call_ui is not None:
+        if not win._call_live():
+            return
+        try:
+            calls = win._modem_monitor.calls()
+            if (self._decide_owners(calls)
+                    and not getattr(win._call_ui, '_surface_live', False)):
+                # A GNOME Calls call the shell was not covering yet.
+                call_ui, _bar = win._ensure_call_surfaces()
+                call_ui.render_snapshot(
+                    calls, display_mgr=getattr(win, '_display_mgr', None))
+        except Exception:
+            pass
+        if win._call_ui is not None:
             win._call_ui.present()
