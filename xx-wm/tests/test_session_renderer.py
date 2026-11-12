@@ -35,7 +35,7 @@ def test_halium_phone_gets_gl(tmp_path, libdir):
     lib = tmp_path / libdir / 'libhybris-common.so.1'
     lib.parent.mkdir(parents=True)
     lib.write_bytes(b'')
-    assert _renderer(tmp_path) == 'ngl'
+    assert _renderer(tmp_path) == 'gl'
 
 
 def test_mainline_keeps_gtks_choice(tmp_path):
