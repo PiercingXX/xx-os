@@ -73,6 +73,10 @@ ALLOW = {
         'telephony worker threads (place-call / emergency paths).',
     ('dialer.py', 'get_modem_emergency_numbers'):
         'documented worker-only; lock-screen modem thread.',
+    ('dialer.py', 'ensure_radio_on'):
+        'place_emergency_call worker (lock-screen emg-call / dialer thread).',
+    ('dialer.py', 'modem_sim_missing'):
+        'place_emergency_call worker, after a failed emergency dial.',
     ('display_manager.py', '_detect_output'):
         'first-blank output probe; result cached for later wlopm calls.',
     ('display_manager.py', '_wlopm'):

@@ -159,7 +159,8 @@ from the lock screen), and Medical info. Emergency numbers are `112` and
 ModemManager exposes one; numbers such as `999`, `000` or `110` work through
 that list only, because elsewhere they are ordinary numbers. The list is
 read each time the surface opens and asked for again before a number is
-refused; anything else typed on that pad is refused. Emergency calling
+refused; anything else typed on that pad is refused. An emergency call
+switches mobile radio back on when airplane mode is set. Emergency calling
 itself cannot be disabled.
 
 | Key | Type | Default | Effect |

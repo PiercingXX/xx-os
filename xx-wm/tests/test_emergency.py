@@ -88,6 +88,16 @@ def _no_host_modem(monkeypatch):
         return real(bus, *args, **kwargs) if bus is not None else []
 
     monkeypatch.setattr(dialer, 'get_modem_emergency_numbers', _modem_numbers)
+    for name, default in (('ensure_radio_on', False),
+                          ('modem_sim_missing', False)):
+        real_fn = getattr(dialer, name, None)
+        if real_fn is None:
+            continue
+
+        def _probe(bus=None, *args, _real=real_fn, _default=default, **kwargs):
+            return _real(bus, *args, **kwargs) if bus is not None else _default
+
+        monkeypatch.setattr(dialer, name, _probe)
 
 
 class TestNormalize:
@@ -290,6 +300,118 @@ class TestPlaceEmergencyCall:
                             or (True, '/c/4'))
         assert dialer.place_emergency_call('999', extra=[]) == (True, '/c/4')
         assert calls == ['999']
+
+
+_NM = 'org.freedesktop.NetworkManager'
+_NM_PATH = '/org/freedesktop/NetworkManager'
+_MODEM = 'org.freedesktop.ModemManager1.Modem'
+
+
+class TestRadioForEmergency:
+    """Airplane mode never stops an emergency call: mobile radio comes
+    back on (NetworkManager WwanEnabled) and a modem ModemManager holds
+    disabled is enabled before the call is placed."""
+
+    def test_airplane_mode_turns_wwan_and_modem_back_on(self):
+        dialer = _dialer()
+        bus = _FakeBus([
+            _FakeReply((False,)),   # NM WwanEnabled
+            _FakeReply(()),         # NM Set WwanEnabled true
+            _FakeReply((3,)),       # Modem.State DISABLED
+            _FakeReply(()),         # Modem.Enable(true)
+        ])
+        assert dialer.ensure_radio_on(bus=bus, modem=MODEM) is True
+        get, set_, state, enable = bus.calls
+        assert get[:4] == (_NM, _NM_PATH, _PROPS, 'Get')
+        assert set_[:4] == (_NM, _NM_PATH, _PROPS, 'Set')
+        assert set_[4].unpack() == (_NM, 'WwanEnabled', True)
+        assert state[:4] == (_MM, MODEM, _PROPS, 'Get')
+        assert enable[:4] == (_MM, MODEM, _MODEM, 'Enable')
+        assert enable[4].unpack() == (True,)
+
+    def test_radio_already_on_changes_nothing(self):
+        dialer = _dialer()
+        bus = _FakeBus([_FakeReply((True,)), _FakeReply((8,))])
+        assert dialer.ensure_radio_on(bus=bus, modem=MODEM) is False
+        assert [c[3] for c in bus.calls] == ['Get', 'Get']
+
+    def test_without_networkmanager_the_modem_is_still_enabled(self):
+        dialer = _dialer()
+        bus = _FakeBus([Exception('ServiceUnknown'), _FakeReply((3,)),
+                        _FakeReply(())])
+        assert dialer.ensure_radio_on(bus=bus, modem=MODEM) is True
+        assert bus.calls[-1][3] == 'Enable'
+
+    def test_radio_comes_on_before_the_call(self, monkeypatch):
+        dialer = _dialer()
+        monitor = _modem_monitor()
+        order = []
+        monkeypatch.setattr(dialer, 'ensure_radio_on',
+                            lambda *a, **k: order.append('radio') or False)
+        monkeypatch.setattr(monitor, 'voice_create_and_start',
+                            lambda number, *a, **k: order.append(number)
+                            or (True, '/c/1'))
+        assert dialer.place_emergency_call('112') == (True, '/c/1')
+        assert order == ['radio', '112']
+
+    def test_call_retried_while_the_radio_comes_up(self, monkeypatch):
+        dialer = _dialer()
+        monitor = _modem_monitor()
+        answers = [(False, 'not registered'), (True, '/c/7')]
+        monkeypatch.setattr(dialer, 'ensure_radio_on', lambda *a, **k: True)
+        monkeypatch.setattr(dialer.time, 'sleep', lambda _s: None)
+        monkeypatch.setattr(monitor, 'voice_create_and_start',
+                            lambda number, *a, **k: answers.pop(0))
+        assert dialer.place_emergency_call('112') == (True, '/c/7')
+
+    def test_no_retry_when_the_radio_was_already_on(self, monkeypatch):
+        dialer = _dialer()
+        monitor = _modem_monitor()
+        attempts = []
+        monkeypatch.setattr(monitor, 'voice_create_and_start',
+                            lambda number, *a, **k: attempts.append(1)
+                            or (False, 'no service'))
+        assert dialer.place_emergency_call('112') == (False, 'no service')
+        assert attempts == [1]
+
+
+class TestNoSimMessage:
+    def test_missing_sim_detected(self):
+        dialer = _dialer()
+        bus = _FakeBus([_FakeReply({'Sim': '/', 'State': -1,
+                                    'StateFailedReason': 2})])
+        assert dialer.modem_sim_missing(bus=bus, modem=MODEM) is True
+        assert bus.calls[0][:4] == (_MM, MODEM, _PROPS, 'GetAll')
+
+    def test_present_sim_not_missing(self):
+        dialer = _dialer()
+        bus = _FakeBus([_FakeReply({'Sim': SIM, 'State': 8})])
+        assert dialer.modem_sim_missing(bus=bus, modem=MODEM) is False
+
+    def test_unreadable_modem_is_not_reported_as_no_sim(self):
+        dialer = _dialer()
+        bus = _FakeBus([Exception('modem gone')])
+        assert dialer.modem_sim_missing(bus=bus, modem=MODEM) is False
+
+    def test_failure_without_sim_reads_plainly(self, monkeypatch):
+        dialer = _dialer()
+        monitor = _modem_monitor()
+        monkeypatch.setattr(dialer, 'modem_sim_missing', lambda *a, **k: True)
+        monkeypatch.setattr(
+            monitor, 'voice_create_and_start', lambda number, *a, **k: (
+                False, 'GDBus.Error:org.freedesktop.ModemManager1.Error.'
+                       'Core.WrongState: modem not enabled'))
+        assert dialer.place_emergency_call('112') == (
+            False, dialer.EMERGENCY_NO_SIM)
+
+    def test_dbus_error_name_stripped(self, monkeypatch):
+        dialer = _dialer()
+        monitor = _modem_monitor()
+        monkeypatch.setattr(
+            monitor, 'voice_create_and_start', lambda number, *a, **k: (
+                False, 'GDBus.Error:org.freedesktop.ModemManager1.Error.'
+                       'Core.Unauthorized: not allowed'))
+        assert dialer.place_emergency_call('112') == (False, 'not allowed')
 
 
 class TestMedicalConfig:
@@ -851,6 +973,18 @@ class TestEmergencySurface:
         lock._emg_digits = '112'
         lock_screen.LockScreen._on_emg_call(lock, None)
         assert lock._emg_status.text == 'Call failed: no service'
+
+    def test_no_sim_failure_reads_plainly(self, emg_lock, monkeypatch):
+        monitor = _modem_monitor()
+        dialer = _dialer()
+        lock_screen = emg_lock.module
+        lock = emg_lock.lock
+        monkeypatch.setattr(dialer, 'modem_sim_missing', lambda *a, **k: True)
+        monkeypatch.setattr(monitor, 'voice_create_and_start',
+                            lambda number, *a, **k: (False, 'GDBus.Error:x.y: z'))
+        lock._emg_digits = '112'
+        lock_screen.LockScreen._on_emg_call(lock, None)
+        assert lock._emg_status.text == f'Call failed: {dialer.EMERGENCY_NO_SIM}'
 
     def test_contact_tap_calls_configured_number(self, emg_lock, monkeypatch):
         monitor = _modem_monitor()

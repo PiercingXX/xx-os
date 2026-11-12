@@ -4,6 +4,7 @@ import gi
 import re
 import subprocess
 import threading
+import time
 
 gi.require_version('Gtk', '4.0')
 
@@ -147,13 +148,27 @@ def _run_mmcli(args: list[str]) -> tuple[bool, str]:
 BUILTIN_EMERGENCY_NUMBERS = frozenset({'112', '911'})
 
 EMERGENCY_REFUSAL = 'Only emergency calls from the lock screen'
+EMERGENCY_NO_SIM = 'no SIM card'
 
 _MODEM3GPP_IFACE = 'org.freedesktop.ModemManager1.Modem.Modem3gpp'
 _MODEM_IFACE = 'org.freedesktop.ModemManager1.Modem'
 _SIM_IFACE = 'org.freedesktop.ModemManager1.Sim'
 _PROPS_IFACE = 'org.freedesktop.DBus.Properties'
 _MM_BUS = 'org.freedesktop.ModemManager1'
+_NM_BUS = 'org.freedesktop.NetworkManager'
+_NM_PATH = '/org/freedesktop/NetworkManager'
 _DBUS_TIMEOUT_MS = 5000
+_MODEM_ENABLE_TIMEOUT_MS = 30_000
+#: MMModemState DISABLED / DISABLING: airplane mode, or radio switched off.
+_MODEM_STATES_OFF = frozenset({3, 4})
+_MODEM_STATE_FAILED = -1
+#: MMModemStateFailedReason SIM_MISSING / SIM_ERROR.
+_FAILED_REASONS_NO_SIM = frozenset({2, 3})
+#: After switching the radio back on, the modem needs a few seconds for
+#: limited service; the call is retried this many times, this far apart.
+_RADIO_RETRIES = 3
+_RADIO_RETRY_S = 3.0
+_DBUS_ERROR_PREFIX = re.compile(r'^GDBus\.Error:[\w.\-]+:\s*')
 
 
 def normalize_emergency_number(raw: str) -> str:
@@ -245,21 +260,138 @@ def get_modem_emergency_numbers(bus=None, modem: str | None = None,
         return []
 
 
+def _system_bus(bus=None):
+    if bus is not None:
+        return bus
+    try:
+        return Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+    except Exception:
+        return None
+
+
+def _voice_modem(modem: str | None) -> str | None:
+    if modem:
+        return modem
+    try:
+        from modem_monitor import resolve_modem_path
+        return resolve_modem_path()
+    except Exception:
+        return None
+
+
+def ensure_radio_on(bus=None, modem: str | None = None,
+                    timeout_ms: int = _DBUS_TIMEOUT_MS) -> bool:
+    """Airplane mode must not stop an emergency call: switch mobile radio
+    back on (NetworkManager WwanEnabled, which airplane mode clears) and
+    Enable the modem when ModemManager holds it disabled. True when it
+    switched something on. Best effort; blocking: worker thread only."""
+    bus = _system_bus(bus)
+    if bus is None:
+        return False
+    changed = False
+    try:
+        wwan = bus.call_sync(
+            _NM_BUS, _NM_PATH, _PROPS_IFACE, 'Get',
+            GLib.Variant('(ss)', (_NM_BUS, 'WwanEnabled')), None,
+            Gio.DBusCallFlags.NONE, timeout_ms, None,
+        ).unpack()[0]
+        if wwan is False:
+            bus.call_sync(
+                _NM_BUS, _NM_PATH, _PROPS_IFACE, 'Set',
+                GLib.Variant('(ssv)', (_NM_BUS, 'WwanEnabled',
+                                       GLib.Variant('b', True))), None,
+                Gio.DBusCallFlags.NONE, timeout_ms, None,
+            )
+            changed = True
+    except Exception:
+        pass
+    modem = _voice_modem(modem)
+    if not modem:
+        return changed
+    try:
+        state = int(bus.call_sync(
+            _MM_BUS, modem, _PROPS_IFACE, 'Get',
+            GLib.Variant('(ss)', (_MODEM_IFACE, 'State')), None,
+            Gio.DBusCallFlags.NONE, timeout_ms, None,
+        ).unpack()[0])
+    except Exception:
+        return changed
+    if state in _MODEM_STATES_OFF:
+        try:
+            bus.call_sync(
+                _MM_BUS, modem, _MODEM_IFACE, 'Enable',
+                GLib.Variant('(b)', (True,)), None,
+                Gio.DBusCallFlags.NONE, _MODEM_ENABLE_TIMEOUT_MS, None,
+            )
+            changed = True
+        except Exception:
+            pass
+    return changed
+
+
+def modem_sim_missing(bus=None, modem: str | None = None,
+                      timeout_ms: int = _DBUS_TIMEOUT_MS) -> bool:
+    """True when the modem reports no usable SIM: no Sim object, or State
+    FAILED for a missing or broken SIM. False when that cannot be read.
+    Blocking: worker thread only."""
+    bus = _system_bus(bus)
+    modem = _voice_modem(modem)
+    if bus is None or not modem:
+        return False
+    try:
+        props = dict(bus.call_sync(
+            _MM_BUS, modem, _PROPS_IFACE, 'GetAll',
+            GLib.Variant('(s)', (_MODEM_IFACE,)), None,
+            Gio.DBusCallFlags.NONE, timeout_ms, None,
+        ).unpack()[0])
+    except Exception:
+        return False
+    try:
+        if (int(props.get('State', 0)) == _MODEM_STATE_FAILED
+                and int(props.get('StateFailedReason', 0))
+                in _FAILED_REASONS_NO_SIM):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return 'Sim' in props and str(props.get('Sim') or '/') == '/'
+
+
+def call_failure_detail(detail: object) -> str:
+    """A dial error for the status line: the D-Bus error name dropped
+    ("GDBus.Error:org.freedesktop.ModemManager1.Error.Core.WrongState:
+    ..." reads as its message)."""
+    return _DBUS_ERROR_PREFIX.sub('', str(detail or '').strip())
+
+
 def place_emergency_call(number: str, extra: object = None) -> tuple[bool, str]:
     """Place ``number`` only when it dials an emergency service; anything
-    else is refused without touching the modem. Blocking: call only from
-    a worker thread — ModemManager places emergency calls even without
-    a SIM when the modem allows, no unlock needed."""
+    else is refused without placing a call. Blocking: call only from a
+    worker thread — ModemManager places emergency calls even without a
+    SIM when the modem and network allow, no unlock needed. Airplane mode
+    is switched off for the call (the call is retried while the radio
+    comes up), and a failure with no SIM says so."""
     if not is_emergency_number(number, extra):
         # The caller's list may be empty or stale (read before the modem
         # registered): ask the modem again before refusing.
         if not is_emergency_number(number, get_modem_emergency_numbers()):
             return False, EMERGENCY_REFUSAL
+    dial = normalize_emergency_number(number)
     try:
         from modem_monitor import voice_create_and_start
-        return voice_create_and_start(normalize_emergency_number(number))
+        radio_switched_on = ensure_radio_on()
+        ok, detail = voice_create_and_start(dial)
+        retries = _RADIO_RETRIES if radio_switched_on else 0
+        while not ok and retries > 0:
+            retries -= 1
+            time.sleep(_RADIO_RETRY_S)
+            ok, detail = voice_create_and_start(dial)
     except Exception as err:
-        return False, str(err)
+        ok, detail = False, str(err)
+    if ok:
+        return True, detail
+    if modem_sim_missing():
+        return False, EMERGENCY_NO_SIM
+    return False, call_failure_detail(detail)
 
 
 def classify_dial(raw: str) -> str:
@@ -573,7 +705,12 @@ class Dialer(Gtk.Window):
 
     def _place_call(self, number: str) -> None:
         try:
-            ok, detail = place_call(number)
+            if is_emergency_number(number):
+                # Same path as the lock screen: airplane mode is lifted
+                # for the call and a missing SIM reads plainly.
+                ok, detail = place_emergency_call(number)
+            else:
+                ok, detail = place_call(number)
         except Exception as err:  # noqa: BLE001 - the guard must lift
             ok, detail = False, str(err)
         self._finish_dial('Dialing…' if ok else f'Call failed: {detail.strip()}')

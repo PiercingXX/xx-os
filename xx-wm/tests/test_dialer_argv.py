@@ -243,6 +243,24 @@ class TestStatusLabelWiring:
         assert d._status.text == 'Dialing…'
 
 
+class TestEmergencyFromDialer:
+    def test_emergency_number_takes_the_emergency_path(self, monkeypatch):
+        flush = _flush_idle(monkeypatch)
+        d = _make_dialer(monkeypatch)
+        used = []
+        monkeypatch.setattr(dialer, 'place_call',
+                            lambda number: used.append(('call', number))
+                            or (True, '/Call/1'))
+        monkeypatch.setattr(dialer, 'place_emergency_call',
+                            lambda number, *a: used.append(('emg', number))
+                            or (False, dialer.EMERGENCY_NO_SIM))
+        d._initiate_call('112')
+        flush()
+        d._initiate_call('5551234567')
+        flush()
+        assert used == [('emg', '112'), ('call', '5551234567')]
+
+
 class TestCallInFlightGuard:
     """A second tap on Call while the first dial is still in flight
     places nothing; the guard lifts once the first attempt reports."""

@@ -224,6 +224,10 @@ class TestEmergencyDialNormalized:
         saved = sys.modules.pop('dialer', None)
         try:
             import dialer
+            # Never the host's NetworkManager / ModemManager.
+            monkeypatch.setattr(dialer, 'ensure_radio_on', lambda *a, **k: False)
+            monkeypatch.setattr(dialer, 'modem_sim_missing',
+                                lambda *a, **k: False)
             ok, _ = dialer.place_emergency_call('*1*1*2#')
         finally:
             sys.modules.pop('dialer', None)
