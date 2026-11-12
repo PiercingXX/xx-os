@@ -251,8 +251,9 @@ def decide_layer_policy(page: str | None, popover_open: bool,
         return ('TOP', 'NONE')
     return ('BOTTOM', 'NONE')
 
-# Swipe-up split: a short flick raises the keyboard, a fast or long swipe
-# opens the app drawer. The stack's GestureSwipe path is velocity-only;
+# Swipe up on home opens the app drawer when it is fast or long; a short,
+# slow one does nothing (home has nothing to type into, so it must not
+# raise the keyboard). The stack's GestureSwipe path is velocity-only;
 # the home page's capture drag (see _build_root) decides by distance AND
 # release velocity (lisgd does distance).
 _LONG_SWIPE_UP_VEL = 900
@@ -303,18 +304,18 @@ def decide_swipe_up_action(
 ) -> str | None:
     """Map an upward drag's travel and release velocity to an action.
 
-    Returns 'drawer' for a fast or long swipe up, 'keyboard' for a short
-    one, None when the movement is too small or too slow (a tap, a hold,
-    or a list-scroll release). Only upward movement counts: distance is
-    up-positive px, velocity is px/s in GTK coordinates (up is negative).
-    Pure so the distance/velocity table is unit-testable.
+    Returns 'drawer' for a fast or long swipe up, None for anything else:
+    a short slow swipe, a tap, a hold, or a list-scroll release. Only
+    upward movement counts: distance is up-positive px, velocity is px/s
+    in GTK coordinates (up is negative). Pure so the distance/velocity
+    table is unit-testable.
     """
     if distance_px < _SWIPE_UP_CLAIM_PX or velocity_y > -_SHORT_SWIPE_UP_VEL:
         return None
     if (distance_px >= _SWIPE_UP_DRAWER_PX
             or velocity_y <= -_LONG_SWIPE_UP_VEL):
         return 'drawer'
-    return 'keyboard'
+    return None
 
 
 def home_side_swipe(win, key: str) -> None:
@@ -1006,8 +1007,8 @@ class ShellWindow(Adw.ApplicationWindow):
         # the button's click gesture first and never reaches it. This drag
         # runs in CAPTURE (before the buttons) and claims only after a
         # vertical-dominant threshold, so taps, long-press edit mode and
-        # horizontal swipes keep working; on release it decides drawer vs
-        # keyboard by distance and velocity. Only the home page claims —
+        # horizontal swipes keep working; on release distance and velocity
+        # decide whether it opens the drawer. Only the home page claims —
         # drawer/settings vertical drags scroll their lists via the swipe
         # path above.
         drag = Gtk.GestureDrag.new()
@@ -1171,11 +1172,8 @@ class ShellWindow(Adw.ApplicationWindow):
             if vel_y > _SHORT_SWIPE_UP_VEL:
                 home_swipe_down(self)
             return
-        action = decide_swipe_up_action(-offset_y, vel_y)
-        if action == 'drawer':
+        if decide_swipe_up_action(-offset_y, vel_y) == 'drawer':
             self.stack.set_visible_child_name('apps')
-        elif action == 'keyboard':
-            self._show_keyboard()
 
     def _open_web_search_prompt(self) -> None:
         """Android opens the system web search; here the drawer search

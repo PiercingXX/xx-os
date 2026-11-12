@@ -5,8 +5,8 @@ starting on a home slot button was claimed by the button's click gesture
 and never reached the stack. A capture-phase GestureDrag now owns those
 touches instead — but only after a vertical-dominant drag threshold, so
 taps, long-press edit mode and horizontal swipes keep working. On
-release the drag decides drawer (fast/long) vs keyboard (short) by
-distance and velocity.
+release the drag opens the drawer when it was fast or long; a short slow
+swipe does nothing (home has nothing to type into, so no keyboard).
 """
 import sys
 import types
@@ -65,12 +65,11 @@ class TestDecideSwipeUpAction:
     def test_drawer_distance_boundary(self, window_mod):
         drawer_px = window_mod._SWIPE_UP_DRAWER_PX
         assert window_mod.decide_swipe_up_action(drawer_px, -350) == 'drawer'
-        assert (window_mod.decide_swipe_up_action(drawer_px - 1, -350)
-                == 'keyboard')
+        assert window_mod.decide_swipe_up_action(drawer_px - 1, -350) is None
 
-    def test_short_flick_raises_keyboard(self, window_mod):
-        assert window_mod.decide_swipe_up_action(40, -500) == 'keyboard'
-        assert window_mod.decide_swipe_up_action(60, -301) == 'keyboard'
+    def test_short_slow_swipe_does_nothing(self, window_mod):
+        assert window_mod.decide_swipe_up_action(40, -500) is None
+        assert window_mod.decide_swipe_up_action(60, -301) is None
 
     def test_below_claim_distance_is_dead(self, window_mod):
         """A tap that somehow reaches release (fast thumb bounce) still
@@ -255,7 +254,8 @@ class TestDragHandlers:
         assert ns.stack.shown == ['apps']
         assert keyboards == []
 
-    def test_short_swipe_up_raises_keyboard(self, window_mod, monkeypatch):
+    def test_short_slow_swipe_up_never_raises_keyboard(self, window_mod,
+                                                       monkeypatch):
         ns, bound, _dispatched, keyboards = _handler_ns(window_mod,
                                                         monkeypatch)
         gesture = _FakeGesture()
@@ -266,7 +266,7 @@ class TestDragHandlers:
         assert ns._swipe_drag_claimed is True
         bound.end(gesture, 0.0, -40.0)
         assert ns.stack.shown == []
-        assert keyboards == [True]
+        assert keyboards == []
 
     def test_slow_upwards_scroll_does_nothing(self, window_mod, monkeypatch):
         ns, bound, _dispatched, keyboards = _handler_ns(window_mod,
