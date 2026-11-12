@@ -66,6 +66,12 @@ _UNREACHABLE = ('ServiceUnknown', 'NameHasNoOwner', 'NoReply', 'TimedOut',
                 'Disconnected')
 
 
+def service_absent(exc: BaseException) -> bool:
+    """True when the error only says the service is not running."""
+    msg = str(exc)
+    return 'ServiceUnknown' in msg or 'NameHasNoOwner' in msg
+
+
 def error_text(exc: BaseException) -> str:
     """Tile text for a failed call: the service's own message, without
     GLib's 'g-dbus-error-quark: GDBus.Error:<name>:' wrapper, and
@@ -288,6 +294,7 @@ class CaptionsController:
             self.active = bool(active)
             if self.active:
                 self.starting = False
+                self.error = None
         if source is not None:
             self.source = str(source)
         self._fire()
@@ -374,9 +381,10 @@ class CaptionsController:
         from gi.repository import Gio
 
         try:
+            # Stopping a service that is not running must not start it.
             bus.call(
                 BUS_NAME, OBJECT_PATH, INTERFACE, 'Stop', None, None,
-                Gio.DBusCallFlags.NONE, 5000, None,
+                Gio.DBusCallFlags.NO_AUTO_START, 5000, None,
                 lambda conn, result: self._finish_stop(
                     conn, result, generation))
         except Exception as exc:
@@ -394,7 +402,9 @@ class CaptionsController:
         self._fire()
 
     def refresh(self) -> None:
-        """Async GetAll for Active/Source."""
+        """Async GetAll for Active/Source. Never starts the service: the
+        shade builds this panel at login, and reading the tile must not
+        load the speech model."""
         bus = self._bus
         if bus is None:
             return
@@ -405,7 +415,7 @@ class CaptionsController:
                 BUS_NAME, OBJECT_PATH, PROPS_IFACE, 'GetAll',
                 GLib.Variant('(s)', (INTERFACE,)),
                 GLib.VariantType.new('(a{sv})'),
-                Gio.DBusCallFlags.NONE, 5000, None,
+                Gio.DBusCallFlags.NO_AUTO_START, 5000, None,
                 lambda conn, result: self._finish_refresh(conn, result))
         except Exception:
             pass
@@ -416,8 +426,17 @@ class CaptionsController:
             self.active, self.source = parse_active_source(reply.unpack())
             if self.active:
                 self.starting = False
+            # A good read is the current truth: an older error is stale.
+            if not self.starting:
+                self.error = None
         except Exception as exc:
-            self.error = error_text(exc)
+            if service_absent(exc):
+                # Not running is plain off, not an error.
+                self.active = False
+                if not self.starting:
+                    self.error = None
+            else:
+                self.error = error_text(exc)
         self._fire()
 
     def _fire(self) -> None:

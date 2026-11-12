@@ -190,7 +190,7 @@ class _FakeBus:
         assert not user_data, 'no trailing user_data: callback takes 2 args'
         self.calls.append({'bus': bus_name, 'path': path, 'iface': iface,
                            'method': method, 'params': params,
-                           'reply_type': reply_type})
+                           'reply_type': reply_type, 'flags': flags})
         self._pending.append((callback, _FakeResult(self._reply_for(method))))
         return 1
 
@@ -488,6 +488,38 @@ class TestTapToggles:
         ctrl.set_enabled(True)
         assert ctrl.error is None
         assert ctrl.tile_state == 'starting'
+
+    def test_reading_the_tile_never_starts_the_service(self, model_home):
+        from gi.repository import Gio
+        ctrl, bus, _changes, _launches = _wired(model_home)
+        ctrl.refresh()
+        ctrl.set_enabled(False)
+        reads = [c for c in bus.calls if c['method'] in ('GetAll', 'Stop')]
+        assert reads
+        assert all(c['flags'] == Gio.DBusCallFlags.NO_AUTO_START
+                   for c in reads)
+
+    def test_service_not_running_reads_as_off_not_error(self, model_home):
+        ctrl, bus, _changes, _launches = _wired(model_home)
+        bus.run_pending()
+        ctrl.refresh()
+        bus.run_pending(error=Exception(
+            'GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: '
+            'The name is not activatable'))
+        assert ctrl.error is None
+        assert ctrl.active is False
+
+    def test_good_read_clears_a_stale_error(self, model_home):
+        _install_model(model_home)
+        ctrl, bus, _changes, _launches = _wired(model_home)
+        bus.run_pending()
+        ctrl.set_enabled(True)
+        bus.run_pending(error=Exception('NotPermitted'))
+        assert ctrl.error == 'NotPermitted'
+        ctrl.refresh()
+        bus.run_pending()
+        assert ctrl.error is None
+        assert ctrl.tile_state != 'error'
 
     def test_enable_without_bus_reports_not_connected(self, model_home):
         _install_model(model_home)
