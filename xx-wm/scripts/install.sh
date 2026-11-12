@@ -322,7 +322,13 @@ download_nerd_font_fallback() {
         echo "warn: no unzip — skipping Nerd Font download" >&2
         return 0
     fi
-    _zip_url=${XX_WM_NERD_FONT_URL:-https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/JetBrainsMono.zip}
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo "warn: no sha256sum — skipping Nerd Font download" >&2
+        return 0
+    fi
+    _zip_ver=3.2.1
+    _zip_sha=${XX_WM_NERD_FONT_SHA256:-6596922aabaf8876bb657c36a47009ac68c388662db45d4ac05c2536c2f07ade}
+    _zip_url=${XX_WM_NERD_FONT_URL:-https://github.com/ryanoasis/nerd-fonts/releases/download/v$_zip_ver/JetBrainsMono.zip}
     _fontdir=${XX_WM_FONT_DIR:-$HOME/.local/share/fonts}
     mkdir -p "$_fontdir" || return 0
     _tmpzip=$(mktemp /tmp/xx-wm-fonts.XXXXXX.zip) || return 0
@@ -338,6 +344,12 @@ download_nerd_font_fallback() {
             echo "warn: Nerd Font download failed" >&2
             return 0
         }
+    fi
+    _got_sha=$(sha256sum "$_tmpzip" | cut -d' ' -f1)
+    if [ "$_got_sha" != "$_zip_sha" ]; then
+        rm -f "$_tmpzip"
+        echo "warn: Nerd Font zip checksum mismatch (got $_got_sha, expected $_zip_sha) — not installing it" >&2
+        return 0
     fi
     unzip -o -j "$_tmpzip" -d "$_fontdir" >/dev/null 2>&1 || \
         echo "warn: Nerd Font unzip failed" >&2
