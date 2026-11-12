@@ -6,6 +6,7 @@ firewall-off behaviour (no table), and one test that no Settings page
 renders the same feature twice (from the settings-map IA tree).
 Fakes and tmp dirs only: no nft, services or network.
 """
+import inspect
 import itertools
 import json
 import subprocess
@@ -66,6 +67,20 @@ def make_core(tmp_path, run=None, **over):
     core = helper.HelperCore(**kw)
     core.nft_available = lambda: True
     return core
+
+
+def _probe_stub(result):
+    """probe_features stand-in bound to the REAL signature, so a call
+    with a keyword the real function lacks raises TypeError here too."""
+    real = inspect.signature(firewall.probe_features)
+
+    def stub(*args, **kwargs):
+        bound = real.bind(*args, **kwargs)
+        bound.apply_defaults()
+        if callable(result):
+            return result(bound.arguments)
+        return dict(result)
+    return stub
 
 
 # ------------------------------------------------------- derivation (pure)
@@ -452,10 +467,8 @@ class TestReapply:
         monkeypatch.setattr(page, '_run_bg', _sync_bg)
         monkeypatch.setattr(
             firewall, 'probe_features',
-            lambda xxdb_enabled=False: {'ssh': True, 'xxdb': False,
-                                        'kdeconnect': False,
-                                        'syncthing': False,
-                                        'nearby': False})
+            _probe_stub({'ssh': True, 'xxdb': False, 'kdeconnect': False,
+                         'syncthing': False, 'nearby': False}))
         sets = []
         self._client(monkeypatch, {'backend': 'nftables', 'enabled': True,
                                    'allowed': {'ssh': True},
@@ -471,10 +484,8 @@ class TestReapply:
         monkeypatch.setattr(page, '_run_bg', _sync_bg)
         monkeypatch.setattr(
             firewall, 'probe_features',
-            lambda xxdb_enabled=False: {'ssh': False, 'xxdb': True,
-                                        'kdeconnect': False,
-                                        'syncthing': False,
-                                        'nearby': False})
+            _probe_stub({'ssh': False, 'xxdb': True, 'kdeconnect': False,
+                         'syncthing': False, 'nearby': False}))
         sets = []
         self._client(monkeypatch, {'backend': 'nftables', 'enabled': True,
                                    'allowed': {'ssh': True},
@@ -487,10 +498,8 @@ class TestReapply:
         monkeypatch.setattr(page, '_run_bg', _sync_bg)
         monkeypatch.setattr(
             firewall, 'probe_features',
-            lambda xxdb_enabled=False: {'ssh': True, 'xxdb': False,
-                                        'kdeconnect': False,
-                                        'syncthing': False,
-                                        'nearby': False})
+            _probe_stub({'ssh': True, 'xxdb': False, 'kdeconnect': False,
+                         'syncthing': False, 'nearby': False}))
         sets = []
         self._client(monkeypatch, {'backend': 'none', 'enabled': False,
                                    'allowed': {}, 'foreign_drop': False},
@@ -507,10 +516,9 @@ class TestReapply:
         seen = {}
         monkeypatch.setattr(
             firewall, 'probe_features',
-            lambda xxdb_enabled=False: seen.update(
-                xxdb=xxdb_enabled) or {'ssh': False, 'xxdb': xxdb_enabled,
-                                       'kdeconnect': False,
-                                       'syncthing': False, 'nearby': False})
+            _probe_stub(lambda args: seen.update(xxdb=args['xxdb']) or {
+                'ssh': False, 'xxdb': args['xxdb'], 'kdeconnect': False,
+                'syncthing': False, 'nearby': False}))
         sets = []
         self._client(monkeypatch, {'backend': 'nftables', 'enabled': True,
                                    'allowed': {}, 'foreign_drop': False},
@@ -519,6 +527,12 @@ class TestReapply:
         firewall.reapply(SimpleNamespace(xxdb_controller=ctrl))
         assert seen == {'xxdb': True}
         assert sets == [['xxdb']]
+
+    def test_probe_stub_rejects_a_wrong_keyword(self):
+        stub = _probe_stub({})
+        with pytest.raises(TypeError):
+            stub(xxdb_enabled=True)
+        assert stub(xxdb=True) == {}
 
 
 class TestServiceFollowHooks:

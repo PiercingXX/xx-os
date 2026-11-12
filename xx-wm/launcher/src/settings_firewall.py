@@ -269,7 +269,7 @@ def reapply(win, on_done=None) -> None:
 
     def _work():
         try:
-            return probe_features(xxdb_enabled=xxdb)
+            return probe_features(xxdb=xxdb)
         except Exception:
             return None
 
