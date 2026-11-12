@@ -510,10 +510,13 @@ def voice_call_params(number: str, glib=None):
 
 def voice_create_and_start(
     number: str, modem: str | None = None, timeout_ms: int = _IO_TIMEOUT_MS,
+    created_calls: list[str] | None = None,
 ) -> tuple[bool, str]:
     """Create a voice call to ``number`` and Start it via D-Bus.
 
-    Returns (True, call path) or (False, error detail). Blocking: call
+    Returns (True, call path) or (False, error detail); a call whose Start
+    failed is deleted. ``created_calls`` collects the path ModemManager
+    created, so a caller knows the daemon was reached. Blocking: call
     only from a worker thread.
     """
     from shell_log import get_logger
@@ -530,6 +533,8 @@ def voice_create_and_start(
             voice_call_params(number), None,
             Gio.DBusCallFlags.NONE, timeout_ms, None,
         ).unpack()[0]
+        if created_calls is not None:
+            created_calls.append(str(call_path))
         bus.call_sync(
             _MM1, call_path, _CALL_IFACE, 'Start',
             None, None, Gio.DBusCallFlags.NONE, timeout_ms, None,

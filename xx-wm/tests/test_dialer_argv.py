@@ -96,8 +96,10 @@ def _flush_idle(monkeypatch):
     return lambda: [cb(*args) for cb, args in list(pending)]
 
 
-def _script_dbus_call(monkeypatch, result):
-    def _place(number):
+def _script_dbus_call(monkeypatch, result, created=()):
+    def _place(number, created_calls=None):
+        if created_calls is not None:
+            created_calls.extend(created)
         return result
 
     monkeypatch.setattr(modem_monitor, 'voice_create_and_start', _place)
@@ -129,7 +131,7 @@ class TestPlaceCall:
         ]
 
     def test_dbus_exception_still_falls_back(self, monkeypatch):
-        def _boom(number):
+        def _boom(number, created_calls=None):
             raise RuntimeError('transport exploded')
 
         monkeypatch.setattr(modem_monitor, 'voice_create_and_start', _boom)
@@ -158,16 +160,34 @@ class TestPlaceCall:
         assert dialer.place_call('5551234567') == \
             (False, 'modem returned no call path')
 
-    def test_start_failure_surfaces(self, monkeypatch):
+    def test_start_failure_surfaces_and_deletes_the_call(self, monkeypatch):
         _script_dbus_call(monkeypatch, (False, 'bus down'))
         monkeypatch.setattr(dialer, '_resolved_modem', lambda: '0')
-        _script_mmcli(monkeypatch, [
+        calls = _script_mmcli(monkeypatch, [
             (True, '/org/freedesktop/ModemManager1/Call/2\n'),
             (False, 'error: call state change failed\n'),
+            (True, 'successfully deleted call\n'),
         ])
         ok, out = dialer.place_call('5551234567')
         assert ok is False
         assert out == 'error: call state change failed'
+        assert calls[-1] == [
+            '-m', '0',
+            '--voice-delete-call=/org/freedesktop/ModemManager1/Call/2']
+
+    def test_dbus_start_failure_never_creates_a_second_call(
+            self, monkeypatch):
+        """ModemManager took the D-Bus call and refused to start it (the
+        call is deleted there). mmcli is a client of the same daemon: a
+        second call could only fail the same way, or leave two calls."""
+        _script_dbus_call(
+            monkeypatch, (False, 'Start failed: no network'),
+            created=['/org/freedesktop/ModemManager1/Call/7'])
+        monkeypatch.setattr(dialer, '_resolved_modem', lambda: '0')
+        calls = _script_mmcli(monkeypatch, [])
+        assert dialer.place_call('5551234567') == (
+            False, 'Start failed: no network')
+        assert calls == []
 
     def test_missing_binary_degrades_gracefully(self, monkeypatch):
         _script_dbus_call(monkeypatch, (False, 'bus down'))

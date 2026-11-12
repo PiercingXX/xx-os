@@ -27,16 +27,23 @@ def place_call(number: str) -> tuple[bool, str]:
     """Place a voice call to ``number``; (success, detail for the status line).
 
     Prefers Voice.CreateCall + Call.Start over D-Bus; only when that
-    transport fails does it fall back to mmcli (create, then start via the
-    returned object path — mmcli has no single dial verb, -o selects Call
-    objects). Blocking: call only from a worker thread."""
+    transport fails before ModemManager created a call does it fall back
+    to mmcli (create, then start via the returned object path — mmcli has
+    no single dial verb, -o selects Call objects). A call whose start
+    fails is deleted, so a failure never leaves a call behind and there
+    is never a second one. Blocking: call only from a worker thread."""
+    created: list[str] = []
     try:
         from modem_monitor import voice_create_and_start
-        ok, detail = voice_create_and_start(number)
+        ok, detail = voice_create_and_start(number, created_calls=created)
         if ok:
             return True, detail
     except Exception as err:
         detail = str(err)
+    if created:
+        # ModemManager took the call and refused to start it (and the call
+        # was deleted there); mmcli talks to the same daemon.
+        return False, detail
     modem = _resolved_modem()
     ok, out = _run_mmcli(['-m', modem, f'--voice-create-call=number={number}'])
     if not ok:
@@ -44,7 +51,10 @@ def place_call(number: str) -> tuple[bool, str]:
     match = _CALL_PATH_RE.search(out)
     if match is None:
         return False, 'modem returned no call path'
-    ok, out = _run_mmcli(['-m', modem, '-o', match.group(0), '--start'])
+    call_path = match.group(0)
+    ok, out = _run_mmcli(['-m', modem, '-o', call_path, '--start'])
+    if not ok:
+        _run_mmcli(['-m', modem, f'--voice-delete-call={call_path}'])
     return ok, out.strip()
 
 
