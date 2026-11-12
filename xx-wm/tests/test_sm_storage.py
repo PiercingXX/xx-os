@@ -530,6 +530,90 @@ class TestFileBackupLogic:
             str(vol / 'xx-backup' / 'phone' / 'Pictures'),
             str(home / 'Pictures'))
 
+    def test_real_rsync_progress_moves(self, tmp_path):
+        import filebackup
+        if shutil.which('rsync') is None:
+            pytest.skip('rsync not installed')
+        src = tmp_path / 'Pictures'
+        src.mkdir()
+        for i in range(20):
+            (src / ('f%02d.bin' % i)).write_bytes(os.urandom(64 * 1024))
+        dest = tmp_path / 'SD' / 'xx-backup' / 'p' / 'Pictures'
+        seen = []
+        ok, err = filebackup.run_transfer(str(src), str(dest), False,
+                                          on_progress=seen.append)
+        assert ok, err
+        assert len(list(dest.iterdir())) == 20
+        assert seen and seen[-1] == 1.0
+        assert any(0.0 < f < 1.0 for f in seen) or len(seen) >= 2
+        assert seen == sorted(seen)
+
+    def test_progress_comes_from_progress2_lines(self, tmp_path, monkeypatch):
+        import subprocess
+        import filebackup
+
+        class _Proc:
+            stdout = iter(['          1,024  10%    1.00MB/s    0:00:01\n',
+                           '        512,000  55%    1.00MB/s    0:00:01\n',
+                           '        900,000 100%    1.00MB/s    0:00:01\n'])
+
+            def wait(self, timeout=None):
+                return 0
+
+        monkeypatch.setattr(subprocess, 'Popen', lambda argv, **_k: _Proc())
+        seen = []
+        ok, _err = filebackup.run_transfer(
+            str(tmp_path), str(tmp_path / 'd'), False, on_progress=seen.append)
+        assert ok
+        assert seen[:3] == [0.10, 0.55, 1.0]
+
+    def test_cancel_stops_rsync(self, tmp_path, monkeypatch):
+        import subprocess
+        import threading
+        import filebackup
+        cancel = threading.Event()
+        calls = []
+
+        def _lines():
+            yield '   10%\n'
+            cancel.set()
+            yield '   20%\n'
+            yield '   30%\n'
+
+        class _Proc:
+            stdout = _lines()
+
+            def terminate(self):
+                calls.append('terminate')
+
+            def wait(self, timeout=None):
+                return 0
+
+        monkeypatch.setattr(subprocess, 'Popen', lambda argv, **_k: _Proc())
+        ok, err = filebackup.run_transfer(
+            str(tmp_path), str(tmp_path / 'd'), False, cancel=cancel)
+        assert not ok and err == 'Stopped.'
+        assert calls == ['terminate']
+
+    def test_confirmed_transfer_does_not_walk_the_tree_again(
+            self, tmp_path, monkeypatch):
+        import settings_page
+        import filebackup
+        walks = []
+        monkeypatch.setattr(filebackup, 'dry_run_counts',
+                            lambda *a, **k: walks.append(a) or (True, '1 file'))
+        monkeypatch.setattr(filebackup, 'run_transfer',
+                            lambda *a, **k: (True, None))
+        monkeypatch.setattr(settings_page, '_run_bg',
+                            lambda work, done: done(work()))
+        section = settings_page.BackupSection()
+        said = []
+        section._say = said.append
+        section._start_transfer(object(), 'Backup', str(tmp_path),
+                                str(tmp_path / 'd'))
+        assert walks == []
+        assert said[-1] == 'Backup done.'
+
     def test_self_nesting_excluded(self, tmp_path):
         import filebackup
         src = tmp_path / 'Pictures'

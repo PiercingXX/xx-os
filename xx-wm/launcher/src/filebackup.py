@@ -135,8 +135,11 @@ def _self_exclude(src: str, dest: str) -> list:
 
 
 def build_rsync_argv(src: str, dest: str, mirror: bool) -> list:
-    """Transfer argv: -aH, --delete only for opt-in Mirror mode."""
-    argv = ['rsync', '-aH', '--info=stats1,progress2']
+    """Transfer argv: -aH, --delete only for opt-in Mirror mode. One
+    progress2 line per update carries the whole-transfer percentage;
+    --no-inc-recursive makes rsync know the total up front, so that
+    percentage only climbs."""
+    argv = ['rsync', '-aH', '--no-inc-recursive', '--info=stats1,progress2']
     if mirror:
         argv.append('--delete')
     argv.extend(_self_exclude(src, dest))
@@ -184,31 +187,39 @@ def dry_run_counts(src: str, dest: str, mirror: bool,
     return True, text
 
 
-def run_transfer(src: str, dest: str, mirror: bool, total: int,
-                 on_progress, run_progress=None) -> tuple:
+def run_transfer(src: str, dest: str, mirror: bool, total: int = 0,
+                 on_progress=None, run_progress=None, cancel=None) -> tuple:
     """Copy on a worker thread with progress; (ok, error-or-None).
 
-    `on_progress(fraction)` fires from this worker — the caller
-    re-posts to the main loop. `total` is the dry-run copy count.
+    `on_progress(fraction)` fires from this worker, from rsync's
+    progress2 percentage — the caller re-posts to the main loop. `total`
+    is kept for older callers and unused. Setting the `cancel` event
+    stops rsync at its next output line.
     """
     import subprocess as _sp
     argv = build_rsync_argv(src, dest, mirror)
     try:
         # rsync creates only the last path component.
         os.makedirs(dest, exist_ok=True)
+        # Text mode reads rsync's \r-separated progress2 updates as lines.
         proc = _sp.Popen(argv, stdout=_sp.PIPE, stderr=_sp.STDOUT,
                          text=True, bufsize=1)
     except OSError as err:
         return False, 'Backup failed to start: %s' % err
     try:
-        done = 0
+        shown = -1.0
         assert proc.stdout is not None
         for line in proc.stdout:
-            if len(line) > 1 and line[0] in '<>ch.' and line[1] == 'f':
-                done += 1
-                if total > 0:
+            if cancel is not None and cancel.is_set():
+                proc.terminate()
+                proc.wait(timeout=30)
+                return False, 'Stopped.'
+            fraction = progress_fraction(line)
+            if fraction is not None and fraction > shown:
+                shown = fraction
+                if on_progress is not None:
                     try:
-                        on_progress(min(1.0, done / total))
+                        on_progress(fraction)
                     except Exception:
                         pass
         code = proc.wait(timeout=3600)
@@ -218,12 +229,15 @@ def run_transfer(src: str, dest: str, mirror: bool, total: int,
         except Exception:
             pass
         return False, 'Backup failed: %s' % err
+    if cancel is not None and cancel.is_set():
+        return False, 'Stopped.'
     if code not in (0, 23, 24):
         return False, 'Backup failed (rsync exit %d).' % code
-    try:
-        on_progress(1.0)
-    except Exception:
-        pass
+    if on_progress is not None:
+        try:
+            on_progress(1.0)
+        except Exception:
+            pass
     return True, None
 
 

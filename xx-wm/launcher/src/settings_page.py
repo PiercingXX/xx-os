@@ -606,6 +606,13 @@ class BackupSection(_Section):
 
     def _on_transfer(self, win, label: str) -> None:
         import filebackup
+        cancel = getattr(self, '_cancel', None)
+        if cancel is not None and not cancel.is_set():
+            # A transfer is running: the same row offers to stop it.
+            win.item_actions._show_action_menu(
+                self._dest_btn, 'A transfer is running.',
+                [('Stop it', cancel.set), ('Keep going', lambda: None)])
+            return
         endpoints = self._endpoints(label)
         if endpoints is None:
             return
@@ -642,41 +649,29 @@ class BackupSection(_Section):
              ('Cancel', lambda: None)])
 
     def _start_transfer(self, win, label: str, src: str, dest: str) -> None:
+        """The confirm step already previewed: go straight to the copy
+        (one more tree walk would be the third)."""
+        import threading
         import filebackup
         from gi.repository import GLib
-        self._say('Starting…')
+        cancel = threading.Event()
+        self._cancel = cancel
+        self._say('Copying… 0%')
 
-        def _preview():
-            return filebackup.dry_run_counts(src, dest, self._mirror)
+        def _progress(fraction: float) -> None:
+            GLib.idle_add(self._say, 'Copying… %d%%' % int(fraction * 100))
 
-        def _on_previewed(res) -> None:
-            try:
-                ok, _text = res
-            except (TypeError, ValueError):
-                return
-            if not ok:
-                self._say(_text)
-                return
-            self._say('Copying… 0%')
+        def _work():
+            return filebackup.run_transfer(src, dest, self._mirror,
+                                           on_progress=_progress,
+                                           cancel=cancel)
 
-            def _work():
-                import re as _re
-                match = _re.match(r'(\d+) file', _text)
-                total = int(match.group(1)) if match else 0
-
-                def _progress(fraction: float) -> None:
-                    GLib.idle_add(self._say,
-                                  'Copying… %d%%' % int(fraction * 100))
-
-                return filebackup.run_transfer(src, dest, self._mirror,
-                                               total, _progress)
-
-            _run_bg(_work,
-                     lambda res: self._on_transferred(label, res))
-
-        _run_bg(_preview, _on_previewed)
+        _run_bg(_work, lambda res: self._on_transferred(label, res))
 
     def _on_transferred(self, label: str, res) -> None:
+        cancel = getattr(self, '_cancel', None)
+        if cancel is not None:
+            cancel.set()
         try:
             ok, error = res
         except (TypeError, ValueError):
