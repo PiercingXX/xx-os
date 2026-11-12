@@ -246,7 +246,7 @@ impl State {
     }
 
     fn area_of(&self, out: &ObjectId) -> Rect {
-        self.output(out).map(|o| o.area.unwrap_or(o.rect)).unwrap_or_default()
+        self.output(out).map(|o| layout::usable_area(o.rect, o.area)).unwrap_or_default()
     }
 
     // ---------------------------------------------------------------- manage
@@ -840,7 +840,7 @@ impl State {
         let focused = self.focused();
         let displayed: Vec<(ObjectId, usize, bool, Rect)> = self
             .live_outputs()
-            .map(|(i, o)| (i.clone(), o.workspace, o.handset, o.area.unwrap_or(o.rect)))
+            .map(|(i, o)| (i.clone(), o.workspace, o.handset, layout::usable_area(o.rect, o.area)))
             .collect();
 
         let mut targets: HashMap<ObjectId, Rect> = HashMap::new();
@@ -964,7 +964,7 @@ impl State {
                         .outputs
                         .iter()
                         .find(|(_, o)| !o.removed && o.workspace == w.workspace)
-                        .map(|(_, o)| o.area.unwrap_or(o.rect));
+                        .map(|(_, o)| layout::usable_area(o.rect, o.area));
                     if let Some(area) = out {
                         let r = centered(area, dw, dh);
                         w.float_rect = Some(r);

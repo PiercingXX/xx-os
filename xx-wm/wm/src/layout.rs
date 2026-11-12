@@ -27,6 +27,24 @@ impl Rect {
     pub fn center(self) -> (i32, i32) {
         (self.x + self.w / 2, self.y + self.h / 2)
     }
+
+    /// The overlap of two rects, if they overlap at all.
+    pub fn intersect(self, o: Rect) -> Option<Rect> {
+        let x = self.x.max(o.x);
+        let y = self.y.max(o.y);
+        let w = (self.x + self.w).min(o.x + o.w) - x;
+        let h = (self.y + self.h).min(o.y + o.h) - y;
+        (w > 0 && h > 0).then(|| Rect::new(x, y, w, h))
+    }
+}
+
+/// The part of an output windows may use: what river reports as left after
+/// the layer surfaces' exclusive zones (the shell's status bar, the
+/// on-screen keyboard), in global coordinates. An area river has not sent
+/// yet, or one that does not lie on the output (stale after the output
+/// moved, or zones that eat the whole screen), falls back to the output.
+pub fn usable_area(output: Rect, non_exclusive: Option<Rect>) -> Rect {
+    non_exclusive.and_then(|a| a.intersect(output)).unwrap_or(output)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -328,6 +346,74 @@ mod tests {
         assert!(toggle_split(&mut s, 3, 2));
         assert!(s[1].flip && !s[0].flip);
         assert!(!toggle_split(&mut s, 1, 0));
+    }
+
+    // A 450x900 handset with the shell's 28 px status bar on top and a
+    // 200 px on-screen keyboard at the bottom, both exclusive zones.
+    const PHONE: Rect = Rect::new(0, 0, 450, 900);
+
+    #[test]
+    fn usable_area_is_the_output_until_river_reports_one() {
+        assert_eq!(usable_area(PHONE, None), PHONE);
+    }
+
+    #[test]
+    fn handset_app_fills_what_bar_and_keyboard_leave() {
+        let bar_only = Rect::new(0, 28, 450, 872);
+        let bar_and_keyboard = Rect::new(0, 28, 450, 672);
+        assert_eq!(usable_area(PHONE, Some(bar_only)), bar_only);
+        assert_eq!(usable_area(PHONE, Some(bar_and_keyboard)), bar_and_keyboard);
+        // the keyboard hides: the app grows back to the bar-only area
+        assert_eq!(usable_area(PHONE, Some(bar_only)).h, 900 - 28);
+    }
+
+    #[test]
+    fn usable_area_is_global_on_a_second_output() {
+        let monitor = Rect::new(450, 0, 1920, 1080);
+        let area = Rect::new(450, 32, 1920, 1048);
+        assert_eq!(usable_area(monitor, Some(area)), area);
+    }
+
+    #[test]
+    fn an_area_off_the_output_falls_back_to_the_output() {
+        // stale: reported before the output moved to the right
+        assert_eq!(usable_area(Rect::new(450, 0, 800, 600), Some(Rect::new(0, 0, 450, 900))), Rect::new(450, 0, 800, 600));
+        // exclusive zones that eat the whole screen
+        assert_eq!(usable_area(PHONE, Some(Rect::new(0, 28, 450, 0))), PHONE);
+        assert_eq!(usable_area(PHONE, Some(Rect::new(0, 28, 450, -40))), PHONE);
+    }
+
+    #[test]
+    fn an_area_hanging_off_the_output_is_clipped_to_it() {
+        assert_eq!(usable_area(PHONE, Some(Rect::new(0, 28, 500, 1000))), Rect::new(0, 28, 450, 872));
+    }
+
+    #[test]
+    fn desktop_tiles_stay_inside_the_usable_area() {
+        let monitor = Rect::new(450, 0, 1000, 600);
+        // a 40 px bar on top and a 200 px keyboard at the bottom
+        let area = usable_area(monitor, Some(Rect::new(450, 40, 1000, 360)));
+        let inner = area.shrink(8);
+        for n in 1..6 {
+            let t = dwindle(n, inner, 8, &even(n));
+            let covered: i64 = t.rects.iter().map(|r| r.w as i64 * r.h as i64).sum();
+            assert!(covered <= inner.w as i64 * inner.h as i64);
+            for r in &t.rects {
+                assert!(r.y >= 40 && r.y + r.h <= 400, "n={n} {r:?} crosses the bar or keyboard");
+                assert!(r.x >= 450 && r.x + r.w <= 1450, "n={n} {r:?}");
+            }
+        }
+        // without the keyboard the bottom row reaches further down
+        let grown = usable_area(monitor, Some(Rect::new(450, 40, 1000, 560))).shrink(8);
+        let a = dwindle(3, inner, 8, &even(2));
+        let b = dwindle(3, grown, 8, &even(2));
+        assert!(b.rects[2].y + b.rects[2].h > a.rects[2].y + a.rects[2].h);
+    }
+
+    #[test]
+    fn intersect_of_disjoint_rects_is_none() {
+        assert_eq!(Rect::new(0, 0, 10, 10).intersect(Rect::new(10, 0, 10, 10)), None);
+        assert_eq!(Rect::new(0, 0, 10, 10).intersect(Rect::new(5, 5, 10, 10)), Some(Rect::new(5, 5, 5, 5)));
     }
 
     #[test]
