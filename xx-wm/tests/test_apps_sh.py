@@ -67,6 +67,26 @@ def test_waydroid_skipped_under_3gib():
     assert 'SKIP: Waydroid' in text
 
 
+def test_waydroid_comes_from_distro_repos_only():
+    text = SCRIPT.read_text(encoding='utf-8')
+    chunk = text[text.find('# --- 17.6 Waydroid'):text.find('# --- 17.7')]
+    assert '$SUDO apk add waydroid' in chunk
+    assert '$SUDO apt install -y waydroid' in chunk
+    assert 'waydro.id' not in chunk
+    assert 'curl' not in chunk
+
+
+def test_nothing_from_the_network_is_piped_into_a_shell_or_tar():
+    for name in ('apps.sh', 'install.sh', 'bootstrap-dots.sh'):
+        text = (SCRIPT.parent / name).read_text(encoding='utf-8')
+        joined = re.sub(r'\\\n\s*', ' ', text)
+        for line in joined.splitlines():
+            if re.search(r'\b(curl|wget)\b', line):
+                assert not re.search(
+                    r'\|\s*(\$SUDO\s+|sudo\s+|doas\s+)?(ba|da|z)?sh\b'
+                    r'|\|\s*(\$SUDO\s+)?tar\b', line), f'{name}: {line}'
+
+
 def test_pwa_desktop_escapes_percent_and_quotes_url():
     text = SCRIPT.read_text(encoding='utf-8')
     assert "s/%/%%/g" in text

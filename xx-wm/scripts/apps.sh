@@ -250,14 +250,12 @@ elif command -v waydroid >/dev/null 2>&1; then
     echo "Waydroid already installed."
 elif [ "$PKG" = apk ] && $SUDO apk add waydroid 2>/dev/null; then
     echo "Waydroid installed via apk."
-elif [ "$PKG" = apt ]; then
-    if ! $SUDO apt install -y waydroid 2>/dev/null; then
-        pkg_install curl ca-certificates
-        curl -s https://repo.waydro.id | $SUDO bash || echo "warn: waydro.id repo setup failed" >&2
-        pkg_install waydroid
-    fi
+elif [ "$PKG" = apt ] && $SUDO apt install -y waydroid 2>/dev/null; then
+    echo "Waydroid installed via apt."
 else
-    echo "warn: Waydroid unavailable on this distro" >&2
+    # Distro repos only: the upstream Waydroid repo is set up by running
+    # a downloaded script as root.
+    echo "warn: Waydroid is not in this distro's repos" >&2
 fi
 echo "Waydroid init + microG image + Android apps are device work — see devices/ notes."
 
