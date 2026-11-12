@@ -51,7 +51,7 @@ def test_keyboard_desktops_use_suite_name_and_icon() -> None:
         pytest.skip("xx-keyboard sibling checkout not present")
     for desktop in KB_DESKTOPS:
         entry = _read_desktop(desktop)
-        assert entry["Name"] == "xx-keyboard", desktop
+        assert entry["Name"] == "keyboard", desktop
         assert entry["Icon"] == "io.piercingxx.XXKeyboard", desktop
 
 
@@ -59,7 +59,7 @@ def test_keyboard_metainfo_and_icon_installed() -> None:
     if not KB.is_dir():
         pytest.skip("xx-keyboard sibling checkout not present")
     root = ET.parse(KB_METAINFO).getroot()
-    assert root.find("name").text == "xx-keyboard"
+    assert root.find("name").text == "keyboard"
     assert KB_ICON.is_file()
     assert "viewBox" in KB_ICON.read_text(encoding="utf-8")
     build = KB_BUILD.read_text(encoding="utf-8")

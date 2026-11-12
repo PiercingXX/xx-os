@@ -231,6 +231,14 @@ def parse_xx_check_output(text: str) -> tuple[int, list[str]]:
     return len(apps), apps
 
 
+def plain_app_name(name: str) -> str:
+    """The on-screen name for an apps.json key: the apps drop the ``xx-``
+    prefix (the OS carries it); the shell keeps its own name."""
+    if name.startswith('xx-') and name != 'xx-wm':
+        return name[len('xx-'):]
+    return name
+
+
 def xx_status_title(returncode: int | None, output: str) -> tuple[str, str]:
     """(title, subtitle) for the Settings XX-apps row: one line plus the
     app names underneath. Unknown stays unknown, never 'up to date'."""
@@ -241,5 +249,6 @@ def xx_status_title(returncode: int | None, output: str) -> tuple[str, str]:
         if count == 0:
             return 'XX apps: status unknown', ''
         plural = 's' if count != 1 else ''
-        return ('XX apps: %d update%s' % (count, plural), ', '.join(apps))
+        return ('XX apps: %d update%s' % (count, plural),
+                ', '.join(plain_app_name(app) for app in apps))
     return 'XX apps: status unknown', ''

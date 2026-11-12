@@ -823,7 +823,7 @@ class TestPrivacyCaptureStream:
         assert capture.APP_ID == BUS_NAME
         assert capture.STREAM_PROPS['application.id'] == BUS_NAME
         assert classify_node(
-            self._captions_node(capture)) == ('mic', 'xx-captions')
+            self._captions_node(capture)) == ('mic', 'captions')
 
     def test_suspended_or_sink_nodes_stay_dark(self, ref_xx_captions):
         from xx_captions import capture

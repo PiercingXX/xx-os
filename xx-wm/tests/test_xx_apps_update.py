@@ -376,6 +376,11 @@ class TestSettingsRow:
             10, "b 1 \u2192 2\nc 1 \u2192 3\n")
         assert title == "XX apps: 2 updates"
         assert subtitle == "b, c"
+        title, subtitle = settings_updates.xx_status_title(
+            10, "xx-captions 1 \u2192 2\nxx-wm 1 \u2192 2\n"
+                "common 1 \u2192 2\n")
+        assert title == "XX apps: 3 updates"
+        assert subtitle == "captions, xx-wm, common"
         assert settings_updates.xx_status_title(None, "") == (
             "XX apps: status unknown", "")
         assert settings_updates.xx_status_title(1, "boom") == (
@@ -442,7 +447,7 @@ class TestPageWiring:
         settings_page.SettingsPage._on_xx_checked(
             self, (10, "xx-demo 0.1.9 \u2192 0.2.0\n"))
         assert row.title_label.text == "XX apps: 1 update"
-        assert row.subtitle_label.text == "xx-demo"
+        assert row.subtitle_label.text == "demo"
 
     def test_xx_checked_unknown(self):
         settings_page, self, _statuses, row = _page_self()
