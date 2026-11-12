@@ -27,6 +27,7 @@ from config import (
     ShellConfig,
     ThemePreset,
     THEME_PRESETS,
+    is_dark_color,
 )
 from gesture_config import GestureConfig
 
@@ -404,7 +405,6 @@ def _xx_render(config: ShellConfig, preset: ThemePreset) -> str:
     """Shared design-system sheet for a resolved preset (pure)."""
     from xx_ui import css as _xx_css
     from xx_ui import theme as _xx_theme
-    red, green, blue = (int(preset.background[i:i + 2], 16) for i in (1, 3, 5))
     return _xx_css.render(_xx_theme.Theme(
         key=preset.key,
         background=preset.background,
@@ -416,7 +416,7 @@ def _xx_render(config: ShellConfig, preset: ThemePreset) -> str:
         accent=preset.accent,
         font_family=config.font_family,
         scale=config.text_size_scale,
-        dark=(0.299 * red + 0.587 * green + 0.114 * blue) / 255 < 0.5,
+        dark=is_dark_color(preset.background),
     ))
 
 
@@ -456,13 +456,8 @@ def _dark_preset_for(config: ShellConfig) -> ThemePreset:
     """The user's dark preset: the current theme when it is dark,
     amoled otherwise (light themes cannot be forced dark)."""
     current = resolve_theme(config)
-    try:
-        red, green, blue = (int(current.background[i:i + 2], 16)
-                            for i in (1, 3, 5))
-        dark = (0.299 * red + 0.587 * green + 0.114 * blue) / 255 < 0.5
-    except (TypeError, ValueError):
-        dark = True
-    return current if dark else THEME_PRESETS['amoled']
+    return (current if is_dark_color(current.background)
+            else THEME_PRESETS['amoled'])
 
 
 def resolve_appearance_preset(config: ShellConfig) -> ThemePreset:
@@ -2382,10 +2377,7 @@ class ShellWindow(Adw.ApplicationWindow):
             if not self.config.set_custom_background(text):
                 self._show_status('Use a hex color like #3a2a10.')
                 return
-            channel = text.lstrip('#')
-            red, green, blue = (int(channel[i:i + 2], 16) for i in (0, 2, 4))
-            self.config.set_prefer_dark(
-                (0.299 * red + 0.587 * green + 0.114 * blue) / 255 < 0.5)
+            self.config.set_prefer_dark(is_dark_color(text))
             self._refresh_theme_buttons()
             self._apply_theme()
             self._retheme_surfaces()
@@ -2397,11 +2389,7 @@ class ShellWindow(Adw.ApplicationWindow):
         self.config.set_theme(key)
         preset = THEME_PRESETS.get(key)
         if preset is not None:
-            bg = preset.background.lstrip('#')
-            if len(bg) == 6:
-                r, g, b = (int(bg[i:i + 2], 16) for i in (0, 2, 4))
-                luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-                self.config.set_prefer_dark(luminance < 0.5)
+            self.config.set_prefer_dark(is_dark_color(preset.background))
         self._refresh_theme_buttons()
         self._apply_theme()
         self._retheme_surfaces()
@@ -2513,9 +2501,7 @@ class ShellWindow(Adw.ApplicationWindow):
                  else resolve_appearance_preset(self.config))
         style_manager = Adw.StyleManager.get_default()
         if preset is not None:
-            red, green, blue = (int(theme.background[i:i + 2], 16)
-                                for i in (1, 3, 5))
-            dark = (0.299 * red + 0.587 * green + 0.114 * blue) / 255 < 0.5
+            dark = is_dark_color(theme.background)
         else:
             dark = effective_dark(self.config)
         if dark:

@@ -60,14 +60,9 @@ _CSS_ATTRS = (
 
 
 def _luminance(color: str) -> float:
-    """Relative luminance of a #rrggbb string, 0.0 on garbage."""
-    try:
-        red = int(color[1:3], 16)
-        green = int(color[3:5], 16)
-        blue = int(color[5:7], 16)
-    except (TypeError, ValueError, IndexError):
-        return 0.0
-    return (0.299 * red + 0.587 * green + 0.114 * blue) / 255
+    """Luminance of a #rrggbb string (xx_ui's rule), 0.0 on garbage."""
+    from config import luminance
+    return luminance(color)
 
 
 def is_dark(preset) -> bool:

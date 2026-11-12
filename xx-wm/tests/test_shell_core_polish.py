@@ -193,3 +193,20 @@ class TestNoUnusedShellCss:
             root / 'window.py').read_text(encoding='utf-8')
         for name in ('.eyebrow', '.nav-button', '.app-subtitle'):
             assert name not in sheets, name
+
+
+class TestOneLuminanceRule:
+    """The light/dark rule lives once (common/xx_ui); the shell reuses it."""
+
+    def test_no_inline_copies(self):
+        root = Path(__file__).parent.parent / 'launcher' / 'src'
+        for name in ('window.py', 'desktop_theme.py'):
+            text = (root / name).read_text(encoding='utf-8')
+            assert '0.587' not in text, name
+
+    def test_is_dark_color(self):
+        import config
+        assert config.is_dark_color('#000000') is True
+        assert config.is_dark_color('F3EEE2') is False
+        assert config.is_dark_color('#0d0b14') is True
+        assert config.is_dark_color('garbage') is True

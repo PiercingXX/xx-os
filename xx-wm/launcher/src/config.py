@@ -33,7 +33,15 @@ ThemePreset = _theme.ThemePreset
 THEME_PRESETS = _theme.THEME_PRESETS
 FONT_FAMILIES = _theme.FONT_FAMILIES
 _derive_shades = _theme._derive_shades
+luminance = _theme._luminance
 del _theme, _xx_ui_theme
+
+
+def is_dark_color(color: str) -> bool:
+    """The one light/dark rule for a #rrggbb color (xx_ui's luminance);
+    a bare rrggbb is accepted, garbage reads as dark."""
+    text = color or ''
+    return luminance(text if text.startswith('#') else '#' + text) < 0.5
 
 # Semantic colors that must not track the theme (universal meanings).
 DANGER_RED = '#ff6b6b'
