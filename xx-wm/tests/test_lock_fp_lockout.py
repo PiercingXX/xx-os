@@ -214,3 +214,15 @@ class TestClockTick:
         lock.visible = False
         assert lock._tick_clock() is False
         assert lock._clock_src is None
+
+
+# ---------------------------------------------------------------- PIN buffer
+
+class TestUnlockWipesPin:
+    def test_unlock_clears_buffer_and_dots(self, glib, threads):
+        lock = _lock()
+        lock._pin = '1234'
+        lock.dots_label.set_text('●●●●')
+        lock._unlock()
+        assert lock._pin == ''
+        assert lock.dots_label.text == ''

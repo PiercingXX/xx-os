@@ -1636,6 +1636,7 @@ class LockScreen(Gtk.Window):
             GLib.source_remove(self._lockout_src)
             self._lockout_src = None
         LockScreen._stop_clock_tick(self)
+        LockScreen._wipe_pin(self)
         open_shade = self._open_shade_after_unlock
         self._open_shade_after_unlock = False
         self._on_unlock()
@@ -1649,6 +1650,13 @@ class LockScreen(Gtk.Window):
             sim_pin.on_shell_unlocked()
         except Exception:
             pass
+
+    def _wipe_pin(self) -> None:
+        self._pin = ''
+        for name in ('dots_label', 'error_label'):
+            label = getattr(self, name, None)
+            if label is not None:
+                label.set_text('')
 
     # ------------------------------------------------------------------
     # Lockout timer
