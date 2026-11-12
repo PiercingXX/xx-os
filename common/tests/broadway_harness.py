@@ -1,7 +1,7 @@
 """Spawn a private gtk4-broadwayd and run a driver script against it.
 
 Shared by the Broadway tests; skips cleanly when the daemon binary is
-missing or no display is free.
+missing.
 """
 
 import json
@@ -31,12 +31,18 @@ def run_driver(name: str, home: Path, timeout: int = 60):
     """Run tests/<name> under a private broadway display."""
     if shutil.which('gtk4-broadwayd') is None:
         pytest.skip('gtk4-broadwayd is missing')
+    # The driver gets its own HOME, and without XDG_RUNTIME_DIR (no login
+    # session, as in CI) GTK would look for the socket under $HOME/.cache:
+    # daemon and driver share a private runtime dir instead.
+    run_dir = home.parent / 'broadway-run'
+    run_dir.mkdir(mode=0o700, exist_ok=True)
     try:
-        proc, display = broadway_display.start()
-    except RuntimeError:
-        pytest.skip('no free broadway display')
+        proc, display = broadway_display.start(run_dir=str(run_dir))
+    except RuntimeError as exc:
+        pytest.fail(f'gtk4-broadwayd did not come up: {exc}')
     try:
         env = dict(os.environ)
+        env['XDG_RUNTIME_DIR'] = str(run_dir)
         env['GDK_BACKEND'] = 'broadway'
         env['BROADWAY_DISPLAY'] = display
         env['GSK_RENDERER'] = 'cairo'
