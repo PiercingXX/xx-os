@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: PiercingXX <155384428+PiercingXX@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 09:20:54 -0500
+Subject: [PATCH] TextInput: send enter to a text input created by the focused
+ client
+
+InputRelay.focus() sends zwp_text_input_v3.enter only when keyboard
+focus changes or an input method appears. A client that creates its
+text input while it already has focus never receives enter, so it can
+never enable the text input and the input method is never activated.
+GTK4 creates its text input on the first frame that shows a text field,
+which is often after the window was focused: a field that first appears
+on a later page gets no on-screen keyboard until focus leaves the app
+and comes back.
+
+On a new text input, send enter if the seat's focused surface belongs
+to the same client (labwc does the same in handle_new_text_input).
+---
+ river/TextInput.zig | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/river/TextInput.zig b/river/TextInput.zig
+index 3a73936..56776cd 100644
+--- a/river/TextInput.zig
++++ b/river/TextInput.zig
+@@ -42,6 +42,18 @@ pub fn create(wlr_text_input: *wlr.TextInputV3) !void {
+     wlr_text_input.events.commit.add(&text_input.commit);
+     wlr_text_input.events.disable.add(&text_input.disable);
+     wlr_text_input.events.destroy.add(&text_input.destroy);
++
++    // A client may create its text input after it already has keyboard
++    // focus (GTK4 does so on the first frame that shows a text field).
++    // InputRelay.focus() only sends enter when focus changes, so send it
++    // here too or the text input can never be enabled.
++    if (seat.relay.input_method != null) {
++        if (seat.focused.surface()) |surface| {
++            if (surface.resource.getClient() == wlr_text_input.resource.getClient()) {
++                wlr_text_input.sendEnter(surface);
++            }
++        }
++    }
+ }
+ 
+ fn handleEnable(listener: *wl.Listener(void)) void {

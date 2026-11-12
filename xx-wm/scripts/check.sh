@@ -103,7 +103,8 @@ if ! skipped shellcheck; then
     else
         missing shellcheck "Install from the distro (pacman -S shellcheck) or .venv/bin/pip install shellcheck-py"
     fi
-    for f in scripts/*.sh devices/*/*.sh tools/*.sh wm/dev/*.sh launcher/data/*.in; do
+    for f in scripts/*.sh devices/*/*.sh tools/*.sh wm/dev/*.sh wm/river/*.sh \
+             wm/river/session/* launcher/data/*.in; do
         [ -f "$f" ] || continue
         first=$(head -1 "$f")
         case "$first" in

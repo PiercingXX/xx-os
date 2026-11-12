@@ -76,17 +76,53 @@ globals a nested session advertises:
   one with non-exclusive focus keeps it until a window is tapped or another
   window takes focus.
 
-**Known river gap.** river sends `zwp_text_input_v3.enter` only when keyboard
-focus changes or an input method appears, never to a text input created
-while its client already has focus. GTK4 creates its text input on the
-first frame that has a text field, after river has focused the new window,
-so a tap on the field never shows the keyboard. xxwm works around it by
-taking focus off each new window once, 300 ms after its first frame, and
-giving it back (moving focus closes popups, so only once). Still broken: an
-app whose first text field appears later (a page opened after start) gets
-no keyboard until focus leaves the app and comes back. The fix belongs in
-river: on a new text input, send `enter` if the seat's focused surface
-belongs to the same client (sway does this).
+**River text-input gap.** Upstream river sends `zwp_text_input_v3.enter`
+only when keyboard focus changes or an input method appears, never to a
+text input created while its client already has focus. GTK4 creates its
+text input on the first frame that has a text field, after river has
+focused the new window, so a tap on the field never shows the keyboard.
+xxwm works around the first frame by taking focus off each new window
+once, 300 ms after its first frame, and giving it back (moving focus
+closes popups, so only once). A text field that first appears later (a
+page opened after start) needs the river patch below; on an unpatched
+river it gets no keyboard until focus leaves the app and comes back.
+
+## Patched river
+
+xx-os builds river itself (Debian has no river package) and carries its
+own patches in `river/`:
+
+- `river/build.sh` fetches river v0.5.0 (commit
+  `cc4a291b2b9375fe3d5fe5a64b6f510b463f888b`, the one Arch's river 0.5.0-1
+  builds), refuses any other commit, applies `river/patches/*.patch` in
+  name order and builds with Zig 0.16.x (`ZIG=/path/to/zig`). Zig checks
+  river's Zig dependencies against the hashes in its `build.zig.zon`.
+  `--install` copies the result to `$PREFIX` (default `/usr/local`).
+  Build dependencies on Debian forky: `libwlroots-0.20-dev`,
+  `libwayland-dev`, `wayland-protocols`, `libxkbcommon-dev`,
+  `libinput-dev`, `libevdev-dev`, `libpixman-1-dev`, `pkg-config`, `git`.
+- Zig: the official release tarball from ziglang.org, checked against
+  the sha256 in `https://ziglang.org/download/index.json` and its minisign
+  signature (key `RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U`),
+  unpacked to `/opt/zig-0.16.0`.
+- `river/install-session.sh` installs xxwm (`cargo build --release` here
+  first) and the greeter session "XX-WM (river)":
+  `xx-wm-river-session` sets up the same environment as the phoc session
+  and starts river with `xx-wm-river-init`, which sets each output's
+  scale from the device's `phoc.ini` (with `wlr-randr`), keeps xxwm
+  running and runs the `xx-wm` shell wrapper; when the shell ends the
+  session, river stops. Logs: `~/.local/share/xx-wm/river.log` and
+  `xxwm.log`. The phoc session and Phosh are left as they are.
+
+Patches:
+
+- `0001-text-input-enter-for-the-focused-client.patch`: on a new text
+  input, send `enter` when the seat's focused surface belongs to the same
+  client (labwc does the same). Checked on headless river with xxwm and
+  xx-keyboard, a GTK4 window whose text field appears 2.5 s after its
+  first frame: upstream sends no `enter` and the keyboard never shows;
+  patched, the field is entered, xx-keyboard is activated and the window
+  shrinks above it. A field present from the first frame works on both.
 
 ## Control socket
 
