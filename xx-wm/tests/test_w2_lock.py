@@ -212,6 +212,15 @@ class TestBlankDrivenLock:
         cb()
         assert locked == []
 
+    def test_blank_and_wake_reach_the_lock_screen(self):
+        seen = []
+        shell = _shell_ns(_lock_screen=types.SimpleNamespace(
+            on_blank_changed=seen.append))
+        shell._show_lock_screen = lambda: None
+        window.ShellWindow.on_blank_changed(shell, True)
+        window.ShellWindow.on_blank_changed(shell, False)
+        assert seen == [True, False]
+
     def test_resync_applies_new_timeout_while_blanked(self):
         shell = _shell_ns()
         shell.config = _config_with(auto_lock_timeout=120)

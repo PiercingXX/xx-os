@@ -653,7 +653,6 @@ class LockScreen(Gtk.Window):
         self._refresh_clock()
         self._resume_lockout_state()
         self.refresh_fp_state()
-        GLib.timeout_add_seconds(1, self._tick_clock)
         self._verifying = False
         self._mapped_reported = False
         # phoc shell mode: the shield lowers only once this surface is up.
@@ -1636,6 +1635,7 @@ class LockScreen(Gtk.Window):
         if self._lockout_src is not None:
             GLib.source_remove(self._lockout_src)
             self._lockout_src = None
+        LockScreen._stop_clock_tick(self)
         open_shade = self._open_shade_after_unlock
         self._open_shade_after_unlock = False
         self._on_unlock()
@@ -1723,6 +1723,8 @@ class LockScreen(Gtk.Window):
         fingerprint probe (hardware can appear while the shell runs) — the
         probe completion auto-starts verification on enrolled devices."""
         self._fit_keypad_to_screen()
+        if not LockScreen._screen_blanked(self):
+            LockScreen._start_clock_tick(self)
         self.refresh_fp_state()
 
     _fp_usable: bool | None = None
@@ -1780,6 +1782,42 @@ class LockScreen(Gtk.Window):
             format_clock(now, resolve_24h(self._config)))
         self.date_label.set_text(now.strftime('%A, %d %b').replace(' 0', ' '))
 
-    def _tick_clock(self) -> bool:
+    _clock_src: int | None = None
+
+    def _screen_blanked(self) -> bool:
+        """The display manager's blank state (the shell app owns it)."""
+        try:
+            app = self.get_application()
+        except Exception:
+            return False
+        mgr = getattr(app, '_display_mgr', None)
+        return bool(getattr(mgr, 'blanked', False))
+
+    def on_blank_changed(self, blanked: bool) -> None:
+        """Shell callback for every blank/wake: the clock tick runs only
+        while the lock is visible on a lit screen."""
+        if blanked:
+            LockScreen._stop_clock_tick(self)
+            return
+        if not self.get_visible():
+            return
+        LockScreen._start_clock_tick(self)
+
+    def _start_clock_tick(self) -> None:
+        if getattr(self, '_clock_src', None) is not None:
+            return
         self._refresh_clock()
-        return True
+        self._clock_src = GLib.timeout_add_seconds(1, self._tick_clock)
+
+    def _stop_clock_tick(self) -> None:
+        src = getattr(self, '_clock_src', None)
+        self._clock_src = None
+        if src is not None:
+            GLib.source_remove(src)
+
+    def _tick_clock(self) -> bool:
+        if not self.get_visible() or LockScreen._screen_blanked(self):
+            self._clock_src = None
+            return GLib.SOURCE_REMOVE
+        self._refresh_clock()
+        return GLib.SOURCE_CONTINUE

@@ -2856,6 +2856,9 @@ class ShellWindow(Adw.ApplicationWindow):
         self._cancel_pending_lock()
         if blanked:
             self._schedule_blank_lock()
+        lock = getattr(self, '_lock_screen', None)
+        if lock is not None:
+            lock.on_blank_changed(self._blanked)
 
     def _resync_blank_lock(self) -> None:
         """Re-evaluate the blank-driven lock after a config change: a new
