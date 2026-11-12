@@ -60,17 +60,21 @@ def _run_bg(work, on_done) -> None:
 
 # ------------------------------------------------------------ owner lookup
 
-def resolve_owner_for_entry(entry) -> dict:
+def _desktop_path(entry) -> str | None:
+    try:
+        return entry.desktop_app.get_filename()
+    except Exception:
+        return None
+
+
+def resolve_owner_for_entry(entry, dpkg_owners: dict | None = None) -> dict:
     """(Blocking: call on a worker.) Who provides ``entry``'s desktop
     file: ``{'flatpak': app_id}``, ``{'owner': pkg, 'backend': backend}``
-    or ``{'owner': None, ...}`` with the reason in ``note``."""
+    or ``{'owner': None, ...}`` with the reason in ``note``.
+    ``dpkg_owners`` is a batch answer from resolve_dpkg_owners."""
     import system_settings
 
-    filename = None
-    try:
-        filename = entry.desktop_app.get_filename()
-    except Exception:
-        filename = None
+    filename = _desktop_path(entry)
     text = None
     if filename:
         try:
@@ -93,7 +97,10 @@ def resolve_owner_for_entry(entry) -> dict:
         return {'flatpak': None, 'owner': owner, 'backend': 'pacman',
                 'path': filename}
     if backend == 'apt' and filename:
-        owner, _ = system_settings.resolve_dpkg_owner(filename)
+        if dpkg_owners is not None and filename in dpkg_owners:
+            owner = dpkg_owners[filename]
+        else:
+            owner, _ = system_settings.resolve_dpkg_owner(filename)
         return {'flatpak': None, 'owner': owner, 'backend': 'apt',
                 'path': filename}
     return {'flatpak': None, 'owner': None, 'backend': backend,
@@ -283,13 +290,25 @@ def is_removable(info) -> bool:
 def lookup_packages(entries) -> dict:
     """(Blocking: worker only.) {app_id: (subtitle, removable)} for apps
     not cached."""
+    import system_settings
+
     found = {}
-    for entry in entries:
-        app_id = getattr(entry, 'app_id', None)
-        if not app_id or app_id in _PACKAGES:
-            continue
+    todo = [entry for entry in entries
+            if getattr(entry, 'app_id', None)
+            and entry.app_id not in _PACKAGES]
+    dpkg_owners = None
+    if todo and system_settings.detect_backend() == 'apt':
+        # One dpkg -S for every app, not one process per app.
         try:
-            info = resolve_owner_for_entry(entry)
+            dpkg_owners = system_settings.resolve_dpkg_owners(
+                [_desktop_path(entry) for entry in todo])
+        except Exception:
+            dpkg_owners = None
+    for entry in todo:
+        app_id = entry.app_id
+        try:
+            info = (resolve_owner_for_entry(entry) if dpkg_owners is None
+                    else resolve_owner_for_entry(entry, dpkg_owners))
             found[app_id] = (package_subtitle(info), is_removable(info))
         except Exception:
             found[app_id] = ('', False)

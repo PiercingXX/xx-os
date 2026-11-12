@@ -383,6 +383,11 @@ class SoundSection(_Section):
         win._source_list_box = mic[1]
         return output + mic
 
+    def refresh(self, win) -> None:
+        import system_settings
+        win._run_bg(system_settings.list_audio_sinks, win._show_sinks)
+        win._run_bg(system_settings.list_audio_sources, win._show_sources)
+
 
 class BatterySection(_Section):
     key = 'battery'
@@ -1098,14 +1103,15 @@ class SettingsPage:
 
     def _build_settings_page(self):
         """The settings surface: a stack of the category menu plus one
-        subpage per category. Every section builds once, up front, so
-        live refreshes and deep links find their widgets."""
+        subpage per category. A category's sections build the first time
+        it is shown (ensure_category), not at shell start; until then
+        their live refreshes have no widgets and are skipped."""
         from gi.repository import Gtk
 
         win = self._win
-        built: dict[str, list] = {}
-        for key, _cls in registry():
-            built[key] = self._sections[key].build(win) or []
+        self._built: set[str] = set()
+        self._built_categories: set[str] = set()
+        win._settings_section_titles = {}
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         root.add_css_class('xx-settings')
@@ -1118,13 +1124,9 @@ class SettingsPage:
         self._scrolls: dict = {}
         stack.add_named(self._page('menu', 'Settings', self._build_menu()),
                         'menu')
-        for key, title, sections in SETTINGS_CATEGORIES:
-            body = [widget for name in sections
-                    for widget in built.get(name, [])]
-            stack.add_named(self._page(key, title, body), 'cat-' + key)
         root.append(stack)
 
-        # Refresh the quick sections whenever the settings page is opened
+        # Refresh what is on screen whenever the settings page is opened
         win.stack.connect(
             'notify::visible-child-name',
             lambda stack, _p: win._refresh_system_sections()
@@ -1133,10 +1135,46 @@ class SettingsPage:
 
         win._settings_stack = stack
         win._settings_scroll = self._scrolls['menu']
-        win._settings_section_titles = {
-            key: widgets[0] for key, widgets in built.items() if widgets}
-        self._refresh_menu()
+        # Screen-time limits are enforced with the page never opened.
+        screen_time = self._sections.get('screentime')
+        start_tick = getattr(screen_time, '_start_limit_tick', None)
+        if callable(start_tick):
+            start_tick(win)
         return root
+
+    def is_built(self, key: str) -> bool:
+        return key in getattr(self, '_built', ())
+
+    def ensure_category(self, key: str | None) -> bool:
+        """Build category ``key``'s subpage once; True when it exists."""
+        if key is None:
+            return False
+        if key in getattr(self, '_built_categories', ()):
+            return True
+        stack = getattr(self._win, '_settings_stack', None)
+        if stack is None:
+            return False
+        for cat, title, sections in SETTINGS_CATEGORIES:
+            if cat != key:
+                continue
+            body = []
+            for name in sections:
+                body.extend(self._build_section(name))
+            stack.add_named(self._page(cat, title, body), 'cat-' + cat)
+            self._built_categories.add(cat)
+            return True
+        return False
+
+    def _build_section(self, name: str) -> list:
+        win = self._win
+        section = self._sections.get(name)
+        if section is None:
+            return []
+        widgets = section.build(win) or []
+        self._built.add(name)
+        if widgets:
+            win._settings_section_titles[name] = widgets[0]
+        return widgets
 
     def _page(self, key: str, title: str, body_widgets: list):
         """One settings screen: a fixed back bar (its small title fades in
@@ -1198,6 +1236,8 @@ class SettingsPage:
         """Show one category subpage (None: the menu) and refresh it."""
         win = self._win
         stack = getattr(win, '_settings_stack', None)
+        if key is not None:
+            self.ensure_category(key)
         if stack is not None:
             stack.set_visible_child_name('menu' if key is None
                                          else 'cat-' + key)
@@ -1319,10 +1359,10 @@ class SettingsPage:
 
     def _refresh_gesture_labels(self) -> None:
         win = self._win
-        for key, label in win._gesture_binding_labels.items():
+        for key, label in getattr(win, '_gesture_binding_labels', {}).items():
             label.set_text(self._long_press_text() if key == 'long_press_home'
                            else win._gesture_binding_text(key))
-        for key, label in win._system_gesture_labels.items():
+        for key, label in getattr(win, '_system_gesture_labels', {}).items():
             label.set_text(self._system_gesture_text(key))
 
     def _system_gesture_text(self, key: str) -> str:
@@ -1538,24 +1578,23 @@ class SettingsPage:
         return _section_placeholder(text)
 
     def _refresh_system_sections(self) -> None:
+        """Settings was opened: refresh only what is on screen, the menu
+        summaries or the one category subpage showing (show_category
+        refreshes a category as it is entered)."""
         win = self._win
         win._refresh_xxdb_section()
-        import system_settings
-        win._run_bg(system_settings.list_audio_sinks, win._show_sinks)
-        win._run_bg(system_settings.list_audio_sources, win._show_sources)
-        win._run_bg(system_settings.list_bt_devices, win._show_bt_devices)
-        for key in ('system', 'apps', 'battery', 'about', 'display',
-                    'launcher', 'standby', 'permissions', 'smart_lock',
-                    'recording', 'services', 'firewall'):
-            section = self._sections.get(key)
-            if section is not None:
-                try:
-                    section.refresh(win)
-                except Exception:
-                    pass
+        stack = getattr(win, '_settings_stack', None)
+        try:
+            visible = stack.get_visible_child_name() if stack else 'menu'
+        except Exception:
+            visible = 'menu'
+        if visible in (None, 'menu'):
+            self._refresh_menu()
 
     def _show_battery(self, status: str | None) -> None:
-        self._win._battery_label.set_text(status or 'No battery detected.')
+        label = getattr(self._win, '_battery_label', None)
+        if label is not None:
+            label.set_text(status or 'No battery detected.')
 
     def _show_sinks(self, sinks) -> None:
         self._show_audio(getattr(self._win, '_sink_list_box', None), sinks,
@@ -2651,7 +2690,7 @@ class SettingsPage:
     def _refresh_apps_section(self) -> None:
         try:
             section = self._sections.get('apps')
-            if section is not None:
+            if section is not None and self.is_built('apps'):
                 section.refresh(self._win)
         except Exception:
             pass

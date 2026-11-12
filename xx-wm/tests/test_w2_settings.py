@@ -522,6 +522,107 @@ def _walk(widget):
         yield from _walk(direct)
 
 
+def _spy_sections(monkeypatch, settings_page):
+    calls = []
+    for key, cls in settings_page.registry():
+        real_build, real_refresh = cls.build, cls.refresh
+
+        def _build(self, win, _k=key, _real=real_build):
+            calls.append(('build', _k))
+            return _real(self, win)
+
+        def _refresh(self, win, _k=key, _real=real_refresh):
+            calls.append(('refresh', _k))
+            return None
+        monkeypatch.setattr(cls, 'build', _build)
+        monkeypatch.setattr(cls, 'refresh', _refresh)
+    return calls
+
+
+class TestLazySettings:
+    def test_shell_start_builds_no_section(self, window, monkeypatch):
+        import settings_page
+        calls = _spy_sections(monkeypatch, settings_page)
+        w, _root, _sp = _built_page(window)
+        assert calls == []
+        assert w._settings_section_titles == {}
+
+    def test_a_category_builds_its_sections_once(self, window, monkeypatch):
+        import settings_page
+        calls = _spy_sections(monkeypatch, settings_page)
+        w, _root, _sp = _built_page(window)
+        w._settings_page.show_category('network')
+        w._settings_page.show_category(None)
+        w._settings_page.show_category('network')
+        builds = [k for op, k in calls if op == 'build']
+        assert builds == ['wifi', 'mobile']
+        refreshes = [k for op, k in calls if op == 'refresh']
+        assert refreshes == ['wifi', 'mobile', 'wifi', 'mobile']
+
+    def test_opening_settings_refreshes_only_the_menu(self, window,
+                                                      monkeypatch):
+        import settings_page
+        calls = _spy_sections(monkeypatch, settings_page)
+        w, _root, _sp = _built_page(window)
+        menus = []
+        monkeypatch.setattr(w._settings_page, '_refresh_menu',
+                            lambda: menus.append(1))
+        w._refresh_xxdb_section = lambda: None
+        w._settings_page._refresh_system_sections()
+        assert calls == [] and menus == [1]
+
+    def test_screen_time_limits_start_without_the_page(self, window,
+                                                       monkeypatch):
+        import settings_screentime
+        started = []
+        monkeypatch.setattr(
+            settings_screentime.ScreenTimeSection, '_start_limit_tick',
+            lambda self, win: started.append(win))
+        w, _root, _sp = _built_page(window)
+        assert started == [w]
+
+    def test_late_refreshes_of_unbuilt_sections_are_no_ops(self, window):
+        w, _root, _sp = _built_page(window)
+        w._settings_page._show_battery('80%')
+        w._settings_page._refresh_gesture_labels()
+        w._settings_page._refresh_apps_section()
+
+
+class TestDpkgBatch:
+    def test_one_dpkg_call_for_every_app(self, monkeypatch):
+        import settings_apps
+        import system_settings
+        runs = []
+
+        def _run(argv, timeout=15):
+            runs.append(argv)
+            out = '\n'.join('pkg-%s:arm64: %s' % (Path(p).name, p)
+                            for p in argv[2:] if 'owned' in p)
+            return SimpleNamespace(returncode=1, stdout=out, stderr='')
+        monkeypatch.setattr(system_settings, 'detect_backend',
+                            lambda which=None: 'apt')
+        real = getattr(system_settings, 'resolve_dpkg_owners', None)
+        if real is not None:
+            monkeypatch.setattr(system_settings, 'resolve_dpkg_owners',
+                                lambda paths: real(paths, run=_run))
+        monkeypatch.setattr(
+            system_settings, 'resolve_dpkg_owner',
+            lambda path, run=None: (runs.append(['dpkg', '-S', path]),
+                                    (None, 'apt'))[1])
+        monkeypatch.setattr(settings_apps, '_PACKAGES', {})
+        entries = []
+        for n in range(10):
+            path = '/usr/share/applications/%s-%d.desktop' % (
+                'owned' if n % 2 else 'loose', n)
+            entries.append(SimpleNamespace(
+                app_id='app%d.desktop' % n,
+                desktop_app=SimpleNamespace(get_filename=lambda p=path: p)))
+        found = settings_apps.lookup_packages(entries)
+        assert len(runs) == 1 and runs[0][:2] == ['dpkg', '-S']
+        assert found['app1.desktop'][0] == 'pkg-owned-1.desktop'
+        assert found['app0.desktop'][0] == ''
+
+
 class TestSettingsMenu:
     def test_every_section_sits_in_exactly_one_category(self):
         import settings_page
@@ -539,6 +640,11 @@ class TestSettingsMenu:
         w, root, settings_page = _built_page(window)
         assert 'xx-settings' in root.classes
         pages = w._settings_stack.props['pages']
+        # Shell start builds the menu only; each subpage on first show.
+        assert list(pages) == ['menu']
+        for cat, _t, _k in settings_page.SETTINGS_CATEGORIES:
+            w._settings_page.show_category(cat)
+            w._settings_page.show_category(cat)
         assert list(pages) == ['menu'] + [
             'cat-' + cat for cat, _t, _k in settings_page.SETTINGS_CATEGORIES]
         menu_titles = [node.kwargs.get('label') for node in
@@ -673,6 +779,7 @@ class TestSettingsListRows:
 class TestShellSection:
     def test_shell_note_ends_the_system_page(self, window):
         w, _root, _settings_page = _built_page(window)
+        w._settings_page.show_category('system')
         system = w._settings_stack.props['pages']['cat-system']
         notes = [n for n in _walk(system) if 'xx-set-footnote' in n.classes]
         assert '~/.config/xx-wm/' in notes[-1].kwargs.get('label')

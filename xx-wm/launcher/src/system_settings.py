@@ -1513,6 +1513,29 @@ def resolve_dpkg_owner(desktop_path: str,
     return None, 'apt'
 
 
+def resolve_dpkg_owners(desktop_paths, run: _RunFn = _run
+                        ) -> dict[str, str | None]:
+    """{path: owner} from ONE `dpkg -S` for every path (unowned paths:
+    None). dpkg prints the owned ones and exits 1 if any is unowned."""
+    owners: dict[str, str | None] = {
+        path: None for path in dict.fromkeys(desktop_paths) if path}
+    if not owners:
+        return owners
+    try:
+        result = run(['dpkg', '-S', *owners], timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return owners
+    for line in (result.stdout or '').splitlines():
+        names, sep, path = line.partition(': ')
+        path = path.strip()
+        if not sep or path not in owners or owners[path] is not None:
+            continue
+        name = names.split(',')[0].split(':')[0].strip()
+        if name:
+            owners[path] = name
+    return owners
+
+
 def parse_flatpak_app_id(desktop_text: str) -> str | None:
     """The `X-Flatpak` app id from a .desktop file, if it has one."""
     for line in (desktop_text or '').splitlines():
