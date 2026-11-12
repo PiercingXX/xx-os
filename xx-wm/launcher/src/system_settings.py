@@ -332,6 +332,127 @@ def connect_wifi(ssid: str, password: str | None = None,
             os.unlink(passwd_path)
 
 
+# --------------------------------------------------------- Mobile data APN
+
+_NM_BUS = 'org.freedesktop.NetworkManager'
+_NM_SETTINGS_PATH = '/org/freedesktop/NetworkManager/Settings'
+_NM_SETTINGS_IFACE = 'org.freedesktop.NetworkManager.Settings'
+_NM_CONNECTION_IFACE = 'org.freedesktop.NetworkManager.Settings.Connection'
+_NM_SETTINGS_TYPE = '(a{sa{sv}})'
+# Update and AddConnection may wait on a polkit password prompt.
+_NM_WRITE_TIMEOUT_MS = 120_000
+
+
+def nm_settings_groups(value) -> dict:
+    """An ``a{sa{sv}}`` GLib.Variant as {group: {key: GLib.Variant}}.
+    The values stay typed variants, so a settings dict read from
+    NetworkManager goes back unchanged apart from the keys replaced."""
+    groups: dict = {}
+    for index in range(value.n_children()):
+        entry = value.get_child_value(index)
+        props = entry.get_child_value(1)
+        inner = {}
+        for prop_index in range(props.n_children()):
+            pair = props.get_child_value(prop_index)
+            inner[pair.get_child_value(0).get_string()] = (
+                pair.get_child_value(1).get_variant())
+        groups[entry.get_child_value(0).get_string()] = inner
+    return groups
+
+
+def gsm_apn_settings(current: dict | None, apn: str, user: str, pwd: str,
+                     new_uuid: str = '') -> dict:
+    """NetworkManager settings for a gsm profile with this APN. With
+    ``current`` (from :func:`nm_settings_groups`, secrets merged in) every
+    other setting is kept; without it a new autoconnecting profile is
+    built. Empty user or password removes that key."""
+    from gi.repository import GLib
+    settings = {group: dict(props) for group, props in (current or {}).items()}
+    if current is None:
+        settings['connection'] = {
+            'id': GLib.Variant('s', 'Mobile data'),
+            'type': GLib.Variant('s', 'gsm'),
+            'uuid': GLib.Variant('s', new_uuid),
+            'autoconnect': GLib.Variant('b', True),
+        }
+        settings['ipv4'] = {'method': GLib.Variant('s', 'auto')}
+        settings['ipv6'] = {'method': GLib.Variant('s', 'auto')}
+    gsm = settings.setdefault('gsm', {})
+    gsm['apn'] = GLib.Variant('s', apn)
+    for key, value in (('username', user), ('password', pwd)):
+        if value:
+            gsm[key] = GLib.Variant('s', value)
+        else:
+            gsm.pop(key, None)
+    if pwd:
+        gsm['password-flags'] = GLib.Variant('u', 0)
+    return settings
+
+
+def _nm_call(bus, path: str, iface: str, method: str, params,
+             reply: str | None, timeout: int = 5_000):
+    from gi.repository import Gio, GLib
+    return bus.call_sync(
+        _NM_BUS, path, iface, method, params,
+        GLib.VariantType.new(reply) if reply else None,
+        Gio.DBusCallFlags.ALLOW_INTERACTIVE_AUTHORIZATION, timeout, None)
+
+
+def _gsm_profile(bus) -> tuple:
+    """(object path, settings groups) of the first gsm profile, or
+    (None, None)."""
+    paths = _nm_call(bus, _NM_SETTINGS_PATH, _NM_SETTINGS_IFACE,
+                     'ListConnections', None, '(ao)').unpack()[0]
+    for path in paths:
+        reply = _nm_call(bus, path, _NM_CONNECTION_IFACE, 'GetSettings',
+                         None, _NM_SETTINGS_TYPE)
+        groups = nm_settings_groups(reply.get_child_value(0))
+        ctype = groups.get('connection', {}).get('type')
+        if ctype is not None and ctype.get_string() == 'gsm':
+            return path, groups
+    return None, None
+
+
+def apply_apn(apn: str, user: str, pwd: str, bus=None) -> tuple[bool, str]:
+    """Write the APN into the phone's gsm profile, creating one when
+    there is none. Worker thread only. The password travels inside the
+    D-Bus message, never on a command line where /proc/<pid>/cmdline
+    would show it to every local user."""
+    try:
+        from gi.repository import Gio, GLib
+        if bus is None:
+            bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        path, current = _gsm_profile(bus)
+        if path is None:
+            import uuid
+            settings = gsm_apn_settings(None, apn, user, pwd,
+                                        str(uuid.uuid4()))
+            _nm_call(bus, _NM_SETTINGS_PATH, _NM_SETTINGS_IFACE,
+                     'AddConnection',
+                     GLib.Variant(_NM_SETTINGS_TYPE, (settings,)), '(o)',
+                     _NM_WRITE_TIMEOUT_MS)
+        else:
+            try:
+                secrets = _nm_call(bus, path, _NM_CONNECTION_IFACE,
+                                   'GetSecrets', GLib.Variant('(s)', ('gsm',)),
+                                   _NM_SETTINGS_TYPE)
+                for group, props in nm_settings_groups(
+                        secrets.get_child_value(0)).items():
+                    current.setdefault(group, {}).update(props)
+            except Exception:
+                pass
+            settings = gsm_apn_settings(current, apn, user, pwd)
+            _nm_call(bus, path, _NM_CONNECTION_IFACE, 'Update',
+                     GLib.Variant(_NM_SETTINGS_TYPE, (settings,)), None,
+                     _NM_WRITE_TIMEOUT_MS)
+    except Exception as err:
+        import re
+        detail = str(getattr(err, 'message', '') or err).strip()
+        detail = re.sub(r'^GDBus\.Error:[\w.-]+:\s*', '', detail)
+        return False, f'Could not save APN: {detail or type(err).__name__}'
+    return True, 'APN saved.'
+
+
 # ------------------------------------------------------------------ Sound
 
 @dataclass(frozen=True)

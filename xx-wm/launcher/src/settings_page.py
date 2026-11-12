@@ -2065,7 +2065,8 @@ class SettingsPage:
                     win._refresh_bluetooth())))
 
     def _on_apn_save(self, values: dict) -> None:
-        """Commit the APN sheet: config first, then nmcli off-thread."""
+        """Commit the APN sheet: config first, then NetworkManager
+        off-thread; the status line reports what NetworkManager said."""
         win = self._win
         apn = str(values.get('apn', '')).strip()
         user = str(values.get('user', '')).strip()
@@ -2077,7 +2078,6 @@ class SettingsPage:
         win._apply_apn(apn, user, pwd)
         ui.set_subtitle(getattr(win, '_apn_row', None),
                         apn_summary(win.config))
-        win._show_status('APN saved.')
 
     @staticmethod
     def _gsm_connection_name() -> str:
@@ -2103,25 +2103,23 @@ class SettingsPage:
         win = self._win
         if not apn:
             return
-        # The gsm lookup shells nmcli (up to 5 s); the modify itself stays a
-        # fire-and-forget Popen. Both run off the GTK thread.
-        args = (apn, user, pwd)
+        win._show_status('Saving APN…')
 
-        def _work() -> None:
+        def _work():
+            import system_settings
+            return system_settings.apply_apn(apn, user, pwd)
+
+        def _done(result) -> None:
             try:
-                import subprocess
-                conn = win._gsm_connection_name()
-                subprocess.Popen(
-                    ['nmcli', 'connection', 'modify', conn,
-                     'gsm.apn', args[0], 'gsm.username', args[1],
-                     'gsm.password', args[2]],
-                    close_fds=True,
-                )
-            except Exception as error:
+                ok, message = result
+            except (TypeError, ValueError):
+                ok, message = False, 'Could not save APN.'
+            if not ok:
                 from shell_log import get_logger
-                get_logger('window').warning('APN update failed: %s', error)
+                get_logger('window').warning('%s', message)
+            win._show_status(message)
 
-        win._run_bg(_work, lambda _result: None)
+        win._run_bg(_work, _done)
 
     def _update_status_text(self, text: str) -> None:
         win = self._win

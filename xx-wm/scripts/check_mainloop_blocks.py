@@ -164,6 +164,8 @@ ALLOW = {
     # main-thread callers of the helpers would evade this site-based check.
     ('system_settings.py', '_run'):
         'sole subprocess chokepoint; invoked via _run_bg workers only.',
+    ('system_settings.py', '_nm_call'):
+        'APN apply worker (settings_page._apply_apn _work) only.',
     ('system_settings.py', 'battery_status'):
         'settings _run_bg worker.',
     ('system_settings.py', 'list_bt_devices'):
