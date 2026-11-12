@@ -100,6 +100,13 @@ while child is not None:
         child.set_reveal_child(True)
     child = child.get_next_sibling()
 EOF
+nav edit <<'EOF'
+win.unfullscreen()
+win.set_default_size(360, 720)
+win.set_size_request(360, 720)
+win.go_home()
+win._home_launcher.set_edit_mode(True)
+EOF
 nav drawer <<'EOF'
 win.unfullscreen()
 win.set_default_size(360, 720)
@@ -182,7 +189,7 @@ wiz_nav() {
     } > "$f"
 }
 
-SHELL_SHOTS="home folder drawer drawer_search lock menu rename"
+SHELL_SHOTS="home folder edit drawer drawer_search lock menu rename"
 run_one() {
     # $1 = home, $2 = out png, $3 = nav file
     _home=$1 _out=$2 _nav=$3

@@ -103,6 +103,7 @@ class HomePage:
         bot_pane.set_hexpand(True)
         bot_pane.set_vexpand(True)
         bot_pane.append(launcher_scroll)
+        bot_pane.append(win._home_launcher.edit_footer)
 
         # Background gestures dispatch gestures.json: double-tap runs
         # double_tap_home, long-press runs long_press_home (edit = slot

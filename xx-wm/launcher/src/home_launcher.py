@@ -216,6 +216,14 @@ class HomeLauncher(Gtk.Box):
         self._on_status = on_status_fn or (lambda message: None)
         self._open_folder_index: int | None = None
         self.edit_mode = False
+        # Edit-mode actions, packed by the home page BELOW the slot list's
+        # scroller: on a 640-720 px screen the rows scroll and these stay
+        # on screen.
+        self.edit_footer = Gtk.Grid()
+        self.edit_footer.set_column_homogeneous(True)
+        self.edit_footer.set_hexpand(True)
+        self.edit_footer.add_css_class('home-edit-footer')
+        self.edit_footer.set_visible(False)
         self._build()
         # Swipe gestures have no screen-reader equivalent; the home list
         # itself carries what opens the drawer and the launcher settings.
@@ -253,6 +261,14 @@ class HomeLauncher(Gtk.Box):
             self.remove(child)
             child = nxt
 
+        footer = self.edit_footer
+        child = footer.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            footer.remove(child)
+            child = nxt
+        footer.set_visible(self.edit_mode)
+
         slots = self._get_slots()
         if self.edit_mode:
             self._build_edit_rows(slots)
@@ -281,12 +297,25 @@ class HomeLauncher(Gtk.Box):
     def _build_edit_rows(self, slots: list[dict]) -> None:
         for idx, slot in enumerate(slots):
             self.append(self._make_edit_row(slot, idx, len(slots)))
-        for action, label in self._edit_footer_actions(len(slots)):
+        from gi.repository import Pango
+        actions = self._edit_footer_actions(len(slots))
+        for pos, (action, label) in enumerate(actions):
             btn = Gtk.Button(label=label)
             btn.add_css_class('home-edit-action')
             btn.set_hexpand(True)
+            child = btn.get_child()
+            if isinstance(child, Gtk.Label):
+                # Two to a line: at large text a label wraps inside its
+                # half rather than widening the page past the screen.
+                child.set_wrap(True)
+                child.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                child.set_justify(Gtk.Justification.CENTER)
+                child.set_width_chars(1)
+                child.set_max_width_chars(14)
             btn.connect('clicked', lambda _b, a=action, w=btn: self._on_edit_action(a, w))
-            self.append(btn)
+            # Pairs per line; an odd last action (Done) takes the whole line.
+            span = 2 if pos == len(actions) - 1 and pos % 2 == 0 else 1
+            self.edit_footer.attach(btn, pos % 2, pos // 2, span, 1)
 
     @staticmethod
     def _edit_footer_actions(slot_count: int) -> list[tuple[str, str]]:
