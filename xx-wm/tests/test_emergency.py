@@ -69,8 +69,25 @@ def _backup():
     return backup
 
 
-BUILTIN = ('112', '911', '999', '000', '08', '110',
-           '118', '119', '100', '101', '102', '108')
+BUILTIN = ('112', '911')
+
+#: Emergency numbers in some countries and ordinary (some billable)
+#: numbers in others: never dialable from the lock screen on their own.
+REGIONAL = ('999', '000', '08', '110', '118', '119', '100', '101', '102',
+            '108')
+
+
+@pytest.fixture(autouse=True)
+def _no_host_modem(monkeypatch):
+    """No test here reaches the host's system bus: the modem list reads
+    empty unless a test hands get_modem_emergency_numbers its own bus."""
+    dialer = _dialer()
+    real = dialer.get_modem_emergency_numbers
+
+    def _modem_numbers(bus=None, *args, **kwargs):
+        return real(bus, *args, **kwargs) if bus is not None else []
+
+    monkeypatch.setattr(dialer, 'get_modem_emergency_numbers', _modem_numbers)
 
 
 class TestNormalize:
@@ -104,7 +121,14 @@ class TestIsEmergencyNumber:
         dialer = _dialer()
         assert dialer.is_emergency_number('1 1 2') is True
         assert dialer.is_emergency_number('9-1-1') is True
-        assert dialer.is_emergency_number('+999') is True
+        assert dialer.is_emergency_number('+112') is True
+
+    def test_regional_numbers_need_the_modem_list(self):
+        dialer = _dialer()
+        for number in REGIONAL:
+            assert dialer.is_emergency_number(number) is False, number
+        assert dialer.is_emergency_number('999', extra=['999']) is True
+        assert dialer.is_emergency_number('110', extra=['999']) is False
 
     def test_non_emergency_refused(self):
         dialer = _dialer()
@@ -240,6 +264,32 @@ class TestPlaceEmergencyCall:
         monkeypatch.setattr(monitor, 'voice_create_and_start',
                             lambda number, *a, **k: (True, '/c/2'))
         assert dialer.place_emergency_call('9999', extra=['9999']) == (True, '/c/2')
+
+    def test_regional_number_refused_without_modem_list(self, monkeypatch):
+        dialer = _dialer()
+        monitor = _modem_monitor()
+        calls = []
+        monkeypatch.setattr(monitor, 'voice_create_and_start',
+                            lambda number, *a, **k: calls.append(number)
+                            or (True, '/c/3'))
+        assert dialer.place_emergency_call('100') == (
+            False, dialer.EMERGENCY_REFUSAL)
+        assert calls == []
+
+    def test_stale_list_rechecked_with_the_modem_at_dial_time(
+            self, monkeypatch):
+        """The list the caller holds may be empty or old (fetched before
+        the modem registered): the modem is asked again before refusing."""
+        dialer = _dialer()
+        monitor = _modem_monitor()
+        calls = []
+        monkeypatch.setattr(dialer, 'get_modem_emergency_numbers',
+                            lambda *a, **k: ['999'])
+        monkeypatch.setattr(monitor, 'voice_create_and_start',
+                            lambda number, *a, **k: calls.append(number)
+                            or (True, '/c/4'))
+        assert dialer.place_emergency_call('999', extra=[]) == (True, '/c/4')
+        assert calls == ['999']
 
 
 class TestMedicalConfig:
@@ -561,7 +611,7 @@ class _EmgHarness:
         self._emg_contacts_box = _FakeContactsBox()
         self._medical_label = _FakeLabel()
         self._modem_emergency_extra = []
-        self._modem_emg_fetched = False
+        self._modem_emg_fetching = False
         self.lockout_label = _FakeLabel()
 
     def get_width(self):
@@ -693,19 +743,70 @@ class TestEmergencyButtonVisible:
 
 
 class TestEmergencySurface:
-    def test_open_reveals_and_fetches_modem_list_once(self, emg_lock, monkeypatch):
+    def test_open_reveals_and_refetches_modem_list(self, emg_lock, monkeypatch):
+        """The modem list is fetched on every open (it changes with the
+        network and SIM), and an empty answer never wipes a good one."""
         lock_screen = emg_lock.module
         dialer = _dialer()
+        answers = [['9999'], [], ['999']]
         fetched = []
         monkeypatch.setattr(dialer, 'get_modem_emergency_numbers',
-                            lambda *a, **k: fetched.append(1) or ['9999'])
+                            lambda *a, **k: fetched.append(1) or answers.pop(0))
         lock = emg_lock.lock
         lock_screen.LockScreen.open_emergency(lock)
         assert lock._emergency_revealer.revealed is True
         assert lock._medical_revealer.revealed is False
         assert lock._modem_emergency_extra == ['9999']
         lock_screen.LockScreen.open_emergency(lock)
-        assert fetched == [1]
+        assert lock._modem_emergency_extra == ['9999']
+        lock_screen.LockScreen.open_emergency(lock)
+        assert lock._modem_emergency_extra == ['999']
+        assert fetched == [1, 1, 1]
+        assert lock._modem_emg_fetching is False
+
+    def test_empty_first_fetch_does_not_latch(self, emg_lock, monkeypatch):
+        lock_screen = emg_lock.module
+        dialer = _dialer()
+        answers = [[], ['999']]
+        monkeypatch.setattr(dialer, 'get_modem_emergency_numbers',
+                            lambda *a, **k: answers.pop(0))
+        lock = emg_lock.lock
+        lock_screen.LockScreen.open_emergency(lock)
+        assert lock._modem_emergency_extra == []
+        lock_screen.LockScreen.open_emergency(lock)
+        assert lock._modem_emergency_extra == ['999']
+
+    def test_number_on_the_modem_list_only_dials(self, emg_lock, monkeypatch):
+        """999 is not built in; the cached list is still empty (fetched
+        before the modem registered), and the modem has it now."""
+        monitor = _modem_monitor()
+        dialer = _dialer()
+        lock_screen = emg_lock.module
+        lock = emg_lock.lock
+        placed = []
+        monkeypatch.setattr(dialer, 'get_modem_emergency_numbers',
+                            lambda *a, **k: ['999'])
+        monkeypatch.setattr(monitor, 'voice_create_and_start',
+                            lambda number, *a, **k: placed.append(number)
+                            or (True, '/c/5'))
+        lock._emg_digits = '999'
+        lock_screen.LockScreen._on_emg_call(lock, None)
+        assert placed == ['999']
+        assert lock._emg_status.text == 'Dialing…'
+
+    def test_regional_number_refused_from_the_lock(self, emg_lock, monkeypatch):
+        monitor = _modem_monitor()
+        dialer = _dialer()
+        lock_screen = emg_lock.module
+        lock = emg_lock.lock
+        placed = []
+        monkeypatch.setattr(monitor, 'voice_create_and_start',
+                            lambda number, *a, **k: placed.append(number)
+                            or (True, '/c/6'))
+        lock._emg_digits = '118'
+        lock_screen.LockScreen._on_emg_call(lock, None)
+        assert placed == []
+        assert lock._emg_status.text == dialer.EMERGENCY_REFUSAL
 
     def test_digit_entry_and_delete(self, emg_lock):
         lock_screen = emg_lock.module
@@ -765,7 +866,7 @@ class TestEmergencySurface:
         })
         fake_gtk = types.SimpleNamespace(Button=_FakeButton)
         monkeypatch.setattr(lock_screen, 'Gtk', fake_gtk)
-        lock._modem_emg_fetched = True
+        lock._modem_emg_fetching = True
         lock_screen.LockScreen.open_emergency(lock)
         assert [b.label for b in lock._emg_contacts_box.children] == [
             'Jo — +15550102222', '+15550103333']
@@ -821,7 +922,7 @@ class TestEmergencySurface:
         monkeypatch.setattr(monitor, 'voice_create_and_start',
                             lambda number, *a, **k: placed.append(number)
                             or (True, '/c/9'))
-        lock._modem_emg_fetched = True
+        lock._modem_emg_fetching = True
         lock_screen.LockScreen.open_emergency(lock)
         jo = lock._emg_contacts_box.children[0]
         emg_lock.config.set_lock_screen_medical_id(False)

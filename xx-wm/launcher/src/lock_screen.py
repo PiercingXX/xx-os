@@ -636,7 +636,7 @@ class LockScreen(Gtk.Window):
         # modem's own emergency list, merged at open time in a worker thread.
         self._emg_digits = ''
         self._modem_emergency_extra: list[str] = []
-        self._modem_emg_fetched = False
+        self._modem_emg_fetching = False
         self._start_smart_lock()
         # Now-playing card: transport only while locked (locked=True drops
         # the title tap that would raise or launch the player app), hidden
@@ -1393,8 +1393,9 @@ class LockScreen(Gtk.Window):
         self._refresh_medical_visibility()
         self._emergency_revealer.set_reveal_child(True)
         self._medical_revealer.set_reveal_child(False)
-        if not self._modem_emg_fetched:
-            self._modem_emg_fetched = True
+        # Re-read on every open: the list follows the network and SIM.
+        if not self._modem_emg_fetching:
+            self._modem_emg_fetching = True
             threading.Thread(target=self._modem_emg_thread, daemon=True,
                              name='emg-numbers').start()
 
@@ -1437,12 +1438,13 @@ class LockScreen(Gtk.Window):
         if contact and number not in {
                 n for _label, n in lock_emergency_contacts(self._config)}:
             contact = False
+        known = contact
         if not contact:
-            from dialer import EMERGENCY_REFUSAL, is_emergency_number
-            if not is_emergency_number(number, self._modem_emergency_extra):
-                self._emg_status.set_text(EMERGENCY_REFUSAL)
-                return
-        self._emg_status.set_text(f'Calling {number}…')
+            from dialer import is_emergency_number
+            known = is_emergency_number(number, self._modem_emergency_extra)
+        # A number missing from the cached list may still be on the
+        # modem's current one: the worker asks it before refusing.
+        self._emg_status.set_text(f'Calling {number}…' if known else '')
         threading.Thread(target=self._emg_call_thread, args=(number, contact),
                          daemon=True, name='emg-call').start()
 
@@ -1459,8 +1461,14 @@ class LockScreen(Gtk.Window):
         GLib.idle_add(self._emg_call_done, number, ok, detail)
 
     def _emg_call_done(self, _number: str, ok: bool, detail: str) -> bool:
-        self._emg_status.set_text(
-            'Dialing…' if ok else f'Call failed: {str(detail).strip()}')
+        from dialer import EMERGENCY_REFUSAL
+        if ok:
+            text = 'Dialing…'
+        elif detail == EMERGENCY_REFUSAL:
+            text = EMERGENCY_REFUSAL
+        else:
+            text = f'Call failed: {str(detail).strip()}'
+        self._emg_status.set_text(text)
         return GLib.SOURCE_REMOVE
 
     def _modem_emg_thread(self) -> None:
@@ -1472,10 +1480,15 @@ class LockScreen(Gtk.Window):
         GLib.idle_add(self._modem_emg_done, extra)
 
     def _modem_emg_done(self, extra: list) -> bool:
+        self._modem_emg_fetching = False
         try:
-            self._modem_emergency_extra = [str(n) for n in extra]
+            fresh = [str(n) for n in extra]
         except Exception:
-            self._modem_emergency_extra = []
+            fresh = []
+        # An empty answer (modem still registering, transient D-Bus error)
+        # keeps the last good list instead of wiping it.
+        if fresh:
+            self._modem_emergency_extra = fresh
         return GLib.SOURCE_REMOVE
 
     def _refresh_emg_contacts(self) -> None:

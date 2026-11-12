@@ -154,11 +154,13 @@ The lock screen always shows an **Emergency** text button (bottom, in every
 state — resting, keypad revealed, lockout). It opens an emergency surface
 without unlocking: a dial pad that only places calls to emergency numbers,
 one row per configured emergency contact (tap to call — explicitly allowed
-from the lock screen), and Medical info. Emergency numbers are the built-in
-list `112`, `911`, `999`, `000`, `08`, `110`, `118`, `119`, `100`, `101`,
-`102`, `108` plus the modem/SIM's own list when ModemManager exposes one;
-anything else typed on that pad is refused. Emergency calling itself cannot
-be disabled.
+from the lock screen), and Medical info. Emergency numbers are `112` and
+`911` (emergency calls on every network) plus the modem/SIM's own list when
+ModemManager exposes one; numbers such as `999`, `000` or `110` work through
+that list only, because elsewhere they are ordinary numbers. The list is
+read each time the surface opens and asked for again before a number is
+refused; anything else typed on that pad is refused. Emergency calling
+itself cannot be disabled.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

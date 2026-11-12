@@ -139,10 +139,12 @@ def _run_mmcli(args: list[str]) -> tuple[bool, str]:
     return True, proc.stdout
 
 
-BUILTIN_EMERGENCY_NUMBERS = frozenset({
-    '112', '911', '999', '000', '08', '110',
-    '118', '119', '100', '101', '102', '108',
-})
+#: Emergency numbers on every network (3GPP TS 22.101: 112 and 911 are
+#: emergency calls wherever the phone is). 999, 000, 110, 119 and the
+#: like are emergency numbers in some countries and ordinary, sometimes
+#: billable, numbers in others (100, 101, 118 and 08 among them), so they
+#: come only from the modem/SIM list for the network the phone is on.
+BUILTIN_EMERGENCY_NUMBERS = frozenset({'112', '911'})
 
 EMERGENCY_REFUSAL = 'Only emergency calls from the lock screen'
 
@@ -249,7 +251,10 @@ def place_emergency_call(number: str, extra: object = None) -> tuple[bool, str]:
     a worker thread — ModemManager places emergency calls even without
     a SIM when the modem allows, no unlock needed."""
     if not is_emergency_number(number, extra):
-        return False, EMERGENCY_REFUSAL
+        # The caller's list may be empty or stale (read before the modem
+        # registered): ask the modem again before refusing.
+        if not is_emergency_number(number, get_modem_emergency_numbers()):
+            return False, EMERGENCY_REFUSAL
     try:
         from modem_monitor import voice_create_and_start
         return voice_create_and_start(normalize_emergency_number(number))
