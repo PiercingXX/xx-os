@@ -58,6 +58,56 @@ class TestWeatherLocation:
 # Item 2: home hides the weather line until real data arrives
 
 
+class TestHomeDialerAndClockTaps:
+    def _page(self, lock_on=False):
+        import home_page
+        calls = []
+        win = types.SimpleNamespace(
+            _clock_tap_timer=None,
+            gesture_config=types.SimpleNamespace(
+                get=lambda key: 'lock_screen' if lock_on else 'none'),
+            _current_tap=lambda key: 'default',
+            _dispatch_widget_tap=lambda key, tap: calls.append(('tap', key)),
+            _show_lock_screen=lambda: calls.append('lock'),
+            _open_dialer=lambda: calls.append('dialer'),
+            focus_state=types.SimpleNamespace(is_paused_app=lambda a: False),
+            config=types.SimpleNamespace(record_launch=lambda a: None),
+        )
+        page = home_page.HomePage.__new__(home_page.HomePage)
+        page._win = win
+        return page, calls
+
+    def test_renamed_dialer_slot_still_opens_the_dialer(self):
+        page, calls = self._page()
+        page._launch_slot({'type': 'app', 'label': 'Calls',
+                           'app_id': None, 'cmd': None})
+        assert calls == ['dialer']
+
+    def test_clock_tap_runs_at_once_without_double_tap_to_lock(
+            self, monkeypatch):
+        from gi.repository import GLib
+        timers = []
+        monkeypatch.setattr(GLib, 'timeout_add',
+                            lambda ms, fn: timers.append(ms) or 1)
+        page, calls = self._page(lock_on=False)
+        page._on_clock_tapped(1)
+        page._on_clock_tapped(2)
+        assert calls == [('tap', 'time')]
+        assert timers == []
+
+    def test_clock_double_tap_locks_when_enabled(self, monkeypatch):
+        from gi.repository import GLib
+        timers = []
+        monkeypatch.setattr(GLib, 'timeout_add',
+                            lambda ms, fn: timers.append(ms) or 1)
+        monkeypatch.setattr(GLib, 'source_remove', lambda tid: True)
+        page, calls = self._page(lock_on=True)
+        page._on_clock_tapped(1)
+        page._on_clock_tapped(2)
+        assert calls == ['lock']
+        assert timers == [280]
+
+
 class TestHomeWeatherHidden:
     def _page(self, seen):
         import home_page

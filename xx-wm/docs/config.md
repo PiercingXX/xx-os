@@ -61,7 +61,7 @@ migration steps are ever required.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `widgets` | dict | all enabled | Per-widget `{enabled, order, tap}` for `time`, `date`, `weather`, `battery`. `tap` ∈ `"default"`, `"none"`, `"refresh"`, or `{"app": "<app_id>"}`. Defaults: order time→date→weather→battery; weather tap `default` (opens a weather app, refreshing in the background). The clock also keeps double-tap-to-lock. |
+| `widgets` | dict | all enabled | Per-widget `{enabled, order, tap}` for `time`, `date`, `weather`, `battery`. `tap` ∈ `"default"`, `"none"`, `"refresh"`, or `{"app": "<app_id>"}`. Defaults: order time→date→weather→battery; weather tap `default` (opens a weather app, refreshing in the background). With `double_tap_home` = `lock_screen` a double tap on the clock locks too. |
 | `weather_lat` / `weather_lon` | float\|null | `null` | Coordinates for the weather widget (Open-Meteo, no API key). Explicit floats win over `weather_location`, which wins over the automatic fix. Unset → the weather line is hidden (never a `--°` placeholder). |
 | `weather_location` | string | `""` | Location for the weather widget as `lat,lon` (e.g. `"48.85,2.35"`), used when `weather_lat`/`weather_lon` are unset. Anything else is ignored. |
 | `weather_temp_unit` | string | `"fahrenheit"` | `"fahrenheit"` or `"celsius"`: Open-Meteo unit and widget suffix (`72°F` / `22°C`). The 15-minute cache is keyed by unit. |
@@ -453,7 +453,7 @@ strip is passed through to whatever is under it.
 | `swipe_up_short` | `home` | Bottom strip → `gesture.home`. Verb-rebindable. A quick flick up from the bottom goes home from any screen (including recents). Missing/corrupt JSON uses this mapped default, not `gesture.keyboard`. |
 | `swipe_up_long` | `app_switcher` | Bottom strip → `gesture.switcher`. Verb-rebindable. Swipe up and pause (or release slowly past a quarter of the screen) to open full-screen recents. Swipe down, tap the dim, or back resumes the current app. |
 | `swipe_left_edge` | `back` | lisgd → `gesture.back` on both edges. Verb-rebindable. |
-| `double_tap_home` | `none` | Android "Double Tap to Lock": `lock_screen` or `none` (any older action loads as `none`). The clock keeps its own double-tap-to-lock. |
+| `double_tap_home` | `none` | Android "Double Tap to Lock": `lock_screen` or `none` (any older action loads as `none`). It covers the clock line too; while it is off a tap on the clock runs its tap action at once. |
 | `long_press_home` | `edit` | Long-press on the home background: `edit` opens slot edit mode, `settings` opens Settings, `none` does nothing. |
 | `swipe_left_home` | `none` | Android "Swipe Left App". `none` = no app chosen: the swipe opens the camera. Seeded to `launch:<skippy>` when Skippy is installed. |
 | `swipe_right_home` | `none` | Android "Swipe Right App". `none` = no app chosen: the swipe opens the dialer. Seeded to `camera` on first boot. |

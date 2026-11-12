@@ -165,10 +165,10 @@ class HomePage:
         if slot_type == 'app':
             android_pkg = slot.get('app_id')
             cmd = slot.get('cmd')
-            label = slot.get('label', '')
 
-            if label == 'Phone' and not android_pkg and not cmd:
-                # Built-in dialer
+            if not android_pkg and not cmd:
+                # The built-in dialer is the one slot with neither an app
+                # nor a command; matched by shape, so a rename keeps it.
                 win._open_dialer()
             elif android_pkg:
                 # Desktop-file ids (incl. waydroid.*.desktop wrappers) launch
@@ -240,8 +240,9 @@ class HomePage:
 
         win = self._win
         if key == 'time':
-            # The clock keeps double-tap-to-lock; a single tap (after the
-            # double-tap window passes) runs the configured action
+            # With Double Tap to Lock on, a double tap on the clock locks
+            # and a single tap waits out the double-tap window; with it
+            # off a single tap runs at once.
             tap_gesture = Gtk.GestureClick.new()
             tap_gesture.connect(
                 'pressed', lambda _g, n, _x, _y: win._on_clock_tapped(n))
@@ -253,15 +254,29 @@ class HomePage:
             lambda _g, _n, _x, _y, k=key: win._dispatch_widget_tap(k, win._current_tap(k)))
         widget.add_controller(gesture)
 
+    def _clock_double_tap_locks(self) -> bool:
+        try:
+            action = self._win.gesture_config.get('double_tap_home')
+        except Exception:
+            return False
+        return action == 'lock_screen'
+
     def _on_clock_tapped(self, n_press: int) -> None:
         from gi.repository import GLib
 
         win = self._win
+        locks = self._clock_double_tap_locks()
         if n_press == 2:
             if win._clock_tap_timer is not None:
                 GLib.source_remove(win._clock_tap_timer)
                 win._clock_tap_timer = None
-            win._show_lock_screen()
+            if locks:
+                win._show_lock_screen()
+            return
+        if n_press == 1 and not locks:
+            tap = win._current_tap('time')
+            if tap != 'none':
+                win._dispatch_widget_tap('time', tap)
             return
         if n_press == 1 and win._clock_tap_timer is None:
             def _fire() -> bool:
