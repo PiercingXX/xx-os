@@ -29,10 +29,12 @@ _KEY_CODES = {
 }
 for _i, _ch in enumerate('1234567890'):
     _KEY_CODES[_ch] = (2 + _i) if _ch != '0' else 11
-for _i, _ch in enumerate('QWERTYUIOPASDFGHJKLZXCVBNM'):
-    _KEY_CODES[_ch] = (16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 30, 31, 32,
-                       33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
-                       46, 47, 48, 49, 50)[_i]
+# linux/input-event-codes.h: each letter row starts at its own code, with
+# punctuation keys between the rows (KEY_SEMICOLON..KEY_BACKSLASH = 39..43).
+for _row, _base in (('QWERTYUIOP', 16), ('ASDFGHJKL', 30), ('ZXCVBNM', 44)):
+    for _i, _ch in enumerate(_row):
+        _KEY_CODES[_ch] = _base + _i
+del _row, _base
 _KEY_CODES['SHIFT'] = 42
 del _i, _ch
 
