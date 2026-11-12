@@ -53,7 +53,7 @@ def _captions_node(state: str = "running",
 def test_captions_capture_classifies_as_mic() -> None:
     privacy = _load_privacy_monitor()
     assert privacy.classify_node(
-        _captions_node()) == ("mic", "xx-captions")
+        _captions_node()) == ("mic", "captions")
 
 
 def test_suspended_or_sink_nodes_stay_dark() -> None:

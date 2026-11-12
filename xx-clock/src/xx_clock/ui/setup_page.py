@@ -47,7 +47,7 @@ class SetupPage:
                                      on_activate=calls.test_sound, last=True,
                                      wrap=True))
         body.append(widgets.section_label("About"))
-        body.append(widgets.setting_row("xx-clock", f"Version {_version} · GPL-3.0"))
+        body.append(widgets.setting_row("clock", f"Version {_version} · GPL-3.0"))
         body.append(widgets.list_row("Open-source licenses", "",
                                      on_activate=calls.show_licenses, last=True,
                                      wrap=True))

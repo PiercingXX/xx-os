@@ -72,7 +72,7 @@ def test_app_icons_ship_with_the_package():
 def test_window_is_named_lowercase():
     from xx_audiobook.ui import setup
 
-    assert setup.APP_NAME == "xx-audiobook"
+    assert setup.APP_NAME == "audiobook"
 
 
 def test_meson_installs_the_whole_package():

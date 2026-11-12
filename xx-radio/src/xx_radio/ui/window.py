@@ -15,7 +15,7 @@ from xx_radio import __version__, licenses
 
 #: About › the short, honest version of the README's disclaimer.
 DISCLAIMER = (
-    "Unofficial. xx-radio is not made or approved by YouTube or Google. "
+    "Unofficial. radio is not made or approved by YouTube or Google. "
     "It reads YouTube Music through the interfaces of YouTube's own apps "
     "and plays without ads, which YouTube's terms don't allow. A change "
     "on their side can stop search or playback until the engine is "

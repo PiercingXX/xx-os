@@ -14,7 +14,7 @@ NOTIFY_BUS = "org.freedesktop.Notifications"
 NOTIFY_PATH = "/org/freedesktop/Notifications"
 NOTIFY_IFACE = "org.freedesktop.Notifications"
 
-APP_NAME = "xx-clock"
+APP_NAME = "clock"
 
 
 def _gio():

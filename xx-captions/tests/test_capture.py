@@ -36,7 +36,7 @@ def _graph() -> list[dict]:
 
 def test_stream_props_classify_capture_for_privacy_dot() -> None:
     assert capture.STREAM_PROPS == {
-        "application.name": "xx-captions",
+        "application.name": "captions",
         "application.id": BUS_NAME,
         "media.role": "Accessibility",
     }
@@ -61,7 +61,7 @@ def test_pipewiresrc_props_tag_stream() -> None:
     props = capture.pipewiresrc_props_for("alsa_output.x")
     assert props["target-object"] == "alsa_output.x"
     assert props["stream.capture.sink"] is True
-    assert props["application.name"] == "xx-captions"
+    assert props["application.name"] == "captions"
     assert props["application.id"] == BUS_NAME
     assert props["media.role"] == "Accessibility"
 

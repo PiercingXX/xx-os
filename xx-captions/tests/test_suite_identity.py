@@ -17,14 +17,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.CaptionsSettings"
 DESKTOP_FILE = DATA / "io.piercingxx.CaptionsSettings.desktop.in"
-EXPECTED_NAME = "xx-captions"
+EXPECTED_NAME = "captions"
 ACTIVATABLE = False
 SERVICE_FILE = DATA / "io.piercingxx.Captions1.service.in"
 LAUNCHER = "xx-captions"
 APP_ID_SOURCES = ["src/xx_captions/settings.py"]
 METAINFO_FILE = DATA / "io.piercingxx.CaptionsSettings.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.CaptionsSettings.svg"
-TITLE_NEEDLE = 'set_title("xx-captions")'
+TITLE_NEEDLE = 'set_title("captions")'
 TITLE_SOURCE = "src/xx_captions/settings.py"
 
 

@@ -3,10 +3,10 @@
   <id>io.piercingxx.XXAudiobook</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
-  <name>xx-audiobook</name>
+  <name>audiobook</name>
   <summary>Self-hosted audiobooks for Linux phones</summary>
   <description>
-    <p>Native Linux port of the xx-audiobook client: library, book detail,
+    <p>Native Linux port of the audiobook client: library, book detail,
     now playing with sleep timer and speed, offline downloads, Home Assistant
     zones, reviews, bookmarks and stats against your own audiobook server.
     Offline-first; the server stays the backend.</p>

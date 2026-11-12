@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>io.piercingxx.XXEmail</id>
-  <name>xx-email</name>
+  <name>email</name>
   <summary>Telemetry-free Gmail client for Linux phones</summary>
   <description>
     <p>

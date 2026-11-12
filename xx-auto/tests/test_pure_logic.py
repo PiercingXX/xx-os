@@ -113,7 +113,7 @@ def test_drive_tiles_gating():
 
 def test_drive_tile_for_player():
     assert tile_for("io.piercingxx.Radio") is Tile.RADIO
-    assert tile_for("io.piercingxx.Audiobook", "xx-audiobook") is Tile.AUDIOBOOK
+    assert tile_for("io.piercingxx.Audiobook", "audiobook") is Tile.AUDIOBOOK
     assert tile_for("io.piercingxx.XXRadio", "XX-Radio") is Tile.RADIO
     assert tile_for("io.piercingxx.XXAudiobook",
                     "XX-Audiobook") is Tile.AUDIOBOOK

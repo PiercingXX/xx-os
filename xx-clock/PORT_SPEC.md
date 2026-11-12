@@ -7,7 +7,7 @@ stdlib + GI libraries only (GStreamer for sound, feedbackd for vibration).
 
 Reference: `ref/xx-clock/` (Android Kotlin app, read-only). The public Play
 edition ("Alarms and timers"): offline, no `INTERNET`, no Play Services,
-no analytics. App id `io.piercingxx.XXClock`, window title `xx-clock`.
+no analytics. App id `io.piercingxx.XXClock`, window title `clock`.
 
 ## 0. What the Android app is
 

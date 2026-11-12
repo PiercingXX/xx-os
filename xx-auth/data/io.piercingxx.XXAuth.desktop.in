@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-auth
+Name=auth
 GenericName=Authenticator
 Comment=Offline TOTP/HOTP two-factor codes
 Exec=@bindir@/xx-auth

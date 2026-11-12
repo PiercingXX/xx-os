@@ -217,7 +217,7 @@ class SignInPage:
         head.set_margin_top(8)
         body.append(head)
         intro = common.para(
-            "xx-radio never sees your password. It borrows the sign-in of "
+            "radio never sees your password. It borrows the sign-in of "
             "a browser session you copy here.", "xx-secondary")
         intro.set_margin_top(8)
         body.append(intro)

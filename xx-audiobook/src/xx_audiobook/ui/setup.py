@@ -27,7 +27,7 @@ from xx_audiobook import prefs as prefs_module
 from xx_audiobook.ui import common
 from xx_ui import widgets
 
-APP_NAME = "xx-audiobook"
+APP_NAME = "audiobook"
 REWIND_CHOICES = (0, 2, 5, 10)
 SPEED_CHOICES = (0.75, 1.0, 1.25, 1.5, 2.0)
 SUBSYSTEM_NAMES = {"ha": "Home Assistant", "db": "Database",

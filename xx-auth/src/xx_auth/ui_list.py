@@ -325,7 +325,7 @@ def build(window):  # type: ignore[no-untyped-def]
         popover.popup()
 
     header = widgets.page_header(
-        "xx-auth", icon_name="system-search-symbolic", icon_cb=toggle_search,
+        "auth", icon_name="system-search-symbolic", icon_cb=toggle_search,
         overflow_cb=show_menu)
     search_button = _header_button(header, "system-search-symbolic")
     more_button = _header_button(header, "view-more-symbolic")

@@ -16,14 +16,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXRadio"
 DESKTOP_FILE = DATA / "io.piercingxx.XXRadio.desktop.in"
-EXPECTED_NAME = "xx-radio"
+EXPECTED_NAME = "radio"
 ACTIVATABLE = True
 SERVICE_FILE = DATA / "io.piercingxx.XXRadio.service.in"
 LAUNCHER = "xx-radio"
 APP_ID_SOURCES = ["src/xx_radio/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXRadio.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXRadio.svg"
-TITLE_NEEDLE = 'name="xx-radio"'
+TITLE_NEEDLE = 'name="radio"'
 TITLE_SOURCE = "src/xx_radio/main.py"
 
 

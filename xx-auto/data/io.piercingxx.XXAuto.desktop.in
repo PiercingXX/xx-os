@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-auto
+Name=auto
 GenericName=Driving
 Comment=Driving screen for a phone in a car mount
 Exec=@bindir@/xx-auto

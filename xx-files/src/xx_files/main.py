@@ -156,7 +156,7 @@ class FilesWindow:
         self._sheet_modal = False
 
         self.win = Adw.ApplicationWindow(application=app)
-        self.win.set_title("xx-files")
+        self.win.set_title("files")
         self.win.set_default_size(360, 720)
         # Adw windows floor at 360 px wide by default: a 320 px
         # screen would cut the app off.

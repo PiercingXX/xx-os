@@ -16,14 +16,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXContacts"
 DESKTOP_FILE = DATA / "io.piercingxx.XXContacts.desktop.in"
-EXPECTED_NAME = "xx-contacts"
+EXPECTED_NAME = "contacts"
 ACTIVATABLE = False
 SERVICE_FILE = DATA / "io.piercingxx.Contacts.service.in"
 LAUNCHER = "xx-contacts"
 APP_ID_SOURCES = ["src/xx_contacts/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXContacts.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXContacts.svg"
-TITLE_NEEDLE = 'self.set_title("xx-contacts")'
+TITLE_NEEDLE = 'self.set_title("contacts")'
 TITLE_SOURCE = "src/xx_contacts/list_ui.py"
 
 

@@ -395,7 +395,7 @@ def _app_shell() -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>xx-find owner console</title>
+<title>find owner console</title>
 <style>
 body{font-family:system-ui,sans-serif;max-width:44rem;margin:0 auto;
 padding:1rem;line-height:1.4;color:#111;background:#fff}
@@ -414,7 +414,7 @@ pre{white-space:pre-wrap;word-break:break-all;background:#f4f4f4;padding:.5rem}
 </style>
 </head>
 <body>
-<h1>xx-find owner console</h1>
+<h1>find owner console</h1>
 <p>Locations decrypt in this browser with your key; this server stores
 ciphertext only. Map tiles: OpenStreetMap contributors.</p>
 <section id="login">

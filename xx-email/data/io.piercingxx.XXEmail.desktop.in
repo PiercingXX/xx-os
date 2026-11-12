@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-email
+Name=email
 GenericName=Email
 Comment=Telemetry-free Gmail client
 Exec=@bindir@/xx-email

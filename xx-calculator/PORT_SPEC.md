@@ -58,7 +58,7 @@ shared danger token. History heading uses the brand display face
 ## 2. Linux integration
 
 - App id `io.piercingxx.XXCalculator`, package `xx_calculator`, launcher
-  `xx-calculator`, desktop `Name=xx-calculator` / `GenericName=Calculator`,
+  `xx-calculator`, desktop `Name=calculator` / `GenericName=Calculator`,
   metainfo, hicolor SVG icon, `DBusActivatable=false` (like xx-auto: no
   session service needed for a stateless calculator).
 - `scripts/check-all.sh` PROJECTS gains `xx-calculator`;

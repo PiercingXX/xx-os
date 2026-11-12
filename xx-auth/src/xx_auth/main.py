@@ -101,7 +101,7 @@ class AuthWindow:
 
         self._xx_ui = xx_ui
         self.win = Adw.ApplicationWindow(application=app)
-        self.win.set_title("xx-auth")
+        self.win.set_title("auth")
         self.win.set_default_size(360, 720)
         # Adw windows floor at 360 px wide by default: a 320 px
         # screen would cut the app off.
@@ -208,7 +208,7 @@ class AuthWindow:
         return False
 
     def _on_backend_error(self, message: str) -> bool:
-        self._build_info_page("loading", "xx-auth", "Couldn't start: " + message)
+        self._build_info_page("loading", "auth", "Couldn't start: " + message)
         self.show("loading")
         return False
 

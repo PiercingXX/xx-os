@@ -96,7 +96,7 @@ def validate_backup(payload: object) -> dict:
     """Check the whole payload; return it typed or raise BackupError."""
     data = _require_mapping(payload)
     if data.get("kind") != BACKUP_KIND:
-        raise BackupError("Not an XX Email backup.")
+        raise BackupError("Not an email backup.")
     if data.get("version") != BACKUP_SCHEMA_VERSION:
         raise BackupError(
             f"Unsupported backup version {data.get('version')!r}.")
@@ -135,7 +135,7 @@ def restore_backup(conn, payload: object, *,
     """
     data = _require_mapping(payload)
     if data.get("kind") != BACKUP_KIND:
-        raise BackupError("Not an XX Email backup.")
+        raise BackupError("Not an email backup.")
     if data.get("version") != BACKUP_SCHEMA_VERSION:
         raise BackupError(
             f"Unsupported backup version {data.get('version')!r}.")

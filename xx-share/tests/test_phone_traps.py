@@ -88,7 +88,7 @@ def test_service_wires_bus_signals_and_history():
 def test_desktop_entry_and_unit():
     root = SRC.parent
     desktop = (root / "data" / "io.piercingxx.XXShare.desktop.in").read_text()
-    assert "Send with xx-share" in desktop
+    assert "Name=Send nearby" in desktop
     assert "--send" in desktop
     unit = (root / "data" / "systemd" / "xx-share.service.in").read_text()
     assert "--service" in unit

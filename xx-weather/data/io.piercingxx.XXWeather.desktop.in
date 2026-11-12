@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-weather
+Name=weather
 GenericName=Weather
 Comment=ZIP-code weather from the National Weather Service
 Exec=@bindir@/xx-weather

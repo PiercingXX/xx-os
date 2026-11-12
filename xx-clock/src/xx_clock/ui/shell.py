@@ -89,7 +89,7 @@ class ClockWindow:
         self._tab = settings.last_tab if settings.last_tab in TABS else "clock"
 
         self.win = Adw.ApplicationWindow(application=app)
-        self.win.set_title("xx-clock")
+        self.win.set_title("clock")
         self.win.set_default_size(360, 720)
         # Adw windows floor at 360 px wide by default: a 320 px
         # screen would cut the app off.
@@ -266,7 +266,7 @@ class ClockWindow:
     def show_licenses(self) -> None:
         widgets = self._xx_ui.widgets
         widgets.show_licenses_dialog(
-            self.win, "xx-clock", widgets.standard_license_entries("xx-clock"))
+            self.win, "clock", widgets.standard_license_entries("clock"))
 
     def open_editor(self, draft: dict | None) -> None:
         import gi

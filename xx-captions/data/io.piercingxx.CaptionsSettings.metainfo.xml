@@ -3,7 +3,7 @@
   <id>io.piercingxx.CaptionsSettings</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
-  <name>xx-captions</name>
+  <name>captions</name>
   <summary>On-device live captions and call transcription</summary>
   <description>
     <p>Live captions over any audio on the phone, plus call

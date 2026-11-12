@@ -16,14 +16,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXAuto"
 DESKTOP_FILE = DATA / "io.piercingxx.XXAuto.desktop.in"
-EXPECTED_NAME = "xx-auto"
+EXPECTED_NAME = "auto"
 ACTIVATABLE = False
 SERVICE_FILE = DATA / "systemd" / "xx-auto-watch.service.in"
 LAUNCHER = "xx-auto"
 APP_ID_SOURCES = ["src/xx_auto/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXAuto.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXAuto.svg"
-TITLE_NEEDLE = 'self.win.set_title("xx-auto")'
+TITLE_NEEDLE = 'self.win.set_title("auto")'
 TITLE_SOURCE = "src/xx_auto/main.py"
 
 

@@ -141,7 +141,7 @@ class ShareWindow:
 
         xx_ui.apply(app)
 
-        self.window = Gtk.ApplicationWindow(application=app, title="xx-share")
+        self.window = Gtk.ApplicationWindow(application=app, title="share")
         self.window.set_decorated(False)
         self.window.set_default_size(360, 720)
 

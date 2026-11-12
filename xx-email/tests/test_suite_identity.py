@@ -16,14 +16,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXEmail"
 DESKTOP_FILE = DATA / "io.piercingxx.XXEmail.desktop.in"
-EXPECTED_NAME = "xx-email"
+EXPECTED_NAME = "email"
 ACTIVATABLE = True
 SERVICE_FILE = DATA / "dbus-1" / "io.piercingxx.XXEmail.service.in"
 LAUNCHER = "xx-email"
 APP_ID_SOURCES = ["src/xx_email/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXEmail.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXEmail.svg"
-TITLE_NEEDLE = 'window.set_title("xx-email")'
+TITLE_NEEDLE = 'window.set_title("email")'
 TITLE_SOURCE = "src/xx_email/main.py"
 
 

@@ -16,14 +16,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXFiles"
 DESKTOP_FILE = DATA / "io.piercingxx.XXFiles.desktop.in"
-EXPECTED_NAME = "xx-files"
+EXPECTED_NAME = "files"
 ACTIVATABLE = True
 SERVICE_FILE = DATA / "io.piercingxx.XXFiles.service.in"
 LAUNCHER = "xx-files"
 APP_ID_SOURCES = ["src/xx_files/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXFiles.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXFiles.svg"
-TITLE_NEEDLE = 'self.win.set_title("xx-files")'
+TITLE_NEEDLE = 'self.win.set_title("files")'
 TITLE_SOURCE = "src/xx_files/main.py"
 
 

@@ -301,7 +301,7 @@ class ContactsWindow(Adw.ApplicationWindow):
         self._watcher = ChangeWatcher(db_path, self._on_external_changed)
         self._photos_dir = os.path.join(
             os.path.dirname(os.path.abspath(db_path)), "photos")
-        self.set_title("xx-contacts")
+        self.set_title("contacts")
         self.set_decorated(False)
         self.set_default_size(360, 720)
 
@@ -390,7 +390,7 @@ class ContactsWindow(Adw.ApplicationWindow):
         root.append(self._chips_slot)
         root.append(middle)
         root.append(search_bar)
-        list_page = Adw.NavigationPage(child=root, title="xx-contacts")
+        list_page = Adw.NavigationPage(child=root, title="contacts")
         navigation.push(list_page)
         self.set_content(navigation)
         # The suite floor: a phone in landscape (1000x450) is shorter

@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-clock
+Name=clock
 GenericName=Clock
 Comment=Alarms, timers and clock
 Exec=@bindir@/xx-clock

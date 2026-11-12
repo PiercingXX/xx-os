@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-files
+Name=files
 GenericName=Files
 Comment=Tree-first local file manager
 Exec=@bindir@/xx-files %U

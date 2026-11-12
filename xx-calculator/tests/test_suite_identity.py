@@ -15,14 +15,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXCalculator"
 DESKTOP_FILE = DATA / "io.piercingxx.XXCalculator.desktop.in"
-EXPECTED_NAME = "xx-calculator"
+EXPECTED_NAME = "calculator"
 EXPECTED_GENERIC = "Calculator"
 ACTIVATABLE = False
 LAUNCHER = "xx-calculator"
 APP_ID_SOURCES = ["src/xx_calculator/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXCalculator.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXCalculator.svg"
-TITLE_NEEDLE = 'self.win.set_title("xx-calculator")'
+TITLE_NEEDLE = 'self.win.set_title("calculator")'
 TITLE_SOURCE = "src/xx_calculator/main.py"
 
 

@@ -191,7 +191,7 @@ def add_error_message(exc: BaseException) -> str:
     if "secret is empty" in message or "no secret" in message:
         return "That code has no secret."
     if "algorithm" in message:
-        return "That code uses an algorithm xx-auth doesn't support."
+        return "That code uses an algorithm auth doesn't support."
     if "digits" in message:
         return "Codes must be 6, 7 or 8 digits."
     if "period" in message:
@@ -647,7 +647,7 @@ def import_error_message(exc: BaseException) -> str:
     if "corrupt" in message or "authentication" in message:
         return "That file is damaged and can't be decrypted."
     if "unsupported Aegis vault version" in message:
-        return "That vault file is from a newer Aegis version xx-auth can't read."
+        return "That vault file is from a newer Aegis version auth can't read."
     if "not an Aegis vault" in message or "not JSON" in message:
         return "That isn't an Aegis vault file or a list of otpauth:// links."
     if isinstance(exc, OSError):

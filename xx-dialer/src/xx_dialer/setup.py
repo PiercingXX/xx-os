@@ -199,7 +199,7 @@ def send_test_ring(on_done=None, bus=None, gio=None,
 
     try:
         params = ringer.notify_params(
-            glib, "XX Dialer", 0, "Test ring",
+            glib, "dialer", 0, "Test ring",
             "If you saw and heard this, ringing works.",
             [], {"sound-name": "phone-incoming-call"})
         bus.call(NOTIFY_BUS_NAME, "/org/freedesktop/Notifications",

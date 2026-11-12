@@ -84,7 +84,7 @@ def build_window(app, db, config, secrets) -> object:
 
     xx_ui.apply(app)
     window = Gtk.ApplicationWindow(application=app)
-    window.set_title("xx-vitals")
+    window.set_title("vitals")
     window.set_default_size(360, 720)
     window.set_decorated(False)
 

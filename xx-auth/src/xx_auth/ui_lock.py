@@ -38,7 +38,7 @@ def build_lock(window):  # type: ignore[no-untyped-def]
     Gtk = window._Gtk
     controller = LockController(window)
 
-    header = widgets.page_header("xx-auth")
+    header = widgets.page_header("auth")
     body = Gtk.Box.new(Gtk.Orientation.VERTICAL, 0)
     note = widgets.wrap_label("")
     note.set_margin_top(8)

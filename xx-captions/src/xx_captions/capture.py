@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from xx_captions import audio
 from xx_captions.dbus_api import BUS_NAME
 
-APP_NAME = "xx-captions"
+APP_NAME = "captions"
 APP_ID = BUS_NAME
 MEDIA_ROLE = "Accessibility"
 

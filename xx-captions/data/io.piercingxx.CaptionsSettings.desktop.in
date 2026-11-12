@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-captions
+Name=captions
 GenericName=Live Captions
 Comment=On-device live captions and call transcription
 Exec=@bindir@/xx-captions --settings

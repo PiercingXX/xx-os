@@ -8,7 +8,7 @@ from .mpris import CustomAction, Track
 def _radio_track() -> Track:
     return Track(
         bus_name="org.mpris.MediaPlayer2.xx_radio",
-        identity="XX-Radio", desktop_entry="io.piercingxx.XXRadio",
+        identity="radio", desktop_entry="io.piercingxx.XXRadio",
         title="Slow Morning Light", artist="Harbor FM · The Quiet Hours",
         length_us=0, position_us=0, status="Playing",
         can_play=True, can_pause=True, can_next=True, can_prev=True,
@@ -22,7 +22,7 @@ def _radio_track() -> Track:
 def _audiobook_track() -> Track:
     return Track(
         bus_name="org.mpris.MediaPlayer2.xx_audiobook",
-        identity="XX-Audiobook", desktop_entry="io.piercingxx.XXAudiobook",
+        identity="audiobook", desktop_entry="io.piercingxx.XXAudiobook",
         title="Chapter 7: The Long Road North",
         artist="The Cartographer's Daughter",
         length_us=2310 * 1_000_000, position_us=754 * 1_000_000,

@@ -16,14 +16,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXAudiobook"
 DESKTOP_FILE = DATA / "io.piercingxx.XXAudiobook.desktop.in"
-EXPECTED_NAME = "xx-audiobook"
+EXPECTED_NAME = "audiobook"
 ACTIVATABLE = True
 SERVICE_FILE = DATA / "io.piercingxx.XXAudiobook.service.in"
 LAUNCHER = "xx-audiobook"
 APP_ID_SOURCES = ["src/xx_audiobook/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXAudiobook.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXAudiobook.svg"
-TITLE_NEEDLE = 'window.set_title("xx-audiobook")'
+TITLE_NEEDLE = 'window.set_title("audiobook")'
 TITLE_SOURCE = "src/xx_audiobook/ui/shell.py"
 
 

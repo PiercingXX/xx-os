@@ -16,7 +16,7 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXNote"
 DESKTOP_FILE = DATA / "io.piercingxx.XXNote.desktop.in"
-EXPECTED_NAME = "xx-note"
+EXPECTED_NAME = "note"
 EXPECTED_GENERIC = "Notes"
 ACTIVATABLE = False
 SERVICE_FILE = DATA / "io.piercingxx.XXNote.service.in"
@@ -24,7 +24,7 @@ LAUNCHER = "xx-note"
 APP_ID_SOURCES = ["src/xx_note/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXNote.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXNote.svg"
-TITLE_NEEDLE = 'self.win.set_title("xx-note")'
+TITLE_NEEDLE = 'self.win.set_title("note")'
 TITLE_SOURCE = "src/xx_note/ui/shell.py"
 
 

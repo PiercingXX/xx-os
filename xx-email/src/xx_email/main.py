@@ -174,7 +174,7 @@ class EmailApplication(Adw.Application):
         window = self.props.active_window
         if window is None:
             window = Adw.ApplicationWindow(application=self)
-            window.set_title("xx-email")
+            window.set_title("email")
             window.set_default_size(360, 720)
             # Adw windows floor at 360 px wide by default: a 320 px
             # screen would cut the app off.

@@ -16,7 +16,7 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXAuth"
 DESKTOP_FILE = DATA / "io.piercingxx.XXAuth.desktop.in"
-EXPECTED_NAME = "xx-auth"
+EXPECTED_NAME = "auth"
 EXPECTED_GENERIC = "Authenticator"
 ACTIVATABLE = False
 SERVICE_FILE = DATA / "io.piercingxx.XXAuth.service"
@@ -24,7 +24,7 @@ LAUNCHER = "xx-auth"
 APP_ID_SOURCES = ["src/xx_auth/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXAuth.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXAuth.svg"
-TITLE_NEEDLE = 'self.win.set_title("xx-auth")'
+TITLE_NEEDLE = 'self.win.set_title("auth")'
 TITLE_SOURCE = "src/xx_auth/main.py"
 
 

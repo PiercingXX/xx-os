@@ -47,7 +47,7 @@ LICENSE_ROWS = (
     ("NWS weather.gov", "Forecasts \u00b7 US public domain"),
     ("Open-Meteo.com", "Weather data \u00b7 CC BY 4.0"),
     ("Zippopotam.us", "ZIP lookup from GeoNames \u00b7 CC BY 4.0"),
-    ("xx-weather", "App code \u00b7 GPL-3.0-only"),
+    ("weather", "App code \u00b7 GPL-3.0-only"),
 )
 
 FOOTER_TEXT = ("NWS weather.gov \u00b7 Open-Meteo.com (CC BY 4.0) "
@@ -110,7 +110,7 @@ class WeatherWindow:
 
         self._W = W
         self.win = Adw.ApplicationWindow(application=app)
-        self.win.set_title("xx-weather")
+        self.win.set_title("weather")
         self.win.set_default_size(360, 720)
         # Adw windows floor at 360 px wide by default: a 320 px
         # screen would cut the app off.

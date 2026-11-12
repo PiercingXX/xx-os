@@ -16,14 +16,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXShare"
 DESKTOP_FILE = DATA / "io.piercingxx.XXShare.desktop.in"
-EXPECTED_NAME = "xx-share"
+EXPECTED_NAME = "share"
 ACTIVATABLE = False
 SERVICE_FILE = DATA / "systemd" / "xx-share.service.in"
 LAUNCHER = "xx-share"
 APP_ID_SOURCES = ["src/main.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXShare.metainfo.xml.in"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXShare.svg"
-TITLE_NEEDLE = 'title="xx-share"'
+TITLE_NEEDLE = 'title="share"'
 TITLE_SOURCE = "src/ui.py"
 
 

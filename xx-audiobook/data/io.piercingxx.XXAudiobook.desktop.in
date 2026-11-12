@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-audiobook
+Name=audiobook
 GenericName=Audiobooks
 Comment=Self-hosted audiobooks for Linux phones
 Exec=@bindir@/xx-audiobook

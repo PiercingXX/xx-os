@@ -65,9 +65,9 @@ def display_name(track: Track) -> str:
         tail = track.desktop_entry[len(SUITE_DESKTOP_PREFIX):]
         name = tail.replace("-", " ").strip()
         # Suite ids spell the brand prefix in caps ("XXRadio"): read it
-        # the way the suite writes app names, "xx-radio".
+        # the way the suite writes app names, "radio".
         if len(name) > 2 and name[:2] == "XX" and name[2].isupper():
-            name = "xx-" + name[2:].lower()
+            name = name[2:].lower()
         return name or track.identity or track.short_name
     return track.identity or track.short_name
 

@@ -127,7 +127,7 @@ def step() -> bool:
         if state["notify"] is not None:
             (app, _replaces, _icon, summary, body, actions,
              _hints, _expire) = state["notify"]
-            if app != "xx-share":
+            if app != "share":
                 return fail(f"wrong app_name: {app!r}")
             if summary != "Incoming files from phone":
                 return fail(f"wrong summary: {summary!r}")

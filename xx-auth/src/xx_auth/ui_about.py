@@ -21,10 +21,10 @@ def build(window):  # type: ignore[no-untyped-def]
     # suite's shared About block (no second About label, no chevron).
     header = widgets.compact_header(lambda: window.show("list"), "About",
                                     "Fully offline")
-    entries = widgets.standard_license_entries("xx-auth")
+    entries = widgets.standard_license_entries("auth")
     body = widgets.about_content(
-        "xx-auth", __version__, entries,
-        lambda: widgets.show_licenses_dialog(window.win, "xx-auth", entries),
+        "auth", __version__, entries,
+        lambda: widgets.show_licenses_dialog(window.win, "auth", entries),
         section=False)
     page = widgets.page(header, body)
     return page, controller

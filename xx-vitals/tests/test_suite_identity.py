@@ -16,14 +16,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXVitals"
 DESKTOP_FILE = DATA / "io.piercingxx.XXVitals.desktop.in"
-EXPECTED_NAME = "xx-vitals"
+EXPECTED_NAME = "vitals"
 ACTIVATABLE = True
 SERVICE_FILE = DATA / "io.piercingxx.XXVitals.service.in"
 LAUNCHER = "xx-vitals"
 APP_ID_SOURCES = ["src/xx_vitals/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXVitals.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXVitals.svg"
-TITLE_NEEDLE = 'window.set_title("xx-vitals")'
+TITLE_NEEDLE = 'window.set_title("vitals")'
 TITLE_SOURCE = "src/xx_vitals/ui/shell.py"
 
 

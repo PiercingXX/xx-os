@@ -34,7 +34,7 @@ class RingCard:
         except Exception:
             LayerShell = None
         self._LayerShell = LayerShell
-        win = Gtk.Window(title="xx-clock")
+        win = Gtk.Window(title="clock")
         win.add_css_class("xx-ring")
         provider = Gtk.CssProvider()
         provider.load_from_data(INK_CSS.encode("utf-8"))

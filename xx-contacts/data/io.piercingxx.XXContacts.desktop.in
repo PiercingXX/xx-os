@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-contacts
+Name=contacts
 GenericName=Contacts
 Comment=System address book
 Exec=@bindir@/xx-contacts %F

@@ -33,6 +33,6 @@ PiercingXX apps. Android source: `ref/xx-weather`.
 
 ## Linux shape
 
-- `xx-weather/src/xx_weather/` (`main.py` window + app, `store.py` prefs/cache, `worker.py` threaded refresh, `notify.py` alert → `Gio.Notification`), `install_subdir`, launcher `xx-weather`, desktop `Name=xx-weather` / `GenericName=Weather`, `DBusActivatable=false` (xx-auto pattern), metainfo, sun-mark icon derived from the Android `ic_launcher_foreground` vector (brand dir absent in this lane).
+- `xx-weather/src/xx_weather/` (`main.py` window + app, `store.py` prefs/cache, `worker.py` threaded refresh, `notify.py` alert → `Gio.Notification`), `install_subdir`, launcher `xx-weather`, desktop `Name=weather` / `GenericName=Weather`, `DBusActivatable=false` (xx-auto pattern), metainfo, sun-mark icon derived from the Android `ic_launcher_foreground` vector (brand dir absent in this lane).
 - Pure logic lives in `common/xx_phone/weather.py` so the shell widget and the app share one fetch/parse/cache implementation; the widget keeps its cache format and line format, and now prefers opening `io.piercingxx.XXWeather` on tap.
 - Tests never touch the network: recorded `ref/xx-weather` JSON fixtures copied to `common/tests/fixtures/weather/`; app tests use fakes + a private bus.

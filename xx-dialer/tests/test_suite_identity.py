@@ -16,14 +16,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXDialer"
 DESKTOP_FILE = DATA / "io.piercingxx.XXDialer.desktop.in"
-EXPECTED_NAME = "xx-dialer"
+EXPECTED_NAME = "dialer"
 ACTIVATABLE = True
 SERVICE_FILE = DATA / "io.piercingxx.XXDialer.service.in"
 LAUNCHER = "xx-dialer"
 APP_ID_SOURCES = ["src/xx_dialer/main.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXDialer.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXDialer.svg"
-TITLE_NEEDLE = 'window.set_title("xx-dialer")'
+TITLE_NEEDLE = 'window.set_title("dialer")'
 TITLE_SOURCE = "src/xx_dialer/main.py"
 
 

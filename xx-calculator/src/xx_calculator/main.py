@@ -170,7 +170,7 @@ def _keypad_class():
     _KEYPAD_CLASS = KeyPad
     return KeyPad
 
-APP_NAME = "xx-calculator"
+APP_NAME = "calculator"
 # Sub-pages and where Back (the phone's back gesture, Escape) returns.
 BACK_TARGETS = {"history": "calc", "licenses": "calc", "license": "licenses"}
 
@@ -320,7 +320,7 @@ class CalcWindow:
 
         self._xx_ui = xx_ui
         self.win = Adw.ApplicationWindow(application=app)
-        self.win.set_title("xx-calculator")
+        self.win.set_title("calculator")
         self.win.set_default_size(360, 720)
         # Adw windows floor at 360 px wide by default: a 320 px
         # screen would cut the app off.

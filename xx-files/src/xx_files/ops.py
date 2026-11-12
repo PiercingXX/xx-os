@@ -331,11 +331,11 @@ def share_files(paths: list[str]) -> str | None:
 
     info = share_target()
     if info is None:
-        return "xx-share is not installed"
+        return "share is not installed"
     try:
         files = [Gio.File.new_for_path(p) for p in paths]
         ok = info.launch(files, None)
-        return None if ok else "xx-share did not start"
+        return None if ok else "share did not start"
     except Exception as exc:  # noqa: BLE001 - shown, never raised
         from .io_error import message
 

@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-radio
+Name=radio
 GenericName=Music
 Comment=Unofficial YouTube Music player for Linux phones
 Exec=@bindir@/xx-radio

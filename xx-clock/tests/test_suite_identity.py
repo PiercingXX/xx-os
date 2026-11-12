@@ -16,7 +16,7 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXClock"
 DESKTOP_FILE = DATA / "io.piercingxx.XXClock.desktop.in"
-EXPECTED_NAME = "xx-clock"
+EXPECTED_NAME = "clock"
 EXPECTED_GENERIC = "Clock"
 ACTIVATABLE = True
 SERVICE_FILE = DATA / "io.piercingxx.XXClock.service.in"
@@ -26,7 +26,7 @@ LAUNCHER = "xx-clock"
 APP_ID_SOURCES = ["src/xx_clock/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXClock.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXClock.svg"
-TITLE_NEEDLE = 'self.win.set_title("xx-clock")'
+TITLE_NEEDLE = 'self.win.set_title("clock")'
 TITLE_SOURCE = "src/xx_clock/ui/shell.py"
 
 

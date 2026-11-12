@@ -201,7 +201,7 @@ class AutoWindow:
 
         self._xx_ui = xx_ui
         self.win = Adw.ApplicationWindow(application=app)
-        self.win.set_title("xx-auto")
+        self.win.set_title("auto")
         self.win.set_default_size(360, 720)
         # Adw windows floor at 360 px wide by default: a 320 px
         # screen would cut the app off.
@@ -596,7 +596,7 @@ class AutoWindow:
             Tile.RADIO: ("Radio", "Stations" if radio_on else "not installed",
                          radio_on),
             Tile.AUDIOBOOK: ("Audiobook",
-                             "xx-audiobook" if audio_on else "not installed",
+                             "audiobook" if audio_on else "not installed",
                              audio_on),
             Tile.MAPS: (snap.maps_title, snap.maps_sub, True),
             Tile.CALLS: ("Calls", "Favourites", True),

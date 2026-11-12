@@ -16,7 +16,7 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXWeather"
 DESKTOP_FILE = DATA / "io.piercingxx.XXWeather.desktop.in"
-EXPECTED_NAME = "xx-weather"
+EXPECTED_NAME = "weather"
 EXPECTED_GENERIC = "Weather"
 ACTIVATABLE = False
 SERVICE_FILE = DATA / "io.piercingxx.XXWeather.service.in"
@@ -24,7 +24,7 @@ LAUNCHER = "xx-weather"
 APP_ID_SOURCES = ["src/xx_weather/__init__.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXWeather.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXWeather.svg"
-TITLE_NEEDLE = 'self.win.set_title("xx-weather")'
+TITLE_NEEDLE = 'self.win.set_title("weather")'
 TITLE_SOURCE = "src/xx_weather/main.py"
 
 

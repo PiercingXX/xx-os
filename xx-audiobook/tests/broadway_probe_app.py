@@ -87,7 +87,7 @@ def main(argv: list[str]) -> int:
     window.present()
     if gates[0] != "checking":
         failed.append(f"opened on {gates[0]!r}, not the Checking frame")
-    if window.get_title() != "xx-audiobook":
+    if window.get_title() != "audiobook":
         failed.append(f"window title {window.get_title()!r}")
 
     def pump(ms: int = 900) -> None:

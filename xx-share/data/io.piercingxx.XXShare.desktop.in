@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-share
+Name=share
 GenericName=Nearby Share
 Comment=Nearby file sharing (LocalSend-compatible)
 Exec=@bindir@/xx-share --send %F
@@ -12,5 +12,5 @@ StartupNotify=false
 Actions=Send;
 
 [Desktop Action Send]
-Name=Send with xx-share
+Name=Send nearby
 Exec=@bindir@/xx-share --send %F

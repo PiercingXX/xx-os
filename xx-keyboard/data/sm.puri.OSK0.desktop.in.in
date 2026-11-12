@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-keyboard
+Name=keyboard
 GenericName=On-screen keyboard
 Comment=On-screen keyboard
 Exec=@bindir@/xx-keyboard --allow-replacement

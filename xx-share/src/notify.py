@@ -85,7 +85,7 @@ class ReceivePrompt:
             return False
         parameters = GLib.Variant(
             "(susssasa{sv}i)",
-            ("xx-share", 0, "", self.summary, self.body,
+            ("share", 0, "", self.summary, self.body,
              prompt_actions(), {}, 0),
         )
         try:

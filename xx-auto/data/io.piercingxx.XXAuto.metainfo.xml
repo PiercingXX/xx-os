@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>io.piercingxx.XXAuto</id>
-  <name>xx-auto</name>
+  <name>auto</name>
   <summary>Driving screen for a phone in a car mount</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
   <description>
     <p>
-      Linux phone port of the PiercingXX Android xx-auto app. Shows the
+      Linux phone port of the PiercingXX Android auto app. Shows the
       active MPRIS player with big transport targets, quick-pick player
       switching, a maps tile, and starred-contact calling through
-      xx-dialer. Local-only: no network.
+      dialer. Local-only: no network.
     </p>
   </description>
   <launchable type="desktop-id">io.piercingxx.XXAuto.desktop</launchable>

@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-vitals
+Name=vitals
 GenericName=Health
 Comment=Self-hosted health tracking (cleanroom Google Fit)
 Exec=@bindir@/xx-vitals

@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=xx-calculator
+Name=calculator
 GenericName=Calculator
 Comment=Expression calculator with history and scientific keys
 Exec=@bindir@/xx-calculator

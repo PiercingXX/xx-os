@@ -61,7 +61,7 @@ class NoteApplication:
             secrets_mod.LibsecretBackend(),
             self._Adw, self._Gtk, self._Pango, self._GLib,
         )
-        self.window.win.set_title("xx-note")
+        self.window.win.set_title("note")
         self._apply_theme()
         try:
             import xx_ui

@@ -12,7 +12,7 @@ def test_main_and_shell_import_without_display():
     from xx_music.ui import shell
     from xx_radio import main as main_module
 
-    assert main_module.SPEC.name == "xx-radio"
+    assert main_module.SPEC.name == "radio"
     assert set(shell.FIRST_RUN_TEXT) == {"home", "search", "library"}
 
 

@@ -300,7 +300,7 @@ class CalendarApp(Adw.Application):
 class CalendarWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application, db_path: str) -> None:
         super().__init__(application=app)
-        self.set_title("xx-calendar")
+        self.set_title("calendar")
         self.set_default_size(360, 720)
         # Adw windows floor at 360 px wide by default: a 320 px
         # screen would cut the app off.

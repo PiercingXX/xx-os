@@ -16,14 +16,14 @@ DATA = ROOT / "data"
 
 DESKTOP_ID = "io.piercingxx.XXCalendar"
 DESKTOP_FILE = DATA / "io.piercingxx.XXCalendar.desktop.in"
-EXPECTED_NAME = "xx-calendar"
+EXPECTED_NAME = "calendar"
 ACTIVATABLE = True
 SERVICE_FILE = DATA / "io.piercingxx.XXCalendar.service.in"
 LAUNCHER = "xx-calendar"
 APP_ID_SOURCES = ["src/xx_calendar/main.py"]
 METAINFO_FILE = DATA / "io.piercingxx.XXCalendar.metainfo.xml"
 ICON_FILE = DATA / "icons" / "io.piercingxx.XXCalendar.svg"
-TITLE_NEEDLE = 'self.set_title("xx-calendar")'
+TITLE_NEEDLE = 'self.set_title("calendar")'
 TITLE_SOURCE = "src/xx_calendar/main.py"
 
 

@@ -71,7 +71,7 @@ def test_mpris_sort_and_metadata():
     # way the suite writes app names.
     radio = Track("org.mpris.MediaPlayer2.xx_radio",
                   desktop_entry="io.piercingxx.XXRadio")
-    assert display_name(radio) == "xx-radio"
+    assert display_name(radio) == "radio"
     title, artist, _art, length = parse_metadata(
         {"xesam:title": "T", "xesam:artist": ["A", "B"],
          "mpris:length": 1000})
