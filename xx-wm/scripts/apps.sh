@@ -63,6 +63,7 @@ pwa_desktop() {
     # backslash is doubled once more because the KeyFile layer consumes one
     # level of \\ escapes before the Exec line is parsed; the same doubling
     # keeps the unquoted heredoc below from expanding $ and ` as shell syntax.
+    # shellcheck disable=SC2016  # the sed expressions are literal
     _url=$(printf '%s' "$3" | sed \
         -e 's/%/%%/g' \
         -e 's/\\/\\\\\\\\/g' \
@@ -136,6 +137,7 @@ ts_apt_repo() {
     # Debian/Ubuntu and derivatives (FuriOS, Mobian, PureOS) through
     # Tailscale's own repo: Debian itself does not package tailscale.
     ts_curl
+    # shellcheck disable=SC1091
     . /etc/os-release
     _ts_key=$(mktemp)
     for _ts_dist in ${ID:-} ${ID_LIKE:-}; do

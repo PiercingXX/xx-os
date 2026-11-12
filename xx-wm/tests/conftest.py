@@ -1,8 +1,17 @@
 """Shared test setup: launcher sources importable, HOME never the real one
 for tests that opt into the isolated_home fixture."""
+import atexit
+import os
+import shutil
+import sys
+import tempfile
 from pathlib import Path
 
-import sys
+# Nothing a test runs may write into the developer's real ~/.cache (the
+# Wayland bindings cache used to land in ~/.cache/xx-wm/wayland_proto).
+_TEST_CACHE = tempfile.mkdtemp(prefix='xx-wm-test-cache-')
+os.environ['XDG_CACHE_HOME'] = _TEST_CACHE
+atexit.register(shutil.rmtree, _TEST_CACHE, True)
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 # The shell themes through the shared design system: common/xx_ui must be

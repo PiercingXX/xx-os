@@ -97,6 +97,7 @@ rsync $RSYNC_FLAGS "$REPO_DIR/launcher/src/" "${TARGET}:${STAGE}/" || exit 1
 # The shared design system rides along into the datadir: the installed shell
 # runs with the datadir on sys.path, so xx_ui resolves next to main.py even
 # when common/ was never meson-installed on the device.
+# shellcheck disable=SC2086
 rsync $RSYNC_FLAGS "$REPO_DIR/../common/xx_ui/" "${TARGET}:${STAGE}/xx_ui/" || exit 1
 # The protocol XMLs live next to the modules on the device; the shell
 # regenerates its bindings when they change, so ship them with the code.

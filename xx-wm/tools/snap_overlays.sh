@@ -318,7 +318,7 @@ done
 
 for spec in $SHOTS; do
     shot=${spec%%:*}
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086,SC2046
     montage $(
         for theme in $THEMES; do echo "-label $theme $WORK/$theme-$shot.png"; done
     ) -tile x1 -geometry +4+4 -background black \

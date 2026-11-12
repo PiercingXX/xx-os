@@ -230,7 +230,7 @@ for theme in $THEMES; do
             "$WORK/nav-wiz-$theme-$page.py" || exit 1
     done
     # One labeled sheet per theme.
-    # shellcheck disable=SC2086
+    # shellcheck disable=SC2086,SC2046
     montage $(
         for shot in $SHELL_SHOTS; do echo "-label $shot $WORK/$theme-$shot.png"; done
         for page in $WIZ_PAGES; do echo "-label firstboot-$page $WORK/$theme-firstboot-$page.png"; done

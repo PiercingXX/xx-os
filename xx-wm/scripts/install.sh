@@ -498,6 +498,7 @@ record_installed() {
         _r_stage=$(mktemp "${TMPDIR:-/tmp}/xx-apps-installed.XXXXXX") || return 0
         if _xx_merge_installed "$_r_app" "$_r_dir/installed.json" \
                 "$_r_stage" "$_r_src"; then
+            # shellcheck disable=SC2016  # $0 expands in the inner sh
             $SUDO sh -c 'mkdir -p "$0" && cat > "$0/installed.json.tmp" && mv "$0/installed.json.tmp" "$0/installed.json"' \
                 "$_r_dir" < "$_r_stage" 2>/dev/null || true
         fi
@@ -785,6 +786,7 @@ _rra_window_pids() {
         if [ "$_w_pid" = "$_w_me" ]; then
             continue
         fi
+        # shellcheck disable=SC3067  # dash and busybox ash support -O
         if ! [ -O "$_w_d" ] 2>/dev/null; then
             continue
         fi
@@ -812,6 +814,7 @@ _rra_player_pids() {
         if [ "$_pp_pid" = "$_pp_me" ]; then
             continue
         fi
+        # shellcheck disable=SC3067  # dash and busybox ash support -O
         if ! [ -O "$_pp_d" ] 2>/dev/null; then
             continue
         fi
@@ -842,6 +845,7 @@ _rra_shell_pids() {
         if [ "$_h_pid" = "$_h_me" ]; then
             continue
         fi
+        # shellcheck disable=SC3067  # dash and busybox ash support -O
         if ! [ -O "$_h_d" ] 2>/dev/null; then
             continue
         fi
