@@ -52,3 +52,17 @@ Timeout was reached` lines.
   If the backend starts but slowly, start the portals from
   `_xx_session_begin` (`--no-block`) so no app launch waits for them; if it
   never starts, fix the unit ordering first.
+
+  Checked 2026-11-12: the GTK backend starts in time. The stall is
+  xdg-desktop-portal-wlr 0.8.2, which exits at start on the hwcomposer
+  phoc ("Compositor supports neither ext_image_copy_capture or
+  wlr_screencopy") although screencopy v3 is advertised; the broker
+  waits 25 s on it for Screenshot and 25 s for ScreenCast, 50.2 s in
+  all, before it answers anyone. install.sh now puts
+  `launcher/data/portals/halium-xx-wm-portals.conf` in
+  `/etc/xdg/xdg-desktop-portal/` on libhybris systems (both off); the
+  broker then starts in 0.11 s.
+- **Renderer, checked 2026-11-12.** `GSK_RENDERER` reaches the shell and
+  the Vulkan line is gone; GTK 4.22 warned that ngl is now called gl, so
+  the session sets gl. Memory did not drop: 258–267 MB RSS (PSS 167 MB)
+  and 27–32 threads; see `todo.md`.
