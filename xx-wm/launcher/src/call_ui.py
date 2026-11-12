@@ -16,6 +16,7 @@ gi.require_version('Gtk', '4.0')
 
 from gi.repository import Gdk, Gio, GLib, Gtk
 from config import DESTRUCTIVE_TINT_BG, DANGER_RED, ON_DANGER_FG, ShellConfig, ThemePreset
+from session_lock import LockHosted
 
 if _LAYER_SHELL:
     from gi.repository import Gtk4LayerShell as LayerShell
@@ -980,7 +981,7 @@ def _fit_page(page):
     return scroller
 
 
-class CallUI(Gtk.Window):
+class CallUI(LockHosted, Gtk.Window):
     """
     Full-screen call surface, rendered from the modem monitor snapshot
     (render_snapshot) instead of the legacy incoming/answered/ended

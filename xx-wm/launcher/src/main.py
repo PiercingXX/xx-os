@@ -360,6 +360,8 @@ class XXWMApplication(Adw.Application):
                                      on_lock=self._shell._show_lock_screen,
                                      call_live=self._shell._call_live)
         self._power_menu.set_application(self)
+        self._power_menu.set_lock_host(
+            lambda: getattr(self._shell, '_lock_screen', None))
         # Volume/brightness HUD overlay (plan T3/T4): flashes a level on the
         # layer-shell window after a hardware key press. Silent no-op when GTK
         # is unavailable, so wiring it in can never break a headless device.

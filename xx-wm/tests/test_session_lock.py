@@ -297,6 +297,21 @@ class _Host:
         return 720
 
 
+class _Overlay(_Widget):
+    def __init__(self):
+        super().__init__()
+        self.overlays = []
+
+    def add_overlay(self, widget):
+        assert widget.parent is None
+        widget.parent = self
+        self.overlays.append(widget)
+
+    def remove_overlay(self, widget):
+        self.overlays.remove(widget)
+        widget.parent = None
+
+
 class _Harness(_Host):
     """The LockScreen attributes the session plumbing touches."""
 
@@ -306,14 +321,17 @@ class _Harness(_Host):
         self._use_session_lock = True
         self._session = None
         self._host = None
-        self._content = _Widget()
+        self._surface_overlay = _Overlay()
+        self._hosted = []
+        self._content = self._surface_overlay
         self.set_child(self._content)
         self.notified = []
         self.presented = 0
         self.overlay = 0
         for name in ('_session_mode', 'get_visible', 'set_visible',
                      '_make_host', '_reclaim_content', '_on_session_ended',
-                     'get_width'):
+                     'get_width', 'can_host_surface', 'host_surface',
+                     'release_surface', '_drop_hosted'):
             setattr(self, name, types.MethodType(
                 getattr(ls.LockScreen, name), self))
 
@@ -373,6 +391,277 @@ class TestLockScreenSession:
         assert h._use_session_lock is False and h.overlay == 1
         assert presented == [h] and h.child is h._content
         assert session_lock.backend() == 'layer-shell'
+
+
+class TestLockScreenHostsSurfaces:
+    """Over a session lock the call UI and the power menu show inside
+    the lock surface, and go back to their own windows when it ends."""
+
+    def test_no_hosting_without_an_active_session_lock(self):
+        h = _Harness(_lock_screen())
+        assert h.can_host_surface() is False
+        assert h.host_surface(_Widget()) is False
+        h._session = SimpleNamespace(active=True)
+        h._use_session_lock = False
+        assert h.can_host_surface() is False
+
+    def test_hosted_widget_sits_over_the_lock_ui(self):
+        h = _Harness(_lock_screen())
+        h._session = SimpleNamespace(active=True)
+        call = _Widget()
+        assert h.host_surface(call) is True
+        assert h._surface_overlay.overlays == [call]
+        assert h.host_surface(call) is True
+        assert h._surface_overlay.overlays == [call]
+        h.release_surface(call)
+        assert call.parent is None and h._hosted == []
+
+    def test_parented_widget_is_refused(self):
+        h = _Harness(_lock_screen())
+        h._session = SimpleNamespace(active=True)
+        widget = _Widget()
+        widget.parent = object()
+        assert h.host_surface(widget) is False
+
+    def test_unlock_hands_hosted_surfaces_back_after_the_lock_is_down(self):
+        h = _Harness(_lock_screen())
+        session = SimpleNamespace(active=True)
+        h._session = session
+        h._make_host()
+        seen = []
+        call, menu = _Widget(), _Widget()
+
+        def released(name, widget):
+            seen.append((name, widget.parent, h.get_visible()))
+        h.host_surface(call, lambda: released('call', call))
+        h.host_surface(menu, lambda: released('menu', menu))
+        session.active = False
+        h._on_session_ended(False)
+        assert seen == [('call', None, False), ('menu', None, False)]
+        assert h._surface_overlay.overlays == []
+        assert h.child is h._content
+
+    def test_refused_lock_releases_after_the_fallback_lock_maps(
+            self, monkeypatch):
+        ls = _lock_screen()
+        h = _Harness(ls)
+        order = []
+        monkeypatch.setattr(ls.Gtk.Window, 'present',
+                            lambda self: order.append('lock'),
+                            raising=False)
+        h._session = SimpleNamespace(active=True)
+        h._make_host()
+        h.host_surface(_Widget(), lambda: order.append('call'))
+        h._session.active = False
+        h._on_session_ended(True)
+        assert order == ['lock', 'call']
+
+
+class _Window:
+    """The Gtk.Window surface LockHosted wraps."""
+
+    def __init__(self, content):
+        self.child = None
+        self.mapped = False
+        self.presents = 0
+        self.sensitive = True
+        self.set_child(content)
+
+    def get_child(self):
+        return self.child
+
+    def set_child(self, child):
+        if self.child is not None:
+            self.child.parent = None
+        self.child = child
+        if child is not None:
+            assert child.parent is None
+            child.parent = self
+
+    def present(self):
+        self.presents += 1
+        self.mapped = True
+
+    def set_visible(self, visible):
+        self.mapped = visible
+
+    def get_visible(self):
+        return self.mapped
+
+    def hide(self):
+        self.mapped = False
+
+    def get_sensitive(self):
+        return self.sensitive
+
+    def set_sensitive(self, sensitive):
+        self.sensitive = sensitive
+
+
+class _Content(_Widget):
+    def __init__(self):
+        super().__init__()
+        self.sensitive = True
+
+    def set_sensitive(self, sensitive):
+        self.sensitive = sensitive
+
+
+class _Surface(session_lock.LockHosted, _Window):
+    pass
+
+
+class _LockHost:
+    def __init__(self, active=True, accept=True):
+        self.active = active
+        self.accept = accept
+        self.hosted = {}
+
+    def can_host_surface(self):
+        return self.active
+
+    def host_surface(self, widget, on_released=None):
+        if not self.accept:
+            return False
+        assert widget.parent is None
+        widget.parent = self
+        self.hosted[id(widget)] = (widget, on_released)
+        return True
+
+    def release_surface(self, widget):
+        self.hosted.pop(id(widget), None)
+        if widget is not None and widget.parent is self:
+            widget.parent = None
+
+    def end(self):
+        self.active = False
+        for widget, on_released in list(self.hosted.values()):
+            self.release_surface(widget)
+            if on_released is not None:
+                on_released()
+
+
+class TestLockHosted:
+    def surface(self, host):
+        content = _Content()
+        surface = _Surface(content)
+        surface.set_lock_host(lambda: host)
+        return surface, content
+
+    def test_without_a_session_lock_it_maps_itself(self):
+        surface, content = self.surface(_LockHost(active=False))
+        surface.present()
+        assert surface.mapped and surface.presents == 1
+        assert content.parent is surface and not surface.lock_hosted()
+
+    def test_without_a_host_it_maps_itself(self):
+        surface, content = self.surface(None)
+        surface.set_visible(True)
+        assert surface.mapped and content.parent is surface
+
+    def test_over_a_session_lock_the_content_moves_into_the_lock(self):
+        host = _LockHost()
+        surface, content = self.surface(host)
+        surface.present()
+        assert content.parent is host and surface.child is None
+        assert not surface.mapped and surface.presents == 0
+        assert surface.get_visible() and surface.lock_hosted()
+        surface.present()
+        surface.set_visible(True)
+        assert len(host.hosted) == 1 and surface.presents == 0
+
+    def test_a_mapped_surface_unmaps_when_the_lock_takes_it(self):
+        host = _LockHost(active=False)
+        surface, content = self.surface(host)
+        surface.present()
+        host.active = True
+        surface.present()
+        assert not surface.mapped and content.parent is host
+
+    def test_hiding_returns_the_content(self):
+        host = _LockHost()
+        surface, content = self.surface(host)
+        surface.present()
+        surface.hide()
+        assert content.parent is surface and host.hosted == {}
+        assert not surface.get_visible()
+        surface.present()
+        surface.set_visible(False)
+        assert content.parent is surface and host.hosted == {}
+
+    def test_lock_end_shows_it_as_its_own_surface(self):
+        host = _LockHost()
+        surface, content = self.surface(host)
+        surface.present()
+        host.end()
+        assert content.parent is surface and surface.mapped
+        assert surface.presents == 1 and not surface.lock_hosted()
+
+    def test_a_refusing_host_leaves_it_on_its_own_window(self):
+        surface, content = self.surface(_LockHost(accept=False))
+        surface.present()
+        assert content.parent is surface and surface.mapped
+
+    def test_a_raising_host_leaves_it_on_its_own_window(self):
+        surface, content = self.surface(None)
+
+        def boom():
+            raise RuntimeError('gone')
+        surface.set_lock_host(boom)
+        surface.present()
+        assert content.parent is surface and surface.mapped
+
+    def test_stale_host_is_left_on_the_next_present(self):
+        host = _LockHost()
+        surface, content = self.surface(host)
+        surface.present()
+        host.active = False
+        surface.present()
+        assert content.parent is surface and surface.mapped
+
+    def test_sensitivity_follows_into_the_lock(self):
+        host = _LockHost()
+        surface, content = self.surface(host)
+        surface.present()
+        surface.set_sensitive(False)
+        assert content.sensitive is False
+        surface.hide()
+        assert content.sensitive is True
+
+
+class TestEngaged:
+    def _lock(self, refuse=False):
+        module = FakeModule([FakeMonitor('DSI-1', 360, 720)], refuse=refuse)
+        lock = session_lock.SessionLock(
+            lambda: 'ui', lambda: 'cover', module=module,
+            display=FakeDisplay(monitors=module.monitors))
+        return lock, module
+
+    def test_engaged_follows_the_lock(self):
+        lock, module = self._lock()
+        assert session_lock.engaged() is False
+        lock.lock()
+        assert session_lock.engaged() is True
+        module.instances[0].confirm()
+        lock.unlock()
+        assert session_lock.engaged() is False
+
+    def test_refused_lock_never_engages(self):
+        lock, _module = self._lock(refuse=True)
+        lock.lock()
+        assert session_lock.engaged() is False
+
+    def test_banners_stay_off_while_engaged(self, monkeypatch):
+        banner = pytest.importorskip('banner')
+        assert banner._session_locked() is False
+        monkeypatch.setattr(session_lock, '_engaged', {1})
+        assert banner._session_locked() is True
+
+    def test_call_ui_and_power_menu_are_lock_hosted(self):
+        for name, cls in (('call_ui', 'CallUI'), ('power_menu', 'PowerMenu')):
+            source = (Path(__file__).parent.parent / 'launcher' / 'src'
+                      / f'{name}.py').read_text()
+            assert f'class {cls}(LockHosted, Gtk.Window):' in source
 
 
 # ------------------------------------------- ShellWindow: lock first

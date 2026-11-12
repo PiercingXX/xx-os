@@ -1873,6 +1873,8 @@ class ShellWindow(Adw.ApplicationWindow):
                 config=self.config, on_lock=self._show_lock_screen,
                 call_live=self._call_live)
             self._power_menu.set_application(self.get_application())
+            self._power_menu.set_lock_host(
+                lambda: getattr(self, '_lock_screen', None))
             # Same current-preset rule as _open_dialer.
             self._power_menu.apply_theme(resolve_appearance_preset(self.config))
         self._power_menu.show_menu()

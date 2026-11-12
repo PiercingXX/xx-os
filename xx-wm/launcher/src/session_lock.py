@@ -127,6 +127,7 @@ def _reset() -> None:
     """Test seam: decide again on the next backend() call."""
     global _choice
     _choice = None
+    _engaged.clear()
 
 
 def handset_index(monitors: list) -> int | None:
@@ -160,6 +161,133 @@ def handset_monitor(display):
             shapes.append(('', 0, 0))
     index = handset_index(shapes)
     return None if index is None else monitors[index]
+
+
+_engaged: set[int] = set()
+
+
+def engaged() -> bool:
+    """True while this process holds an ext-session-lock: the compositor
+    shows nothing but lock surfaces, so a window mapped now is never
+    seen."""
+    return bool(_engaged)
+
+
+class LockHosted:
+    """Mixin for a shell Gtk.Window that must stay reachable over the
+    lock (the call UI, the power menu). Over a layer-shell lock it maps
+    as its own overlay surface, as always. While an ext-session-lock is
+    up only lock surfaces show, so its content moves into the lock
+    surface of the host from ``set_lock_host`` and back to this window
+    when the window hides or the lock ends; the window itself stays
+    unmapped meanwhile.
+
+    The host offers ``can_host_surface()``,
+    ``host_surface(widget, on_released) -> bool`` and
+    ``release_surface(widget)``; ``on_released`` runs when the lock ends
+    with the widget still hosted, after the host dropped it."""
+
+    _lock_host_fn: Callable[[], object] | None = None
+    _lock_hosted = None
+    _lock_content = None
+
+    def set_lock_host(self, host_fn: Callable[[], object] | None) -> None:
+        self._lock_host_fn = host_fn
+
+    def lock_hosted(self) -> bool:
+        return self._lock_hosted is not None
+
+    def _lock_host_target(self):
+        fn = self._lock_host_fn
+        if fn is None:
+            return None
+        try:
+            host = fn()
+            if host is not None and host.can_host_surface():
+                return host
+        except Exception as exc:
+            log.warning('lock host unavailable: %s', exc)
+        return None
+
+    def _enter_lock(self) -> bool:
+        if self._lock_hosted is not None:
+            try:
+                if self._lock_hosted.can_host_surface():
+                    return True
+            except Exception:
+                pass
+            self._leave_lock()
+        host = self._lock_host_target()
+        if host is None:
+            return False
+        content = self.get_child()
+        if content is None:
+            return False
+        if super().get_visible():
+            super().set_visible(False)
+        self.set_child(None)
+        try:
+            hosted = bool(host.host_surface(content, self._on_lock_released))
+        except Exception as exc:
+            log.warning('lock host refused a surface: %s', exc)
+            hosted = False
+        if not hosted:
+            self.set_child(content)
+            return False
+        content.set_sensitive(super().get_sensitive())
+        self._lock_hosted = host
+        self._lock_content = content
+        return True
+
+    def _restore_lock_content(self) -> None:
+        content, self._lock_content = self._lock_content, None
+        if content is None:
+            return
+        content.set_sensitive(True)
+        if content.get_parent() is None:
+            self.set_child(content)
+
+    def _leave_lock(self) -> None:
+        host, self._lock_hosted = self._lock_hosted, None
+        if host is None:
+            return
+        try:
+            host.release_surface(self._lock_content)
+        except Exception as exc:
+            log.warning('lock host release failed: %s', exc)
+        self._restore_lock_content()
+
+    def _on_lock_released(self) -> None:
+        """The lock ended while this surface sat in it: it stays shown,
+        now as its own surface."""
+        if self._lock_hosted is None:
+            return
+        self._lock_hosted = None
+        self._restore_lock_content()
+        super().present()
+
+    def present(self) -> None:
+        if not self._enter_lock():
+            super().present()
+
+    def set_visible(self, visible: bool) -> None:
+        if not visible:
+            self._leave_lock()
+            super().set_visible(False)
+        elif not self._enter_lock():
+            super().set_visible(True)
+
+    def hide(self) -> None:
+        self._leave_lock()
+        super().hide()
+
+    def get_visible(self) -> bool:
+        return self._lock_hosted is not None or super().get_visible()
+
+    def set_sensitive(self, sensitive: bool) -> None:
+        super().set_sensitive(sensitive)
+        if self._lock_hosted is not None and self._lock_content is not None:
+            self._lock_content.set_sensitive(sensitive)
 
 
 class SessionLock:
@@ -198,6 +326,7 @@ class SessionLock:
         instance.connect('failed', self._on_failed)
         instance.connect('unlocked', self._on_unlocked)
         self.active = True
+        _engaged.add(id(self))
         if not instance.lock():
             log.error('session lock refused immediately')
             self._end(failed=True)
@@ -254,6 +383,7 @@ class SessionLock:
             return
         self.active = False
         self.locked = False
+        _engaged.discard(id(self))
         self._covers.clear()
         callback, self._on_ended = self._on_ended, None
         if callback is not None:

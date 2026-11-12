@@ -611,6 +611,8 @@ class LockScreen(Gtk.Window):
         self._session = None
         self._host: Gtk.Window | None = None
         self._content: Gtk.Widget | None = None
+        self._surface_overlay: Gtk.Overlay | None = None
+        self._hosted: list = []
         self._use_session_lock = _lock_backend() == 'session-lock'
         if not self._use_session_lock:
             self._init_overlay_surface()
@@ -657,7 +659,12 @@ class LockScreen(Gtk.Window):
             clip.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.EXTERNAL)
             clip.set_kinetic_scrolling(False)
             clip.set_child(content)
-            content = clip
+            # Only lock surfaces show over a session lock, so the call UI
+            # and the power menu show inside this one (host_surface).
+            overlay = Gtk.Overlay()
+            overlay.set_child(clip)
+            self._surface_overlay = overlay
+            content = overlay
         self._content = content
         self.set_child(content)
         self._refresh_clock()
@@ -794,23 +801,67 @@ class LockScreen(Gtk.Window):
         if content is not None and content.get_parent() is None:
             self.set_child(content)
 
+    def can_host_surface(self) -> bool:
+        """True while a session lock is up: another shell surface can
+        only be seen inside it."""
+        return (self._session_mode() and self._session is not None
+                and self._session.active
+                and getattr(self, '_surface_overlay', None) is not None)
+
+    def host_surface(self, widget: Gtk.Widget,
+                     on_released: Callable[[], None] | None = None) -> bool:
+        """Show another surface's unparented content (session_lock.
+        LockHosted) over the lock UI, on the handset output, until
+        release_surface or the end of the lock (then ``on_released``)."""
+        if not self.can_host_surface():
+            return False
+        overlay = self._surface_overlay
+        if widget.get_parent() is not overlay:
+            if widget.get_parent() is not None:
+                return False
+            overlay.add_overlay(widget)
+        self._hosted = [(w, cb) for w, cb in self._hosted if w is not widget]
+        self._hosted.append((widget, on_released))
+        return True
+
+    def release_surface(self, widget: Gtk.Widget | None) -> None:
+        self._hosted = [(w, cb) for w, cb in self._hosted if w is not widget]
+        overlay = getattr(self, '_surface_overlay', None)
+        if (widget is not None and overlay is not None
+                and widget.get_parent() is overlay):
+            overlay.remove_overlay(widget)
+
+    def _drop_hosted(self) -> list:
+        hosted, self._hosted = getattr(self, '_hosted', []), []
+        for widget, _cb in hosted:
+            self.release_surface(widget)
+        return hosted
+
     def _on_session_ended(self, failed: bool) -> None:
         """Runs before gtk4-session-lock destroys the host: take the
-        content back for the next lock. A lock the compositor refused
-        falls back to the overlay surface right away."""
+        content back for the next lock, and hand hosted surfaces back to
+        their own windows. A lock the compositor refused falls back to
+        the overlay surface right away."""
+        hosted = self._drop_hosted()
         self._reclaim_content()
         self.notify('visible')
-        if not failed:
-            return
-        try:
-            import session_lock
-            session_lock.fall_back('the session lock failed')
-        except Exception:
-            pass
-        self._use_session_lock = False
-        self._session = None
-        self._init_overlay_surface()
-        Gtk.Window.present(self)
+        if failed:
+            try:
+                import session_lock
+                session_lock.fall_back('the session lock failed')
+            except Exception:
+                pass
+            self._use_session_lock = False
+            self._session = None
+            self._init_overlay_surface()
+            Gtk.Window.present(self)
+        for _widget, on_released in hosted:
+            if on_released is None:
+                continue
+            try:
+                on_released()
+            except Exception as exc:
+                _log.warning('hosted surface release failed: %s', exc)
 
     def _display_preset(self) -> ThemePreset:
         """Preset this surface renders with: window.resolve_theme over the

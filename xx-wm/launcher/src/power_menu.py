@@ -19,6 +19,7 @@ if _HAS_LAYER:
     from gi.repository import Gtk4LayerShell as LayerShell
 
 from config import DANGER_RED, ShellConfig, ThemePreset
+from session_lock import LockHosted
 from shell_log import get_logger
 
 _log = get_logger('power')
@@ -236,7 +237,7 @@ window.power-menu-window {{
 """
 
 
-class PowerMenu(Gtk.Window):
+class PowerMenu(LockHosted, Gtk.Window):
     """
     Full-screen scrim with a text-first action list — Lock, Suspend,
     Restart, Power off, Cancel — triggered by long-pressing the power

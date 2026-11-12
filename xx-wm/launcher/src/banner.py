@@ -116,6 +116,14 @@ def should_show_banner(
     return True
 
 
+def _session_locked() -> bool:
+    try:
+        import session_lock
+        return session_lock.engaged()
+    except Exception:
+        return False
+
+
 def banner_duration_ms(body) -> int:
     """Card hold time: longer bodies earn the longer hold."""
     try:
@@ -404,6 +412,10 @@ if _HAS_GTK:
             actions=None,
             hints=None,
         ) -> None:
+            # Over a session lock the compositor shows only lock
+            # surfaces; the lock screen lists notifications itself.
+            if _session_locked():
+                return
             current = self._state.show(
                 notif_id, app_name, summary, body, desktop_entry,
                 actions, hints)

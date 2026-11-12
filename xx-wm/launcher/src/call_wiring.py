@@ -109,6 +109,8 @@ class CallWiring:
             win._call_ui.apply_theme(resolve_theme(win.config))
             try:
                 win._call_ui.set_lock_probe(win.is_locked)
+                win._call_ui.set_lock_host(
+                    lambda: getattr(win, '_lock_screen', None))
             except Exception:
                 pass
         if win._call_bar is None:
