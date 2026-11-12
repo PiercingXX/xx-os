@@ -265,11 +265,36 @@ echo "Waydroid init + microG image + Android apps are device work — see device
 # android-tools ships no adbd daemon, so the ADB row hides there.
 # openssh + nftables are the SSH/firewall transports (nftables is the
 # firewall backend everywhere; ufw is only a fallback). All guarded.
+deb_installed() {
+    # shellcheck disable=SC2016  # ${Status} is a dpkg-query field, not shell
+    dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'
+}
+
+sshd_off() {
+    # Debian starts sshd with password logins on install. SSH stays off
+    # until the user turns it on in Settings.
+    if [ -d /run/systemd/system ]; then
+        $SUDO systemctl disable --now ssh
+        $SUDO systemctl disable --now ssh.socket 2>/dev/null || true
+    else
+        $SUDO service ssh stop 2>/dev/null || true
+        $SUDO update-rc.d ssh disable 2>/dev/null || true
+    fi
+}
+
 echo "Installing sharing backends..."
 case "$PKG" in
     apk) pkg_install openssh nftables kdeconnect syncthing ;;
     pacman) pkg_install openssh nftables kdeconnect syncthing ;;
-    *) pkg_install openssh-server nftables kdeconnect syncthing ;;
+    *)
+        # An sshd that was already there (a device set up over SSH) is
+        # left as the user had it.
+        _had_sshd=0
+        deb_installed openssh-server && _had_sshd=1
+        pkg_install openssh-server nftables kdeconnect syncthing
+        if [ "$_had_sshd" = 0 ] && deb_installed openssh-server; then
+            sshd_off
+        fi ;;
 esac
 if [ "$PKG" = apt ]; then
     pkg_install adbd || pkg_install android-tools-adbd || \

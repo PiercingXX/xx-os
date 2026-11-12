@@ -87,6 +87,72 @@ def test_nothing_from_the_network_is_piped_into_a_shell_or_tar():
                     r'|\|\s*(\$SUDO\s+)?tar\b', line), f'{name}: {line}'
 
 
+def _run_sharing_section(tmp_path, pkg, sshd_before):
+    """Section 17.7 of the real script with pkg_install faked: it marks
+    openssh-server installed in a fake dpkg database, and a logging
+    stand-in for $SUDO records what would run as root."""
+    text = SCRIPT.read_text(encoding='utf-8')
+    chunk = text[text.find('# --- 17.7'):text.find('# --- 17.8')]
+    assert chunk
+    bindir = tmp_path / 'bin'
+    bindir.mkdir()
+    log = tmp_path / 'calls.log'
+    db = tmp_path / 'dpkg'
+    db.mkdir()
+    if sshd_before:
+        (db / 'openssh-server').touch()
+    stubs = {
+        'dpkg-query': ('for a in "$@"; do pkg="$a"; done\n'
+                       '[ -e "%s/$pkg" ] || exit 1\n'
+                       'printf "install ok installed"\n' % db),
+        'fakesudo': 'echo "sudo $*" >> "%s"\n' % log,
+    }
+    for name, body in stubs.items():
+        (bindir / name).write_text('#!/bin/sh\n' + body)
+        (bindir / name).chmod(0o755)
+    funcs = tmp_path / 'sharing.sh'
+    funcs.write_text(
+        'pkg_install() {\n'
+        '    echo "pkg_install $*" >> "%s"\n'
+        '    for p in "$@"; do touch "%s/$p"; done\n'
+        '}\n' % (log, db) + chunk)
+    env = dict(os.environ)
+    env.update({'PATH': '%s:%s' % (bindir, os.environ['PATH']),
+                'SUDO': 'fakesudo', 'PKG': pkg})
+    proc = subprocess.run(['sh', '-c', '. "%s"' % funcs],
+                          capture_output=True, stdin=subprocess.DEVNULL,
+                          text=True, env=env, cwd=str(tmp_path), timeout=60)
+    return proc, (log.read_text() if log.exists() else '')
+
+
+def _sshd_disabled(calls):
+    if os.path.isdir('/run/systemd/system'):
+        return 'sudo systemctl disable --now ssh\n' in calls
+    return 'sudo update-rc.d ssh disable' in calls
+
+
+def test_fresh_openssh_server_on_apt_is_disabled_right_away(tmp_path):
+    proc, calls = _run_sharing_section(tmp_path, 'apt', sshd_before=False)
+    assert proc.returncode == 0, proc.stderr
+    assert 'pkg_install openssh-server' in calls
+    assert _sshd_disabled(calls)
+    assert calls.find('pkg_install openssh-server') < calls.find('sudo ')
+
+
+def test_existing_sshd_on_apt_is_left_as_it_was(tmp_path):
+    proc, calls = _run_sharing_section(tmp_path, 'apt', sshd_before=True)
+    assert proc.returncode == 0, proc.stderr
+    assert 'pkg_install openssh-server' in calls
+    assert 'sudo ' not in calls
+
+
+def test_sshd_off_is_apt_only(tmp_path):
+    proc, calls = _run_sharing_section(tmp_path, 'apk', sshd_before=False)
+    assert proc.returncode == 0, proc.stderr
+    assert 'pkg_install openssh nftables' in calls
+    assert 'sudo ' not in calls
+
+
 def test_pwa_desktop_escapes_percent_and_quotes_url():
     text = SCRIPT.read_text(encoding='utf-8')
     assert "s/%/%%/g" in text
