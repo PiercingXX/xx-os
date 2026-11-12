@@ -199,14 +199,16 @@ their own transient systemd user scope
 (`app-xxwm-<app id>-<pid>.scope`) and frozen when unused — thawed
 instantly on return (relaunch, switcher activation, notification tap, or
 any other toplevel activation). Only shell-launched apps are ever frozen;
-the shell, phoc, and everything else are never touched.
+the shell, phoc, and everything else are never touched. An app is one
+record whichever id names it: the drawer's desktop id (`X.desktop`), the
+window's app_id (`X`) and the desktop file's `StartupWMClass` all match.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `app_standby_minutes` | int | `10` | Idle minutes (screen on) before an unused app freezes; `0` disables standby entirely. |
 | `standby_exempt` | list | `[]` | App ids that are never frozen (compared without `.desktop`, case-insensitive). |
 | `battery_saver` | bool | `false` | Manual saver toggle (also the "Saver" quick-settings tile). Halves `app_standby_minutes` (floor 1), freezes 30 s after blank instead of 2 min, and pauses automatic weather/update checks (manual refresh still works). |
-| `battery_saver_auto` | bool | `true` | Turn the saver on automatically at low battery (see `battery_saver_auto_pct`); it stays on until the device is charging (or rises 5 points above the threshold). |
+| `battery_saver_auto` | bool | `true` | Turn the saver on automatically at low battery (see `battery_saver_auto_pct`); it stays on until the device is charging (or rises 5 points above the threshold). Unplugging while still at or below the threshold turns it on again. |
 | `battery_saver_auto_pct` | int | `15` | Battery percent that trips the automatic saver (standby settings card: 10/15/20/25). Clamped 1..100. |
 | `charge_limit` | int or null | `null` | Battery charge cap in percent (`null` = Off). Written through the root helper (50..100, clamped); the Settings → Charging control only appears when the battery driver exposes a charge-cap sysfs knob. |
 
@@ -217,12 +219,22 @@ an estimate labeled as such. There is no per-app power meter on Linux, so
 shares are honest approximations, not measurements.
 
 Always exempt regardless of timers: apps with an MPRIS player in Playing
-state, apps holding a live PipeWire stream, voice-call apps (GNOME Calls,
-xx-dialer, or whichever app currently owns `org.gnome.Calls`), the
-on-screen keyboard (squeekboard/stevia), and apps whose notification
-action was invoked in the last 60 s. On devices where systemd is not the
-user manager (OpenRC) there are no scopes: pids are recorded and freezing
-degrades to per-process SIGSTOP/SIGCONT.
+state, apps holding a live PipeWire stream (a child process or anything
+in the app's scope counts), voice-call apps (GNOME Calls, xx-dialer, or
+whichever app currently owns `org.gnome.Calls`), apps whose desktop file
+is in the Email, Chat, InstantMessaging, SoftPhone or Telephony category,
+the on-screen keyboard (squeekboard/stevia), and apps whose notification
+action was invoked in the last 60 s. When `pw-dump` fails, nothing is
+frozen until it answers again. A headset or media key thaws a frozen app
+that owns an MPRIS player before the key reaches it. On devices where
+systemd is not the user manager (OpenRC) there are no scopes: pids are
+recorded and freezing degrades to per-process SIGSTOP/SIGCONT.
+
+A pid is only ever signalled after its `/proc/<pid>/stat` start time
+matches the one recorded at launch, so a recycled pid is never stopped;
+a scope that is gone means the app exited. Units the shell froze are
+listed in `$XDG_RUNTIME_DIR/xx-wm/standby-frozen-units.json` and thawed
+at the next shell start, so a crash or deploy never leaves apps frozen.
 
 ### Keeping the screen on & automatic suspend
 
@@ -278,7 +290,7 @@ the active preset.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `network_denied_apps` | list | `[]` | App ids with no network access (compared without `.desktop`, case-insensitive, like `standby_exempt`). Enforced per launch by blocking the app's systemd scope cgroup through the root helper. |
+| `network_denied_apps` | list | `[]` | App ids with no network access (compared without `.desktop`, case-insensitive, like `standby_exempt`). Enforced per launch by blocking the app's systemd scope cgroup through the root helper. Not enforced for Flatpak apps (they run in flatpak's own scope) or D-Bus-activated apps (no shell scope): the Settings → Permissions row says "Not enforced" and the shell log notes each launch. |
 | `privacy_indicators` | bool | `true` | Mic/camera/location indicators on home and in the shade. While `false`, snapshots are dropped before they reach the UI; the "recently used" log (`~/.local/share/xx-wm/privacy-usage.json`, last 24 h) keeps recording. |
 
 Mic/camera detection reads the PipeWire graph (`pw-dump --monitor`, one

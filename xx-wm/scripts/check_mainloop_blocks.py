@@ -41,6 +41,10 @@ ALLOW = {
         'standby exemption-refresh worker thread.',
     ('app_standby.py', 'query_mpris_playing'):
         'standby exemption-refresh worker thread.',
+    ('app_standby.py', 'query_mpris_players'):
+        'standby exemption-refresh worker thread.',
+    ('app_standby.py', '_name_owner_pid'):
+        'standby exemption-refresh worker thread (via query_mpris_players).',
     ('app_standby.py', 'query_calls_owner_pid'):
         'standby exemption-refresh worker thread.',
     ('app_standby.py', 'query_battery'):

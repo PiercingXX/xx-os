@@ -274,7 +274,9 @@ class XXWMApplication(Adw.Application):
             # Live-config read so hot reloads apply on the next reset_idle.
             get_blank_timeout=lambda: self._shell.config.display_blank_timeout,
             on_power_press=self._shell.silence_ringer,
-            on_media_key=self._mpris.handle_media_key,
+            # A frozen player is thawed before the key reaches it.
+            on_media_key=self._standby.wrap_media_key(
+                self._mpris.handle_media_key),
         )
         self._shell._display_mgr = self._display_mgr
         self._start_idle_services()

@@ -137,6 +137,19 @@ def network_denied(win, app_id: str) -> bool:
     return any(_normalize(entry) == wanted for entry in denied)
 
 
+def network_not_enforced(win, app_id: str) -> bool:
+    """The standby controller places launches in scopes; it says when a
+    denial cannot hold (Flatpak and D-Bus-activated apps)."""
+    check = getattr(getattr(win, 'standby', None), 'network_not_enforced',
+                    None)
+    if not callable(check):
+        return False
+    try:
+        return bool(check(app_id))
+    except Exception:
+        return False
+
+
 def set_network_denied(win, app_id: str, denied: bool) -> None:
     try:
         current = list(getattr(win.config, 'network_denied_apps', None) or ())
@@ -381,6 +394,8 @@ class PermissionsSection(settings_page._Section):
                 active = not network_denied(win, app_id)
                 if net_supported is False:
                     detail = 'Needs the helper service'
+                elif not active and network_not_enforced(win, app_id):
+                    detail = 'Not enforced'
             else:
                 active = stored_state(maps, kind, app_id) is True
             row = ui.switch_row(label, detail, active)

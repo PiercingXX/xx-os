@@ -69,9 +69,16 @@ CLOCK_APP_IDS = frozenset({
 })
 BUILTIN_EXEMPT_APP_IDS = TELEPHONY_APP_IDS | SMS_APP_IDS | CLOCK_APP_IDS
 
+# Desktop-file categories that are never frozen: mail, chat and VoIP apps
+# have to keep their connections up to receive anything while blanked.
+EXEMPT_CATEGORIES = frozenset({
+    'email', 'chat', 'instantmessaging', 'softphone', 'telephony',
+})
+
 # Built-in exemptions as the settings UI lists them (read-only).
 BUILTIN_EXEMPTION_LABELS = (
-    'Dialer', 'TxxT daemon', 'Calls', 'Clock & alarms', 'Media playing',
+    'Dialer', 'TxxT daemon', 'Calls', 'Clock & alarms', 'Email & chat',
+    'Media playing',
 )
 
 
@@ -118,6 +125,7 @@ STANDBY_SCOPE_PREFIX = 'app-xxwm-'
 STANDBY_SCOPE_SUFFIX = '.scope'
 STANDBY_SCOPE_PATTERN = 'app-xxwm-*.scope'
 STOPPED_REL_PATH = os.path.join('xx-wm', 'standby-stopped.json')
+FROZEN_UNITS_REL_PATH = os.path.join('xx-wm', 'standby-frozen-units.json')
 DBUS_LIST_TIMEOUT_MS = 500
 SHUTDOWN_UNIT_TIMEOUT_MS = 200
 SHUTDOWN_BUDGET_S = 1.0
@@ -234,17 +242,43 @@ def select_app_units(units: object, app_id: str) -> list[str]:
     return matched
 
 
+def _runtime_dir() -> str:
+    return os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
+
+
 def stopped_file_path() -> str:
     """Degraded-path ledger: runtime dir lifetime matches the need (gone
     on reboot, so no stale SIGSTOP can survive a boot cycle)."""
-    base = os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}'
-    return os.path.join(base, STOPPED_REL_PATH)
+    return os.path.join(_runtime_dir(), STOPPED_REL_PATH)
 
 
-def proc_starttime(pid: int) -> int | None:
-    """Process start time (clock ticks since boot, /proc stat field 22)
-    or None when the pid is gone/unreadable. Used to never signal a
-    recycled pid."""
+def frozen_units_file_path() -> str:
+    """Ledger of units this shell froze, thawed at the next start so a
+    crash or deploy (which skips the quit path) never leaves apps frozen."""
+    return os.path.join(_runtime_dir(), FROZEN_UNITS_REL_PATH)
+
+
+_LEDGER_UNIT_RE = re.compile(r'^[A-Za-z0-9:_.@-]+\.(scope|service)$')
+
+
+def _read_json_list(path: str) -> list:
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _write_private_json(path: str, data: object) -> None:
+    """Write a runtime ledger: directory 0700, file 0600."""
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+        json.dump(data, handle)
+
+
+def _proc_stat_fields(pid: object, proc_root: str) -> list[str] | None:
     try:
         pid_int = int(pid)
     except (TypeError, ValueError):
@@ -252,15 +286,137 @@ def proc_starttime(pid: int) -> int | None:
     if pid_int <= 0:
         return None
     try:
-        with open(f'/proc/{pid_int}/stat', 'r', encoding='utf-8') as handle:
+        with open(os.path.join(proc_root, str(pid_int), 'stat'), 'r',
+                  encoding='utf-8') as handle:
             data = handle.read()
     except OSError:
         return None
+    return data.rpartition(')')[2].split()
+
+
+def proc_starttime(pid: int, proc_root: str = '/proc') -> int | None:
+    """Process start time (clock ticks since boot, /proc stat field 22)
+    or None when the pid is gone/unreadable. Used to never signal a
+    recycled pid."""
+    fields = _proc_stat_fields(pid, proc_root)
     try:
-        after = data.rpartition(')')[2]
-        return int(after.split()[19])
+        return int(fields[19]) if fields else None
     except (IndexError, ValueError):
         return None
+
+
+def proc_parent(pid: int, proc_root: str = '/proc') -> int | None:
+    """Parent pid (/proc stat field 4), None when unreadable."""
+    fields = _proc_stat_fields(pid, proc_root)
+    try:
+        return int(fields[1]) if fields else None
+    except (IndexError, ValueError):
+        return None
+
+
+def proc_unit(pid: int, proc_root: str = '/proc') -> str | None:
+    """Innermost systemd unit (.scope/.service) the process lives in,
+    from /proc/<pid>/cgroup; None when unreadable or not in a unit."""
+    try:
+        with open(os.path.join(proc_root, str(int(pid)), 'cgroup'), 'r',
+                  encoding='utf-8') as handle:
+            text = handle.read()
+    except (OSError, TypeError, ValueError):
+        return None
+    for line in text.splitlines():
+        path = line.split(':', 2)[-1]
+        for part in reversed(path.split('/')):
+            if part.endswith('.scope') or part.endswith('.service'):
+                return part
+    return None
+
+
+def expand_pids(pids: object, proc_root: str = '/proc',
+                max_depth: int = 32) -> tuple[set[int], set[str]]:
+    """Pids plus all their ancestors, and the units they run in.
+
+    An app's audio or MPRIS player is often a child process (a browser
+    content process, a helper), so the app is matched by being an
+    ancestor of the playing pid or sharing its unit (scope)."""
+    lineage: set[int] = set()
+    units: set[str] = set()
+    for pid in pids or ():
+        try:
+            cur = int(pid)
+        except (TypeError, ValueError):
+            continue
+        unit = proc_unit(cur, proc_root)
+        if unit:
+            units.add(unit)
+        for _depth in range(max_depth):
+            if cur <= 1 or cur in lineage:
+                break
+            lineage.add(cur)
+            parent = proc_parent(cur, proc_root)
+            if parent is None:
+                break
+            cur = parent
+    return lineage, units
+
+
+def _unit_gone(error: object) -> bool:
+    """FreezeUnit/ThawUnit failed because the unit no longer exists or is
+    not running: the app exited, so there is nothing to freeze."""
+    name = ''
+    try:
+        name = Gio.DBusError.get_remote_error(error) or ''
+    except Exception:
+        name = ''
+    text = f'{name} {error}'
+    return any(marker in text for marker in (
+        'NoSuchUnit', 'UnitInactive', 'not loaded', 'not active'))
+
+
+def _desktop_app_info_class() -> object:
+    """GioUnix.DesktopAppInfo on GLib 2.86+, Gio's (deprecated) before."""
+    try:
+        import gi
+        gi.require_version('GioUnix', '2.0')
+        from gi.repository import GioUnix
+        return GioUnix.DesktopAppInfo
+    except (ImportError, ValueError, AttributeError):
+        return Gio.DesktopAppInfo
+
+
+def _default_desktop_lookup(app_id: str) -> dict:
+    """Desktop-file facts standby needs: StartupWMClass (alias for the
+    toplevel app_id), categories, Flatpak export, DBusActivatable."""
+    text = (app_id or '').strip()
+    if not text:
+        return {}
+    desktop_id = text if text.lower().endswith('.desktop') else text + '.desktop'
+    try:
+        info = _desktop_app_info_class().new(desktop_id)
+    except Exception:
+        info = None
+    if info is None:
+        return {}
+    facts: dict = {}
+    try:
+        facts['wm_class'] = info.get_startup_wm_class() or ''
+    except Exception:
+        pass
+    try:
+        facts['categories'] = [c for c in (info.get_categories() or '')
+                               .split(';') if c]
+    except Exception:
+        pass
+    try:
+        filename = info.get_filename() or ''
+        facts['flatpak'] = ('flatpak' in filename.split(os.sep)
+                            or bool(info.has_key('X-Flatpak')))
+    except Exception:
+        pass
+    try:
+        facts['dbus_activatable'] = bool(info.get_boolean('DBusActivatable'))
+    except Exception:
+        pass
+    return facts
 
 
 def is_telephony_app(app_id: str) -> bool:
@@ -362,13 +518,21 @@ def parse_pw_dump_pids(payload: str) -> set[int]:
     Node-type (or typeless) objects count — an idle app merely linked
     against PipeWire must not read as busy.
     """
-    pids: set[int] = set()
+    return audio_pids_or_unknown(payload) or set()
+
+
+def audio_pids_or_unknown(payload: object) -> set[int] | None:
+    """parse_pw_dump_pids, but None when the dump is missing or not a
+    pw-dump array: a failed probe means "unknown", never "nobody plays"."""
+    if not isinstance(payload, str):
+        return None
     try:
         objects = json.loads(payload)
     except (TypeError, ValueError):
-        return pids
+        return None
     if not isinstance(objects, list):
-        return pids
+        return None
+    pids: set[int] = set()
     for obj in objects:
         if not isinstance(obj, dict):
             continue
@@ -437,6 +601,62 @@ def query_mpris_playing(session_bus: object) -> set[str]:
             text = str(entry)
             playing.add(text if text.endswith('.desktop') else text + '.desktop')
     return playing
+
+
+def _name_owner_pid(session_bus: object, name: str) -> int | None:
+    """Pid behind a bus name; the bus daemon answers even when the owner
+    is frozen."""
+    try:
+        return int(session_bus.call_sync(
+            'org.freedesktop.DBus', '/org/freedesktop/DBus',
+            'org.freedesktop.DBus', 'GetConnectionUnixProcessID',
+            GLib.Variant('(s)', (name,)),
+            GLib.VariantType('(u)'),
+            Gio.DBusCallFlags.NONE, 2000, None,
+        ).unpack()[0])
+    except Exception:
+        return None
+
+
+def query_mpris_players(session_bus: object,
+                        skip_pids: object = ()) -> list[dict]:
+    """Every MPRIS player: {'name', 'pid', 'entry', 'playing'}.
+
+    The pid comes from the bus daemon, so a frozen player is still
+    attributed; its own properties are not asked for (pids in skip_pids)
+    because a frozen process never answers."""
+    players: list[dict] = []
+    try:
+        names = session_bus.call_sync(
+            'org.freedesktop.DBus', '/org/freedesktop/DBus',
+            'org.freedesktop.DBus', 'ListNames', None,
+            GLib.VariantType('(as)'),
+            Gio.DBusCallFlags.NONE, 2000, None,
+        ).unpack()[0]
+    except Exception:
+        return players
+    skip = set(skip_pids or ())
+    for name in names or ():
+        if not isinstance(name, str) or not name.startswith(_MPRIS_PREFIX):
+            continue
+        pid = _name_owner_pid(session_bus, name)
+        player = {'name': name, 'pid': pid, 'entry': '', 'playing': False}
+        players.append(player)
+        if pid is not None and pid in skip:
+            continue
+        try:
+            player['playing'] = str(_get_prop(
+                session_bus, name, '/org/mpris/MediaPlayer2',
+                'org.mpris.MediaPlayer2.Player', 'PlaybackStatus')) == 'Playing'
+        except Exception:
+            pass
+        try:
+            entry = _get_prop(session_bus, name, '/org/mpris/MediaPlayer2',
+                              'org.mpris.MediaPlayer2', 'DesktopEntry')
+            player['entry'] = str(entry) if entry else ''
+        except Exception:
+            pass
+    return players
 
 
 def query_calls_owner_pid(session_bus: object) -> int | None:
@@ -510,11 +730,14 @@ def launch_with_pid(info: object, on_pid: object = None) -> object:
 class _TrackedApp:
     app_id: str
     pids: set[int] = field(default_factory=set)
+    starttimes: dict[int, int] = field(default_factory=dict)
     scopes: dict[int, str] = field(default_factory=dict)
     dbus_units: set[str] = field(default_factory=set)
+    names: set[str] = field(default_factory=set)
     last_active: float | None = None
     last_notif_action: float | None = None
     frozen: bool = False
+    frozen_units: set[str] = field(default_factory=set)
     stopped: set[int] = field(default_factory=set)
 
 
@@ -532,13 +755,18 @@ def _default_system_bus() -> object | None:
         return None
 
 
-def _default_pw_dump() -> str:
+def _default_pw_dump() -> str | None:
+    """pw-dump JSON; None when it ran and failed (unknown: freeze nothing).
+    Without pw-dump installed there is no PipeWire to ask, so the answer
+    is an empty dump and MPRIS stays the media guard."""
     try:
         out = subprocess.run(['pw-dump'], capture_output=True, text=True,
                              timeout=10)
+    except FileNotFoundError:
+        return '[]'
     except (OSError, subprocess.SubprocessError):
-        return ''
-    return out.stdout if out.returncode == 0 else ''
+        return None
+    return out.stdout if out.returncode == 0 else None
 
 
 class StandbyController:
@@ -562,7 +790,10 @@ class StandbyController:
                  proc_root: str = '/proc',
                  cgroup_root: str = '/sys/fs/cgroup',
                  stopped_file: str | None = None,
-                 on_saver_changed=None) -> None:
+                 on_saver_changed=None,
+                 starttime_reader=None,
+                 desktop_lookup=None,
+                 frozen_units_file: str | None = None) -> None:
         self._config = config
         self._session_bus_factory = session_bus_factory or _default_session_bus
         self._system_bus_factory = system_bus_factory or _default_system_bus
@@ -572,6 +803,14 @@ class StandbyController:
         self._proc_root = proc_root or '/proc'
         self._cgroup_root = cgroup_root or '/sys/fs/cgroup'
         self._stopped_file_override = stopped_file
+        if frozen_units_file is None and stopped_file:
+            frozen_units_file = os.path.join(
+                os.path.dirname(stopped_file), 'standby-frozen-units.json')
+        self._frozen_units_override = frozen_units_file
+        self._starttime_reader = starttime_reader
+        self._desktop_lookup = desktop_lookup or _default_desktop_lookup
+        self._desktop_cache: dict[str, dict] = {}
+        self._aliases: dict[str, str] = {}
         self._clock = clock or time.time
         self._manager = manager
         self._manager_ready = manager is not None
@@ -581,7 +820,14 @@ class StandbyController:
         self._blanked = False
         self._blank_since: float | None = None
         self._mpris_playing: set[str] = set()
+        self._mpris_pids: set[int] = set()
+        self._mpris_units: set[str] = set()
+        self._player_keys: set[str] = set()
+        self._player_pids: set[int] = set()
+        self._player_units: set[str] = set()
+        self._audio_known = True
         self._audio_pids: set[int] = set()
+        self._audio_units: set[str] = set()
         self._calls_pids: set[int] = set()
         self._battery: tuple[float | None, bool] = (None, False)
         self._manual_saver = False
@@ -671,9 +917,93 @@ class StandbyController:
                 self._session_bus_failed = True
         return self._session_bus
 
+    # One record per app: the drawer's desktop id (`X.desktop`), the
+    # toplevel app_id (`X`) and the desktop file's StartupWMClass all
+    # resolve to the same normalized key.
+
+    def _key(self, app_id: object) -> str:
+        norm = normalize_app_id(str(app_id or ''))
+        return self._aliases.get(norm, norm)
+
+    def _record(self, app_id: object,
+                create: bool = True) -> _TrackedApp | None:
+        key = self._key(app_id)
+        if not key:
+            return None
+        rec = self._apps.get(key)
+        if rec is None and create:
+            rec = self._apps[key] = _TrackedApp(app_id=str(app_id))
+        if rec is not None and create:
+            rec.names.add(str(app_id))
+        return rec
+
+    def _desktop_info(self, app_id: object) -> dict:
+        raw = str(app_id or '').strip()
+        if raw in self._desktop_cache:
+            return self._desktop_cache[raw]
+        try:
+            facts = self._desktop_lookup(raw) if raw else {}
+        except Exception:
+            facts = {}
+        if not isinstance(facts, dict):
+            facts = {}
+        self._desktop_cache[raw] = facts
+        return facts
+
+    def add_alias(self, alias: str, app_id: str) -> None:
+        """Map another id for the same app (StartupWMClass, a toplevel
+        app_id that differs from the desktop id) onto app_id's record,
+        merging a record already kept under the alias."""
+        src = normalize_app_id(str(alias or ''))
+        dst = self._key(app_id)
+        if not src or not dst or src == dst:
+            return
+        self._aliases[src] = dst
+        for name, target in list(self._aliases.items()):
+            if target == src:
+                self._aliases[name] = dst
+        other = self._apps.pop(src, None)
+        if other is None:
+            return
+        rec = self._apps.get(dst)
+        if rec is None:
+            self._apps[dst] = other
+        else:
+            self._merge(rec, other)
+
+    @staticmethod
+    def _merge(rec: _TrackedApp, other: _TrackedApp) -> None:
+        rec.pids |= other.pids
+        rec.starttimes.update(other.starttimes)
+        rec.scopes.update(other.scopes)
+        rec.dbus_units |= other.dbus_units
+        rec.names |= other.names
+        rec.stopped |= other.stopped
+        rec.frozen_units |= other.frozen_units
+        rec.frozen = rec.frozen or other.frozen
+        for attr in ('last_active', 'last_notif_action'):
+            stamps = [v for v in (getattr(rec, attr), getattr(other, attr))
+                      if v is not None]
+            setattr(rec, attr, max(stamps) if stamps else None)
+
+    def _learn_aliases(self, app_id: str) -> None:
+        wm_class = self._desktop_info(app_id).get('wm_class')
+        if isinstance(wm_class, str) and wm_class.strip():
+            self.add_alias(wm_class, app_id)
+
+    def _starttime(self, pid: int) -> int | None:
+        reader = self._starttime_reader
+        if reader is None:
+            return proc_starttime(pid, self._proc_root)
+        try:
+            return reader(pid)
+        except Exception:
+            return None
+
     def track(self, app_id: str, pid: int, now: float | None = None) -> None:
         """Record a freshly launched child and place it in its own scope.
-        Launch counts as use: last_active starts now."""
+        Launch counts as use: last_active starts now. The pid's start
+        time is kept so a recycled pid is never signalled."""
         now = self._now(now)
         try:
             pid = int(pid)
@@ -681,10 +1011,17 @@ class StandbyController:
             return
         if pid <= 0:
             return
-        rec = self._apps.get(app_id)
+        self._learn_aliases(app_id)
+        rec = self._record(app_id)
         if rec is None:
-            rec = self._apps[app_id] = _TrackedApp(app_id=app_id)
+            return
+        rec.app_id = str(app_id)
         rec.pids.add(pid)
+        started = self._starttime(pid)
+        if started is None:
+            rec.starttimes.pop(pid, None)
+        else:
+            rec.starttimes[pid] = started
         rec.last_active = now
         if self._force_degraded:
             return
@@ -711,7 +1048,7 @@ class StandbyController:
             try:
                 conn.call_finish(res)
             except Exception as error:
-                rec = self._apps.get(app_id)
+                rec = self._record(app_id, create=False)
                 if rec is not None:
                     rec.scopes.pop(pid, None)
                 _log.info('scope for %s pid %d not placed: %s',
@@ -744,9 +1081,30 @@ class StandbyController:
         except Exception:
             return []
 
+    def network_not_enforced(self, app_id: str) -> bool:
+        """True when app_id is in network_denied_apps but a launch cannot
+        be blocked: a Flatpak runs in flatpak's own scope, and a D-Bus
+        activated app is started by the bus, outside any shell scope."""
+        try:
+            from app_permissions import is_network_denied
+            if not is_network_denied(app_id, self._network_denied_ids()):
+                return False
+        except Exception:
+            return False
+        facts = self._desktop_info(app_id)
+        return bool(facts.get('flatpak') or facts.get('dbus_activatable'))
+
+    def _log_network_enforcement(self, app_id: str) -> None:
+        if not self.network_not_enforced(app_id):
+            return
+        why = ('Flatpak apps run outside the launch scope'
+               if self._desktop_info(app_id).get('flatpak')
+               else 'D-Bus activation starts it outside the shell')
+        _log.warning('network block for %s not enforced: %s', app_id, why)
+
     def scope_names_for(self, app_id: str) -> dict[int, str]:
         """Tracked pid -> scope names for one app ({} when unknown)."""
-        rec = self._apps.get(app_id)
+        rec = self._record(app_id, create=False)
         if rec is None:
             return {}
         return dict(rec.scopes)
@@ -755,7 +1113,7 @@ class StandbyController:
                         pid: int | None = None) -> str | None:
         """Verified /sys/fs/cgroup path for one tracked scope: the proc
         cgroup must actually name the scope, never a constructed guess."""
-        rec = self._apps.get(app_id)
+        rec = self._record(app_id, create=False)
         if rec is None:
             return None
         try:
@@ -793,7 +1151,7 @@ class StandbyController:
         if not any(normalize_app_id(str(e)) == normalize_app_id(app_id)
                    for e in denied):
             return
-        rec = self._apps.get(app_id)
+        rec = self._record(app_id, create=False)
         scope = rec.scopes.get(pid) if rec is not None else None
         if not scope:
             return
@@ -810,8 +1168,11 @@ class StandbyController:
     # -- thaw ----------------------------------------------------------------
 
     def thaw_for_launch(self, app_id: str, now: float | None = None) -> None:
-        """Thaw BEFORE relaunching from home/drawer; relaunch counts as use."""
-        rec = self._apps.get(app_id)
+        """Thaw BEFORE relaunching from home/drawer; relaunch counts as use.
+        Both shell launch paths call this first, so it also logs a network
+        denial the launch cannot enforce."""
+        self._log_network_enforcement(app_id)
+        rec = self._record(app_id, create=False)
         if rec is not None:
             self._thaw(rec)
             rec.last_active = self._now(now)
@@ -819,9 +1180,9 @@ class StandbyController:
     def note_activated(self, app_id: str, now: float | None = None) -> None:
         """The app's toplevel was activated (switcher, tap, any means):
         thaw it and stamp use."""
-        rec = self._apps.get(app_id)
+        rec = self._record(app_id)
         if rec is None:
-            rec = self._apps[app_id] = _TrackedApp(app_id=app_id)
+            return
         self._thaw(rec)
         rec.last_active = self._now(now)
 
@@ -829,53 +1190,82 @@ class StandbyController:
         if not rec.frozen and not rec.stopped:
             return
         bus = None if self._force_degraded else self._bus()
-        for scope in sorted(set(rec.scopes.values()) | set(rec.dbus_units)):
-            if bus is None:
-                break
-            try:
-                bus.call(SYSTEMD_DEST, SYSTEMD_PATH, SYSTEMD_MANAGER,
-                         'ThawUnit', GLib.Variant('(s)', (scope,)), None,
-                         Gio.DBusCallFlags.NONE, -1, None,
-                         self._on_unit_done('ThawUnit', scope))
-            except Exception as error:
-                _log.info('thaw %s failed: %s', scope, error)
+        units = sorted(set(rec.scopes.values()) | set(rec.dbus_units)
+                       | set(rec.frozen_units))
+        if bus is not None:
+            for unit in units:
+                try:
+                    bus.call(SYSTEMD_DEST, SYSTEMD_PATH, SYSTEMD_MANAGER,
+                             'ThawUnit', GLib.Variant('(s)', (unit,)), None,
+                             Gio.DBusCallFlags.NONE, -1, None,
+                             self._on_unit_done('ThawUnit', unit))
+                except Exception as error:
+                    _log.info('thaw %s failed: %s', unit, error)
+            self._forget_frozen_units(units)
         conted = sorted(rec.stopped)
         for pid in conted:
-            try:
-                os.kill(pid, signal.SIGCONT)
-            except OSError:
-                rec.pids.discard(pid)
+            self._signal_pid(rec, pid, signal.SIGCONT)
         if conted:
             self._forget_stopped(conted)
         rec.stopped.clear()
+        rec.frozen_units.clear()
         rec.frozen = False
 
     def activate_with_thaw(self, manager: object, app_id: str,
                            handle: object,
                            on_activated: object = None,
                            now: float | None = None) -> None:
-        """Switcher path: thaw BEFORE the activation reaches the compositor.
+        """Switcher and neighbour-gesture path: thaw BEFORE the activation
+        reaches the compositor.
 
         ThawUnit/SIGCONT are dispatched first, then manager.activate, then
-        on_activated — the ordering the switcher depends on so a frozen
-        app is running by the time its window is raised. Covers re-adopted
-        scopes and cached D-Bus units alike; uncached pid-less apps get one
-        bounded sync resolve so an externally frozen unit is still thawed
-        before its window is raised."""
-        rec = self._apps.get(app_id)
-        if rec is None:
-            rec = self._apps[app_id] = _TrackedApp(app_id=app_id)
-        if not rec.pids and not rec.scopes and not rec.dbus_units:
-            try:
-                self._ensure_dbus_units_sync(rec)
-            except Exception as error:
-                _log.info('standby unit resolve for %s failed: %s',
-                          app_id, error)
-        self._thaw(rec)
-        rec.last_active = self._now(now)
+        on_activated, so a frozen app is running by the time its window
+        is raised."""
+        rec = self._record(app_id)
+        if rec is not None:
+            self._thaw(rec)
+            rec.last_active = self._now(now)
         manager.activate(handle)
         if on_activated is not None:
             on_activated()
+
+    def close_with_thaw(self, manager: object, app_id: str,
+                        handle: object, now: float | None = None) -> None:
+        """Switcher close: a frozen client never handles the close request,
+        so thaw it first (and stamp use, in case it asks to save)."""
+        rec = self._record(app_id, create=False)
+        if rec is not None:
+            self._thaw(rec)
+            rec.last_active = self._now(now)
+        manager.close(handle)
+
+    def note_media_key(self, now: float | None = None) -> list[str]:
+        """A headset/media key was pressed: thaw every frozen app that owns
+        an MPRIS player, before the key reaches the player. Returns the
+        app ids thawed."""
+        thawed: list[str] = []
+        for key, rec in list(self._apps.items()):
+            if not rec.frozen and not rec.stopped:
+                continue
+            units = set(rec.scopes.values()) | rec.dbus_units
+            if (key in self._player_keys or rec.pids & self._player_pids
+                    or units & self._player_units):
+                self._thaw(rec)
+                rec.last_active = self._now(now)
+                thawed.append(rec.app_id)
+        return thawed
+
+    def wrap_media_key(self, handler: object) -> object:
+        """Media-key callback that thaws a frozen player, then runs handler."""
+        def _on_media_key(action: str, *args: object) -> object:
+            try:
+                self.note_media_key()
+            except Exception as error:
+                _log.info('standby media-key thaw failed: %s', error)
+            if handler is None:
+                return False
+            return handler(action, *args)
+        return _on_media_key
 
     def _on_unit_done(self, what: str, scope: str) -> object:
         def _done(conn: object, res: object) -> None:
@@ -918,6 +1308,7 @@ class StandbyController:
     def _freeze(self, rec: _TrackedApp) -> bool:
         if rec.frozen:
             return True
+        self._prune_pids(rec)
         bus = None if self._force_degraded else self._bus()
         if not rec.pids and not rec.scopes and not rec.dbus_units:
             try:
@@ -925,49 +1316,63 @@ class StandbyController:
             except Exception as error:
                 _log.info('standby unit resolve for %s failed: %s',
                           rec.app_id, error)
-        dispatched = False
         for pid, scope in sorted(rec.scopes.items()):
-            if pid not in rec.pids:
-                continue
             if bus is None:
                 self._stop_pid(rec, pid)
-                dispatched = True
                 continue
-            try:
-                bus.call(SYSTEMD_DEST, SYSTEMD_PATH, SYSTEMD_MANAGER,
-                         'FreezeUnit', GLib.Variant('(s)', (scope,)), None,
-                         Gio.DBusCallFlags.NONE, -1, None,
-                         self._on_freeze_done(rec, pid))
-                dispatched = True
-            except Exception as error:
-                _log.info('freeze %s failed, stopping pid: %s', scope, error)
-                self._stop_pid(rec, pid)
-                dispatched = True
+            self._dispatch_freeze(bus, rec, scope,
+                                  self._on_freeze_done(rec, pid, scope),
+                                  fallback_pid=pid)
         for pid in sorted(rec.pids):
             if pid not in rec.scopes:
                 self._stop_pid(rec, pid)
-                dispatched = True
         if not rec.pids and not rec.scopes and bus is not None:
             for unit in sorted(rec.dbus_units):
-                try:
-                    bus.call(SYSTEMD_DEST, SYSTEMD_PATH, SYSTEMD_MANAGER,
-                             'FreezeUnit', GLib.Variant('(s)', (unit,)), None,
-                             Gio.DBusCallFlags.NONE, -1, None,
-                             self._on_dbus_freeze_done(rec, unit))
-                    dispatched = True
-                except Exception as error:
-                    _log.info('freeze %s failed: %s', unit, error)
-        if dispatched:
-            rec.frozen = True
-        return dispatched
+                self._dispatch_freeze(bus, rec, unit,
+                                      self._on_dbus_freeze_done(rec, unit))
+        rec.frozen = bool(rec.frozen_units or rec.stopped)
+        return rec.frozen
 
-    def _on_freeze_done(self, rec: _TrackedApp, pid: int) -> object:
+    def _dispatch_freeze(self, bus: object, rec: _TrackedApp, unit: str,
+                         callback: object,
+                         fallback_pid: int | None = None) -> None:
+        rec.frozen_units.add(unit)
+        self._remember_frozen_units([unit])
+        try:
+            bus.call(SYSTEMD_DEST, SYSTEMD_PATH, SYSTEMD_MANAGER,
+                     'FreezeUnit', GLib.Variant('(s)', (unit,)), None,
+                     Gio.DBusCallFlags.NONE, -1, None, callback)
+        except Exception as error:
+            _log.info('freeze %s failed: %s', unit, error)
+            rec.frozen_units.discard(unit)
+            self._forget_frozen_units([unit])
+            if fallback_pid is not None:
+                self._stop_pid(rec, fallback_pid)
+
+    def _settle_frozen(self, rec: _TrackedApp) -> None:
+        if not rec.frozen_units and not rec.stopped:
+            rec.frozen = False
+
+    def _on_freeze_done(self, rec: _TrackedApp, pid: int,
+                        scope: str) -> object:
         def _done(conn: object, res: object) -> None:
             try:
                 conn.call_finish(res)
             except Exception as error:
-                _log.info('FreezeUnit failed, stopping pid %d: %s', pid, error)
-                self._stop_pid(rec, pid)
+                rec.frozen_units.discard(scope)
+                self._forget_frozen_units([scope])
+                if _unit_gone(error):
+                    # The scope is gone: the app exited. Its pid may
+                    # already belong to something else, so never stop it.
+                    _log.info('FreezeUnit %s: app exited', scope)
+                    rec.scopes.pop(pid, None)
+                    rec.pids.discard(pid)
+                    rec.starttimes.pop(pid, None)
+                else:
+                    _log.info('FreezeUnit failed, stopping pid %d: %s',
+                              pid, error)
+                    self._stop_pid(rec, pid)
+                self._settle_frozen(rec)
         return _done
 
     def _on_dbus_freeze_done(self, rec: _TrackedApp, unit: str) -> object:
@@ -976,22 +1381,109 @@ class StandbyController:
                 conn.call_finish(res)
             except Exception as error:
                 _log.info('FreezeUnit %s failed: %s', unit, error)
+                rec.frozen_units.discard(unit)
+                self._forget_frozen_units([unit])
                 rec.dbus_units.discard(unit)
-                if not rec.dbus_units and not rec.scopes and not rec.pids:
-                    rec.frozen = False
+                self._settle_frozen(rec)
         return _done
 
-    def _stop_pid(self, rec: _TrackedApp, pid: int) -> None:
-        if pid <= 0:
-            return
-        try:
-            os.kill(pid, signal.SIGSTOP)
-        except OSError:
-            rec.pids.discard(pid)
+    # -- pid safety ------------------------------------------------------------
+
+    def _pid_alive(self, rec: _TrackedApp, pid: int) -> bool:
+        """The pid still is the process tracked: same start time as at
+        track(). Unknown start times never verify."""
+        recorded = rec.starttimes.get(pid)
+        if recorded is None:
+            return False
+        return self._starttime(pid) == recorded
+
+    def _drop_pid(self, rec: _TrackedApp, pid: int) -> None:
+        rec.pids.discard(pid)
+        rec.starttimes.pop(pid, None)
+        if pid in rec.stopped:
             rec.stopped.discard(pid)
-            return
+            self._forget_stopped([pid])
+
+    def _prune_pids(self, rec: _TrackedApp) -> int:
+        dead = [pid for pid in sorted(rec.pids)
+                if not self._pid_alive(rec, pid)]
+        for pid in dead:
+            self._drop_pid(rec, pid)
+        return len(dead)
+
+    def _signal_pid(self, rec: _TrackedApp, pid: int, sig: int) -> bool:
+        if pid <= 0 or not self._pid_alive(rec, pid):
+            self._drop_pid(rec, pid)
+            return False
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            self._drop_pid(rec, pid)
+            return False
+        return True
+
+    def _stop_pid(self, rec: _TrackedApp, pid: int) -> bool:
+        if not self._signal_pid(rec, pid, signal.SIGSTOP):
+            return False
         rec.stopped.add(pid)
-        self._record_stopped(pid)
+        self._record_stopped(pid, rec.starttimes.get(pid))
+        return True
+
+    # -- ledgers ($XDG_RUNTIME_DIR, thawed at the next start) ------------------
+
+    def _frozen_units_path(self) -> str:
+        if self._frozen_units_override:
+            return self._frozen_units_override
+        return frozen_units_file_path()
+
+    def _load_frozen_units(self) -> list[str]:
+        return [unit for unit in _read_json_list(self._frozen_units_path())
+                if isinstance(unit, str) and _LEDGER_UNIT_RE.match(unit)]
+
+    def _save_frozen_units(self, units: list[str]) -> None:
+        path = self._frozen_units_path()
+        try:
+            if units:
+                _write_private_json(path, units)
+            else:
+                os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            _log.info('standby frozen-units ledger write failed: %s', error)
+
+    def _remember_frozen_units(self, units: object) -> None:
+        current = self._load_frozen_units()
+        added = [unit for unit in units if unit not in current]
+        if added:
+            self._save_frozen_units(current + added)
+
+    def _forget_frozen_units(self, units: object) -> None:
+        gone = set(units)
+        current = self._load_frozen_units()
+        kept = [unit for unit in current if unit not in gone]
+        if len(kept) != len(current):
+            self._save_frozen_units(kept)
+
+    def _thaw_ledger_units(self) -> list[str]:
+        """Thaw what a previous shell froze and never thawed (crash, deploy,
+        SIGUSR1 restart). systemd keeps a frozen unit frozen forever."""
+        units = self._load_frozen_units()
+        if not units or self._force_degraded:
+            return []
+        bus = self._bus()
+        if bus is None:
+            return []
+        for unit in units:
+            try:
+                bus.call(SYSTEMD_DEST, SYSTEMD_PATH, SYSTEMD_MANAGER,
+                         'ThawUnit', GLib.Variant('(s)', (unit,)), None,
+                         Gio.DBusCallFlags.NONE, -1, None,
+                         self._on_unit_done('ThawUnit', unit))
+            except Exception as error:
+                _log.info('thaw %s failed: %s', unit, error)
+        self._save_frozen_units([])
+        return units
 
     def _stopped_path(self) -> str:
         if self._stopped_file_override:
@@ -999,24 +1491,17 @@ class StandbyController:
         return stopped_file_path()
 
     def _load_stopped(self) -> list:
-        try:
-            with open(self._stopped_path(), 'r', encoding='utf-8') as handle:
-                data = json.load(handle)
-        except (OSError, ValueError):
-            return []
-        return data if isinstance(data, list) else []
+        return _read_json_list(self._stopped_path())
 
     def _write_stopped(self, entries: list) -> None:
-        path = self._stopped_path()
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, 'w', encoding='utf-8') as handle:
-                json.dump(entries, handle)
+            _write_private_json(self._stopped_path(), entries)
         except OSError as error:
             _log.info('standby stopped ledger write failed: %s', error)
 
-    def _record_stopped(self, pid: int) -> None:
-        starttime = proc_starttime(pid)
+    def _record_stopped(self, pid: int, starttime: int | None = None) -> None:
+        if starttime is None:
+            starttime = self._starttime(pid)
         if starttime is None:
             return
         entries = [entry for entry in self._load_stopped()
@@ -1065,7 +1550,7 @@ class StandbyController:
                 continue
             if recorded_int is None:
                 continue
-            current = proc_starttime(pid)
+            current = self._starttime(pid)
             if current is None or current != recorded_int:
                 continue
             try:
@@ -1077,7 +1562,7 @@ class StandbyController:
 
     @property
     def frozen_apps(self) -> list[str]:
-        return [app_id for app_id, rec in self._apps.items() if rec.frozen]
+        return [rec.app_id for rec in self._apps.values() if rec.frozen]
 
     # -- activation observation -------------------------------------------------
 
@@ -1182,7 +1667,12 @@ class StandbyController:
         threshold = saver_auto_threshold(self._config)
         clear = max(SAVER_AUTO_CLEAR_PCT, threshold + 5)
         low = pct <= threshold
-        if charging or pct > clear:
+        if charging:
+            # Unplugging while still low is a fresh low edge: re-arm.
+            self._auto_saver = False
+            self._was_low = False
+            return
+        if pct > clear:
             self._auto_saver = False
         elif low and not self._was_low:
             self._auto_saver = True
@@ -1202,31 +1692,52 @@ class StandbyController:
         minutes = saver_effective_minutes(self._standby_minutes, saver)
         blank_s = saver_blank_seconds(saver)
         exempt = self._standby_exempt
-        mpris = {normalize_app_id(a) for a in self._mpris_playing}
+        exempt_keys = {self._key(e) for e in exempt or ()}
+        mpris = {self._key(a) for a in self._mpris_playing}
         frozen_now: list[str] = []
-        for app_id in list(self._apps):
-            rec = self._apps[app_id]
-            if (not rec.pids and not rec.scopes and not rec.dbus_units
-                    and not rec.stopped and not rec.frozen
-                    and rec.last_active is None):
-                del self._apps[app_id]
+        for key in list(self._apps):
+            rec = self._apps[key]
+            dead = self._prune_pids(rec)
+            empty = (not rec.pids and not rec.scopes and not rec.dbus_units
+                     and not rec.stopped and not rec.frozen)
+            if empty and (dead or rec.last_active is None):
+                del self._apps[key]
                 continue
             if rec.frozen:
                 continue
+            if key in exempt_keys or self._rec_exempt(rec):
+                continue
+            units = set(rec.scopes.values()) | rec.dbus_units
             if should_standby(
-                    app_id, now=now, last_active=rec.last_active,
+                    rec.app_id, now=now, last_active=rec.last_active,
                     screen_blanked=self._blanked, blank_since=self._blank_since,
                     standby_minutes=minutes, blank_seconds=blank_s,
-                    mpris_playing=normalize_app_id(app_id) in mpris,
-                    audio_busy=bool(rec.pids & self._audio_pids),
-                    is_telephony=is_telephony_app(app_id) or bool(
+                    mpris_playing=(key in mpris
+                                   or bool(rec.pids & self._mpris_pids)
+                                   or bool(units & self._mpris_units)),
+                    audio_busy=(not self._audio_known
+                                or bool(rec.pids & self._audio_pids)
+                                or bool(units & self._audio_units)),
+                    is_telephony=is_telephony_app(rec.app_id) or bool(
                         rec.pids & self._calls_pids),
-                    is_keyboard=is_keyboard_app(app_id),
+                    is_keyboard=is_keyboard_app(rec.app_id),
                     exempt_ids=exempt,
                     last_notif_action=rec.last_notif_action):
                 if self._freeze(rec):
-                    frozen_now.append(app_id)
+                    frozen_now.append(rec.app_id)
         return frozen_now
+
+    def _rec_exempt(self, rec: _TrackedApp) -> bool:
+        """Built-in and category exemptions over every id the app goes by
+        (desktop id, toplevel app_id)."""
+        for name in {rec.app_id} | rec.names:
+            if is_builtin_exempt(name) or is_keyboard_app(name):
+                return True
+            categories = self._desktop_info(name).get('categories') or ()
+            if any(str(cat).casefold() in EXEMPT_CATEGORIES
+                   for cat in categories):
+                return True
+        return False
 
     def _sweep_tick(self) -> bool:
         try:
@@ -1245,10 +1756,14 @@ class StandbyController:
     # -- exemption refresh (worker thread, never the main loop) -----------------
 
     def refresh_exemptions_async(self) -> object | None:
+        frozen_pids = {pid for rec in self._apps.values() if rec.frozen
+                       for pid in rec.pids}
+        proc_root = self._proc_root
+
         def _work() -> None:
-            mpris: set[str] = set()
+            players: list[dict] = []
             calls_pid: int | None = None
-            audio: set[int] = set()
+            audio: set[int] | None = None
             batt: tuple[float | None, bool] = (None, False)
             try:
                 bus = self._session_bus_factory()
@@ -1256,7 +1771,7 @@ class StandbyController:
                 bus = None
             if bus is not None:
                 try:
-                    mpris = query_mpris_playing(bus)
+                    players = query_mpris_players(bus, skip_pids=frozen_pids)
                 except Exception:
                     pass
                 try:
@@ -1264,9 +1779,32 @@ class StandbyController:
                 except Exception:
                     pass
             try:
-                audio = parse_pw_dump_pids(self._pw_dump())
+                audio = audio_pids_or_unknown(self._pw_dump())
             except Exception:
-                pass
+                audio = None
+            mpris = set()
+            for player in players:
+                entry = player.get('entry')
+                if player.get('playing') and entry:
+                    mpris.add(entry if entry.endswith('.desktop')
+                              else entry + '.desktop')
+            playing_pids, playing_units = expand_pids(
+                [p['pid'] for p in players
+                 if p.get('playing') and p.get('pid')], proc_root)
+            player_pids, player_units = expand_pids(
+                [p['pid'] for p in players if p.get('pid')], proc_root)
+            audio_units: set[str] = set()
+            if audio is not None:
+                audio, audio_units = expand_pids(audio, proc_root)
+            calls_pids, _calls_units = expand_pids(
+                [calls_pid] if calls_pid else (), proc_root)
+            extra = {
+                'mpris_pids': playing_pids, 'mpris_units': playing_units,
+                'player_pids': player_pids, 'player_units': player_units,
+                'player_entries': {p['entry'] for p in players
+                                   if p.get('entry')},
+                'audio_units': audio_units, 'calls_pids': calls_pids,
+            }
             try:
                 sysbus = self._system_bus_factory()
             except Exception:
@@ -1278,7 +1816,7 @@ class StandbyController:
                     pass
             try:
                 GLib.idle_add(self._apply_exemptions, mpris, calls_pid,
-                              audio, batt)
+                              audio, batt, extra)
             except Exception as error:
                 _log.info('standby refresh post failed: %s', error)
         try:
@@ -1291,11 +1829,27 @@ class StandbyController:
             return None
 
     def _apply_exemptions(self, mpris: set[str], calls_pid: int | None,
-                          audio: set[int], batt: tuple) -> bool:
+                          audio: set[int] | None, batt: tuple,
+                          extra: dict | None = None) -> bool:
+        """Main-loop side of the refresh. audio None means the PipeWire
+        probe failed: unknown, so nothing freezes until it answers."""
         try:
+            extra = extra or {}
             self._mpris_playing = set(mpris or ())
+            self._mpris_pids = set(extra.get('mpris_pids') or ())
+            self._mpris_units = set(extra.get('mpris_units') or ())
+            self._player_pids = set(extra.get('player_pids') or ())
+            self._player_units = set(extra.get('player_units') or ())
+            self._player_keys = {self._key(e) for e in
+                                 extra.get('player_entries') or ()}
             self._calls_pids = {calls_pid} if calls_pid else set()
-            self._audio_pids = set(audio or ())
+            self._calls_pids |= set(extra.get('calls_pids') or ())
+            if audio is None:
+                self._audio_known = False
+            else:
+                self._audio_known = True
+                self._audio_pids = set(audio)
+                self._audio_units = set(extra.get('audio_units') or ())
             self._battery = batt
         except Exception as error:
             _log.info('standby apply exemptions failed: %s', error)
@@ -1307,6 +1861,10 @@ class StandbyController:
             self._restore_stopped_file()
         except Exception as error:
             _log.info('standby stopped restore failed: %s', error)
+        try:
+            self._thaw_ledger_units()
+        except Exception as error:
+            _log.info('standby frozen-units thaw failed: %s', error)
         try:
             self._readopt_scopes_async()
         except Exception as error:
@@ -1361,16 +1919,32 @@ class StandbyController:
             app_id, pid = parse_standby_scope(name)
             if app_id is None:
                 continue
-            rec = self._apps.get(app_id)
+            self._learn_aliases(app_id)
+            rec = self._record(app_id)
             if rec is None:
-                rec = self._apps[app_id] = _TrackedApp(app_id=app_id)
+                continue
             if pid is not None:
-                rec.pids.add(pid)
                 rec.scopes[pid] = name
+                started = self._readopt_starttime(name, pid)
+                if started is not None:
+                    rec.pids.add(pid)
+                    rec.starttimes[pid] = started
             else:
                 rec.dbus_units.add(name)
             rec.last_active = now
             rec.frozen = False
+
+    def _readopt_starttime(self, scope: str, pid: int) -> int | None:
+        """A pid named in a leftover scope is only adopted for signals when
+        it still lives in that scope (it may have been recycled since)."""
+        try:
+            from app_permissions import find_scope_cgroup
+            if not find_scope_cgroup(scope, pid, proc_root=self._proc_root,
+                                     cgroup_root=self._cgroup_root):
+                return None
+        except Exception:
+            return None
+        return self._starttime(pid)
 
     def shutdown_thaw(self) -> None:
         """Synchronous best-effort thaw of everything tracked, bounded to
@@ -1387,8 +1961,10 @@ class StandbyController:
             except Exception as error:
                 _log.info('standby shutdown bus unavailable: %s', error)
                 bus = None
+        thawed: set[str] = set()
         for rec in list(self._apps.values()):
-            for unit in sorted(set(rec.scopes.values()) | set(rec.dbus_units)):
+            for unit in sorted(set(rec.scopes.values()) | set(rec.dbus_units)
+                               | set(rec.frozen_units)):
                 try:
                     remaining = deadline - time.monotonic()
                 except Exception:
@@ -1405,8 +1981,10 @@ class StandbyController:
                         Gio.DBusCallFlags.NONE,
                         max(1, min(SHUTDOWN_UNIT_TIMEOUT_MS,
                                    int(remaining * 1000))), None)
-                except Exception:
-                    pass
+                    thawed.add(unit)
+                except Exception as error:
+                    if _unit_gone(error):
+                        thawed.add(unit)
             try:
                 expired = deadline - time.monotonic() <= 0
             except Exception:
@@ -1414,14 +1992,16 @@ class StandbyController:
             for pid in sorted(rec.stopped):
                 if expired:
                     break
-                try:
-                    os.kill(pid, signal.SIGCONT)
-                except OSError:
-                    pass
+                self._signal_pid(rec, pid, signal.SIGCONT)
             rec.stopped.clear()
+            rec.frozen_units.clear()
             rec.frozen = False
         try:
             self._clear_stopped()
+        except Exception:
+            pass
+        try:
+            self._forget_frozen_units(thawed)
         except Exception:
             pass
 
@@ -1461,9 +2041,9 @@ class StandbyController:
                                  now: float | None = None) -> None:
         """A notification action fired for this app: exempt it for 60 s and
         thaw it so it can respond."""
-        rec = self._apps.get(app_id)
+        rec = self._record(app_id)
         if rec is None:
-            rec = self._apps[app_id] = _TrackedApp(app_id=app_id)
+            return
         rec.last_notif_action = self._now(now)
         self._thaw(rec)
 
@@ -1502,6 +2082,12 @@ def get_standby(config: object = None) -> StandbyController:
     global _default_controller
     if _default_controller is None:
         _default_controller = StandbyController(config=config)
+    return _default_controller
+
+
+def current_standby() -> StandbyController | None:
+    """The configured controller, or None before the shell set one up
+    (never creates one: callers fall back to acting directly)."""
     return _default_controller
 
 

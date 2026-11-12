@@ -151,10 +151,35 @@ def _config(**overrides):
     return cfg
 
 
+def _alive(pid):
+    """Start-time reader for fake pids: every pid is the tracked process."""
+    return 1
+
+
+def _no_desktop(app_id):
+    """Desktop lookup that never reads the host's .desktop files."""
+    return {}
+
+
+def _rec(ctl, app_id):
+    return ctl._record(app_id, create=False)
+
+
+@pytest.fixture(autouse=True)
+def _private_runtime_dir(tmp_path, monkeypatch):
+    """Ledgers land in a temp runtime dir, never the developer's."""
+    runtime = tmp_path / 'runtime'
+    runtime.mkdir()
+    monkeypatch.setenv('XDG_RUNTIME_DIR', str(runtime))
+    return runtime
+
+
 def _controller(bus=None, manager=None, **kwargs):
     kwargs.setdefault('config', _config())
     kwargs.setdefault('session_bus_factory', lambda: bus)
     kwargs.setdefault('system_bus_factory', lambda: None)
+    kwargs.setdefault('starttime_reader', _alive)
+    kwargs.setdefault('desktop_lookup', _no_desktop)
     if manager is not None:
         kwargs['manager'] = manager
     return StandbyController(**kwargs)
@@ -217,14 +242,14 @@ class TestLaunchToScope:
         assert mode == 'fail'
         assert props == [('PIDs', [4242])]
         assert aux == []
-        rec = ctl._apps['org.example.App.desktop']
+        rec = _rec(ctl, 'org.example.App.desktop')
         assert rec.pids == {4242}
         assert rec.last_active == 100.0
 
     def test_track_without_bus_records_pid_only(self):
         ctl = _controller(bus=None, manager=_FakeManager())
         ctl.track('org.example.App.desktop', 4242, now=100.0)
-        rec = ctl._apps['org.example.App.desktop']
+        rec = _rec(ctl, 'org.example.App.desktop')
         assert rec.pids == {4242}
         assert rec.scopes == {}
 
@@ -232,15 +257,15 @@ class TestLaunchToScope:
         bus = _FakeBus(fail_async=True)
         ctl = _controller(bus=bus, manager=_FakeManager())
         ctl.track('org.example.App.desktop', 4242, now=100.0)
-        assert ctl._apps['org.example.App.desktop'].scopes == {}
-        assert ctl._apps['org.example.App.desktop'].pids == {4242}
+        assert _rec(ctl, 'org.example.App.desktop').scopes == {}
+        assert _rec(ctl, 'org.example.App.desktop').pids == {4242}
 
     def test_bad_pids_ignored(self):
         ctl = _controller(bus=_FakeBus(), manager=_FakeManager())
         ctl.track('a.desktop', 0)
         ctl.track('a.desktop', -5)
         ctl.track('a.desktop', 'nope')
-        assert 'a.desktop' not in ctl._apps
+        assert _rec(ctl, 'a.desktop') is None
 
 
 class TestLaunchWithPid:
@@ -393,7 +418,7 @@ class TestAppIndexLaunch:
             ('kill', 424242, int(signal.SIGCONT)),
             ('launch-called',),
         ]
-        assert ctl._apps['org.example.App.desktop'].pids == {424242, 424243}
+        assert _rec(ctl, 'org.example.App.desktop').pids == {424242, 424243}
 
     def test_launch_without_tracker_uses_plain_launch(self):
         info = _FakeDesktopApp(pids=[9])
@@ -506,8 +531,9 @@ class TestDegradedFreezer:
         monkeypatch.setattr(os, 'kill', _kill)
         ctl = self._ctl()
         ctl.track('org.example.App.desktop', 424242, now=0.0)
-        assert ctl.sweep(now=601.0) == ['org.example.App.desktop']
-        rec = ctl._apps['org.example.App.desktop']
+        assert ctl.sweep(now=601.0) == []
+        assert ctl.frozen_apps == []
+        rec = _rec(ctl, 'org.example.App.desktop')
         assert rec.pids == set()
         assert rec.stopped == set()
 
@@ -521,7 +547,7 @@ class TestDegradedFreezer:
         ctl = _controller(bus=None, manager=_observable_manager(),
                           force_degraded=False)
         ctl.track('org.example.App.desktop', 424242, now=0.0)
-        rec = ctl._apps['org.example.App.desktop']
+        rec = _rec(ctl, 'org.example.App.desktop')
         assert rec.pids == {424242}
         assert rec.scopes == {}
         assert ctl.sweep(now=601.0) == ['org.example.App.desktop']
@@ -538,7 +564,7 @@ class TestActivationObservation:
         assert ctl.sweep(now=601.0) == []
         assert manager._callback is not None
         manager.fire('org.example.App.desktop')
-        rec = ctl._apps['org.example.App.desktop']
+        rec = _rec(ctl, 'org.example.App.desktop')
         assert rec.last_active > 601.0
         ctl.track('org.example.App.desktop', 424243, now=0.0)
         assert ctl.sweep(now=601.0) == ['org.example.App.desktop']
@@ -552,9 +578,9 @@ class TestActivationObservation:
         assert ctl.sweep(now=100.0) == []
         before = ctl._now()
         manager.fire(_FakeTop('a.desktop', activated=True))
-        assert ctl._apps['a.desktop'].last_active >= before
+        assert _rec(ctl, 'a.desktop').last_active >= before
         manager.fire(app_id='b.desktop')
-        assert ctl._apps['b.desktop'].last_active >= before
+        assert _rec(ctl, 'b.desktop').last_active >= before
 
     def test_poll_marks_activated_toplevel(self):
         app = _FakeTop('org.example.App.desktop', activated=True)
@@ -563,7 +589,7 @@ class TestActivationObservation:
                           force_degraded=True)
         ctl.track('org.example.App.desktop', 424242, now=0.0)
         assert ctl.sweep(now=601.0) == []
-        assert ctl._apps['org.example.App.desktop'].last_active > 601.0
+        assert _rec(ctl, 'org.example.App.desktop').last_active > 601.0
 
     def test_absent_activation_means_no_freezing(self, kills):
         tops = [_FakeTop('org.example.App.desktop', activated='missing')]
@@ -897,7 +923,7 @@ class TestNotificationAction:
         before = ctl._now()
         daemon.invoke_action(7, 'open')
         assert invoked == [(7, 'open')]
-        assert ctl._apps['org.example.App.desktop'].last_notif_action >= \
+        assert _rec(ctl, 'org.example.App.desktop').last_notif_action >= \
             before
         ctl.note_notification_closed(7)
         daemon.invoke_action(7, 'open')
@@ -1048,6 +1074,15 @@ class _FakeSystemdBus(_FakeBus):
         return super().call_finish(res)
 
 
+def _write_proc_cgroup(proc_root, pid, unit):
+    uid = os.getuid()
+    leaf = Path(proc_root) / str(pid)
+    leaf.mkdir(parents=True, exist_ok=True)
+    (leaf / 'cgroup').write_text(
+        '0::/user.slice/user-%d.slice/user@%d.service/app.slice/%s\n'
+        % (uid, uid, unit), encoding='utf-8')
+
+
 def _systemd_controller(bus, clock_now=0.0, stopped_file=None, **kwargs):
     now = [float(clock_now)]
     kwargs.setdefault('config', _config())
@@ -1055,6 +1090,8 @@ def _systemd_controller(bus, clock_now=0.0, stopped_file=None, **kwargs):
     kwargs.setdefault('system_bus_factory', lambda: None)
     kwargs.setdefault('manager', _observable_manager())
     kwargs.setdefault('clock', lambda: now[0])
+    kwargs.setdefault('starttime_reader', _alive)
+    kwargs.setdefault('desktop_lookup', _no_desktop)
     ctl = StandbyController(stopped_file=stopped_file, **kwargs)
     return ctl, now
 
@@ -1145,13 +1182,15 @@ class TestSelectAppUnits:
 class TestStartReadopt:
     def test_start_lists_thaws_and_readopts(self, tmp_path):
         scope = scope_name_for('org.example.App.desktop', 4242)
+        _write_proc_cgroup(tmp_path / 'proc', 4242, scope)
         bus = _FakeSystemdBus(units=[scope, 'suspend.target'])
         ctl, _now = _systemd_controller(
-            bus, stopped_file=str(tmp_path / 'stopped.json'))
+            bus, stopped_file=str(tmp_path / 'stopped.json'),
+            proc_root=str(tmp_path / 'proc'))
         ctl.start()
         try:
-            assert ctl._apps['org.example.App.desktop'].pids == {4242}
-            rec = ctl._apps['org.example.App.desktop']
+            assert _rec(ctl, 'org.example.App.desktop').pids == {4242}
+            rec = _rec(ctl, 'org.example.App.desktop')
             assert rec.scopes == {4242: scope}
             assert rec.frozen is False
         finally:
@@ -1179,7 +1218,25 @@ class TestStartReadopt:
             bus, stopped_file=str(tmp_path / 'stopped.json'))
         ctl.start()
         try:
-            assert ctl._apps['org.example.App.desktop'].pids == {4242}
+            assert _rec(ctl, 'org.example.App.desktop').scopes == {
+                4242: scope}
+        finally:
+            ctl.stop()
+
+    def test_readopt_never_adopts_a_recycled_pid(self, tmp_path):
+        """The pid in a leftover scope name is only signalled when it still
+        lives in that scope; otherwise only the unit is managed."""
+        scope = scope_name_for('org.example.App.desktop', 4242)
+        _write_proc_cgroup(tmp_path / 'proc', 4242, 'pipewire.service')
+        bus = _FakeSystemdBus(units=[scope])
+        ctl, _now = _systemd_controller(
+            bus, stopped_file=str(tmp_path / 'stopped.json'),
+            proc_root=str(tmp_path / 'proc'))
+        ctl.start()
+        try:
+            rec = _rec(ctl, 'org.example.App.desktop')
+            assert rec.scopes == {4242: scope}
+            assert rec.pids == set()
         finally:
             ctl.stop()
 
@@ -1197,7 +1254,8 @@ class TestStoppedLedger:
 
         monkeypatch.setattr(os, 'kill', _kill)
         ctl, _now = _systemd_controller(
-            _FakeSystemdBus(), stopped_file=ledger, force_degraded=True)
+            _FakeSystemdBus(), stopped_file=ledger, force_degraded=True,
+            starttime_reader=proc_starttime)
         ctl.track('org.example.App.desktop', pid, now=0.0)
         assert ctl.sweep(now=601.0) == ['org.example.App.desktop']
         assert (pid, int(signal.SIGSTOP)) in conted
@@ -1207,7 +1265,8 @@ class TestStoppedLedger:
 
         conted.clear()
         ctl2, _now2 = _systemd_controller(
-            _FakeSystemdBus(), stopped_file=ledger, force_degraded=True)
+            _FakeSystemdBus(), stopped_file=ledger, force_degraded=True,
+            starttime_reader=proc_starttime)
         assert ctl2._restore_stopped_file() == [pid]
         assert conted == [(pid, int(signal.SIGCONT))]
         assert not os.path.exists(ledger)
@@ -1255,7 +1314,7 @@ class TestShutdownThaw:
         conted = []
         monkeypatch.setattr(os, 'kill',
                             lambda pid, sig: conted.append((pid, int(sig))))
-        ctl._apps['org.example.App.desktop'].stopped.add(999999)
+        _rec(ctl, 'org.example.App.desktop').stopped.add(999999)
         ctl.shutdown_thaw()
         thawed = [c[4].unpack()[0] for c in bus.sync_calls
                   if c[3] == 'ThawUnit']
@@ -1302,7 +1361,7 @@ class TestDbusActivatedFreeze:
             'app-gnome-org.gnome.Evolution-1234.scope',
             'dbus-:1.42-org.gnome.Evolution@0.service',
         ]
-        assert ctl._apps['org.gnome.Evolution.desktop'].dbus_units == \
+        assert _rec(ctl, 'org.gnome.Evolution.desktop').dbus_units == \
             set(frozen)
 
     def test_pidless_thaw_thaws_units(self, tmp_path):
@@ -1379,7 +1438,7 @@ class TestThawBeforeActivateOrdering:
         manager = ctl._manager
         ctl.start()
         try:
-            assert ctl._apps['org.example.App.desktop'].scopes == \
+            assert _rec(ctl, 'org.example.App.desktop').scopes == \
                 {4242: scope}
             now[0] = 601.0
             assert ctl.sweep(now=601.0) == ['org.example.App.desktop']
@@ -1394,3 +1453,473 @@ class TestThawBeforeActivateOrdering:
 
 
 
+
+
+# --- one record per app (desktop id, toplevel app_id, StartupWMClass) ---------
+
+class TestOneRecordPerApp:
+    def test_desktop_id_and_toplevel_share_record(self, kills):
+        """track `X.desktop`, the toplevel `X` stays activated, sweep at
+        +11 min: the app on screen is never frozen."""
+        now = [0.0]
+        manager = _FakeManager([_FakeTop('org.example.App', activated=True)])
+        ctl = _controller(bus=None, manager=manager, force_degraded=True,
+                          clock=lambda: now[0])
+        ctl.track('org.example.App.desktop', 424242, now=0.0)
+        now[0] = 660.0
+        assert ctl.sweep(now=660.0) == []
+        assert ctl.frozen_apps == []
+        assert kills == []
+        assert len(ctl._apps) == 1
+        assert _rec(ctl, 'org.example.App').pids == {424242}
+
+    def test_startup_wm_class_alias(self, kills):
+        lookup = {'org.mozilla.firefox.desktop': {'wm_class': 'firefox'}}
+        now = [0.0]
+        manager = _FakeManager([_FakeTop('firefox', activated=True)])
+        ctl = _controller(bus=None, manager=manager, force_degraded=True,
+                          clock=lambda: now[0],
+                          desktop_lookup=lambda a: lookup.get(a, {}))
+        ctl.track('org.mozilla.firefox.desktop', 424242, now=0.0)
+        now[0] = 660.0
+        assert ctl.sweep(now=660.0) == []
+        assert kills == []
+        assert _rec(ctl, 'firefox') is _rec(ctl, 'org.mozilla.firefox.desktop')
+
+    def test_alias_merges_a_record_seen_first(self):
+        lookup = {'org.mozilla.firefox.desktop': {'wm_class': 'firefox'}}
+        ctl = _controller(bus=None, manager=_observable_manager(),
+                          force_degraded=True,
+                          desktop_lookup=lambda a: lookup.get(a, {}))
+        ctl.note_activated('firefox', now=500.0)
+        ctl.track('org.mozilla.firefox.desktop', 424242, now=100.0)
+        assert len(ctl._apps) == 1
+        rec = _rec(ctl, 'firefox')
+        assert rec.pids == {424242}
+        assert rec.last_active == 100.0
+        assert rec.app_id == 'org.mozilla.firefox.desktop'
+
+    def test_idle_tracked_app_still_freezes(self, kills):
+        ctl = _controller(bus=None, manager=_observable_manager(),
+                          force_degraded=True)
+        ctl.track('org.example.App.desktop', 424242, now=0.0)
+        assert ctl.sweep(now=660.0) == ['org.example.App.desktop']
+
+
+# --- switcher and neighbour gesture go through the controller ----------------
+
+def _frozen_systemd(tmp_path):
+    bus = _FakeSystemdBus()
+    ctl, now = _systemd_controller(
+        bus, stopped_file=str(tmp_path / 'stopped.json'))
+    ctl.track('org.example.App.desktop', 4242, now=0.0)
+    now[0] = 601.0
+    assert ctl.sweep(now=601.0) == ['org.example.App.desktop']
+    bus.calls.clear()
+    return ctl, bus
+
+
+def _record_order(bus, manager):
+    order = []
+    orig_call = bus.call
+
+    def _call(*args):
+        if args[3] == 'ThawUnit':
+            order.append(('thaw', args[4].unpack()[0]))
+        return orig_call(*args)
+
+    bus.call = _call
+    manager.activate = lambda h: order.append(('activate', h))
+    manager.close = lambda h: order.append(('close', h))
+    return order
+
+
+class TestSwitcherThaws:
+    def test_switcher_activate_thaws_first(self, tmp_path):
+        from app_switcher import AppInfo, AppSwitcher
+        ctl, bus = _frozen_systemd(tmp_path)
+        manager = ctl._manager
+        order = _record_order(bus, manager)
+        handed = []
+        AppSwitcher._focus_app_with_manager(
+            manager, AppInfo('org.example.App', 'App', handle='h1'),
+            on_activated=lambda: handed.append(True), standby=ctl)
+        scope = scope_name_for('org.example.App.desktop', 4242)
+        assert order == [('thaw', scope), ('activate', 'h1')]
+        assert handed == [True]
+        assert ctl.frozen_apps == []
+
+    def test_switcher_close_thaws_first(self, tmp_path):
+        from app_switcher import AppInfo, AppSwitcher
+        ctl, bus = _frozen_systemd(tmp_path)
+        manager = ctl._manager
+        order = _record_order(bus, manager)
+        AppSwitcher._kill_app_with_manager(
+            manager, AppInfo('org.example.App', 'App', handle='h1'),
+            standby=ctl)
+        scope = scope_name_for('org.example.App.desktop', 4242)
+        assert order == [('thaw', scope), ('close', 'h1')]
+        assert ctl.frozen_apps == []
+
+    def test_switcher_finds_the_configured_controller(self):
+        from app_switcher import AppSwitcher
+        saved = app_standby._default_controller
+        try:
+            app_standby._default_controller = None
+            assert AppSwitcher._standby(object()) is None
+            ctl = configure_standby()
+            assert AppSwitcher._standby(object()) is ctl
+        finally:
+            app_standby._default_controller = saved
+
+    def test_neighbour_gesture_thaws_first(self, tmp_path):
+        import window
+        from toplevel_manager import Toplevel
+        ctl, bus = _frozen_systemd(tmp_path)
+        tops = [Toplevel(app_id='other.app', title='o', handle='o',
+                         activated=True),
+                Toplevel(app_id='org.example.App', title='a', handle='h1',
+                         activated=False)]
+        manager = types.SimpleNamespace(list=lambda: tops)
+        order = _record_order(bus, manager)
+        shell = types.SimpleNamespace(
+            _toplevel_manager=manager, _home_showing=lambda: False,
+            drop_to_background=lambda: order.append('drop'), standby=ctl)
+        assert window.ShellWindow.switch_adjacent_app(shell, 'next') is True
+        scope = scope_name_for('org.example.App.desktop', 4242)
+        assert order == [('thaw', scope), ('activate', 'h1'), 'drop']
+        assert ctl.frozen_apps == []
+
+
+# --- pid safety ----------------------------------------------------------------
+
+class TestPidSafety:
+    def test_track_records_proc_start_time(self):
+        pid = os.getpid()
+        ctl = StandbyController(config=_config(),
+                                session_bus_factory=lambda: None,
+                                desktop_lookup=_no_desktop)
+        ctl.track('org.example.App.desktop', pid, now=0.0)
+        assert _rec(ctl, 'org.example.App.desktop').starttimes == {
+            pid: proc_starttime(pid)}
+
+    def test_recycled_pid_never_stopped(self, kills):
+        start = {424242: 100}
+        ctl = _controller(bus=None, manager=_observable_manager(),
+                          force_degraded=True,
+                          starttime_reader=lambda pid: start.get(pid))
+        ctl.track('org.example.App.desktop', 424242, now=0.0)
+        start[424242] = 999
+        assert ctl.sweep(now=601.0) == []
+        assert kills == []
+        assert _rec(ctl, 'org.example.App.desktop') is None
+
+    def test_recycled_pid_never_continued(self, kills):
+        start = {424242: 100}
+        ctl = _controller(bus=None, manager=_observable_manager(),
+                          force_degraded=True,
+                          starttime_reader=lambda pid: start.get(pid))
+        ctl.track('org.example.App.desktop', 424242, now=0.0)
+        assert ctl.sweep(now=601.0) == ['org.example.App.desktop']
+        start[424242] = 999
+        ctl.note_activated('org.example.App.desktop', now=700.0)
+        assert kills == [(424242, signal.SIGSTOP)]
+        assert ctl.frozen_apps == []
+
+    def test_unknown_start_time_never_signalled(self, kills):
+        ctl = _controller(bus=None, manager=_observable_manager(),
+                          force_degraded=True,
+                          starttime_reader=lambda pid: None)
+        ctl.track('org.example.App.desktop', 424242, now=0.0)
+        assert ctl.sweep(now=601.0) == []
+        assert kills == []
+
+    def test_unit_not_loaded_means_app_exited(self, tmp_path, kills):
+        scope = scope_name_for('org.example.App.desktop', 4242)
+        bus = _FakeSystemdBus(freeze_errors={scope: 'NoSuchUnit'})
+        ctl, now = _systemd_controller(
+            bus, stopped_file=str(tmp_path / 'stopped.json'))
+        ctl.track('org.example.App.desktop', 4242, now=0.0)
+        now[0] = 601.0
+        assert ctl.sweep(now=601.0) == []
+        assert kills == []
+        rec = _rec(ctl, 'org.example.App.desktop')
+        assert rec.scopes == {} and rec.pids == set()
+        assert ctl.frozen_apps == []
+        assert ctl._load_frozen_units() == []
+
+    def test_unit_inactive_means_app_exited(self, tmp_path, kills):
+        scope = scope_name_for('org.example.App.desktop', 4242)
+        bus = _FakeSystemdBus(freeze_errors={scope: 'UnitInactive'})
+        ctl, now = _systemd_controller(
+            bus, stopped_file=str(tmp_path / 'stopped.json'))
+        ctl.track('org.example.App.desktop', 4242, now=0.0)
+        now[0] = 601.0
+        ctl.sweep(now=601.0)
+        assert kills == []
+
+
+# --- exemptions ------------------------------------------------------------------
+
+def _write_proc(proc_root, pid, ppid, unit=None):
+    leaf = Path(proc_root) / str(pid)
+    leaf.mkdir(parents=True, exist_ok=True)
+    fields = ['S', str(ppid)] + ['0'] * 17 + ['777']
+    (leaf / 'stat').write_text('%d (app) %s\n' % (pid, ' '.join(fields)),
+                               encoding='utf-8')
+    if unit:
+        (leaf / 'cgroup').write_text(
+            '0::/user.slice/app.slice/%s\n' % unit, encoding='utf-8')
+
+
+def _run_refresh(ctl, monkeypatch):
+    monkeypatch.setattr(app_standby.GLib, 'idle_add',
+                        lambda fn, *args: fn(*args))
+    thread = ctl.refresh_exemptions_async()
+    thread.join(5)
+
+
+def _pw_payload(*pids):
+    return json.dumps([{'type': 'PipeWire:Interface:Node',
+                        'info': {'props': {'application.process.id': pid}}}
+                       for pid in pids])
+
+
+def _players_bus(players):
+    """MPRIS players: {bus name: (pid, status, entry)}."""
+    def _on_sync(dest, path, iface, method, params, *rest):
+        if method == 'ListNames':
+            return _Reply(list(players))
+        if method == 'GetConnectionUnixProcessID':
+            return _Reply(players[params.unpack()[0]][0])
+        if method == 'GetNameOwner':
+            raise Exception('not owned')
+        prop = params.unpack()[1]
+        pid, status, entry = players[dest]
+        return _Reply(status if prop == 'PlaybackStatus' else entry)
+    return _FakeBus(on_sync=_on_sync)
+
+
+class TestExemptionCoverage:
+    def test_audio_from_child_process_exempts_app(self, tmp_path, kills,
+                                                  monkeypatch):
+        proc = tmp_path / 'proc'
+        _write_proc(proc, 500, 1)
+        _write_proc(proc, 501, 500)
+        ctl = _controller(bus=None, manager=_observable_manager(),
+                          force_degraded=True, proc_root=str(proc),
+                          pw_dump_runner=lambda: _pw_payload(501))
+        ctl.track('org.example.App.desktop', 500, now=0.0)
+        _run_refresh(ctl, monkeypatch)
+        assert ctl.sweep(now=10 ** 6) == []
+        assert kills == []
+
+    def test_audio_in_the_app_scope_exempts_app(self, tmp_path, kills,
+                                                monkeypatch):
+        proc = tmp_path / 'proc'
+        scope = scope_name_for('org.example.App.desktop', 4242)
+        _write_proc(proc, 900, 1, unit=scope)
+        bus = _FakeSystemdBus()
+        ctl, now = _systemd_controller(
+            bus, stopped_file=str(tmp_path / 'stopped.json'),
+            proc_root=str(proc), pw_dump_runner=lambda: _pw_payload(900))
+        ctl.track('org.example.App.desktop', 4242, now=0.0)
+        _run_refresh(ctl, monkeypatch)
+        now[0] = 10 ** 6
+        assert ctl.sweep(now=10 ** 6) == []
+
+    def test_failed_pw_dump_freezes_nothing(self, kills, monkeypatch):
+        dump = [None]
+        ctl = _controller(bus=None, manager=_observable_manager(),
+                          force_degraded=True, pw_dump_runner=lambda: dump[0])
+        ctl.track('org.example.App.desktop', 424242, now=0.0)
+        _run_refresh(ctl, monkeypatch)
+        assert ctl.sweep(now=10 ** 6) == []
+        dump[0] = '[]'
+        _run_refresh(ctl, monkeypatch)
+        assert ctl.sweep(now=10 ** 6) == ['org.example.App.desktop']
+
+    def test_unknown_audio_parse(self):
+        assert app_standby.audio_pids_or_unknown(None) is None
+        assert app_standby.audio_pids_or_unknown('not json') is None
+        assert app_standby.audio_pids_or_unknown('{}') is None
+        assert app_standby.audio_pids_or_unknown('[]') == set()
+
+    def test_mpris_child_with_other_id_exempts_app(self, tmp_path, kills,
+                                                   monkeypatch):
+        proc = tmp_path / 'proc'
+        _write_proc(proc, 500, 1)
+        _write_proc(proc, 501, 500)
+        bus = _players_bus({'org.mpris.MediaPlayer2.firefox.instance501':
+                            (501, 'Playing', 'firefox')})
+        ctl = _controller(bus=bus, manager=_observable_manager(),
+                          force_degraded=True, proc_root=str(proc),
+                          pw_dump_runner=lambda: '[]')
+        ctl.track('org.mozilla.firefox.desktop', 500, now=0.0)
+        _run_refresh(ctl, monkeypatch)
+        assert ctl.sweep(now=10 ** 6) == []
+        assert kills == []
+
+    def test_media_key_thaws_frozen_player_first(self, tmp_path, kills,
+                                                 monkeypatch):
+        proc = tmp_path / 'proc'
+        _write_proc(proc, 500, 1)
+        bus = _players_bus({'org.mpris.MediaPlayer2.vlc':
+                            (500, 'Paused', 'vlc')})
+        ctl = _controller(bus=bus, manager=_observable_manager(),
+                          force_degraded=True, proc_root=str(proc),
+                          pw_dump_runner=lambda: '[]')
+        ctl.track('org.videolan.VLC.desktop', 500, now=0.0)
+        other = 'org.example.Other.desktop'
+        ctl.track(other, 600, now=0.0)
+        _run_refresh(ctl, monkeypatch)
+        assert sorted(ctl.sweep(now=10 ** 6)) == [other,
+                                                  'org.videolan.VLC.desktop']
+        handled = []
+        on_key = ctl.wrap_media_key(
+            lambda action: handled.append((action, list(kills))) or True)
+        assert on_key('play-pause') is True
+        assert handled[0][0] == 'play-pause'
+        assert (500, signal.SIGCONT) in handled[0][1]
+        assert ctl.frozen_apps == [other]
+
+    def test_mail_chat_and_softphone_categories_exempt(self, kills):
+        cats = {
+            'org.gnome.Geary.desktop': ['Network', 'Email'],
+            'im.dino.Dino.desktop': ['Network', 'Chat',
+                                     'InstantMessaging'],
+            'org.linphone.desktop': ['Network', 'Telephony', 'SoftPhone'],
+            'org.gnome.TextEditor.desktop': ['Utility', 'TextEditor'],
+        }
+        ctl = _controller(bus=None, manager=_observable_manager(),
+                          force_degraded=True,
+                          desktop_lookup=lambda a: {
+                              'categories': cats.get(a, [])})
+        for pid, app_id in enumerate(cats, start=1000):
+            ctl.track(app_id, pid, now=0.0)
+        assert ctl.sweep(now=10 ** 6) == ['org.gnome.TextEditor.desktop']
+
+
+# --- frozen-units ledger ------------------------------------------------------------
+
+class TestFrozenUnitsLedger:
+    def test_freeze_is_recorded_privately(self, tmp_path,
+                                          _private_runtime_dir):
+        bus = _FakeSystemdBus()
+        ctl, now = _systemd_controller(bus)
+        ctl.track('org.example.App.desktop', 4242, now=0.0)
+        now[0] = 601.0
+        ctl.sweep(now=601.0)
+        path = _private_runtime_dir / 'xx-wm' / 'standby-frozen-units.json'
+        scope = scope_name_for('org.example.App.desktop', 4242)
+        assert json.loads(path.read_text(encoding='utf-8')) == [scope]
+        assert (path.parent.stat().st_mode & 0o777) == 0o700
+        assert (path.stat().st_mode & 0o777) == 0o600
+        ctl.note_activated('org.example.App.desktop', now=602.0)
+        assert not path.exists()
+
+    def test_start_thaws_units_left_by_a_crashed_shell(self, tmp_path):
+        bus = _FakeSystemdBus(units=TestDbusActivatedFreeze._UNITS)
+        ctl, now = _systemd_controller(
+            bus, stopped_file=str(tmp_path / 'stopped.json'))
+        ctl.note_activated('org.gnome.Evolution.desktop', now=0.0)
+        now[0] = 601.0
+        assert ctl.sweep(now=601.0) == ['org.gnome.Evolution.desktop']
+        # The shell dies here: no shutdown_thaw. A new one starts.
+        bus2 = _FakeSystemdBus()
+        ctl2, _now2 = _systemd_controller(
+            bus2, stopped_file=str(tmp_path / 'stopped.json'))
+        ctl2.start()
+        try:
+            thawed = sorted(c[4].unpack()[0] for c in bus2.calls
+                            if c[3] == 'ThawUnit')
+            assert thawed == [
+                'app-gnome-org.gnome.Evolution-1234.scope',
+                'dbus-:1.42-org.gnome.Evolution@0.service',
+            ]
+            assert ctl2._load_frozen_units() == []
+        finally:
+            ctl2.stop()
+
+    def test_ledger_entries_are_validated(self, tmp_path):
+        ledger = tmp_path / 'standby-frozen-units.json'
+        ledger.write_text(json.dumps(
+            ['ok-unit.scope', '../../etc', 7, 'x.target', 'a b.service']),
+            encoding='utf-8')
+        bus = _FakeSystemdBus()
+        ctl, _now = _systemd_controller(bus, frozen_units_file=str(ledger))
+        assert ctl._thaw_ledger_units() == ['ok-unit.scope']
+
+    def test_stopped_ledger_dir_is_private(self, tmp_path,
+                                           _private_runtime_dir):
+        pid = os.getpid()
+        ctl = _controller(bus=None, manager=_observable_manager(),
+                          force_degraded=True,
+                          starttime_reader=proc_starttime)
+        ctl.track('org.example.App.desktop', pid, now=0.0)
+        ctl._record_stopped(pid)
+        path = _private_runtime_dir / 'xx-wm' / 'standby-stopped.json'
+        assert (path.parent.stat().st_mode & 0o777) == 0o700
+        assert (path.stat().st_mode & 0o777) == 0o600
+
+
+# --- auto saver re-arms after a charge --------------------------------------------------
+
+class TestSaverRearm:
+    def test_unplugging_while_low_rearms(self):
+        ctl = _controller(bus=None, manager=_observable_manager(),
+                          force_degraded=True)
+        ctl._apply_exemptions(set(), None, set(), (10.0, False))
+        ctl.sweep(now=100.0)
+        assert ctl.saver_effective is True
+        ctl._apply_exemptions(set(), None, set(), (12.0, True))
+        ctl.sweep(now=200.0)
+        assert ctl.saver_effective is False
+        ctl._apply_exemptions(set(), None, set(), (12.0, False))
+        ctl.sweep(now=300.0)
+        assert ctl.saver_effective is True
+
+
+# --- network denial that cannot be enforced ------------------------------------------------
+
+class TestNetworkNotEnforced:
+    _FACTS = {
+        'org.example.Flat.desktop': {'flatpak': True},
+        'org.example.Bus.desktop': {'dbus_activatable': True},
+        'org.example.Native.desktop': {},
+    }
+
+    def _ctl(self, denied):
+        return _controller(bus=None, manager=_observable_manager(),
+                           force_degraded=True, network_denied=denied,
+                           desktop_lookup=lambda a: self._FACTS.get(a, {}))
+
+    def test_flatpak_and_dbus_activated_report_not_enforced(self):
+        ctl = self._ctl(['org.example.Flat', 'org.example.Bus',
+                         'org.example.Native'])
+        assert ctl.network_not_enforced('org.example.Flat.desktop') is True
+        assert ctl.network_not_enforced('org.example.Bus.desktop') is True
+        assert ctl.network_not_enforced('org.example.Native.desktop') is False
+
+    def test_allowed_apps_are_not_flagged(self):
+        ctl = self._ctl([])
+        assert ctl.network_not_enforced('org.example.Flat.desktop') is False
+
+    def test_launch_logs_not_enforced(self, monkeypatch):
+        logged = []
+        monkeypatch.setattr(app_standby._log, 'warning',
+                            lambda *a: logged.append(a[0] % a[1:]))
+        ctl = self._ctl(['org.example.Flat'])
+        ctl.thaw_for_launch('org.example.Flat.desktop')
+        ctl.thaw_for_launch('org.example.Native.desktop')
+        assert len(logged) == 1
+        assert 'org.example.Flat.desktop not enforced' in logged[0]
+
+    def test_settings_row_reads_controller(self):
+        import settings_permissions
+        ctl = self._ctl(['org.example.Flat'])
+        win = types.SimpleNamespace(standby=ctl)
+        assert settings_permissions.network_not_enforced(
+            win, 'org.example.Flat.desktop') is True
+        assert settings_permissions.network_not_enforced(
+            types.SimpleNamespace(), 'org.example.Flat.desktop') is False

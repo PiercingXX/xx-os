@@ -495,19 +495,39 @@ class AppSwitcher(_AppSwitcherBase):
 
     @staticmethod
     def _focus_app_with_manager(manager: ToplevelManager, app: AppInfo,
-                                on_activated: Callable[[], None] | None = None) -> None:
+                                on_activated: Callable[[], None] | None = None,
+                                standby: object | None = None) -> None:
         """Headless seam: activating a row dispatches to the manager, then
-        hands the screen to the app via on_activated."""
+        hands the screen to the app via on_activated. With a standby
+        controller the app is thawed first, so a frozen app raised from
+        recents is running when it appears."""
+        if app.handle is not None and standby is not None:
+            standby.activate_with_thaw(manager, app.app_id, app.handle,
+                                       on_activated=on_activated)
+            return
         if app.handle is not None:
             manager.activate(app.handle)
         if on_activated is not None:
             on_activated()
 
     @staticmethod
-    def _kill_app_with_manager(manager: ToplevelManager, app: AppInfo) -> None:
-        """Headless seam: killing a row dispatches to the manager."""
-        if app.handle is not None:
-            manager.close(app.handle)
+    def _kill_app_with_manager(manager: ToplevelManager, app: AppInfo,
+                               standby: object | None = None) -> None:
+        """Headless seam: killing a row dispatches to the manager (through
+        the standby controller, which thaws a frozen app so it can close)."""
+        if app.handle is None:
+            return
+        if standby is not None:
+            standby.close_with_thaw(manager, app.app_id, app.handle)
+            return
+        manager.close(app.handle)
+
+    def _standby(self) -> object | None:
+        try:
+            from app_standby import current_standby
+            return current_standby()
+        except Exception:
+            return None
 
     def _rebuild_cards(self) -> None:
         if not hasattr(self, 'card_box'):
@@ -697,11 +717,13 @@ class AppSwitcher(_AppSwitcherBase):
                 except Exception:
                     pass
             return
-        self._focus_app_with_manager(self._manager, app, self._on_activated)
+        self._focus_app_with_manager(self._manager, app, self._on_activated,
+                                     standby=self._standby())
         self.hide_switcher()
 
     def _kill_app(self, app: AppInfo) -> None:
-        self._kill_app_with_manager(self._manager, app)
+        self._kill_app_with_manager(self._manager, app,
+                                    standby=self._standby())
         self._apps = [a for a in self._apps if a.handle != app.handle]
         self._rebuild_cards()
 

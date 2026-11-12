@@ -2004,7 +2004,12 @@ class ShellWindow(Adw.ApplicationWindow):
             return False
         if target is None:
             return False
-        manager.activate(target.handle)
+        standby = getattr(self, 'standby', None)
+        if standby is not None:
+            standby.activate_with_thaw(
+                manager, getattr(target, 'app_id', ''), target.handle)
+        else:
+            manager.activate(target.handle)
         self.drop_to_background()
         return True
 

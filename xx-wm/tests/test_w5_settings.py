@@ -47,10 +47,10 @@ class TestBuiltinExemptions:
         assert app_standby.is_builtin_exempt('org.mozilla.firefox') is False
         assert app_standby.is_builtin_exempt('') is False
 
-    def test_labels_name_the_five_surfaces(self):
+    def test_labels_name_the_builtin_surfaces(self):
         assert app_standby.builtin_exemption_labels() == [
             'Dialer', 'TxxT daemon', 'Calls', 'Clock & alarms',
-            'Media playing']
+            'Email & chat', 'Media playing']
 
     def test_policy_never_freezes_builtins(self):
         for app_id in ('xx-clock.desktop', 'chatty', 'xx-dialer',

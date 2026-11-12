@@ -1051,7 +1051,8 @@ class TestShellWiring:
     def test_main_builds_watcher_and_wires_key_callback(self):
         text = (REPO / 'launcher' / 'src' / 'main.py').read_text()
         assert 'MprisWatcher()' in text
-        assert 'on_media_key=self._mpris.handle_media_key' in text
+        assert ('on_media_key=self._standby.wrap_media_key(\n'
+                '                self._mpris.handle_media_key)') in text
 
     def test_window_passes_watcher_to_shade(self):
         text = (REPO / 'launcher' / 'src' / 'window.py').read_text()
