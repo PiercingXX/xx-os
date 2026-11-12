@@ -6,7 +6,8 @@ Coordinates come from the `weather_lat`/`weather_lon` config floats or the
 default) and neither set, a coarse GeoClue fix is used instead. Results
 cache to ~/.cache/xx-wm/weather.json and refresh at most every 15 minutes.
 Offline or unset → the provider reports `--°` and the home screen hides
-the weather line entirely (never a placeholder). Fetches run on a daemon
+the weather line entirely (never a placeholder); offline, a cache older
+than three hours counts as unset. Fetches run on a daemon
 thread; the UI callback is dispatched via an injectable dispatcher
 (GLib.idle_add at runtime, synchronous in tests).
 """
@@ -20,6 +21,8 @@ from pathlib import Path
 from typing import Callable
 
 REFRESH_SECONDS = 15 * 60
+# Offline, cached conditions older than this are not shown as current.
+STALE_SECONDS = 3 * 3600
 AUTO_LOCATION_REFRESH_SECONDS = 30 * 60
 PLACEHOLDER = '--°'
 
@@ -355,6 +358,11 @@ class WeatherProvider:
         """Cached conditions as `72°F Clear`; `--°` when unset/offline."""
         cached = self._load_cache()
         if cached is None:
+            return PLACEHOLDER
+        try:
+            if self._clock() - float(cached['fetched_at']) > STALE_SECONDS:
+                return PLACEHOLDER
+        except (TypeError, ValueError):
             return PLACEHOLDER
         try:
             temp = cached.get('temp', cached.get('temp_c'))

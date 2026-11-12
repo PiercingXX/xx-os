@@ -95,6 +95,18 @@ class TestHomeWeatherHidden:
         assert seen.get('visible') is True
         assert seen.get('text') == '18° Clear'
 
+    def test_widget_off_never_looks_up_or_fetches(self):
+        seen = {'feed': '18° Clear'}
+        page = self._page(seen)
+        asked = []
+        page._win._weather.refresh = lambda on_done, force=False: asked.append(1)
+        page._win.config = types.SimpleNamespace(
+            widgets={'weather': {'enabled': False, 'order': 3}})
+        page._refresh_weather()
+        page._refresh_weather(force=True)
+        assert asked == []
+        assert seen.get('visible') is False
+
 
 # ---------------------------------------------------------------------------
 # Item 1: unified theme registry — home sheet in the window provider

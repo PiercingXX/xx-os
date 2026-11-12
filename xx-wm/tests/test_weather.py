@@ -54,6 +54,19 @@ def _refresh_sync(provider, force=False):
     return results[0] if results else None
 
 
+class TestStaleCache:
+    def test_offline_cache_older_than_three_hours_is_not_shown(
+            self, config, tmp_path):
+        import weather
+        provider = _provider(config, tmp_path, now=1000.0,
+                             fetch_result={'temp': 18.0, 'code': 0})
+        assert _refresh_sync(provider) == '18°F Clear'
+        provider._test_state['now'] = 1000.0 + weather.STALE_SECONDS - 60
+        assert provider.current_text() == '18°F Clear'
+        provider._test_state['now'] = 1000.0 + weather.STALE_SECONDS + 60
+        assert provider.current_text() == PLACEHOLDER
+
+
 class TestFormatting:
     def test_format(self):
         assert format_current(17.6, 0) == '18°F Clear'

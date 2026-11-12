@@ -347,10 +347,22 @@ class HomePage:
         self._refresh_weather()
         return True
 
+    def _weather_widget_on(self) -> bool:
+        try:
+            conf = self._win.config.widgets.get('weather') or {}
+        except Exception:
+            return True
+        return bool(conf.get('enabled', True))
+
     def _refresh_weather(self, force: bool = False) -> None:
         from weather import PLACEHOLDER
 
         win = self._win
+        # Off means off: no location lookup and no request carrying the
+        # coordinates off the phone, not just a hidden line.
+        if not self._weather_widget_on():
+            win.weather_label.set_visible(False)
+            return
 
         def _apply(text: str) -> None:
             if text == PLACEHOLDER:
