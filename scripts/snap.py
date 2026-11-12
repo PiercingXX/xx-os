@@ -177,7 +177,14 @@ def main() -> int:
                SNAP_SCRIPT=os.path.abspath(a.script) if a.script else '',
                # The shell's brightness and torch code: an empty sysfs,
                # never the workstation's real LEDs.
-               XX_WM_SYSFS_CLASS=os.path.join(run_dir, 'no-sysfs'))
+               XX_WM_SYSFS_CLASS=os.path.join(run_dir, 'no-sysfs'),
+               # Nor the host's services: no polkit agent on the system
+               # bus, no portal activation on the snapshot's session bus.
+               XX_WM_NO_POLKIT_AGENT='1', ADW_DISABLE_PORTAL='1',
+               GTK_USE_PORTAL='0')
+    gdk_debug = [f for f in env.get('GDK_DEBUG', '').split(',') if f]
+    if 'no-portals' not in gdk_debug:
+        env['GDK_DEBUG'] = ','.join(gdk_debug + ['no-portals'])
     if a.path:
         env['PYTHONPATH'] = os.pathsep.join(
             [os.path.abspath(x) for x in a.path] + [env.get('PYTHONPATH', '')])

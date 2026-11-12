@@ -16,6 +16,16 @@ atexit.register(shutil.rmtree, _TEST_CACHE, True)
 # input*::scrolllock): brightness and torch code see an empty tree; a test
 # that needs a panel builds one under its own root.
 os.environ['XX_WM_SYSFS_CLASS'] = os.path.join(_TEST_CACHE, 'no-sysfs')
+# Nor the host's services: no polkit agent on the real system bus, and no
+# portal requests from GTK or libadwaita, which would activate the host's
+# xdg-desktop-portal (and its compositor backend) even on a private bus.
+# Children (dbus-run-session, Broadway runs) inherit all of it.
+os.environ['XX_WM_NO_POLKIT_AGENT'] = '1'
+os.environ['ADW_DISABLE_PORTAL'] = '1'
+os.environ['GTK_USE_PORTAL'] = '0'
+if 'no-portals' not in os.environ.get('GDK_DEBUG', '').split(','):
+    os.environ['GDK_DEBUG'] = ','.join(
+        f for f in (os.environ.get('GDK_DEBUG', ''), 'no-portals') if f)
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 # The shell themes through the shared design system: common/xx_ui must be

@@ -490,6 +490,11 @@ def start_agent():
     register with (headless tests, minimal images). Never raises."""
     global _agent
     log = _log()
+    if os.environ.get('XX_WM_NO_POLKIT_AGENT') == '1':
+        # Snapshot and test runs: never register on the host's system bus.
+        if log is not None:
+            log.info('polkit agent off (XX_WM_NO_POLKIT_AGENT)')
+        return None
     if not _HAVE_AGENT:
         if log is not None:
             log.info('polkit agent unavailable (no PolkitAgent typelib)')
