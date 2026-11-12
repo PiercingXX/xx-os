@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unicodedata
 from dataclasses import dataclass
 
@@ -33,6 +34,32 @@ class AppEntry:
     executable: str
     search_text: str
     desktop_app: Gio.DesktopAppInfo
+    # Filled once per index refresh, so a drawer populate or a search
+    # keystroke never stats a .desktop file or re-folds every entry.
+    # None (an entry built elsewhere): computed on use.
+    mtime: float | None = None
+    folded_name: str | None = None
+    folded_text: str | None = None
+
+
+def _desktop_mtime(info: object) -> float:
+    try:
+        filename = info.get_filename()
+        return os.stat(filename).st_mtime if filename else 0.0
+    except (OSError, TypeError, AttributeError):
+        return 0.0
+
+
+def _folded_name(entry: AppEntry) -> str:
+    if entry.folded_name is not None:
+        return entry.folded_name
+    return fold_for_search(entry.name)
+
+
+def _folded_text(entry: AppEntry) -> str:
+    if entry.folded_text is not None:
+        return entry.folded_text
+    return fold_for_search(entry.search_text)
 
 
 def _current_desktops() -> set[str]:
@@ -147,6 +174,9 @@ class AppIndex:
                     executable=executable,
                     search_text=search_text,
                     desktop_app=info,
+                    mtime=_desktop_mtime(info),
+                    folded_name=fold_for_search(name),
+                    folded_text=fold_for_search(search_text),
                 )
             )
             seen.add(app_id)
@@ -161,6 +191,13 @@ class AppIndex:
                    if _normalized_app_id(entry.app_id) not in self.replacements]
         self.entries = sorted(entries, key=lambda entry: entry.name.casefold())
         return self.entries
+
+    def signature(self) -> tuple:
+        """What the drawer and home render from: unchanged after a
+        refresh means there is nothing to rebuild."""
+        return (tuple((e.app_id, e.name, e.description, e.mtime)
+                      for e in self.entries),
+                tuple(sorted(self.replacements.items())))
 
     def replacement_for(self, app_id: str) -> str | None:
         """The installed XX app id that supersedes ``app_id``, else None."""
@@ -178,19 +215,16 @@ class AppIndex:
         if not trimmed:
             return list(self.entries)
         folded = fold_for_search(trimmed)
-        folded_names = {e.app_id: fold_for_search(e.name) for e in self.entries}
-        folded_texts = {e.app_id: fold_for_search(e.search_text)
-                        for e in self.entries}
 
         def _is_prefix(entry: AppEntry) -> bool:
             if entry.name.casefold().startswith(trimmed):
                 return True
-            return bool(folded) and folded_names[entry.app_id].startswith(folded)
+            return bool(folded) and _folded_name(entry).startswith(folded)
 
         def _is_contains(entry: AppEntry) -> bool:
             if trimmed in entry.search_text:
                 return True
-            return bool(folded) and folded in folded_texts[entry.app_id]
+            return bool(folded) and folded in _folded_text(entry)
 
         prefix_matches = [e for e in self.entries if _is_prefix(e)]
         in_prefix = {e.app_id for e in prefix_matches}

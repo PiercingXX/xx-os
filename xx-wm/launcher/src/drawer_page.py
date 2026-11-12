@@ -121,11 +121,13 @@ def app_is_new(entry: AppEntry, now: float | None = None) -> bool:
     if now is None:
         import time
         now = time.time()
-    try:
-        filename = entry.desktop_app.get_filename()
-        mtime = Path(filename).stat().st_mtime if filename else 0.0
-    except OSError:
-        return False
+    mtime = getattr(entry, 'mtime', None)
+    if mtime is None:
+        try:
+            filename = entry.desktop_app.get_filename()
+            mtime = Path(filename).stat().st_mtime if filename else 0.0
+        except OSError:
+            return False
     return (now - mtime) < _NEW_APP_SECONDS
 
 
@@ -475,6 +477,9 @@ class DrawerPage:
 
     @staticmethod
     def _install_time(entry: AppEntry) -> float:
+        mtime = getattr(entry, 'mtime', None)
+        if mtime is not None:
+            return mtime
         try:
             filename = entry.desktop_app.get_filename()
             return Path(filename).stat().st_mtime if filename else 0.0

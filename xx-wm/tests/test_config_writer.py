@@ -4,11 +4,22 @@ the process read what is queued; a monitor event for our own write is not
 re-parsed; the night-light slider restarts wlsunset once per drag."""
 import json
 import os
+import sys
 import threading
 import time
 import types
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_window_leak():
+    """window.py imported here binds real GTK; suites that import it
+    against fake bindings must not inherit this module."""
+    saved = {n: m for n, m in sys.modules.items() if n == 'window'}
+    yield
+    sys.modules.pop('window', None)
+    sys.modules.update(saved)
 
 
 @pytest.fixture

@@ -31,6 +31,8 @@ from config import (
 )
 from gesture_config import GestureConfig
 
+_APP_RESCAN_DELAY_MS = 1000
+
 # lisgd owns the bezel. In-window home swipes that start this close to an
 # edge would otherwise double-fire with gesture.back / short-home / long-recents.
 _EDGE_GUARD_PX = 72
@@ -2688,15 +2690,23 @@ class ShellWindow(Adw.ApplicationWindow):
             self._app_monitor = None
 
     def _on_app_info_changed(self, _monitor) -> None:
+        # A package install fires a burst of these (each .desktop,
+        # mimeinfo.cache, the icon cache): one rescan once it settles.
         if self._app_refresh_timer is not None:
             GLib.source_remove(self._app_refresh_timer)
-        self._app_refresh_timer = GLib.timeout_add(500, self._reload_app_index)
+        self._app_refresh_timer = GLib.timeout_add(
+            _APP_RESCAN_DELAY_MS, self._reload_app_index)
 
     def _reload_app_index(self) -> bool:
         self._app_refresh_timer = None
         try:
             previous = {entry.app_id for entry in self.app_index.entries}
+            signature = getattr(self.app_index, 'signature', None)
+            before = signature() if callable(signature) else None
             self.app_index.refresh()
+            if before is not None and signature() == before:
+                # Nothing the drawer or home shows changed.
+                return GLib.SOURCE_REMOVE
             current = {entry.app_id for entry in self.app_index.entries}
             if current:
                 # A real uninstall: present before, gone from a non-empty
