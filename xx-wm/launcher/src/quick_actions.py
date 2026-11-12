@@ -1381,17 +1381,14 @@ class QuickActionsPanel(Gtk.Box):
         headless tests drive the exact mapping without constructing real
         widgets (real Gtk segfaults without a display)."""
         if tile.key == 'focus':
-            # Long-press → take a break (focus suspends, auto-resumes)
-            long_press = Gtk.GestureLongPress.new()
-            long_press.set_touch_only(False)
-            long_press.connect('pressed', self._on_focus_long_press, btn)
-            btn.add_controller(long_press)
-        else:
-            settings_press = Gtk.GestureLongPress.new()
-            settings_press.set_touch_only(False)
-            settings_press.connect(
-                'pressed', self._on_tile_long_press, tile.key)
-            btn.add_controller(settings_press)
+            # Take a break is offered where a paused app is tapped (the
+            # shell's sheet); the shade has no menu of its own for it.
+            return
+        settings_press = Gtk.GestureLongPress.new()
+        settings_press.set_touch_only(False)
+        settings_press.connect(
+            'pressed', self._on_tile_long_press, tile.key)
+        btn.add_controller(settings_press)
 
     def _on_tile_long_press(self, gesture: Gtk.GestureLongPress,
                             _x: float, _y: float, key: str) -> None:
@@ -1418,32 +1415,6 @@ class QuickActionsPanel(Gtk.Box):
                 callback()
             except Exception:
                 pass
-
-    def _on_focus_long_press(self, gesture: Gtk.GestureLongPress,
-                             _x: float, _y: float, btn: Gtk.Widget) -> None:
-        if self._focus is None:
-            return
-        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-        popover = Gtk.Popover()
-        popover.add_css_class('action-menu')
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        for minutes in (5, 10, 15):
-            action = Gtk.Button(label=f'Take a break — {minutes} min')
-            action.add_css_class('flat')
-            action.add_css_class('menu-action')
-            action.connect(
-                'clicked',
-                lambda _b, m=minutes, p=popover: self._start_focus_break(m, p))
-            box.append(action)
-        popover.set_child(box)
-        popover.set_parent(btn)
-        popover.connect('closed', lambda p: p.unparent())
-        popover.popup()
-
-    def _start_focus_break(self, minutes: int, popover: Gtk.Popover) -> None:
-        popover.popdown()
-        self._focus.start_break(minutes)
-        self.refresh_states()
 
     def _build_sliders(self) -> None:
         # Two flat rows: glyph, 2 px track with a 4x20 thumb, numeric

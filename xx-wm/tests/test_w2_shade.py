@@ -695,17 +695,19 @@ class TestTileLongPressWiring:
         callback(press, 0.0, 0.0, *args)
         assert fired == [1]
 
-    def test_focus_keeps_break_menu_not_settings(self, monkeypatch):
+    def test_focus_tile_opens_no_stock_popover(self, monkeypatch):
+        # The break menu was a Gtk.Popover on the shade's layer surface
+        # (stock styling, and phoc closes such popups as they map).
         _pin_shade_gtk(monkeypatch)
         panel = _bare_panel(on_open_settings=lambda section: None)
         tile = next(t for t in quick_actions._TILES if t.key == 'focus')
         btn = _FakeToggleButton()
         panel._wire_tile_press(btn, tile)
-        panel._tile_buttons['focus'] = btn
-        assert btn.controllers, 'focus tile lost its long-press'
-        for controller in btn.controllers:
-            for callback, _args in controller.handlers.values():
-                assert callback != panel._on_tile_long_press
+        assert btn.controllers == []
+        assert not hasattr(quick_actions.QuickActionsPanel,
+                           '_on_focus_long_press')
+        src = Path(quick_actions.__file__).read_text(encoding='utf-8')
+        assert 'Gtk.Popover(' not in src
 
 
 class TestOpenSettingsSectionCompat:

@@ -469,22 +469,10 @@ class PowerMenu(LockHosted, Gtk.Window):
         power_action_async(cmd, on_done=self._on_power_result)
 
     def _on_power_result(self, ok: bool, message: str) -> None:
-        if ok:
-            return
-        detail = message or 'Power action failed.'
-        self._show_status(f'Power action failed: {detail}')
-
-    def _show_status(self, message: str) -> None:
-        dialog = Gtk.MessageDialog(
-            transient_for=self,
-            modal=True,
-            message_type=Gtk.MessageType.ERROR,
-            buttons=Gtk.ButtonsType.CLOSE,
-            text='Power action failed',
-            secondary_text=message,
-        )
-        dialog.connect('response', lambda dlg, _resp: dlg.destroy())
-        dialog.present()
+        # No stock dialog over the shell: the phone simply stays on, and
+        # the reason goes to the log.
+        if not ok:
+            _log.warning('power action failed: %s', message or 'no detail')
 
     def _on_scrim_tap(self, gesture: Gtk.GestureClick, _n: int, x: float, y: float) -> None:
         # Dismiss if the tap lands outside the list: the scrolled middle is

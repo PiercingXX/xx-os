@@ -614,6 +614,16 @@ class TestSuspendDuringCall:
         power_menu.PowerMenu._execute(menu, 'reboot')
         assert fired == ['reboot']
 
+    def test_failed_power_action_logs_without_a_stock_dialog(self, caplog):
+        import logging
+        import power_menu
+        src = Path(power_menu.__file__).read_text(encoding='utf-8')
+        assert 'MessageDialog' not in src
+        with caplog.at_level(logging.WARNING, logger=power_menu._log.name):
+            power_menu.PowerMenu._on_power_result(
+                types.SimpleNamespace(), False, 'Interactive auth needed')
+        assert 'Interactive auth needed' in caplog.text
+
     def test_main_wires_call_probe(self):
         src = (Path(__file__).parent.parent / 'launcher' / 'src' /
                'main.py').read_text(encoding='utf-8')
