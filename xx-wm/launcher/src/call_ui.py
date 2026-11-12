@@ -1290,12 +1290,8 @@ class CallUI(LockHosted, Gtk.Window):
             'Hold', '', False, self._on_hold_toggled)
         self._add_btn = widgets.status_tile(
             'Add call', '', False, self._on_add_call_toggled)
-        # 'BT' as on the shade's tile: three caps tiles across must fit a
-        # 360 px screen at large text (BLUETOOTH alone outgrew a third).
-        self._bt_btn = widgets.status_tile(
-            'BT', '', False, self._on_bt_toggled)
         for tile in (self._mute_btn, self._speaker_btn, self._keypad_btn,
-                     self._hold_btn, self._add_btn, self._bt_btn):
+                     self._hold_btn, self._add_btn):
             # Two-word labels (ADD CALL) wrap rather than widen the grid.
             name = tile.get_child().get_first_child()
             if name is not None:
@@ -1305,12 +1301,13 @@ class CallUI(LockHosted, Gtk.Window):
                          column_homogeneous=True)
         tiles.set_hexpand(True)
         tiles.set_margin_bottom(16)
+        # Three across, then two halves: a six-column grid keeps both
+        # rows full width with no empty cell.
         for col, tile in enumerate((self._mute_btn, self._keypad_btn,
                                    self._speaker_btn)):
-            tiles.attach(tile, col, 0, 1, 1)
-        for col, tile in enumerate((self._hold_btn, self._add_btn,
-                                   self._bt_btn)):
-            tiles.attach(tile, col, 1, 1, 1)
+            tiles.attach(tile, col * 2, 0, 2, 1)
+        for col, tile in enumerate((self._hold_btn, self._add_btn)):
+            tiles.attach(tile, col * 3, 1, 3, 1)
         page.append(tiles)
 
         self._keypad_grid = Gtk.Grid(row_spacing=8, column_spacing=8)
@@ -1424,8 +1421,7 @@ class CallUI(LockHosted, Gtk.Window):
                            (getattr(self, '_speaker_btn', None), False),
                            (getattr(self, '_keypad_btn', None), False),
                            (getattr(self, '_hold_btn', None), False),
-                           (getattr(self, '_add_btn', None), False),
-                           (getattr(self, '_bt_btn', None), False)):
+                           (getattr(self, '_add_btn', None), False)):
             if btn is not None:
                 try:
                     btn.set_active(state)
@@ -1918,16 +1914,6 @@ class CallUI(LockHosted, Gtk.Window):
             except Exception:
                 pass
         self.minimize()
-
-    def _on_bt_toggled(self, btn: Gtk.ToggleButton) -> None:
-        # No Bluetooth audio route exists on this shell: in-call audio
-        # rides CallAudioRouter behind the SPEAKER tile, so the toggle
-        # snaps back instead of faking a route.
-        if btn.get_active():
-            try:
-                btn.set_active(False)
-            except Exception:
-                pass
 
     def _on_mute_toggled(self, btn: Gtk.ToggleButton) -> None:
         self._muted = btn.get_active()

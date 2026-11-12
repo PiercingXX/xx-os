@@ -1397,12 +1397,12 @@ class TestCallTiles:
         assert ui._minimized is True
         assert ui.hidden == 1
 
-    def test_bluetooth_snaps_back(self):
-        ui = _make_ui()
-        btn = FakeToggle()
-        btn.set_active(True)
-        ui._on_bt_toggled(btn)
-        assert btn.get_active() is False
+    def test_no_bluetooth_tile_that_does_nothing(self):
+        # Minimal rule: no control without a function. There is no
+        # Bluetooth audio route, so there is no BT tile.
+        assert not hasattr(call_ui.CallUI, '_on_bt_toggled')
+        src = Path(call_ui.__file__).read_text(encoding='utf-8')
+        assert "'BT'" not in src
 
 
 class LockProbe:
