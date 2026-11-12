@@ -170,6 +170,18 @@ class TestRepeatCaller:
         dnd.note_call('+15550102222', when=t0)
         assert not dnd.is_exception('+15550109999', when=t0 + 60)
 
+    def test_short_code_never_matches_a_long_number(self, dnd):
+        """A short code that happens to end a full number is another
+        sender: 262 calling twice does not let +1 555 010 0262 through,
+        and neither does a starred 262."""
+        t0 = 1_000_000.0
+        assert not numbers_match('262', '+15550100262')
+        dnd.note_call('262', when=t0)
+        assert not dnd.is_exception('+15550100262', when=t0 + 60)
+        assert dnd.is_exception('262', when=t0 + 60)
+        dnd.set_starred('262', True)
+        assert not dnd.is_starred('+15550100262')
+
 
 class TestStarred:
     def test_starred_does_not_cover_another_area_code(self, dnd):

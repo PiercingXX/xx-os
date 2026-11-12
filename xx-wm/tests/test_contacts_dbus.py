@@ -167,6 +167,13 @@ class TestLocalFallback:
         assert book.lookup_number('614.555.0142') == 'Columbus Friend'
         assert book.lookup_number('+13125550199') == 'Chicago Friend'
 
+    def test_short_code_never_names_a_long_number(self, monkeypatch, tmp_path):
+        book = _local_book(monkeypatch, tmp_path, [
+            ('Pharmacy alerts', ['262']),
+            ('Columbus Friend', ['+1 555 010 0262'])])
+        assert book.lookup_number('+15550100262') == 'Columbus Friend'
+        assert book.lookup_number('262') == 'Pharmacy alerts'
+
     def test_empty_home_without_service(self, monkeypatch, tmp_path):
         book = _local_book(monkeypatch, tmp_path)
         assert book.lookup_number('5550100') is None
