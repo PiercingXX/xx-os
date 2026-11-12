@@ -20,7 +20,7 @@ OUTDIR=${1:?usage: snap_all.sh OUTDIR}
 THEMES=${THEMES-"amoled paper forest"}
 SIZES=${SIZES-"450x1000 360x800"}
 JOBS=${JOBS:-3}
-PY=${PYTHON:-/media/Working-Storage/GitHub/Phone-Projects/linux/xx-wm/.venv/bin/python}
+PY=${PYTHON:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)/xx-wm/.venv/bin/python}
 [ -x "$PY" ] || PY=python3
 
 SCREENS="schedule month month-picked month-weeks day detail detail-repeat

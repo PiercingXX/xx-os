@@ -9,7 +9,7 @@
 | **Audience** | Skippy (implementation agent) — build from this document; do not guess |
 | **UI contract** | `design.md` wins on every UI disagreement |
 | **Work order** | `todo.md` remains the checkbox list. Do **not** restore WS1–28 history. Tick boxes as items land. WS1 verify line is 660 passed, 3 skipped; 1b records a new count. |
-| **Repo** | `/media/Working-Storage/GitHub/Phone-Projects/linux/xx-wm` |
+| **Repo** | `/media/Working-Storage/GitHub/Phone-Projects/xx-os/xx-wm` |
 
 This is the engineering plan to make a meson-installed session bootable, cut the x86 tablet over from piercing-shell to XX-WM, smoke it over SSH, then bring up FLX1 and the Librem 5. It is not a product vision doc.
 
@@ -991,7 +991,7 @@ ssh -o BatchMode=yes -o ConnectTimeout=8 dr3k@192.168.1.129 'sudo -n true'
 
 ```sh
 rsync -az --delete --exclude '.venv' --exclude 'build' --exclude '__pycache__' --exclude '.git' \
-  /media/Working-Storage/GitHub/Phone-Projects/linux/xx-wm/ \
+  /media/Working-Storage/GitHub/Phone-Projects/xx-os/xx-wm/ \
   dr3k@192.168.1.129:~/xx-wm/
 ```
 

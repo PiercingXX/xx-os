@@ -19,7 +19,7 @@ LANDSCAPE=${LANDSCAPE-"720x360"}
 FIT320=${FIT320-1}
 SCALE15=${SCALE15-1}
 mkdir -p "$OUTDIR"
-PY=${PYTHON:-/media/Working-Storage/GitHub/Phone-Projects/linux/xx-wm/.venv/bin/python}
+PY=${PYTHON:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)/xx-wm/.venv/bin/python}
 [ -x "$PY" ] || PY=python3
 
 # name,scenario,sheet,nav  (nav: extra python run before the sheet opens)

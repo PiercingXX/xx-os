@@ -20,7 +20,7 @@ ROOT=$(cd "$APP/.." && pwd)
 OUTDIR=${1:?usage: snap_all.sh OUTDIR}
 THEMES=${THEMES-"amoled paper forest"}
 SIZE=${SIZE:-360x800}
-PY=${PYTHON:-/media/Working-Storage/GitHub/Phone-Projects/linux/xx-wm/.venv/bin/python}
+PY=${PYTHON:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)/xx-wm/.venv/bin/python}
 [ -x "$PY" ] || PY=python3
 
 # A screen is <window>-<state>. The first-run and download screens run

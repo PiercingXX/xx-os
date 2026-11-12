@@ -29,7 +29,7 @@ FIT320=${FIT320-$SCREENS}
 SCALE15=${SCALE15-$SCREENS}
 FIT320X15=${FIT320X15-$SCREENS}
 mkdir -p "$OUTDIR"
-PY=${PYTHON:-/media/Working-Storage/GitHub/Phone-Projects/linux/xx-wm/.venv/bin/python}
+PY=${PYTHON:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)/xx-wm/.venv/bin/python}
 [ -x "$PY" ] || PY=python3
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

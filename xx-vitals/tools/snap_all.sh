@@ -15,7 +15,7 @@
 set -u
 LANE=$(cd "$(dirname "$0")/../.." && pwd)
 OUTDIR=${1:?usage: snap_all.sh OUTDIR}
-PY=${PYTHON:-/media/Working-Storage/GitHub/Phone-Projects/linux/xx-wm/.venv/bin/python}
+PY=${PYTHON:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)/xx-wm/.venv/bin/python}
 [ -x "$PY" ] || PY=python3
 THEMES=${THEMES-"amoled paper forest"}
 SIZES=${SIZES-"450x1000 360x800"}
