@@ -904,4 +904,6 @@ class DrawerPage:
         # Like an app launch: the browser surfacing is the feedback, and
         # the drawer must not stay layered over it.
         if open_web_search(self._win, query):
-            self._win.drop_to_background()
+            drop = getattr(self._win, 'drop_to_background', None)
+            if callable(drop):
+                drop()
