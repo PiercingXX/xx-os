@@ -65,6 +65,7 @@ None of it has run on hardware yet.
 Landed in code with headless tests only; each needs a device to confirm.
 
 - [ ] **phoc `-S` shield** on phoc 0.56 and on the FLX1: boot comes up covered, lowers onto the lock (PIN) or shell; kill the Python shell and the crash-restart comes back covered, then locked.
+- [ ] **Phosh after a crash loop** (passes on the pmOS VM with greetd): on the FLX1s (`phosh.service` with the `99-xx-wm.conf` ExecStart override) and the Librem 5 (greetd + phrog), make the shell exit at start (e.g. a `main.py` that exits 3), reboot: after six crashes Phosh comes up on its lock screen, calls work, `journalctl -t xx-wm` names the reason; a restart of the service in the same boot goes straight to Phosh; the next boot is XX-WM.
 - [ ] **Lost config with a helper PIN**: with a PIN set, delete (then corrupt) `~/.config/xx-wm/config.json` and restart the shell: the lock comes up first (shield on phoc, nothing shown on river), asks the old PIN, then the wizard runs without a PIN step. Stop the helper from answering (e.g. `chmod -x` its binary) and restart: locked, "Could not check PIN"; restore it and the same keypad unlocks. Boot time with no PIN set grows only by the helper's activation time.
 - [ ] **pywayland bindings from the stripped `phosh-private.xml`** generate on the device's pywayland and `set_shell_state` reaches phoc (log: `reported shell state UP to phoc`); `deploy.sh` now ships the XML.
 - [ ] **scrypt time on the SoC**: `VerifyPin` with N = 2^15 stays a few hundred ms (FLX1, Librem 5), not seconds.

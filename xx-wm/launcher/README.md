@@ -123,11 +123,22 @@ ps -p 1                            # systemd or OpenRC?
   and truncated past 1 MB at each restart and every five minutes (apps
   the shell starts write there too) — phoc's own stderr is `/dev/tty7`,
   so without this tracebacks vanish on a phone.
-- Session ends right after login: the wrapper restarts a crashing shell
+- Stock Phosh instead of XX-WM: the wrapper restarts a crashing shell
   with a growing delay, but after six crashes in a row, each within a
-  minute of starting, it ends the session with the shell's exit status
-  (look in `stderr.log` for the traceback). The structured shell log
-  stays at `~/.local/share/xx-wm/shell.log`.
+  minute of starting, it gives up (look in `stderr.log` for the
+  traceback; the structured shell log stays at
+  `~/.local/share/xx-wm/shell.log`). When the session came from
+  `xx-wm-session` (greetd/phrog, tinydm, a `phosh.service` override) and
+  `phosh-session` is installed (`XX_WM_PHOSH_SESSION` names another
+  one), the wrapper writes this boot's id to
+  `~/.local/state/xx-wm/phosh-fallback` and `xx-wm-session` starts stock
+  Phosh in the same login, so calls keep working. Phosh comes up on its
+  own lock screen (the account password, not the XX-WM PIN): the
+  session clears `GDMSESSION`, the only thing that makes Phosh start
+  unlocked. Every session start for the rest of that boot goes straight
+  to Phosh; the next boot tries XX-WM again. The reason is in the
+  journal or syslog under `xx-wm`. Without Phosh, or with the systemd
+  user unit, the session ends with the shell's exit status as before.
 - From a paired host, `xxdb logcat` tails both logs (`[shell.log]` and
   `[stderr.log]` sources) plus the journal snapshot.
 - Blank screen after a restart: fixed by the output-power reconciler

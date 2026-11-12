@@ -278,6 +278,8 @@ while :; do
     # A shell that keeps dying at startup will not come up: end the
     # session with its status (phoc exits with us; systemd and OpenRC
     # see a failure) instead of retrying behind a black screen forever.
+    # Under xx-wm-session with Phosh installed, stamp the fallback file
+    # with this boot's id first: the session then starts stock Phosh.
     if [ $(( $(date +%s) - _started )) -ge 60 ]; then
         _backoff=1
         _fast_crashes=0
@@ -285,7 +287,20 @@ while :; do
         _fast_crashes=$(( _fast_crashes + 1 ))
     fi
     if [ "$_fast_crashes" -ge "${XX_WM_MAX_FAST_CRASHES:-6}" ]; then
-        echo "xx-wm: shell exited with status $_st $_fast_crashes times in a row within a minute; ending the session" >&2
+        _xx_why="shell exited with status $_st $_fast_crashes times in a row within a minute"
+        _xx_then="ending the session"
+        _xx_fb="${XX_WM_PHOSH_FALLBACK:-}"
+        if [ -n "$_xx_fb" ] && \
+           _xx_boot=$(cat "${XX_WM_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}" 2>/dev/null) && \
+           [ -n "$_xx_boot" ] && mkdir -p "${_xx_fb%/*}" 2>/dev/null && \
+           printf '%s\n%s at %s\n' "$_xx_boot" "$_xx_why" "$(date)" >"$_xx_fb" 2>/dev/null; then
+            _xx_then="falling back to Phosh until the next boot"
+        fi
+        echo "xx-wm: $_xx_why; $_xx_then" >&2
+        echo "xx-wm: $_xx_why; $_xx_then" >>"$_xx_err_log" 2>/dev/null || true
+        if command -v logger >/dev/null 2>&1; then
+            logger -t xx-wm "$_xx_why; $_xx_then" 2>/dev/null || true
+        fi
         _xx_session_end
         exit "$_st"
     fi

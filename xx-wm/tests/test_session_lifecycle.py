@@ -223,6 +223,34 @@ class TestCrashLoop:
         assert len((paths['state'] / 'runs').read_text().split()) == 2
         assert b'ending the session' in proc.stderr.read()
 
+    def test_crash_loop_stamps_the_phosh_fallback_with_the_boot(
+            self, wrapper, tmp_path):
+        start, paths = wrapper
+        boot = tmp_path / 'boot_id'
+        boot.write_text('3b1c-boot\n')
+        marker = tmp_path / 'state-home' / 'xx-wm' / 'phosh-fallback'
+        proc = start('crash', XX_WM_MAX_FAST_CRASHES='2',
+                     XX_WM_PHOSH_FALLBACK=str(marker),
+                     XX_WM_BOOT_ID_FILE=str(boot))
+        assert proc.wait(timeout=20) == 3
+        lines = marker.read_text().splitlines()
+        assert lines[0] == '3b1c-boot'
+        assert 'status 3 2 times in a row' in lines[1]
+        err = proc.stderr.read()
+        assert b'falling back to Phosh until the next boot' in err
+        assert b'ending the session' not in err
+        assert b'falling back to Phosh' in paths['log'].read_bytes()
+
+    def test_no_boot_id_keeps_ending_the_session(self, wrapper, tmp_path):
+        start, _paths = wrapper
+        marker = tmp_path / 'state-home' / 'xx-wm' / 'phosh-fallback'
+        proc = start('crash', XX_WM_MAX_FAST_CRASHES='2',
+                     XX_WM_PHOSH_FALLBACK=str(marker),
+                     XX_WM_BOOT_ID_FILE=str(tmp_path / 'missing'))
+        assert proc.wait(timeout=20) == 3
+        assert not marker.exists()
+        assert b'ending the session' in proc.stderr.read()
+
     def test_default_limit_is_finite(self):
         text = WRAPPER_IN.read_text(encoding='utf-8')
         assert '${XX_WM_MAX_FAST_CRASHES:-6}' in text

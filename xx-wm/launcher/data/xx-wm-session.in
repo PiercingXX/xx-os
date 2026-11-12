@@ -2,6 +2,68 @@
 # Session launcher: starts the phoc compositor with the XX-WM shell as the client.
 # Reads ~/.config/xx-wm/config.json to propagate theme preference to GTK.
 
+_xx_log() {
+    echo "xx-wm-session: $*" >&2
+    if command -v logger >/dev/null 2>&1; then
+        logger -t xx-wm "$*" 2>/dev/null || true
+    fi
+}
+
+# Stock Phosh is the fallback when the shell crash-loops at startup, so a
+# broken update still leaves a phone that takes calls. The wrapper
+# (bin/xx-wm) stamps $XX_WM_PHOSH_FALLBACK with this boot's id when it
+# gives up; every session start for the rest of the boot then goes
+# straight to Phosh, and the next boot tries XX-WM again.
+_xx_fallback_file="${XDG_STATE_HOME:-$HOME/.local/state}/xx-wm/phosh-fallback"
+_xx_boot_id_file="${XX_WM_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}"
+
+_xx_phosh_session() {
+    _xx_ps=${XX_WM_PHOSH_SESSION:-}
+    if [ -z "$_xx_ps" ]; then
+        _xx_ps=$(command -v phosh-session 2>/dev/null) || _xx_ps=
+    fi
+    [ -n "$_xx_ps" ] && [ -x "$_xx_ps" ] || return 1
+    printf '%s\n' "$_xx_ps"
+}
+
+_xx_fallback_this_boot() {
+    [ -f "$_xx_fallback_file" ] || return 1
+    _xx_boot=$(cat "$_xx_boot_id_file" 2>/dev/null) || return 1
+    [ -n "$_xx_boot" ] && \
+        [ "$(head -n 1 "$_xx_fallback_file" 2>/dev/null)" = "$_xx_boot" ]
+}
+
+_xx_start_phosh() {
+    _xx_log "$1; starting Phosh for the rest of this boot"
+    # Phosh starts unlocked only when GDMSESSION=phosh (it then trusts a
+    # display manager to have asked for the password): clear it here and
+    # in the systemd user manager, which starts phosh itself
+    # (mobi.phosh.Shell.service), so the fallback always comes up on
+    # Phosh's own lock screen.
+    unset GDMSESSION XDG_SESSION_DESKTOP GTK_THEME ADWAITA_COLOR_SCHEME \
+        XX_WM_SESSION XX_WM_PHOC_SHELL_MODE XX_WM_PHOSH_FALLBACK
+    if [ -n "${_xx_qt_theme_set:-}" ]; then
+        unset QT_QPA_PLATFORMTHEME
+    fi
+    # phosh-session leaves this to the display manager (phosh.desktop's
+    # DesktopNames); the OSK and portals pick their config by it.
+    XDG_CURRENT_DESKTOP=Phosh:GNOME
+    export XDG_CURRENT_DESKTOP
+    if [ -d "${XX_WM_SYSTEMD_RUN_DIR:-/run/systemd/system}" ] && \
+       command -v systemctl >/dev/null 2>&1; then
+        systemctl --user unset-environment GDMSESSION XDG_SESSION_DESKTOP \
+            GTK_THEME ADWAITA_COLOR_SCHEME XX_WM_SESSION 2>/dev/null || true
+        systemctl --user set-environment XDG_CURRENT_DESKTOP=Phosh:GNOME \
+            2>/dev/null || true
+    fi
+    exec "$2"
+}
+
+_xx_phosh=$(_xx_phosh_session) || _xx_phosh=
+if [ -n "$_xx_phosh" ] && _xx_fallback_this_boot; then
+    _xx_start_phosh "the XX-WM shell crash-looped earlier this boot" "$_xx_phosh"
+fi
+
 _prefer_dark=$(python3 -c "
 import json, sys
 try:
@@ -31,6 +93,7 @@ for _qt_plugin in \
     if [ -e "$_qt_plugin" ]; then
         QT_QPA_PLATFORMTHEME=gtk3
         export QT_QPA_PLATFORMTHEME
+        _xx_qt_theme_set=1
         break
     fi
 done
@@ -116,7 +179,44 @@ else
 fi
 export XX_WM_PHOC_SHELL_MODE
 
+# Only a session that can fall back asks the wrapper to; a wrapper
+# started some other way (the systemd user unit) keeps ending the
+# session on a crash loop.
+if [ -n "$_xx_phosh" ]; then
+    XX_WM_PHOSH_FALLBACK=$_xx_fallback_file
+    export XX_WM_PHOSH_FALLBACK
+else
+    unset XX_WM_PHOSH_FALLBACK
+fi
+
+# phoc runs as a child (not exec'd) so a crash loop can hand the login
+# over to Phosh: phoc exits with the wrapper's status. Stop requests
+# (systemd, greetd, OpenRC's supervisor) reach phoc through the trap.
+# An async list gets /dev/null as stdin, so hand phoc ours through fd 3.
+_xx_phoc_pid=
+# shellcheck disable=SC2329 # invoked by the trap below
+_xx_stop_phoc() {
+    trap - TERM INT HUP
+    if [ -n "$_xx_phoc_pid" ]; then
+        kill -TERM "$_xx_phoc_pid" 2>/dev/null || true
+        wait "$_xx_phoc_pid" 2>/dev/null || true
+    fi
+    exit 143
+}
+trap '_xx_stop_phoc' TERM INT HUP
+exec 3<&0
 # shellcheck disable=SC2086 # empty flag must vanish, not become ''
-exec phoc $_phoc_shell_flag \
+phoc $_phoc_shell_flag \
   -C @datadir@/xx-wm/phoc.ini \
-  -E "@bindir@/xx-wm"
+  -E "@bindir@/xx-wm" 0<&3 3<&- &
+_xx_phoc_pid=$!
+exec 3<&-
+wait "$_xx_phoc_pid"
+_xx_status=$?
+_xx_phoc_pid=
+trap - TERM INT HUP
+
+if [ -n "$_xx_phosh" ] && _xx_fallback_this_boot; then
+    _xx_start_phosh "the XX-WM shell crash-looped at startup (phoc exited with status $_xx_status)" "$_xx_phosh"
+fi
+exit "$_xx_status"
