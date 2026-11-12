@@ -45,12 +45,18 @@ def _free_display() -> int:
 def test_real_overlay_window_under_broadway(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
+    # The driver moves HOME, and without XDG_RUNTIME_DIR GTK looks for
+    # the broadway socket under $HOME/.cache: share a private runtime dir.
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(mode=0o700)
     display = _free_display()
     daemon = subprocess.Popen(
         ["gtk4-broadwayd", f":{display}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        env={**os.environ, "XDG_RUNTIME_DIR": str(run_dir)})
     try:
         env = dict(os.environ)
+        env["XDG_RUNTIME_DIR"] = str(run_dir)
         env["GDK_BACKEND"] = "broadway"
         env["BROADWAY_DISPLAY"] = f":{display}"
         env["PYTHONPATH"] = str(SRC_DIR) + os.pathsep + env.get(

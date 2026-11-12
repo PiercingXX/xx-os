@@ -602,6 +602,11 @@ def test_broadway_list_shows_grace_hopper(tmp_path):
             seed_store.persist_inbound_sms("+15550100200", "Yes! 12:30?", 1700000000000)
         finally:
             seed_store.close()
+        # The helper runs with its own HOME, and without XDG_RUNTIME_DIR GTK
+        # looks for the broadway socket under $HOME/.cache: share a private
+        # runtime dir between the daemon and the helper.
+        run_dir = tmp_path / "run"
+        run_dir.mkdir(mode=0o700)
         number = None
         for _ in range(5):
             candidate = _free_display()
@@ -610,6 +615,7 @@ def test_broadway_list_shows_grace_hopper(tmp_path):
             proc = subprocess.Popen(
                 ["gtk4-broadwayd", f":{candidate}"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env={**os.environ, "XDG_RUNTIME_DIR": str(run_dir)},
             )
             time.sleep(1.0)
             if proc.poll() is None:
@@ -626,6 +632,7 @@ def test_broadway_list_shows_grace_hopper(tmp_path):
                "PYTHONPATH": str(TXXT_SRC),
                "GDK_BACKEND": "broadway",
                "BROADWAY_DISPLAY": f":{number}",
+               "XDG_RUNTIME_DIR": str(run_dir),
                "XDG_DATA_HOME": tmp.name}
         child = subprocess.run(
             ["dbus-run-session", "--", sys.executable, str(helper),
