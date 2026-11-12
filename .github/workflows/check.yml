@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - run: pacman -Sy --noconfirm --needed git
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sh scripts/ci-setup.sh
       - run: chown -R ci:ci "$GITHUB_WORKSPACE"
       - run: sudo -u ci env HOME=/home/ci xvfb-run -a sh scripts/check-all.sh
