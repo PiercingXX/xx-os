@@ -715,9 +715,11 @@ class TestPolkitAgent:
                 assert 'password' not in lowered, lineno
                 assert 'secret' not in lowered, lineno
 
-    def test_no_python_finish_call(self):
+    def test_finish_only_as_vfunc_override(self):
+        import re
         text = (SRC / 'polkit_agent.py').read_text(encoding='utf-8')
-        assert 'initiate_authentication_finish' not in text
+        assert 'def do_initiate_authentication_finish(' in text
+        assert not re.search(r'\.initiate_authentication_finish\(', text)
 
 
 # -------------------------------------------------- static project contracts

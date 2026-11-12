@@ -17,9 +17,11 @@ async callback, ``PolkitAgent.Session`` handles the authority
 round-trip), so no helper subprocess or agent process is needed — a
 separate process would still need this same Listener plus IPC for
 every prompt. Completion goes through the captured callback with an
-own ``Gio.Task``; the async finish wrapper must never be called from
-Python (it segfaults on this stack — completion still works because
-the C side only needs the callback fired with a valid task).
+own ``Gio.Task``, exactly once per request; the C side then calls the
+``initiate_authentication_finish`` vfunc, which the Listener must
+implement (the base class leaves it NULL and the call segfaults).
+A wrong password keeps the dialog open and starts a fresh session for
+the retry.
 """
 from __future__ import annotations
 
@@ -130,6 +132,16 @@ def register_listener(listener, subject, object_path: str = OBJECT_PATH):
     return PolkitAgent.register_listener(listener, subject, object_path)
 
 
+def new_session(identity, cookie: str):
+    """A PolkitAgent.Session for one attempt (import seam for tests)."""
+    from gi.repository import PolkitAgent
+
+    return PolkitAgent.Session.new(identity, cookie)
+
+
+WRONG_PASSWORD_NOTE = 'Wrong password. Try again.'
+
+
 @dataclass
 class Pending:
     """One in-flight authentication: the session, its dialog, and the
@@ -142,6 +154,8 @@ class Pending:
     session: object = None
     dialog: object = None
     done: bool = False
+    identity: object = None
+    responded: bool = False
 
     def cancel(self, _reason: str | None = None) -> None:
         """User dismissed (or the dialog went away): stop the session
@@ -291,6 +305,7 @@ def _on_dialog_authenticate(pending: Pending, secret: str) -> None:
     session = pending.session
     if session is None or pending.done:
         return
+    pending.responded = True
     try:
         session.response(secret)
     except Exception:
@@ -328,6 +343,8 @@ if _HAVE_AGENT:
                 self, action_id, message, icon_name, details, cookie,
                 identities, cancellable, callback, user_data):
             def finish(_ok, _cb=callback, _ud=user_data) -> None:
+                if self._pending.get(cookie) is pending:
+                    self._pending.pop(cookie, None)
                 _complete_auth(self, _cb, _ud)
             pending = Pending(cookie=cookie, action_id=str(action_id or ''),
                               message=str(message or action_id or ''),
@@ -337,32 +354,23 @@ if _HAVE_AGENT:
             if ident is None:
                 self._drop(cookie)
                 return None
-            from gi.repository import PolkitAgent
-
+            pending.identity = ident
             try:
-                session = PolkitAgent.Session.new(ident, cookie)
+                session = new_session(ident, cookie)
+                self._connect_session(session, pending)
             except Exception:
                 self._drop(cookie)
                 return None
             pending.session = session
-            try:
-                session.connect('request', self._on_session_request,
-                                pending)
-                session.connect('show-info', self._on_session_info,
-                                pending)
-                session.connect('show-error', self._on_session_error,
-                                pending)
-                session.connect('completed', self._on_session_completed,
-                                pending)
-            except Exception:
-                self._drop(cookie)
-                return None
             if cancellable is not None:
                 try:
+                    # GCancellable callbacks carry no arguments here.
                     cancellable.connect(
-                        lambda _c, p=pending: p.cancel('cancelled'))
+                        lambda *_a, p=pending: p.cancel('cancelled'))
                 except Exception:
                     pass
+                if pending.done:
+                    return None
             try:
                 pending.dialog = show_auth_dialog(pending,
                                                   self._user_name(ident))
@@ -375,10 +383,20 @@ if _HAVE_AGENT:
                 self._drop(cookie)
             return None
 
+        def do_initiate_authentication_finish(self, _res) -> bool:
+            return True
+
+        def _connect_session(self, session, pending) -> None:
+            session.connect('request', self._on_session_request, pending)
+            session.connect('show-info', self._on_session_info, pending)
+            session.connect('show-error', self._on_session_error, pending)
+            session.connect('completed', self._on_session_completed,
+                            pending)
+
         def _on_session_request(self, session, request_text, echo_on,
                                 pending) -> None:
             dialog = pending.dialog
-            if dialog is None:
+            if dialog is None or session is not pending.session:
                 return
             try:
                 note = meaningful_prompt(request_text)
@@ -389,6 +407,8 @@ if _HAVE_AGENT:
                 pass
 
         def _on_session_info(self, session, text, pending) -> None:
+            if session is not pending.session:
+                return
             try:
                 if pending.dialog is not None:
                     pending.dialog.set_note(str(text or ''))
@@ -396,6 +416,8 @@ if _HAVE_AGENT:
                 pass
 
         def _on_session_error(self, session, text, pending) -> None:
+            if session is not pending.session:
+                return
             try:
                 if pending.dialog is not None:
                     pending.dialog.set_note(
@@ -404,8 +426,43 @@ if _HAVE_AGENT:
             except Exception:
                 pass
 
+        def _retry(self, pending) -> bool:
+            """Wrong password: a fresh session on the same cookie, the
+            dialog kept open with the error line."""
+            try:
+                session = new_session(pending.identity, pending.cookie)
+                self._connect_session(session, pending)
+            except Exception:
+                return False
+            pending.session = session
+            pending.responded = False
+            try:
+                pending.dialog.set_note(WRONG_PASSWORD_NOTE,
+                                        clear_entry=True)
+                pending.dialog.present()
+            except Exception:
+                pass
+            try:
+                session.initiate()
+            except Exception:
+                pending.cancel('retry failed')
+            return True
+
         def _on_session_completed(self, session, gained, pending) -> None:
+            if pending.done or session is not pending.session:
+                return
             log = _log()
+            if (not gained and pending.responded
+                    and pending.dialog is not None
+                    and pending.identity is not None):
+                if log is not None:
+                    try:
+                        log.info('authentication failed for %s, retrying',
+                                 pending.action_id)
+                    except Exception:
+                        pass
+                if self._retry(pending):
+                    return
             if log is not None:
                 try:
                     log.info('authentication %s for %s',
@@ -413,9 +470,9 @@ if _HAVE_AGENT:
                              pending.action_id)
                 except Exception:
                     pass
-            self._pending.pop(pending.cookie, None)
             dialog, finish = pending.dialog, pending.finish
             pending.dialog = None
+            pending.session = None
             pending.done = True
             if dialog is not None:
                 try:
