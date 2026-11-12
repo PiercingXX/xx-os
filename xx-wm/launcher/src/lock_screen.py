@@ -1599,8 +1599,11 @@ class LockScreen(Gtk.Window):
                     self._fail_count, until, start=time.time())
             else:
                 self._config.set_lockout_state(self._fail_count, until)
-        except Exception:
-            pass
+        except Exception as exc:
+            # The running lockout stays armed in memory; only a restart
+            # before the next successful write would lose it.
+            _log.error('lockout state not saved (fails=%d): %s',
+                       self._fail_count, exc)
 
     def _resume_lockout_state(self) -> None:
         """A shell restart must not reset the escalating lockout: pick up
@@ -1610,19 +1613,25 @@ class LockScreen(Gtk.Window):
         clock now reads before the lockout started (the count stays)."""
         try:
             fails, until = self._config.get_lockout_state()
-        except Exception:
+        except Exception as exc:
+            # Unknown state fails closed: assume the threshold was reached
+            # and arm its lockout rather than hand out fresh attempts.
+            _log.error('lockout state unreadable, arming lockout: %s', exc)
+            self._fail_count = max(self._fail_count, _FAIL_THRESHOLD)
+            self._start_lockout(_lockout_secs(self._fail_count))
             return
         try:
             start = float(self._config.get_lockout_start())
-        except Exception:
+        except Exception as exc:
+            _log.warning('lockout start unreadable: %s', exc)
             start = 0.0
         self._fail_count = fails
         secs = resume_lockout_secs(fails, until, start, time.time())
         if secs is None:
             try:
                 self._config.set_lockout_state(fails, 0.0)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning('lockout state not saved: %s', exc)
         elif secs > 0:
             self._start_lockout(secs)
 
@@ -1630,8 +1639,8 @@ class LockScreen(Gtk.Window):
         self._fail_count = 0
         try:
             self._config.clear_lockout_state()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning('lockout state not cleared: %s', exc)
         if self._lockout_src is not None:
             GLib.source_remove(self._lockout_src)
             self._lockout_src = None

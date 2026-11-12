@@ -2,6 +2,7 @@
 only on verify-match; lockout state failures fail closed and are logged;
 the clock tick runs only while the lock is shown; unlock wipes the PIN."""
 import inspect
+import logging
 import subprocess
 import types
 
@@ -150,6 +151,11 @@ def glib(monkeypatch):
                         lambda src: rec.removed.append(src) or True)
     monkeypatch.setattr(ls.GLib, 'idle_add',
                         lambda cb, *a: rec.idle.append((cb, a)) or 1)
+    # Sibling modules may bind lock_screen to a minimal fake GLib.
+    monkeypatch.setattr(ls.GLib, 'get_monotonic_time', lambda: 0,
+                        raising=False)
+    monkeypatch.setattr(ls.GLib, 'SOURCE_REMOVE', False, raising=False)
+    monkeypatch.setattr(ls.GLib, 'SOURCE_CONTINUE', True, raising=False)
     return rec
 
 
@@ -226,3 +232,33 @@ class TestUnlockWipesPin:
         lock._unlock()
         assert lock._pin == ''
         assert lock.dots_label.text == ''
+
+
+# ---------------------------------------------------------------- lockout
+
+class TestLockoutFailsClosed:
+    def test_unreadable_state_arms_lockout(self, glib, caplog):
+        ls = _ls()
+        lock = _lock(_Config(read_error=OSError('disk')))
+        with caplog.at_level(logging.ERROR, logger='lock_screen'):
+            ls.LockScreen._resume_lockout_state(lock)
+        assert lock._fail_count >= ls._FAIL_THRESHOLD
+        assert lock._lockout_src is not None
+        assert all(not k.sensitive for k in lock._keypad_btns)
+        assert 'lockout state unreadable' in caplog.text
+
+    def test_persist_failure_is_logged_and_lockout_holds(self, glib, caplog):
+        ls = _ls()
+        lock = _lock(_Config(write_error=OSError('read-only')))
+        lock._fail_count = ls._FAIL_THRESHOLD - 1
+        with caplog.at_level(logging.ERROR, logger='lock_screen'):
+            ls.LockScreen._on_pin_result(lock, False, 0, None)
+        assert lock._lockout_src is not None
+        assert 'lockout state not saved' in caplog.text
+
+    def test_clear_failure_on_unlock_is_logged(self, glib, caplog):
+        lock = _lock(_Config(clear_error=OSError('read-only')))
+        with caplog.at_level(logging.WARNING, logger='lock_screen'):
+            lock._unlock()
+        assert lock.unlocked == 1
+        assert 'lockout state not cleared' in caplog.text
