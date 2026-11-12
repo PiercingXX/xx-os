@@ -63,7 +63,7 @@ def _sigils():
 
 def test_document_shape_carries_app_tag_and_version():
     text = write({}, {})
-    assert '"app": "xx-calendar"' in text
+    assert '"app": "calendar"' in text
     assert '"version": 1' in text
     assert FORMAT_VERSION == 1
     assert '"settings"' in text

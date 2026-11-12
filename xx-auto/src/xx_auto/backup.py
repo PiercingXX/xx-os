@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from .settings_store import DEFAULTS, Settings, parse_settings
 
-APP_TAG = "xx-auto"
+APP_TAG = "auto"
+# Backups written before the apps dropped the xx- prefix still restore.
+LEGACY_APP_TAGS = ("xx-auto",)
 FORMAT_VERSION = 1
 
 
@@ -18,7 +20,7 @@ def parse_backup(payload: object) -> Settings | None:
     """Parse a backup payload; None when it is not ours or corrupt."""
     if not isinstance(payload, dict):
         return None
-    if payload.get("app") != APP_TAG or payload.get("version") != 1:
+    if payload.get("app") not in (APP_TAG, *LEGACY_APP_TAGS) or payload.get("version") != 1:
         return None
     settings = payload.get("settings")
     if not isinstance(settings, dict):

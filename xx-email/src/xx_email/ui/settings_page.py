@@ -309,7 +309,7 @@ class SettingsPage(Gtk.Box):
     def _export_backup(self) -> None:
         dialog = Gtk.FileDialog()
         dialog.set_title("Save backup")
-        dialog.set_initial_name("xx-email-backup.json")
+        dialog.set_initial_name("email-backup.json")
         backup_filter = Gtk.FileFilter()
         backup_filter.set_name("JSON backup")
         backup_filter.add_suffix("json")

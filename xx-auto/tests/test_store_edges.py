@@ -30,6 +30,13 @@ def test_backup_round_trip_and_reject():
     assert backup_mod.parse_backup({"app": "xx-auto", "version": 1,
                                      "settings": "nope"}) is None
     assert backup_mod.parse_backup(None) is None
+    assert payload["app"] == "auto"
+
+
+def test_backup_from_before_the_rename_still_restores():
+    settings = Settings(surface_calls=True)
+    old = dict(backup_mod.export_backup(settings), app="xx-auto")
+    assert backup_mod.parse_backup(old) == settings
 
 
 def test_applog_ring_cap_and_redact():

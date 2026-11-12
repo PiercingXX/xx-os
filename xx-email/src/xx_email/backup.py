@@ -24,7 +24,9 @@ from xx_email import db as db_mod
 from xx_email.domain import OutboxFiles, SafePaths
 
 BACKUP_SCHEMA_VERSION = 1
-BACKUP_KIND = "xx-email-backup"
+BACKUP_KIND = "email-backup"
+# Backups written before the apps dropped the xx- prefix still restore.
+LEGACY_BACKUP_KINDS = ("xx-email-backup",)
 
 
 class BackupError(ValueError):
@@ -95,7 +97,7 @@ def _require_mapping(payload: object) -> dict:
 def validate_backup(payload: object) -> dict:
     """Check the whole payload; return it typed or raise BackupError."""
     data = _require_mapping(payload)
-    if data.get("kind") != BACKUP_KIND:
+    if data.get("kind") not in (BACKUP_KIND, *LEGACY_BACKUP_KINDS):
         raise BackupError("Not an email backup.")
     if data.get("version") != BACKUP_SCHEMA_VERSION:
         raise BackupError(
@@ -134,7 +136,7 @@ def restore_backup(conn, payload: object, *,
     Outbox rows whose payload file is gone are skipped by name.
     """
     data = _require_mapping(payload)
-    if data.get("kind") != BACKUP_KIND:
+    if data.get("kind") not in (BACKUP_KIND, *LEGACY_BACKUP_KINDS):
         raise BackupError("Not an email backup.")
     if data.get("version") != BACKUP_SCHEMA_VERSION:
         raise BackupError(

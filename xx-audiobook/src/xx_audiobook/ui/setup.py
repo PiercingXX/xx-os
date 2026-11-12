@@ -34,7 +34,7 @@ SUBSYSTEM_NAMES = {"ha": "Home Assistant", "db": "Database",
                    "scanner": "Library scan", "stream": "Streaming",
                    "cast": "Casting", "matcher": "Matching"}
 GOOD_STATES = ("ok", "ready", "running", "up", "configured", "healthy")
-SHARE_NAME = "xx-audiobook-logs.txt"
+SHARE_NAME = "audiobook-logs.txt"
 
 
 def license_entries() -> list:

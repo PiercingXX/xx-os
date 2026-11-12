@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from xx_calendar.app_config import DEFAULTS, parse_settings
 from xx_calendar.models import CalendarKey
 
-APP_TAG = "xx-calendar"
+APP_TAG = "calendar"
 FORMAT_VERSION = 1
 
 MAX_BACKUP_BYTES = 10 * 1024 * 1024

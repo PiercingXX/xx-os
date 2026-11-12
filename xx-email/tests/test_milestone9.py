@@ -137,7 +137,7 @@ def test_export_never_carries_tokens_or_bodies(conn, tmp_path):
     _seed_wake_and_page(conn)
     payload = backup_mod.export_backup(conn)
     raw = json.dumps(payload)
-    assert payload["kind"] == "xx-email-backup"
+    assert payload["kind"] == "email-backup"
     assert payload["version"] == 1
     assert payload["settings"]["last_account"] is not None
     assert len(payload["snooze_wakes"]) == 1
@@ -146,7 +146,15 @@ def test_export_never_carries_tokens_or_bodies(conn, tmp_path):
     assert "Bearer" not in raw
     out = backup_mod.write_export_file(tmp_path / "b.json", payload)
     assert backup_mod.read_export_file(out)["kind"] == \
-        "xx-email-backup"
+        "email-backup"
+
+
+def test_backups_from_before_the_rename_still_restore(conn):
+    _seed_wake_and_page(conn)
+    old = dict(backup_mod.export_backup(conn), kind="xx-email-backup")
+    assert backup_mod.validate_backup(old)["kind"] == "xx-email-backup"
+    with pytest.raises(backup_mod.BackupError):
+        backup_mod.validate_backup(dict(old, kind="someone-else"))
 
 
 def test_restore_round_trips_wakes_pages_and_settings(conn, tmp_path):

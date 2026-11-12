@@ -571,7 +571,7 @@ def reveal_secret(store: VaultStore, account_id: str, cipher: SecretCipher) -> s
 
 def export_file_name(now: int | None = None) -> str:
     stamp = time.strftime("%Y-%m-%d", time.localtime((now if now is not None else now_millis()) / 1000))
-    return f"xx-auth-{stamp}.json"
+    return f"auth-{stamp}.json"
 
 
 def export_secrets(store: VaultStore, cipher: SecretCipher) -> list[StoredAccount]:

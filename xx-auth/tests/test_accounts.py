@@ -205,3 +205,8 @@ def test_rekey_vault_leaves_the_vault_untouched_on_a_bad_row(store, cipher):
     with pytest.raises(Exception):
         accounts.rekey_vault(store, SecretCipher(os.urandom(32)), cipher)
     assert [row.secret for row in store.get_all()] == before
+
+
+def test_export_file_name_is_the_plain_app_name():
+    name = accounts.export_file_name(0)
+    assert name.startswith("auth-") and name.endswith(".json")
