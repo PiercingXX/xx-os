@@ -1,6 +1,6 @@
 project(
   'xx-wm',
-  version: '0.1.1',
+  version: '0.1.2',
   meson_version: '>=0.60.0',
 )
 
@@ -319,6 +319,14 @@ install_data(
   rename: 'xx-apps-update',
   install_dir: get_option('bindir'),
   install_mode: 'rwxr-xr-x',
+)
+
+# The release key xx-apps-update verifies tags against
+# → $prefix/share/xx-wm/release-signers (root-owned, like everything here).
+install_data(
+  'data/release-signers',
+  install_dir: shell_datadir,
+  install_mode: 'rw-r--r--',
 )
 
 # App .desktop entry → $prefix/share/applications/

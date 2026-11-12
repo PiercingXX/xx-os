@@ -79,7 +79,9 @@ class TestManifest:
         assert manifest["xx-keyboard"]["version"] == "0.58.0"
         assert manifest["xx-keyboard"]["deps"] == []
         assert manifest["xx-find"]["deps"] == []
-        assert manifest["xx-wm"]["version"] == "0.1.1"
+        meson = (REPO_ROOT / "xx-wm" / "launcher" / "meson.build").read_text(
+            encoding="utf-8")
+        assert ("version: '%s'" % manifest["xx-wm"]["version"]) in meson
 
     def test_check_flags_a_stale_manifest(self, tmp_path):
         _make_repo(tmp_path)

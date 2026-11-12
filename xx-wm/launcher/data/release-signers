@@ -1,0 +1,3 @@
+# xx-os release signing key (public half). xx-apps-update installs only
+# release tags signed by a key listed here; see docs/versioning.md.
+release@xx-os namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDDxZ7Ilf/BOnM4Zn8ySDzA7TPnBe+zU+SJScKjXk7wv xx-os release signing

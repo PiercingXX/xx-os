@@ -232,8 +232,9 @@ ALLOW = {
     ('xx_apps_update.py', '_default_run'):
         'xx-apps-update bindir CLI, never imported by the shell; '
         'runner injectable.',
-    ('xx_apps_update.py', '_https_get'):
-        'xx-apps-update bindir CLI, never imported by the shell.',
+    ('xx_apps_update.py', '_run_git'):
+        'xx-apps-update bindir CLI, never imported by the shell; '
+        'runner injectable.',
     # Gio.bus_get_sync returns the process-wide connection. The session
     # one is held by Gtk.Application from registration on; the system one
     # is opened at startup by main._setup_logind and held for the shell's

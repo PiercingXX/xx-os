@@ -1,7 +1,8 @@
 """xx-apps-update: compare, safe extraction, ordering, apply, Settings row.
 
-Fake fetchers and fake installers throughout: no network, no installs,
-no sudo. The only real subprocesses are ``tar``-free tarfile builds in
+Releases come from throwaway git repos with tags signed by a key made in
+tmp (``_release_repo``); meson and the installers are fakes: no network,
+no installs, no sudo. The other real subprocesses are tarfile builds in
 tmp dirs and ``sh`` sourcing of install.sh's record function with an
 overridden state dir.
 """
@@ -24,8 +25,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 import settings_updates
 import update_checker
 import xx_apps_update as updater
+from _release_repo import ReleaseRepo, tools_missing
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
+TAG = "v2026.11.01"
 
 AVAILABLE = {
     "common": {"version": "0.1.1", "path": "common", "deps": []},
@@ -39,14 +42,6 @@ INSTALLED = {
     "xx-demo": {"version": "0.1.9", "commit": "old", "common": "0.1.0"},
     "xx-plain": {"version": "0.1.0", "commit": "old"},
 }
-
-
-def _api_payload():
-    return json.dumps({"sha": SHA}).encode()
-
-
-def _manifest_payload(manifest=AVAILABLE):
-    return json.dumps(manifest).encode()
 
 
 def _make_tarball(root: Path, top: str, apps: dict) -> bytes:
@@ -80,21 +75,14 @@ class _Run:
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
 
-def _fetch(mapping):
-    def fetch(url, timeout=20):
-        for key, payload in mapping.items():
-            if url == key:
-                return payload
-        raise AssertionError("unexpected fetch: %s" % url)
-    return fetch
-
-
-def _check_fetch(tarball: bytes, manifest=AVAILABLE):
-    return _fetch({
-        updater.API_COMMIT_URL: _api_payload(),
-        updater.RAW_APPS_URL.format(sha=SHA): _manifest_payload(manifest),
-        updater.TARBALL_URL.format(sha=SHA): tarball,
-    })
+@pytest.fixture
+def release(tmp_path):
+    missing = tools_missing()
+    if missing:
+        pytest.skip("needs %s" % ", ".join(missing))
+    repo = ReleaseRepo(tmp_path / "release", AVAILABLE)
+    repo.tag(TAG)
+    return repo
 
 
 def _write_bytes(path: Path, payload: bytes) -> Path:
@@ -205,54 +193,43 @@ class TestSafeExtract:
 
 
 class TestCheck:
-    def test_updates_listed_with_exit_10(self, tmp_path, capsys):
+    def test_updates_listed_with_exit_10(self, tmp_path, capsys, release):
         state = _write_state(tmp_path / "installed.json")
-        fetch = _fetch({
-            updater.API_COMMIT_URL: _api_payload(),
-            updater.RAW_APPS_URL.format(sha=SHA): _manifest_payload(),
-        })
-        assert updater.cmd_check(fetch=fetch, state=state) == 10
+        assert updater.cmd_check(state=state,
+                                 **release.source(tmp_path)) == 10
         out = capsys.readouterr().out
         assert "xx-demo 0.1.9 \u2192 0.2.0" in out
         assert "common 0.1.0 \u2192 0.1.1" in out
         assert "xx-plain" not in out
 
-    def test_up_to_date_with_exit_0(self, tmp_path, capsys):
+    def test_up_to_date_with_exit_0(self, tmp_path, capsys, release):
         state = _write_state(tmp_path / "installed.json", AVAILABLE)
-        fetch = _fetch({
-            updater.API_COMMIT_URL: _api_payload(),
-            updater.RAW_APPS_URL.format(sha=SHA): _manifest_payload(),
-        })
-        assert updater.cmd_check(fetch=fetch, state=state) == 0
+        assert updater.cmd_check(state=state,
+                                 **release.source(tmp_path)) == 0
         assert updater.UP_TO_DATE in capsys.readouterr().out
 
-    def test_fetch_failure_is_an_error(self, tmp_path):
+    def test_fetch_failure_is_an_error(self, tmp_path, release):
         state = _write_state(tmp_path / "installed.json")
+        source = dict(release.source(tmp_path),
+                      url=str(tmp_path / "no-such-origin.git"))
+        assert updater.cmd_check(state=state, **source) == 1
 
-        def fetch(_url, timeout=20):
-            raise OSError("offline")
-        assert updater.cmd_check(fetch=fetch, state=state) == 1
+    def test_missing_state_is_an_error(self, tmp_path, release):
+        assert updater.cmd_check(state=str(tmp_path / "nope.json"),
+                                 **release.source(tmp_path)) == 1
 
-    def test_missing_state_is_an_error(self, tmp_path):
-        fetch = _fetch({
-            updater.API_COMMIT_URL: _api_payload(),
-            updater.RAW_APPS_URL.format(sha=SHA): _manifest_payload(),
-        })
-        assert updater.cmd_check(
-            fetch=fetch, state=str(tmp_path / "nope.json")) == 1
+    def test_second_check_reuses_the_cache_clone(self, tmp_path, release):
+        state = _write_state(tmp_path / "installed.json")
+        source = release.source(tmp_path)
+        assert updater.cmd_check(state=state, **source) == 10
+        assert (Path(source["cache"]) / "objects").is_dir()
+        assert updater.cmd_check(state=state, **source) == 10
 
 
 class TestApply:
-    def _apply(self, tmp_path, monkeypatch, run, manifest=AVAILABLE,
+    def _apply(self, tmp_path, monkeypatch, run, release,
                installed=INSTALLED, wanted=None):
-        tarball = _make_tarball(
-            tmp_path, "XX-Linux-Phone-" + SHA[:7],
-            {"common": manifest["common"]["version"],
-             "xx-demo": manifest["xx-demo"]["version"],
-             "xx-plain": manifest["xx-plain"]["version"]})
         state = _write_state(tmp_path / "installed.json", installed)
-        work = tmp_path / "work"
-        work.mkdir()
         monkeypatch.setattr(updater.os, "geteuid", lambda: 0)
         created: list = []
         real_mkdtemp = updater.tempfile.mkdtemp
@@ -263,21 +240,23 @@ class TestApply:
             created.append(path)
             return path
         monkeypatch.setattr(updater.tempfile, "mkdtemp", fake_mkdtemp)
-        fetch = _check_fetch(tarball, manifest)
-        rc = updater.cmd_apply(wanted, fetch=fetch, run=run, state=state)
+        rc = updater.cmd_apply(wanted, run=run, state=state,
+                               **release.source(tmp_path))
         return rc, state, run, created
 
     def test_apply_updates_state_and_installs_dep_first(
-            self, tmp_path, monkeypatch, capsys):
+            self, tmp_path, monkeypatch, capsys, release):
         run = _Run()
-        rc, state, run, created = self._apply(tmp_path, monkeypatch, run)
+        rc, state, run, created = self._apply(tmp_path, monkeypatch, run,
+                                              release)
         assert rc == 0
         out = capsys.readouterr().out
-        assert "Installed common 0.1.1." in out
-        assert "Installed xx-demo 0.2.0." in out
+        assert "Installed common 0.1.1 from %s." % TAG in out
+        assert "Installed xx-demo 0.2.0 from %s." % TAG in out
         data = json.loads(Path(state).read_text(encoding="utf-8"))
         assert data["common"]["version"] == "0.1.1"
-        assert data["common"]["commit"] == SHA
+        assert data["common"]["commit"] == release.head()
+        assert data["common"]["release"] == TAG
         assert data["xx-demo"]["version"] == "0.2.0"
         assert data["xx-demo"]["common"] == "0.1.1"
         assert data["xx-plain"]["version"] == "0.1.0"
@@ -294,10 +273,33 @@ class TestApply:
         assert created and not any(
             os.path.exists(path) for path in created)
 
+    def test_builds_the_tagged_commit_not_main(
+            self, tmp_path, monkeypatch, capsys, release):
+        newer = json.loads(json.dumps(AVAILABLE))
+        newer["xx-demo"]["version"] = "0.9.0"
+        release.commit(newer, "unreleased work on main")
+        seen: dict = {}
+
+        class _Recording(_Run):
+            def __call__(self, argv, cwd="/", timeout=0):
+                meson = Path(cwd) / "meson.build"
+                if meson.is_file():
+                    seen[Path(cwd).name] = meson.read_text()
+                return super().__call__(argv, cwd=cwd, timeout=timeout)
+        rc, state, _run, _created = self._apply(
+            tmp_path, monkeypatch, _Recording(), release)
+        assert rc == 0
+        assert "'0.2.0'" in seen["xx-demo"]
+        data = json.loads(Path(state).read_text(encoding="utf-8"))
+        assert data["xx-demo"]["version"] == "0.2.0"
+        assert data["xx-demo"]["commit"] == release.head(TAG)
+        capsys.readouterr()
+
     def test_build_failure_leaves_system_untouched(
-            self, tmp_path, monkeypatch, capsys):
+            self, tmp_path, monkeypatch, capsys, release):
         run = _Run(fail_compile=("xx-demo",))
-        rc, state, run, created = self._apply(tmp_path, monkeypatch, run)
+        rc, state, run, created = self._apply(tmp_path, monkeypatch, run,
+                                              release)
         assert rc == 1
         assert created and not any(
             os.path.exists(path) for path in created)
@@ -309,19 +311,19 @@ class TestApply:
         assert not any("install" in argv for argv, _cwd in run.calls)
 
     def test_unknown_app_is_one_plain_line(
-            self, tmp_path, monkeypatch, capsys):
+            self, tmp_path, monkeypatch, capsys, release):
         run = _Run()
         rc, _state, _run, _created = self._apply(
-            tmp_path, monkeypatch, run, wanted=["xx-nope"])
+            tmp_path, monkeypatch, run, release, wanted=["xx-nope"])
         assert rc == 1
         lines = capsys.readouterr().out.strip().splitlines()
         assert lines == ["XX app update failed: unknown app(s): xx-nope."]
 
     def test_named_subset_keeps_needed_deps(
-            self, tmp_path, monkeypatch, capsys):
+            self, tmp_path, monkeypatch, capsys, release):
         run = _Run()
         rc, _state, run, _created = self._apply(
-            tmp_path, monkeypatch, run, wanted=["xx-demo"])
+            tmp_path, monkeypatch, run, release, wanted=["xx-demo"])
         assert rc == 0
         apps = sorted(cwd.rsplit("/", 1)[-1]
                       for argv, cwd in run.calls if "install" in argv)
@@ -676,14 +678,3 @@ def test_manifest_paths_cannot_leave_the_tree(tmp_path):
     for bad in ('../etc', '/etc', 'a/../../b', '', '..', 'x/y'):
         with pytest.raises(u.UpdateError):
             u.source_dir(str(tmp_path), 'xx-radio', {'xx-radio': {'path': bad}})
-
-
-def test_commit_sha_must_be_a_full_hex_sha():
-    import json
-    import pytest
-    import xx_apps_update as u
-    for bad in ('abc1234', '../../x', 'G' * 40, ''):
-        def fetch(url, _b=bad):
-            return json.dumps({'sha': _b}).encode()
-        with pytest.raises(u.UpdateError):
-            u.pinned_tree(fetch)

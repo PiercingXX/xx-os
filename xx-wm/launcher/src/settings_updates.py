@@ -15,7 +15,7 @@ import subprocess
 
 LOG_TAIL_LINES = 15
 XX_APPS_BINARY = 'xx-apps-update'
-XX_APPS_CHECK_TIMEOUT = 60
+XX_APPS_CHECK_TIMEOUT = 300
 XX_APPS_APPLY_TIMEOUT = 1800
 XX_APPS_UP_TO_DATE = 'All XX apps are up to date.'
 

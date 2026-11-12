@@ -130,6 +130,8 @@ install_deps() {
             meson ninja rsync git phoc lisgd wl-clipboard
         pkg_install py3-wayland
         pkg_install py3-phonenumbers openssl py3-cairo
+        # ssh-keygen: xx-apps-update verifies signed release tags with it.
+        pkg_install openssh-keygen
         pkg_install geoclue
         pkg_install networkmanager
         pkg_install brightnessctl
@@ -145,7 +147,8 @@ install_deps() {
     elif [ "$PKG" = pacman ]; then
         pkg_install python-gobject gtk4 libadwaita gtk4-layer-shell meson ninja \
             rsync git phoc python-pywayland wl-clipboard geoclue \
-            networkmanager brightnessctl python-phonenumbers openssl python-cairo
+            networkmanager brightnessctl python-phonenumbers openssl python-cairo \
+            openssh
         pkg_install wlsunset
         pkg_install polkit   # ships the PolkitAgent typelib
         if command -v lisgd >/dev/null 2>&1; then
@@ -159,6 +162,7 @@ install_deps() {
             phoc lisgd wl-clipboard
         pkg_install python3-pywayland
         pkg_install python3-phonenumbers openssl python3-gi-cairo
+        pkg_install openssh-client
         # PolkitAgent typelib for the shell's password prompt. FuriOS ships
         # it; Mobian does not (the Librem logged "no PolkitAgent typelib").
         pkg_install gir1.2-polkit-1.0

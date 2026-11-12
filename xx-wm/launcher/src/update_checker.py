@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 import subprocess
@@ -49,6 +50,12 @@ def terminal_argv(cmd: str) -> tuple[str, list[str]] | None:
         if shutil.which(binary):
             return binary, build(shell, full)
     return None
+
+
+# update-system.sh replaces itself and ~/.scripts from piercing-dots main
+# at the end of every run unless this is set; from Settings only the copy
+# bootstrap-dots.sh pinned may run.
+NO_SELF_UPDATE = 'PX_NO_SELF_UPDATE=1'
 
 
 # The owner's update-system.sh prompts (Arch news, conflict retries,
@@ -108,7 +115,8 @@ def plan_update(script_path: str, which=None) -> tuple[str, str, list[str] | Non
     path = Path(script_path).expanduser()
     if not path.exists():
         return 'missing', f'Update script not found: {path}', None
-    cmd = shlex.quote(str(path)) + xx_apply_suffix(which=which)
+    cmd = (NO_SELF_UPDATE + ' ' + shlex.quote(str(path))
+           + xx_apply_suffix(which=which))
     found = update_terminal_argv(cmd, which=which)
     if found is not None:
         binary, argv = found
@@ -134,7 +142,8 @@ def run_owner_headless(script_path: str, on_line, on_done,
             proc = subprocess.Popen(
                 [str(script_path)], stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                text=True, close_fds=True)
+                text=True, close_fds=True,
+                env=dict(os.environ, PX_NO_SELF_UPDATE='1'))
         except OSError as error:
             _log.warning('headless update failed to start: %s', error)
             GLib.idle_add(on_done, -1)
@@ -199,7 +208,8 @@ def run_update_script(script_path: str) -> tuple[bool, str]:
     if not path.exists():
         return False, f'Update script not found: {path}'
 
-    return run_terminal_command(shlex.quote(str(path)))
+    return run_terminal_command(
+        NO_SELF_UPDATE + ' ' + shlex.quote(str(path)))
 
 
 # Package indexes `apt list --upgradable` / `apk list --upgradable` read go
@@ -221,7 +231,6 @@ _INDEX_MAX_AGE = 24 * 3600
 def _newest_mtime(path: str) -> float | None:
     """Newest mtime of a file or directory tree root (one level), or None
     when the path cannot be inspected."""
-    import os
     try:
         newest = os.path.getmtime(path)
         if os.path.isdir(path):

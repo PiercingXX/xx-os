@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""xx-apps-update: install the XX apps that changed.
+"""xx-apps-update: install the XX apps that changed, from signed releases.
 
-Compares the installed state (/var/lib/xx-apps/installed.json, written by
-install.sh) against the apps.json published on GitHub main at one pinned
-commit SHA, then rebuilds only what is newer -- dependencies first.
+Fetches the xx-os repository's release tags into a cache clone, picks the
+newest release tag (``vYYYY.MM.DD`` or ``vYYYY.MM.DD.N``) and verifies its
+SSH signature against the allowed-signers file the shell installs
+(/usr/share/xx-wm/release-signers). An unsigned tag, a tag signed by any
+other key, a tampered or renamed tag object, and a release that does not
+descend from an installed app's recorded commit are all refused: nothing is
+built. Otherwise the installed state (/var/lib/xx-apps/installed.json,
+written by install.sh) is compared against that tag's apps.json, and only
+what is newer is rebuilt from exactly the verified commit -- dependencies
+first.
 
-Network happens only here, only on an explicit check/apply, over HTTPS with
-certificate verification and a timeout. Builds run unprivileged in a fresh
-temp dir; only ``meson install`` runs as root (non-interactive sudo where
-available, else pkexec; credentials are never stored). Apply builds
-everything before installing anything, so a build failure leaves the
-installed apps untouched, and the temp dir is removed either way.
+Network happens only here, only on an explicit check/apply, through git
+over HTTPS. Builds run unprivileged in a fresh temp dir; only
+``meson install`` runs as root (non-interactive sudo where available, else
+pkexec; credentials are never stored). Apply builds everything before
+installing anything, so a build failure leaves the installed apps
+untouched, and the temp dir is removed either way.
 
 Exit codes: 0 means up to date (check) or applied (apply), 10 means updates
 are available (check only), anything else is an error.
@@ -23,22 +30,19 @@ import json
 import os
 import re
 import shutil
-import ssl
 import subprocess
 import sys
 import tarfile
 import tempfile
-import urllib.request
+from typing import NamedTuple
 
-GITHUB_REPO = "PiercingXX/XX-Linux-Phone"
-GITHUB_BRANCH = "main"
-API_COMMIT_URL = ("https://api.github.com/repos/%s/commits/%s"
-                  % (GITHUB_REPO, GITHUB_BRANCH))
-RAW_APPS_URL = ("https://raw.githubusercontent.com/%s/{sha}/apps.json"
-                % GITHUB_REPO)
-TARBALL_URL = ("https://codeload.github.com/%s/tar.gz/{sha}" % GITHUB_REPO)
+REPO_URL = "https://github.com/PiercingXX/xx-os.git"
+SIGNERS_FILE = "/usr/share/xx-wm/release-signers"
+SIGNER = "release@xx-os"
+RELEASE_TAG_RE = re.compile(r"v(\d{4})\.(\d{2})\.(\d{2})(?:\.(\d+))?")
+SHA_RE = re.compile(r"[0-9a-f]{40}")
 
-FETCH_TIMEOUT = 20
+GIT_TIMEOUT = 600
 SETUP_TIMEOUT = 300
 INSTALL_TIMEOUT = 1200
 REFRESH_TIMEOUT = 120
@@ -61,6 +65,13 @@ class UnsafeTarball(UpdateError):
     pass
 
 
+class Release(NamedTuple):
+    tag: str
+    sha: str
+    manifest: dict
+    repo: str
+
+
 def state_dir() -> str:
     return os.environ.get(STATE_ENV) or DEFAULT_STATE_DIR
 
@@ -69,41 +80,177 @@ def installed_path() -> str:
     return os.path.join(state_dir(), "installed.json")
 
 
-def _https_get(url: str, timeout: int = FETCH_TIMEOUT) -> bytes:
-    request = urllib.request.Request(
-        url, headers={"User-Agent": "xx-apps-update",
-                      "Accept": "application/vnd.github+json"})
-    context = ssl.create_default_context()
-    with urllib.request.urlopen(request, timeout=timeout,
-                                 context=context) as response:
-        return response.read()
+def cache_repo() -> str:
+    base = (os.environ.get("XDG_CACHE_HOME")
+            or os.path.join(os.path.expanduser("~"), ".cache"))
+    return os.path.join(base, "xx-apps-update", "xx-os.git")
 
 
-def pinned_tree(fetch=None) -> tuple[str, dict]:
-    """(commit SHA, apps.json) fetched at that exact SHA."""
-    fetch = fetch or _https_get
+def _run_git(argv: list[str], cwd: str, timeout: int):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", LC_ALL="C")
+    return subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
+                          timeout=timeout, check=False, env=env)
+
+
+def _git(run, repo: str, *args: str, timeout: int = GIT_TIMEOUT):
     try:
-        commit_doc = json.loads(fetch(API_COMMIT_URL).decode("utf-8"))
-        sha = commit_doc["sha"]
-    except (ValueError, KeyError, TypeError) as error:
-        raise UpdateError(
-            "could not read the latest commit: %s" % error) from error
-    except Exception as error:
-        raise UpdateError("could not reach GitHub: %s" % error) from error
-    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise UpdateError("bad commit SHA from GitHub.")
+        return run(["git", "-C", repo, *args], cwd="/", timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise UpdateError("git failed: %s" % error) from error
+
+
+def _last_line(result) -> str:
+    lines = (result.stderr or result.stdout or "").strip().splitlines()
+    return lines[-1].strip().rstrip(".") if lines else "no output"
+
+
+def release_key(tag: str) -> tuple | None:
+    """Sort key for a release tag name, or None when it is not one."""
+    match = RELEASE_TAG_RE.fullmatch(tag)
+    if match is None:
+        return None
+    year, month, day, serial = match.groups()
+    return int(year), int(month), int(day), int(serial or 0)
+
+
+def fetch_releases(repo: str, url: str, run=None) -> None:
+    """Bring the cache clone's main and tags up to date with ``url``.
+    Tags are force-updated and pruned so the clone mirrors the origin;
+    nothing fetched is trusted until verify_release says so."""
+    run = run or _run_git
+    if not os.path.isdir(os.path.join(repo, "objects")):
+        try:
+            os.makedirs(os.path.dirname(repo), mode=0o700, exist_ok=True)
+            result = run(["git", "init", "--quiet", "--bare", repo],
+                         cwd="/", timeout=GIT_TIMEOUT)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise UpdateError(
+                "could not create the release cache: %s" % error) from error
+        if result.returncode != 0:
+            raise UpdateError("could not create the release cache: %s"
+                              % _last_line(result))
+    result = _git(run, repo, "fetch", "--quiet", "--force", "--prune",
+                  "--no-tags", url, "+refs/heads/main:refs/heads/main",
+                  "+refs/tags/*:refs/tags/*")
+    if result.returncode != 0:
+        raise UpdateError("could not fetch releases: %s" % _last_line(result))
+
+
+def newest_release(repo: str, run=None) -> str:
+    run = run or _run_git
+    result = _git(run, repo, "for-each-ref",
+                  "--format=%(refname:strip=2)", "refs/tags/")
+    if result.returncode != 0:
+        raise UpdateError("could not list releases: %s" % _last_line(result))
+    tags = [tag for tag in result.stdout.split()
+            if release_key(tag) is not None]
+    if not tags:
+        raise UpdateError("no release has been published yet")
+    return max(tags, key=lambda tag: release_key(tag) or ())
+
+
+def _tag_headers(text: str) -> dict:
+    headers: dict[str, str] = {}
+    for line in text.split("\n"):
+        if not line:
+            break
+        key, _sep, value = line.partition(" ")
+        headers.setdefault(key, value)
+    return headers
+
+
+def verify_release(repo: str, tag: str, signers: str, run=None) -> str:
+    """The commit SHA of release ``tag`` once its tag object is proven to
+    be signed by a key in ``signers`` (principal SIGNER, namespace git).
+    Raises UpdateError for anything else."""
+    run = run or _run_git
+    if not os.path.isfile(signers):
+        raise UpdateError("the release signing key is not installed (%s)"
+                          % signers)
+    ref = "refs/tags/" + tag
+    result = _git(run, repo, "cat-file", "tag", ref)
+    if result.returncode != 0:
+        raise UpdateError("release %s is not a signed tag" % tag)
+    headers = _tag_headers(result.stdout)
+    sha = headers.get("object", "")
+    if headers.get("type") != "commit" or not SHA_RE.fullmatch(sha):
+        raise UpdateError("release %s does not name a commit" % tag)
+    # The signature covers the name inside the tag object, not the ref:
+    # a genuine old release re-pushed under a newer name must not pass.
+    if headers.get("tag") != tag:
+        raise UpdateError("release %s carries the tag name %r"
+                          % (tag, headers.get("tag")))
+    result = _git(run, repo,
+                  "-c", "gpg.format=ssh",
+                  "-c", "gpg.ssh.program=ssh-keygen",
+                  "-c", "gpg.ssh.allowedSignersFile=" + signers,
+                  "-c", "gpg.minTrustLevel=fully",
+                  "verify-tag", ref)
+    good = 'Good "git" signature for %s with ' % SIGNER
+    if result.returncode != 0 or good not in (result.stderr or ""):
+        raise UpdateError("release %s is not signed by the release key: %s"
+                          % (tag, _last_line(result)))
+    return sha
+
+
+def release_manifest(repo: str, sha: str, run=None) -> dict:
+    run = run or _run_git
+    result = _git(run, repo, "cat-file", "blob", sha + ":apps.json")
+    if result.returncode != 0:
+        raise UpdateError("the release has no apps.json")
     try:
-        manifest = json.loads(
-            fetch(RAW_APPS_URL.format(sha=sha)).decode("utf-8"))
+        manifest = json.loads(result.stdout)
     except ValueError as error:
         raise UpdateError(
-            "published apps.json is invalid: %s" % error) from error
-    except Exception as error:
-        raise UpdateError(
-            "could not download apps.json: %s" % error) from error
+            "the release's apps.json is invalid: %s" % error) from error
     if not isinstance(manifest, dict):
-        raise UpdateError("published apps.json is invalid.")
-    return sha, manifest
+        raise UpdateError("the release's apps.json is invalid")
+    return manifest
+
+
+def verified_release(url: str | None = None, cache: str | None = None,
+                     signers: str | None = None, git=None) -> Release:
+    """Fetch, pick the newest release tag, verify it, read its apps.json."""
+    repo = cache or cache_repo()
+    fetch_releases(repo, url or REPO_URL, run=git)
+    tag = newest_release(repo, run=git)
+    sha = verify_release(repo, tag, signers or SIGNERS_FILE, run=git)
+    return Release(tag, sha, release_manifest(repo, sha, run=git), repo)
+
+
+def check_descends(release: Release, installed: dict, apps: list[str],
+                   git=None) -> None:
+    """Refuse a release that does not descend from the commit each of
+    ``apps`` was installed from (no downgrades, no side branches)."""
+    run = git or _run_git
+    for app in apps:
+        entry = installed.get(app)
+        commit = entry.get("commit") if isinstance(entry, dict) else None
+        if (not isinstance(commit, str) or not SHA_RE.fullmatch(commit)
+                or commit == release.sha):
+            continue
+        result = _git(run, release.repo, "merge-base", "--is-ancestor",
+                      commit, release.sha)
+        if result.returncode == 1:
+            raise UpdateError(
+                "release %s does not descend from the installed %s (%s); "
+                "refusing a downgrade" % (release.tag, app, commit[:12]))
+        if result.returncode != 0:
+            raise UpdateError(
+                "the installed %s (%s) is not in the release history"
+                % (app, commit[:12]))
+
+
+def export_tree(release: Release, workdir: str, git=None) -> str:
+    """Extract exactly the verified commit under ``workdir``."""
+    run = git or _run_git
+    tarball = os.path.join(workdir, "tree.tar")
+    result = _git(run, release.repo, "archive", "--format=tar",
+                  "--prefix=xx-os/", "-o", tarball, release.sha)
+    if result.returncode != 0:
+        raise UpdateError("could not export the release: %s"
+                          % _last_line(result))
+    return safe_extract(tarball, workdir)
 
 
 def load_installed(path: str | None = None) -> dict:
@@ -376,7 +523,8 @@ def refresh_running(tree: str, run=None) -> None:
 
 def record_state(path: str, apps: list[str], manifest: dict,
                  commit: str, run=None, prefix=None,
-                 stage_dir: str | None = None) -> None:
+                 stage_dir: str | None = None,
+                 tag: str | None = None) -> None:
     """Merge the new versions into installed.json.
 
     The state dir belongs to root (install.sh creates it), so when it is
@@ -385,7 +533,8 @@ def record_state(path: str, apps: list[str], manifest: dict,
     otherwise it is replaced atomically in place."""
     parent = os.path.dirname(path)
     if prefix and parent and not _can_write(parent):
-        _record_privileged(path, _merged_state(path, apps, manifest, commit),
+        _record_privileged(path,
+                           _merged_state(path, apps, manifest, commit, tag),
                            run or _default_run, prefix,
                            stage_dir or tempfile.gettempdir())
         return
@@ -395,7 +544,7 @@ def record_state(path: str, apps: list[str], manifest: dict,
         except OSError as error:
             raise UpdateError(
                 "could not write installed state: %s" % error) from error
-    data = _merged_state(path, apps, manifest, commit)
+    data = _merged_state(path, apps, manifest, commit, tag)
     tmp = path + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as handle:
@@ -443,7 +592,7 @@ def _record_privileged(path: str, data: dict, run, prefix: list[str],
 
 
 def _merged_state(path: str, apps: list[str], manifest: dict,
-                  commit: str) -> dict:
+                  commit: str, tag: str | None = None) -> dict:
     try:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
@@ -456,6 +605,8 @@ def _merged_state(path: str, apps: list[str], manifest: dict,
         entry = dict(data.get(app)) if isinstance(data.get(app), dict) else {}
         entry["version"] = _manifest_version(manifest, app)
         entry["commit"] = commit
+        if tag:
+            entry["release"] = tag
         if "common" in _depends_on(manifest, app):
             entry["common"] = common_want
         data[app] = entry
@@ -479,14 +630,24 @@ def parse_check_output(text: str) -> tuple[int, list[str]]:
     return len(apps), apps
 
 
-def cmd_check(fetch=None, state=None) -> int:
+def _plan(state, url, cache, signers, git) -> tuple[Release, dict, list]:
+    release = verified_release(url=url, cache=cache, signers=signers,
+                               git=git)
+    installed = load_installed(state)
+    updates = find_updates(installed, release.manifest)
+    check_descends(release, installed, [app for app, _h, _w in updates],
+                   git=git)
+    return release, installed, updates
+
+
+def cmd_check(state=None, url=None, cache=None, signers=None,
+              git=None) -> int:
     try:
-        _sha, available = pinned_tree(fetch=fetch)
-        installed = load_installed(state)
+        _release, _installed, updates = _plan(state, url, cache, signers,
+                                              git)
     except UpdateError as error:
         print("XX app update check failed: %s" % error, file=sys.stderr)
         return 1
-    updates = find_updates(installed, available)
     if not updates:
         print(UP_TO_DATE)
         return 0
@@ -495,12 +656,13 @@ def cmd_check(fetch=None, state=None) -> int:
     return EXIT_UPDATES
 
 
-def cmd_apply(wanted: list[str] | None, fetch=None, run=None,
-              state=None) -> int:
-    fetch = fetch or _https_get
+def cmd_apply(wanted: list[str] | None, run=None, state=None, url=None,
+              cache=None, signers=None, git=None) -> int:
     run = run or _default_run
     try:
-        sha, available = pinned_tree(fetch=fetch)
+        release = verified_release(url=url, cache=cache, signers=signers,
+                                   git=git)
+        available = release.manifest
         try:
             installed = load_installed(state)
         except UpdateError as error:
@@ -524,29 +686,23 @@ def cmd_apply(wanted: list[str] | None, fetch=None, run=None,
         if not apps:
             print(UP_TO_DATE)
             return 0
+        check_descends(release, installed, apps, git=git)
         prefix = privilege_prefix(check=run)
         workdir = tempfile.mkdtemp(prefix="xx-apps-update-")
         try:
-            tarball = os.path.join(workdir, "tree.tar.gz")
-            try:
-                payload = fetch(TARBALL_URL.format(sha=sha))
-            except Exception as error:
-                raise UpdateError("could not download the release: %s"
-                                  % error) from error
-            with open(tarball, "wb") as handle:
-                handle.write(payload)
-            tree = safe_extract(tarball, workdir)
+            tree = export_tree(release, workdir, git=git)
             ordered = order_for_install(apps, available)
             build_apps(tree, ordered, available, run=run)
             install_built(tree, ordered, available, run=run, prefix=prefix)
             refresh_running(tree, run=run)
-            record_state(state or installed_path(), ordered, available, sha,
-                         run=run, prefix=prefix, stage_dir=workdir)
+            record_state(state or installed_path(), ordered, available,
+                         release.sha, run=run, prefix=prefix,
+                         stage_dir=workdir, tag=release.tag)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
         for app in ordered:
-            print("Installed %s %s."
-                  % (app, _manifest_version(available, app)))
+            print("Installed %s %s from %s."
+                  % (app, _manifest_version(available, app), release.tag))
         return 0
     except (UpdateError, UnsafeTarball) as error:
         print(FAILED_LINE % error)

@@ -21,8 +21,8 @@ are in [`../docs/pixel-9-pro-design.md`](../docs/pixel-9-pro-design.md). In shor
 ## Now
 
 M0 (the fix list in [`docs/review-2026-11-11.md`](docs/review-2026-11-11.md), P0 to
-P4 and the process section) is closed in code, except P0.6's update signing, which
-waits for a signing key. M1 and M2 pass on headless and nested river (session lock that
+P4 and the process section) is closed in code; P0.6's update signing landed as
+SSH-signed release tags (`../docs/versioning.md`, "Releases"). M1 and M2 pass on headless and nested river (session lock that
 survives a shell kill, calls and the power menu inside it, the keyboard resizing the
 app, dock and undock, top bar, Super launcher, keybind sheet, the phone as trackpad).
 None of it has run on hardware yet.
@@ -31,9 +31,9 @@ None of it has run on hardware yet.
    (phoc), then river on the Librem 5. Debian forky has no river package, so that
    needs river 0.5 built on the device.
 2. **Open items.**
-   - Update signing (P0.6): a signed manifest or signed tags checked by
-     `xx_apps_update.py`; `update-system.sh` still self-updates from piercing-dots
-     `main` (Settings could pass `PX_NO_SELF_UPDATE=1`).
+   - Signed releases (P0.6): cut the first release with `scripts/release.sh`, then
+     on a device run `xx-apps-update --check` and `--apply` against it (needs
+     `git` and `ssh-keygen` there).
    - Per-app network blocking (P1.6 rest): persist app ids rather than pid-scoped
      cgroup paths, and show a failed block in the UI.
    - river text-input: a text field that first appears after an app's first frame
