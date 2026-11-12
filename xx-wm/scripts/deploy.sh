@@ -34,6 +34,7 @@ fi
 
 TARGET="${USER_NAME}@${DEVICE}"
 DEST=/usr/share/xx-wm
+SYNC=/usr/local/libexec/xx-wm-deploy-sync
 RSYNC_FLAGS="-az --delete --exclude __pycache__"
 
 # Restart the running shell: the systemd user unit only when it is the
@@ -79,8 +80,15 @@ if [ "$DRY_RUN" = 1 ]; then
     exit 0
 fi
 
+# A device set up by grant-tablet-sudo.sh lets the user run only the
+# deploy sync helper without a password; other dev devices grant more.
 echo "Checking passwordless sudo on ${TARGET}..."
-if ! ssh "$TARGET" 'sudo -n true'; then
+# shellcheck disable=SC2029  # client-side expansion of SYNC is intended
+if ssh "$TARGET" "sudo -n -l ${SYNC}" >/dev/null 2>&1; then
+    USE_SYNC=1
+elif ssh "$TARGET" 'sudo -n true'; then
+    USE_SYNC=0
+else
     echo "passwordless sudo is required to write ${DEST}. Run scripts/grant-tablet-sudo.sh" >&2
     exit 1
 fi
@@ -88,7 +96,7 @@ fi
 # A fixed staging path is pre-creatable by another local user, whose files
 # would then be copied into /usr/share/xx-wm as root. Stage in a private
 # mktemp dir instead, and remove it on the way out.
-STAGE=$(ssh "$TARGET" 'mktemp -d "${TMPDIR:-/tmp}/xx-wm-deploy.XXXXXXXX"') || exit 1
+STAGE=$(ssh "$TARGET" 'mktemp -d /tmp/xx-wm-deploy.XXXXXXXX') || exit 1
 trap 'ssh "$TARGET" "rm -rf $STAGE"' EXIT INT TERM
 
 echo "Deploying launcher/src/ -> ${TARGET}:${STAGE}/ then ${DEST}/"
@@ -112,7 +120,11 @@ rsync -az "$REPO_DIR/launcher/data/wayland.xml" \
 # Datadir rsync is without --delete: --delete would wipe phoc.ini, sounds,
 # squeekboard, gnome-osk. --chown keeps the meson-installed tree root-owned.
 # shellcheck disable=SC2029  # client-side expansion of STAGE/DEST is intended
-ssh "$TARGET" "sudo rsync -a --chown=root:root ${STAGE}/ ${DEST}/" || exit 1
+if [ "$USE_SYNC" = 1 ]; then
+    ssh "$TARGET" "sudo -n ${SYNC} ${STAGE}" || exit 1
+else
+    ssh "$TARGET" "sudo rsync -a --chown=root:root ${STAGE}/ ${DEST}/" || exit 1
+fi
 
 echo "Restarting xx-wm on ${DEVICE}..."
 # shellcheck disable=SC2029  # client-side expansion is intended

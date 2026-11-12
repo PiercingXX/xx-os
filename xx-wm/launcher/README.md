@@ -92,8 +92,11 @@ active, otherwise `SIGUSR1` to the unique `python3
 /usr/share/xx-wm/main.py` child (the `/usr/bin/xx-wm` supervisor respawns
 it; never `TERM`/`HUP` — `Gio.Application` maps those to quit and the
 session would end). It never updates `/usr/bin/xx-wm` itself — wrapper
-changes need `meson install`. Needs passwordless sudo on the device
-(`scripts/grant-tablet-sudo.sh`). `--dry-run` prints the real paths
+changes need `meson install`. Needs passwordless sudo on the device for
+the copy into the datadir: `scripts/grant-tablet-sudo.sh` grants only
+that (it installs `scripts/deploy-sync.sh` as
+`/usr/local/libexec/xx-wm-deploy-sync`, which copies one private staging
+dir the user owns and nothing else). `--dry-run` prints the real paths
 without touching anything. Full installs go through `scripts/install.sh`
 (whiptail menu: Install / Update / Install phone apps).
 
