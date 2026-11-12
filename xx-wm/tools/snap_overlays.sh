@@ -210,6 +210,9 @@ pm.unfullscreen()
 pm.set_decorated(False)
 pm.set_default_size(360, 720)
 pm.set_size_request(360, 720)
+# The app builds the menu at startup, before the lock screen the seeded
+# PIN raises: without this the rig captured the lock (420x768 headless).
+snap_target(pm)
 win.set_visible(False)
 EOF
 

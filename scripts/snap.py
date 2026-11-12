@@ -12,8 +12,10 @@ The --script file runs with ``win`` (the window) and ``app`` in scope,
 after --delay; the capture follows another --delay. With SNAP_MULTI=1
 in the environment the script captures its own shots instead
 (``snap_render(path)`` per shot, then ``snap_done()`` for --out and
-exit). Point HOME/XDG_* at a
-seeded temp dir yourself so the app shows real-looking data.
+exit). ``snap_target(window)`` names the window to capture when the shot
+is not the first one presented (an overlay over other visible windows).
+Point HOME/XDG_* at a seeded temp dir yourself so the app shows
+real-looking data.
 """
 
 from __future__ import annotations
@@ -84,13 +86,20 @@ def _capture():
     os._exit(0)
 
 
+def _target(window):
+    """Capture ``window`` instead of the first presented one: with the
+    main window hidden, the first visible toplevel in GTK's list is
+    whichever was built last, e.g. the lock screen under an overlay."""
+    state['win'] = window
+
+
 def _navigate():
     if script:
         win = _main_window()
         code = compile(open(script).read(), script, 'exec')
         exec(code, {'win': win, 'app': win.get_application() if win else None,
                     'Gtk': Gtk, 'GLib': GLib, 'snap_render': _render,
-                    'snap_done': _capture})
+                    'snap_done': _capture, 'snap_target': _target})
     if not multi:
         GLib.timeout_add(int(delay * 1000), _capture)
     return False
