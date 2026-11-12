@@ -810,9 +810,13 @@ class TestStaticContracts:
         assert 'polkit_agent' in text
         assert 'start_agent' in text
 
-    def test_drawer_menu_offers_uninstall(self):
+    def test_drawer_menu_has_no_uninstall(self):
+        # design.md: no uninstall in the long-press menu; Settings → Apps
+        # owns removal.
         text = (SRC / 'app_item_actions.py').read_text(encoding='utf-8')
-        assert 'Uninstall' in text
+        assert "'Uninstall'" not in text
+        assert 'begin_uninstall' in (SRC / 'settings_apps.py').read_text(
+            encoding='utf-8')
 
     def test_registry_order_pins_apps(self):
         import settings_page

@@ -194,7 +194,7 @@ class TestLastMemberCleanup:
         assert len(config.home_slots[1]['folder']) == 1
 
 
-# -- item 6+7: member menu Hide/Show + Sort A–Z ----------------------------
+# -- the shared member menu (design.md "Folders") --------------------------
 
 class TestMemberMenu:
     def _labels(self, actions, slot=1, member=0):
@@ -203,32 +203,18 @@ class TestMemberMenu:
         assert len(menus) == 1
         return menus[0][1]
 
-    def test_member_menu_lists_hide_sort_rearrange(self, actions):
+    def test_member_menu_is_the_design_list(self, actions):
         labels = [label for label, _cb in self._labels(actions)]
-        assert 'Hide' in labels
-        assert 'Sort A–Z' in labels
-        assert 'Rearrange…' in labels
-        assert 'Remove from folder' in labels
+        assert labels == ['App info', 'Rename', 'Disable for…', 'Move up',
+                          'Move down', 'Remove from folder']
 
-    def test_member_hide_and_show(self, actions, config):
-        items = dict(self._labels(actions))
-        items['Hide']()
-        assert 'camera.desktop' in config.hidden_apps
-        items = dict(self._labels(actions))
-        assert 'Show' in items
-        items['Show']()
-        assert 'camera.desktop' not in config.hidden_apps
-
-    def test_member_sort_orders_members(self, actions, config):
-        items = dict(self._labels(actions))
-        items['Sort A–Z']()
+    def test_folder_sort_orders_members(self, actions, config):
+        actions.sort_folder_members(1)
         assert [m['label'] for m in config.home_slots[1]['folder']] == [
             'Calc', 'Camera']
 
-    def test_member_rearrange_needs_two_members(self, actions):
-        menus = _capture_menus(actions)
-        actions.show_member_menu(object(), 2, 0)
-        dict(menus[0][1])['Rearrange…']()
+    def test_folder_rearrange_needs_two_members(self, actions):
+        actions._show_folder_reorder(object(), 2)
         assert any('two' in msg for msg in actions.events)
 
 
@@ -286,21 +272,19 @@ class TestApplyOrder:
         actions.apply_slot_order(['1', '0'])
         assert [s['label'] for s in config.home_slots] == before
 
-    def test_apply_pinned_order(self, actions, config):
-        actions._set_pinned(_entry('a.desktop', 'A'), True)
-        actions._set_pinned(_entry('b.desktop', 'B'), True)
-        actions.events.clear()
-        actions.apply_pinned_order(['b.desktop', 'a.desktop'])
-        assert config.pinned == ['b.desktop', 'a.desktop']
-        assert 'changed' not in actions.events
-
-    def test_pinned_menu_gains_rearrange(self, actions, config):
-        actions._set_pinned(_entry('a.desktop', 'A'), True)
-        actions._set_pinned(_entry('b.desktop', 'B'), True)
+    def test_app_menu_is_the_design_list(self, actions, config):
         menus = _capture_menus(actions)
         actions.show_app_menu(object(), _entry('a.desktop', 'A'))
-        labels = [label for label, _cb in menus[0][1]]
-        assert 'Rearrange pinned…' in labels
+        assert [label for label, _cb in menus[0][1]] == [
+            'App info', 'Rename', 'Add to folder', 'Hide', 'Disable for…',
+            'Pin']
+        actions._set_pinned(_entry('a.desktop', 'A'), True)
+        actions._set_pinned(_entry('b.desktop', 'B'), True)
+        menus.clear()
+        actions.show_app_menu(object(), _entry('a.desktop', 'A'))
+        assert [label for label, _cb in menus[0][1]] == [
+            'App info', 'Rename', 'Add to folder', 'Hide', 'Disable for…',
+            'Unpin', 'Move up', 'Move down']
 
 
 # -- item 5: home edit-mode delete asks first ------------------------------

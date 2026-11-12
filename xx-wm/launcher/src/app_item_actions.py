@@ -150,27 +150,21 @@ class AppItemActions:
                  on_changed: Callable[[], None],
                  on_status: Callable[[str], None],
                  focus_state: object | None = None,
-                 nope_state: object | None = None,
                  on_popover_changed: Callable[[bool], None] | None = None,
                  on_keyboard: Callable[[bool], None] | None = None,
                  real_name_fn: Callable[[str], str | None] | None = None,
-                 on_launch: Callable[[], None] | None = None,
                  on_open_page=None,
                  on_muted: Callable[[str], None] | None = None,
-                 on_uninstall: Callable[[object, AppEntry], None] | None = None,
                  ) -> None:
         self._config = config
         self._on_changed = on_changed
         self._on_status = on_status
         self._focus = focus_state
-        self._nope = nope_state
         self._on_popover_changed = on_popover_changed
         self._on_keyboard = on_keyboard
         self._real_name_fn = real_name_fn
-        self._on_launch = on_launch
         self._on_open_page = on_open_page
         self._on_muted = on_muted
-        self._on_uninstall = on_uninstall
 
     def _real_name(self, app_id: str) -> str | None:
         """The app's current desktop Name, for blank-rename resets."""
@@ -180,32 +174,6 @@ class AppItemActions:
             return self._real_name_fn(app_id)
         except Exception:
             return None
-
-    @staticmethod
-    def desktop_action_items(entry: AppEntry) -> list[tuple[str, str]]:
-        """(localized label, action id) for the row's Desktop Actions
-        (the Linux counterpart of Android's pinned shortcuts)."""
-        try:
-            actions = entry.desktop_app.list_actions() or ()
-        except Exception:
-            return []
-        items = []
-        for action in actions:
-            try:
-                name = entry.desktop_app.get_action_name(action)
-            except Exception:
-                name = None
-            items.append((name or str(action), str(action)))
-        return items
-
-    @staticmethod
-    def launch_desktop_action(entry: AppEntry, action_id: str) -> bool:
-        """Launch one Desktop Action; False when the backend refuses."""
-        try:
-            entry.desktop_app.launch_action(action_id, None)
-        except Exception:
-            return False
-        return True
 
     # -- popover plumbing --------------------------------------------------
 
@@ -423,50 +391,32 @@ class AppItemActions:
     # -- drawer app rows ---------------------------------------------------
 
     def _build_app_menu_actions(
-            self, anchor: Gtk.Widget, entry: AppEntry,
-            hidden_view: bool = False) -> list[tuple[str, Callable[[], None]]]:
+            self, anchor: Gtk.Widget,
+            entry: AppEntry) -> list[tuple[str, Callable[[], None]]]:
+        """design.md "App drawer": App info, Rename, Add to folder,
+        Hide/Show, Disable for…, Pin/Unpin, Move up/down. No uninstall."""
         config = self._config
         actions: list[tuple[str, Callable[[], None]]] = []
         actions.append(('App info', lambda: self._show_app_info(anchor, entry)))
-        for display, action_id in self.desktop_action_items(entry):
-            actions.append((display, lambda aid=action_id, lb=display:
-                            self._run_desktop_action(entry, aid, lb)))
         actions.append(('Rename', lambda: self._show_rename(anchor, entry)))
         actions.append(('Add to folder', lambda: self._show_add_to_folder(anchor, entry)))
-        actions.append(('Add to Home', lambda: self._add_to_home(
-            entry.app_id, config.label_for(entry.app_id, entry.name))))
-        if entry.app_id in config.hidden_apps or hidden_view:
+        if entry.app_id in config.hidden_apps:
             actions.append(('Show', lambda: self._set_hidden(entry, False)))
         else:
             actions.append(('Hide', lambda: self._set_hidden(entry, True)))
         actions.append(('Disable for…', lambda: self._show_disable_for(anchor, entry.app_id, entry.name)))
-        if self._focus is not None:
-            if self._focus.is_focus_app(entry.app_id):
-                actions.append(('Focus: unpause this app',
-                                lambda: self._set_focus_app(entry, False)))
-            else:
-                actions.append(('Focus: pause this app',
-                                lambda: self._set_focus_app(entry, True)))
         if entry.app_id in config.pinned:
             actions.append(('Unpin', lambda: self._set_pinned(entry, False)))
             actions.append(('Move up', lambda: self._move_pinned(entry, -1)))
             actions.append(('Move down', lambda: self._move_pinned(entry, +1)))
-            if len(config.pinned) >= 2:
-                actions.append(('Rearrange pinned…',
-                                lambda: self._show_pinned_reorder(anchor)))
         else:
             actions.append(('Pin', lambda: self._set_pinned(entry, True)))
-        if self._on_uninstall is not None:
-            actions.append(('Uninstall',
-                            lambda: self._ask_uninstall(anchor, entry)))
         return actions
 
-    def show_app_menu(self, anchor: Gtk.Widget, entry: AppEntry,
-                      hidden_view: bool = False) -> None:
+    def show_app_menu(self, anchor: Gtk.Widget, entry: AppEntry) -> None:
         display = self._config.label_for(entry.app_id, entry.name)
         self._show_action_menu(
-            anchor, display,
-            self._build_app_menu_actions(anchor, entry, hidden_view),
+            anchor, display, self._build_app_menu_actions(anchor, entry),
             subtitle=muted_menu_subtitle(self._config, entry.app_id))
 
     def info_page_items(self, entry: AppEntry) -> list[tuple[str, str]]:
@@ -498,10 +448,6 @@ class AppItemActions:
         else:
             self._on_status('No settings page is wired for %s.' % page)
 
-    def _ask_uninstall(self, anchor: Gtk.Widget, entry: AppEntry) -> None:
-        if callable(self._on_uninstall):
-            self._on_uninstall(anchor, entry)
-
     def _show_app_info(self, anchor: Gtk.Widget, entry: AppEntry) -> None:
         lines = [entry.name]
         if entry.description:
@@ -530,29 +476,6 @@ class AppItemActions:
             box.append(btn)
         self._show_popover(anchor, box)
 
-    def _run_desktop_action(self, entry: AppEntry, action_id: str,
-                            display: str) -> None:
-        try:
-            nope = getattr(self, '_nope', None)
-            blocked = bool(nope is not None and nope.is_blocked(entry.app_id))
-        except Exception:
-            blocked = False
-        if blocked:
-            try:
-                self._on_status(nope.notice_text(display or entry.name))
-            except Exception:
-                pass
-            return
-        if self.launch_desktop_action(entry, action_id):
-            try:
-                self._config.record_launch(entry.app_id)
-            except Exception:
-                pass
-            if self._on_launch is not None:
-                self._on_launch()
-        else:
-            self._on_status('Could not open %s.' % display)
-
     def _show_rename(self, anchor: Gtk.Widget, entry: AppEntry) -> None:
         current = self._config.label_for(entry.app_id, entry.name)
 
@@ -568,26 +491,6 @@ class AppItemActions:
 
         self._show_entry_dialog(anchor, 'Rename', current, 'Rename', _commit,
                                 allow_empty=True)
-
-    def _add_to_home(self, app_id: str, display: str) -> None:
-        """Put an app in the next free home slot, up to the 8-slot cap."""
-        slots = self._config.home_slots
-        for slot in slots:
-            if slot.get('type') == 'app' and slot.get('app_id') == app_id:
-                self._on_status('Already on home.')
-                return
-            for member in slot.get('folder') or []:
-                if member.get('app_id') == app_id:
-                    self._on_status('Already on home.')
-                    return
-        if len(slots) >= 8:
-            self._on_status('Home is full — remove a slot first.')
-            return
-        slots.append({'type': 'app', 'label': display, 'app_id': app_id,
-                      'cmd': None, 'folder': None})
-        self._config.set_home_slots(slots)
-        self._on_changed()
-        self._on_status(f'{display} added to home.')
 
     def _rename_in_slots(self, app_id: str, label: str) -> None:
         slots = self._config.home_slots
@@ -712,20 +615,14 @@ class AppItemActions:
         label = member.get('label', '')
         app_id = member.get('app_id')
 
+        # design.md "Folders": the one shared member menu, home and drawer.
         actions: list[tuple[str, Callable[[], None]]] = []
         actions.append(('App info', lambda: self._show_member_info(anchor, member)))
         actions.append(('Rename', lambda: self._show_member_rename(anchor, slot_index, member_index)))
         if app_id:
-            hidden = app_id in self._config.hidden_apps
-            actions.append(('Show' if hidden else 'Hide',
-                            lambda: self._set_hidden_id(app_id, not hidden)))
-            actions.append(('Add to Home',
-                            lambda: self._add_to_home(app_id, label)))
             actions.append(('Disable for…', lambda: self._show_disable_for(anchor, app_id, label)))
         actions.append(('Move up', lambda: self._move_member(slot_index, member_index, -1)))
         actions.append(('Move down', lambda: self._move_member(slot_index, member_index, +1)))
-        actions.append(('Sort A–Z', lambda: self.sort_folder_members(slot_index)))
-        actions.append(('Rearrange…', lambda: self._show_folder_reorder(anchor, slot_index)))
         actions.append(('Remove from folder', lambda: self._remove_member(slot_index, member_index)))
         self._show_action_menu(
             anchor, label, actions,
@@ -942,17 +839,6 @@ class AppItemActions:
             on_order_changed=lambda ids: self.apply_member_order(slot_index, ids),
             on_sort=_on_sort)
 
-    def _show_pinned_reorder(self, anchor: Gtk.Widget) -> None:
-        pinned = list(self._config.pinned)
-        if len(pinned) < 2:
-            self._on_status('Needs at least two apps to rearrange.')
-            return
-        items = [(app_id, self._config.label_for(app_id, app_id))
-                 for app_id in pinned]
-        self.show_reorder(
-            anchor, 'Rearrange pinned apps', items,
-            on_order_changed=self.apply_pinned_order)
-
     def show_home_reorder(self, anchor: Gtk.Widget) -> None:
         slots = self._config.home_slots
         if len(slots) < 2:
@@ -990,12 +876,4 @@ class AppItemActions:
         if sorted(order) != list(range(len(slots))):
             return False
         self._config.set_home_slots([slots[i] for i in order])
-        return True
-
-    def apply_pinned_order(self, ids: list[str]) -> bool:
-        """Persist a whole pinned permutation silently; Done refreshes."""
-        pinned = list(self._config.pinned)
-        if sorted(ids) != sorted(pinned):
-            return False
-        self._config.set_pinned(list(ids))
         return True

@@ -378,7 +378,6 @@ class TestGateEnumeration:
         ('banner.py', 'def dispatch_tap', 'allow_fn'),
         ('banner.py', 'def _on_tap', '_nope_allows'),
         ('app_switcher.py', 'def _focus_app', 'is_blocked'),
-        ('app_item_actions.py', 'def _run_desktop_action', 'is_blocked'),
         ('main.py', 'def _on_notification', 'silences'),
     ]
 

@@ -202,12 +202,8 @@ try:
 
     actions = win.item_actions._build_app_menu_actions(win.apps_list, calc)
     names = [label for label, _thunk in actions]
-    check('New Window' in names, 'desktop action row, got %r' % (names,))
-    check('Uninstall' in names, 'uninstall row, got %r' % (names,))
-    thunk = dict(actions)['New Window']
-    thunk()
-    check(calc.desktop_app.launched_actions == ['new-window'],
-          'desktop action launches')
+    check(names == ['App info', 'Rename', 'Add to folder', 'Hide',
+                    'Disable for…', 'Pin'], 'design menu, got %r' % (names,))
 
     _wait_until(lambda: not failures, timeout_s=3.0)
     _pump(0.5)
@@ -689,41 +685,6 @@ class TestDrawerSwipeDown:
         ns, actions = self._swipe_ns(window_mod, (180.0, 400.0), value=250.0)
         window_mod.ShellWindow._on_stack_swipe(ns, None, 0.0, 400.0)
         assert actions == ['notification_shade']
-
-
-class TestDesktopActions:
-    def test_lists_localized_actions(self):
-        import app_item_actions
-        entry = _entry('edit.desktop', 'Editor',
-                       actions=('new-window', 'open-file'))
-        items = app_item_actions.AppItemActions.desktop_action_items(entry)
-        assert items == [('New Window', 'new-window'),
-                         ('Open File', 'open-file')]
-
-    def test_no_actions_is_empty(self):
-        import app_item_actions
-        assert app_item_actions.AppItemActions.desktop_action_items(
-            _entry('plain.desktop', 'Plain')) == []
-
-    def test_launch_action_delegates(self):
-        import app_item_actions
-        entry = _entry('edit.desktop', 'Editor', actions=('new-window',))
-        assert app_item_actions.AppItemActions.launch_desktop_action(
-            entry, 'new-window') is True
-        assert entry.desktop_app.launched_actions == ['new-window']
-
-    def test_menu_lists_desktop_actions(self):
-        import app_item_actions
-        entry = _entry('edit.desktop', 'Editor', actions=('new-window',))
-        config = types.SimpleNamespace(
-            hidden_apps=[], pinned=[],
-            label_for=lambda app_id, fallback: fallback)
-        act = app_item_actions.AppItemActions(
-            config, on_changed=lambda: None, on_status=lambda _m: None)
-        labels = [label for label, _ in
-                  act._build_app_menu_actions(None, entry)]
-        assert 'New Window' in labels
-        assert labels.index('New Window') < labels.index('Rename')
 
 
 class TestAppInfoActions:
