@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 import queue
 import subprocess
 import threading
+import weakref
 from pathlib import Path
 from typing import Callable
 
@@ -20,6 +22,25 @@ _LOGIN1_SESSION_IFACE = 'org.freedesktop.login1.Session'
 
 _failure_logged = False
 
+# Display blank state, mirrored by display_manager: every live ALS
+# instance pauses while the panel is dark.
+_display_blanked = False
+_INSTANCES: weakref.WeakSet = weakref.WeakSet()
+
+
+def set_display_blanked(blanked: bool) -> None:
+    """Pause (True) or resume (False) automatic brightness everywhere."""
+    global _display_blanked
+    blanked = bool(blanked)
+    if blanked == _display_blanked:
+        return
+    _display_blanked = blanked
+    for als in list(_INSTANCES):
+        try:
+            als._on_display_blanked(blanked)
+        except Exception:
+            _log.exception('ALS pause/resume failed')
+
 
 def _note_failure(message: str, *args) -> None:
     """Log a backend failure once per process — the ALS poll and the shade
@@ -35,8 +56,12 @@ def _note_failure(message: str, *args) -> None:
 # Backlight: backlight.find() (backlight class, else a *backlight LED)
 
 _IIO_GLOB = '/sys/bus/iio/devices/iio:device*/in_illuminance_input'
-_POLL_INTERVAL_MS = 5000
-_CHANGE_THRESHOLD = 0.12  # only apply if brightness changes by ≥12%
+_POLL_INTERVAL_MS = 2000
+_CHANGE_THRESHOLD = 0.08  # apply only when the level moves by >= 8%
+_SMOOTHING = 0.5          # EMA weight of a new (median) log-lux sample
+_MEDIAN_WINDOW = 3        # a single odd sample never wins a median of 3
+_RAMP_STEPS = 8
+_RAMP_STEP_MS = 60
 
 _LUX_CURVE: list[tuple[float, float]] = [
     (0.0,    0.02),
@@ -230,6 +255,12 @@ class ALSBrightness:
     Reads ambient light sensor via IIO sysfs and adjusts display brightness.
     Enable/disable with `start()` / `stop()`.
     Falls back silently if sensor or backlight sysfs node is absent.
+
+    Paused while the display is blanked (set_display_blanked): a write
+    then would light a panel that is meant to be dark. Readings are
+    filtered (median of the last three, then an EMA in log-lux) and a new
+    level applies as a short ramp, so a hand passing over the sensor never
+    flickers the screen.
     """
 
     def __init__(self) -> None:
@@ -239,6 +270,14 @@ class ALSBrightness:
         self._last_ratio: float = -1.0
         self._timer_id: int | None = None
         self._enabled: bool = False
+        self._log_lux: float | None = None
+        self._samples: list[float] = []
+        self._ramp_src: int | None = None
+        self._ramp_steps: list[int] = []
+        self._current: int | None = None
+        self._write_lock = threading.Lock()
+        self._write_value_pending: int | None = None
+        _INSTANCES.add(self)
 
     def _read_max(self) -> int:
         if self._backlight_path is None:
@@ -259,27 +298,57 @@ class ALSBrightness:
         if self._enabled:
             return
         self._enabled = True
-        self._poll()
-        if self._timer_id is None:
-            self._timer_id = GLib.timeout_add(_POLL_INTERVAL_MS, self._poll)
+        self._resume()
 
     def stop(self) -> None:
         self._enabled = False
+        self._pause()
+
+    def _resume(self) -> None:
+        """Start polling from a fresh reading (the first one applies at
+        once; the level may have changed while paused)."""
+        if not self._enabled or _display_blanked:
+            return
+        self._log_lux = None
+        self._samples = []
+        self._last_ratio = -1.0
+        self._current = None
+        self._poll()
+        if self._timer_id is None and self._enabled:
+            self._timer_id = GLib.timeout_add(_POLL_INTERVAL_MS, self._poll)
+
+    def _pause(self) -> None:
         if self._timer_id is not None:
             GLib.source_remove(self._timer_id)
             self._timer_id = None
+        self._cancel_ramp()
+
+    def _on_display_blanked(self, blanked: bool) -> None:
+        if blanked:
+            self._pause()
+        else:
+            self._resume()
 
     def _poll(self) -> bool:
-        if not self._enabled:
+        if not self._enabled or _display_blanked:
+            self._timer_id = None
             return False
         lux = self._read_lux()
         if lux is None:
             return True
-
-        ratio = _lux_to_ratio(lux)
-        if abs(ratio - self._last_ratio) >= _CHANGE_THRESHOLD:
-            self._apply(ratio)
-            self._last_ratio = ratio
+        sample = math.log1p(max(0.0, lux))
+        if not self._samples:
+            self._samples = [sample] * _MEDIAN_WINDOW
+        else:
+            self._samples = self._samples[1:] + [sample]
+        median = sorted(self._samples)[_MEDIAN_WINDOW // 2]
+        self._log_lux = median if self._log_lux is None else (
+            self._log_lux + _SMOOTHING * (median - self._log_lux))
+        ratio = _lux_to_ratio(math.expm1(self._log_lux))
+        if abs(ratio - self._last_ratio) < _CHANGE_THRESHOLD:
+            return True
+        self._last_ratio = ratio
+        self._ramp_to(max(1, round(ratio * self._max_brightness)))
         return True
 
     def _read_lux(self) -> float | None:
@@ -290,9 +359,73 @@ class ALSBrightness:
         except (OSError, ValueError):
             return None
 
-    def _apply(self, ratio: float) -> None:
-        value = max(1, round(ratio * self._max_brightness))
+    def _read_current(self) -> int | None:
+        if self._current is not None:
+            return self._current
+        if self._backlight_path is None:
+            return None
+        try:
+            return int(self._backlight_path.read_text().strip())
+        except (OSError, ValueError):
+            return None
+
+    def _ramp_to(self, target: int) -> None:
+        self._cancel_ramp()
+        start = self._read_current()
+        if start is None or start == target:
+            self._ramp_steps = [target]
+        else:
+            n = _RAMP_STEPS
+            self._ramp_steps = [round(start + (target - start) * i / n)
+                                for i in range(1, n + 1)]
+        self._ramp_tick()
+        if self._ramp_steps:
+            self._ramp_src = GLib.timeout_add(_RAMP_STEP_MS, self._ramp_tick)
+
+    def _ramp_tick(self) -> bool:
+        if not self._ramp_steps or _display_blanked:
+            self._ramp_steps = []
+            self._ramp_src = None
+            return False
+        value = self._ramp_steps.pop(0)
+        self._current = value
+        self._queue_write(value)
+        if not self._ramp_steps:
+            self._ramp_src = None
+            return False
+        return True
+
+    def _cancel_ramp(self) -> None:
+        if self._ramp_src is not None:
+            GLib.source_remove(self._ramp_src)
+            self._ramp_src = None
+        self._ramp_steps = []
+
+    def _queue_write(self, value: int) -> None:
+        """Coalescing write: one job in flight on the backlight worker,
+        which writes the newest value, so a slow brightnessctl never
+        builds a backlog of stale ramp steps."""
+        with self._write_lock:
+            queued = self._write_value_pending is not None
+            self._write_value_pending = value
+        if not queued:
+            run_backlight_io(self._flush_write)
+
+    def _flush_write(self) -> None:
+        with self._write_lock:
+            value, self._write_value_pending = self._write_value_pending, None
+        # Checked again on the worker: a blank queued just before this job
+        # already switched the panel off, and it must stay off.
+        if value is None or _display_blanked:
+            return
+        self._write_value(value)
+
+    def _write_value(self, value: int) -> None:
         apply_backlight(value, sysfs_path=self._backlight_path)
+
+    def _apply(self, ratio: float) -> None:
+        """Blocking single write of a ratio (backlight worker only)."""
+        self._write_value(max(1, round(ratio * self._max_brightness)))
 
     @property
     def enabled(self) -> bool:

@@ -46,7 +46,9 @@ from typing import Callable
 from gi.repository import GLib
 
 import backlight
-from als_brightness import SerialWorker, login1_set_brightness, run_backlight_io
+from als_brightness import (
+    SerialWorker, login1_set_brightness, run_backlight_io, set_display_blanked,
+)
 
 try:
     from output_power import OutputPower
@@ -834,6 +836,7 @@ class DisplayManager:
             _brightnessctl('set', str(max(1, self._saved_brightness)))
 
     def _notify_blank_changed(self) -> None:
+        set_display_blanked(self._blanked)
         cb = getattr(self, '_on_blank_changed', None)
         if cb is not None:
             cb(self._blanked)
