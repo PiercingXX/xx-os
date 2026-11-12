@@ -66,6 +66,14 @@ def theme_css(preset: ThemePreset, scale: float = 1.0) -> str:
     border: none;
     color: {preset.muted};
 }}
+/* Slot rows: the arrows and remove keep their 44 px target without side
+   padding, so the name has room at large text on a 320 px screen. */
+.home-edit-row > .home-edit-ctl {{
+    padding: 4px 0;
+}}
+.home-edit-row > .home-edit-ctl.home-edit-label {{
+    padding: 4px 12px;
+}}
 .home-edit-action {{
     font-size: {_pt(13, scale)};
     font-weight: 300;
@@ -331,17 +339,24 @@ class HomeLauncher(Gtk.Box):
 
     def _make_edit_row(self, slot: dict, idx: int, total: int) -> Gtk.Widget:
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        row.set_halign(Gtk.Align.CENTER)
+        row.add_css_class('home-edit-row')
+        row.set_hexpand(True)
 
         label_text = slot.get('label', '')
         from gi.repository import Pango
         name_btn = Gtk.Button(label=label_text)
         name_btn.add_css_class('home-edit-ctl')
         name_btn.add_css_class('home-edit-label')
+        # The name takes the row's spare width, as in _make_row: sized to
+        # its natural width it ellipsized anyway ("Calenda…"), because
+        # GTK's natural width falls short of the text under letter-spacing.
+        name_btn.set_hexpand(True)
         child = name_btn.get_child()
         if isinstance(child, Gtk.Label):
             child.set_ellipsize(Pango.EllipsizeMode.END)
             child.set_max_width_chars(16)
+            child.set_halign(Gtk.Align.FILL)
+            child.set_xalign(self._row_xalign())
         name_btn.connect('clicked', lambda _b, w=name_btn, i=idx: self._on_slot_rename(w, i))
         row.append(name_btn)
 

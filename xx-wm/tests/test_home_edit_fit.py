@@ -1,7 +1,8 @@
 """Home edit mode fits the phone: the slot rows scroll, the action footer
 (Add app, New folder, Rearrange, Settings, Done) stays on screen at
 360x720 and 320x640. It used to sit inside the scroller, so Settings and
-Done were pushed below the bottom edge."""
+Done were pushed below the bottom edge. A slot name that fits its row is
+shown whole; only one that does not fit ellipsizes."""
 import shutil
 import subprocess
 import sys
@@ -40,8 +41,14 @@ for name in names:
         fh.write(f'[Desktop Entry]\nName={name}\nExec=true\nType=Application\n')
     slots.append({'type': 'app', 'label': name, 'app_id': app_id,
                   'cmd': None, 'folder': None})
+slots = slots[:int(sys.argv[4])]
+text_scale = float(sys.argv[5]) if len(sys.argv) > 5 else 1.0
+if len(sys.argv) > 6:
+    slots.append({'type': 'app', 'label': sys.argv[6],
+                  'app_id': 'notes.desktop', 'cmd': None, 'folder': None})
 with open(os.path.join(home, '.config', 'xx-wm', 'config.json'), 'w') as fh:
-    json.dump({'theme': 'amoled', 'home_slots': slots[:int(sys.argv[4])]}, fh)
+    json.dump({'theme': 'amoled', 'text_size_scale': text_scale,
+               'home_slots': slots}, fh)
 
 _common = src_dir
 while _common != os.path.dirname(_common) and not os.path.isdir(
@@ -104,6 +111,20 @@ try:
                                     f'{left},{top},{right},{bottom}')
                 if b.get_ancestor(Gtk.ScrolledWindow) is not None:
                     failures.append(f'{b.get_label()} scrolls away')
+            from gi.repository import Pango
+            for b in _walk(win._home_launcher):
+                if not (isinstance(b, Gtk.Button)
+                        and b.has_css_class('home-edit-label')):
+                    continue
+                lbl = b.get_child()
+                layout = lbl.get_layout().copy()
+                layout.set_width(-1)
+                text_w = layout.get_extents()[1].width / Pango.SCALE
+                ok, rect = b.compute_bounds(win)
+                print('LABEL', repr(lbl.get_label()),
+                      lbl.get_layout().is_ellipsized(), round(text_w, 2),
+                      lbl.get_width(), rect.get_x(),
+                      rect.get_x() + rect.get_width())
         except Exception as exc:
             failures.append(repr(exc))
         loop.quit()
@@ -141,6 +162,43 @@ def test_edit_footer_stays_on_screen(tmp_path, size, count):
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     assert 'EDIT FIT OK' in proc.stdout, (
         proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:])
+
+
+@pytest.mark.parametrize('size', ['360x720', '320x640'])
+def test_edit_names_ellipsize_only_when_they_do_not_fit(tmp_path, size):
+    """At text scale 1.5 "Calendar" got exactly its natural width and
+    still ellipsized ("Calenda…"): GTK's natural width falls short of the
+    laid-out text under the shell's letter-spacing."""
+    if shutil.which('gtk4-broadwayd') is None:
+        pytest.skip('needs gtk4-broadwayd')
+    pytest.importorskip('gi')
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    script = tmp_path / 'edit_fit.py'
+    script.write_text(_SCRIPT)
+    long_name = 'A Much Longer Application Name'
+    cmd = [sys.executable, str(script), str(SRC), str(run_dir), size, '7',
+           '1.5', long_name]
+    if shutil.which('dbus-run-session'):
+        cmd = ['dbus-run-session', '--'] + cmd
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    assert 'EDIT FIT OK' in proc.stdout, (
+        proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:])
+    width = int(size.split('x')[0])
+    rows = {}
+    for line in proc.stdout.splitlines():
+        if line.startswith('LABEL '):
+            name, rest = line[6:].rsplit("' ", 1)
+            ellipsized, text_w, alloc, left, right = rest.split()
+            rows[name.strip("'")] = (ellipsized == 'True', float(text_w),
+                                     int(alloc), float(left), float(right))
+    assert len(rows) == 8, proc.stdout
+    for name, (ellipsized, text_w, alloc, left, right) in rows.items():
+        assert left >= 0 and right <= width + 0.5, (name, left, right)
+        if name == long_name:
+            assert ellipsized, rows[name]
+        else:
+            assert not ellipsized, (name, rows[name])
 
 
 def test_footer_actions_pair_up_and_done_spans():
