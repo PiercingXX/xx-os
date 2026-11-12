@@ -183,9 +183,13 @@ class MedicalSection(settings_page._Section):
             'Save', lambda values: self._on_save(win, values))
 
     def _on_save(self, win, values: dict) -> str | None:
-        medical = {field: str(values.get(field, '')).strip()
-                   for field, _title in MEDICAL_FIELDS
-                   if str(values.get(field, '')).strip()}
+        medical = self._medical(win)
+        for field, _title in MEDICAL_FIELDS:
+            value = str(values.get(field, '')).strip()
+            if value:
+                medical[field] = value
+            else:
+                medical.pop(field, None)
         medical['emergency_contacts'] = self._contacts(win)
         if not self._save(win, medical):
             return 'Could not save.'

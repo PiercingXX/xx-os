@@ -957,6 +957,8 @@ class TestMedicalSection:
     def _config(self, saved):
         config = SimpleNamespace(
             medical_id={'name': 'Ada', 'blood_type': 'O+',
+                        'date_of_birth': '1990-01-02', 'notes': 'Pacemaker',
+                        'organ_donor': True,
                         'emergency_contacts': [{'name': 'Bob',
                                                 'number': '+100'}]},
             lock_screen_medical_id=True,
@@ -987,6 +989,18 @@ class TestMedicalSection:
             {'name': 'Bob', 'number': '+100'}]
         assert 'Saved.' in (section._note.get_text() or '')
         assert '3 of 5 fields' in _texts(section._row)
+
+    def test_save_keeps_fields_the_sheet_does_not_show(self, fake_gi):
+        import settings_medical as medical
+        saved = {}
+        win = _bare_win(config=self._config(saved))
+        section = medical.MedicalSection()
+        section.build(win)
+        assert section._on_save(win, {'name': 'Ada', 'blood_type': ''}) is None
+        assert saved['medical']['date_of_birth'] == '1990-01-02'
+        assert saved['medical']['notes'] == 'Pacemaker'
+        assert saved['medical']['organ_donor'] is True
+        assert 'blood_type' not in saved['medical']
 
     def test_fields_sheet_lists_every_field(self, fake_gi):
         import settings_medical as medical
