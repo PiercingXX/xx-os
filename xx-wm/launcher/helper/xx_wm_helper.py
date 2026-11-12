@@ -405,7 +405,8 @@ def clamp_charge_limit(percent: int) -> int:
 
 def _default_run(argv: list[str],
                  input: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    # argv is a list (no shell) built from constants and allowlisted values.
+    return subprocess.run(  # noqa: S603
         argv, input=input, capture_output=True, text=True, timeout=30,
         check=False,
     )
@@ -432,8 +433,10 @@ def _default_spawn(argv: list[str], on_exit) -> None:
 
     def _work() -> None:
         try:
-            proc = subprocess.Popen(
+            # argv is a list (no shell) from the package-job allowlist.
+            proc = subprocess.Popen(  # noqa: S603
                 argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+
                 stderr=subprocess.STDOUT)
             raw, _ = proc.communicate()
         except OSError as err:
@@ -1948,7 +1951,7 @@ def get_connection_uid(connection, sender, callback) -> None:
     def _on_user(conn, result) -> None:
         try:
             uid = int(conn.call_finish(result).unpack()[0])
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 (callback fires once)
             callback(None, str(err))
             return
         callback(uid, None)
@@ -1986,7 +1989,7 @@ def check_polkit_authorization(connection, sender, action, callback,
                 # [0][0] is the verdict. bool() of the struct itself is
                 # always True and would authorize every caller.
                 authorized = bool(conn.call_finish(result).unpack()[0][0])
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 (any failure denies)
                 callback(False, uid, str(err))
                 return
             callback(authorized, uid, None)
@@ -2008,7 +2011,7 @@ def check_polkit_authorization(connection, sender, action, callback,
                 else POLKIT_TIMEOUT_MS,
                 None, _on_checked,
             )
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 (any failure denies)
             callback(False, uid, str(err))
 
     get_connection_uid(connection, sender, _on_uid)
@@ -2188,7 +2191,7 @@ class HelperService:
         if method == 'GetCapabilities':
             try:
                 caps = self.core.get_capabilities()
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 (D-Bus reply boundary)
                 invocation.return_dbus_error(ERROR_FAILED, str(err))
                 return
             Gio, GLib = _require_gio()
@@ -2199,7 +2202,7 @@ class HelperService:
         if method == 'GetFirewallState':
             try:
                 state = self.core.get_firewall_state()
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001 (D-Bus reply boundary)
                 invocation.return_dbus_error(ERROR_FAILED, str(err))
                 return
             Gio, GLib = _require_gio()
@@ -2238,7 +2241,7 @@ class HelperService:
 
         try:
             self._authorize(conn, sender, action, interactive, _on_auth)
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 (D-Bus reply boundary)
             if not answered:
                 answered.append(True)
                 self._pending_auth -= 1
@@ -2265,7 +2268,7 @@ class HelperService:
 
         try:
             self._get_uid(conn, sender, _on_uid)
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 (D-Bus reply boundary)
             invocation.return_dbus_error(ERROR_FAILED, str(err))
 
     def _run_pin(self, invocation, method, args, uid: int) -> None:
@@ -2285,7 +2288,7 @@ class HelperService:
         except HelperError as err:
             invocation.return_dbus_error(err.dbus_name, str(err))
             return
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 (type only: no PIN in reply)
             invocation.return_dbus_error(ERROR_FAILED, type(err).__name__)
             return
         Gio, GLib = _require_gio()
@@ -2305,7 +2308,7 @@ class HelperService:
     def _spawn_step(self, job_id: str, argv: list[str], on_exit) -> None:
         try:
             self.core.spawn(argv, on_exit)
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 (the job must still finish)
             self._finish_job(job_id, -1, '%s failed to start: %s' % (
                 argv[0], type(err).__name__))
 
@@ -2355,7 +2358,7 @@ class HelperService:
             self.connection.emit_signal(
                 sender, OBJECT_PATH, INTERFACE, 'JobFinished',
                 GLib.Variant('(sis)', (job_id, int(rc), job_tail(output))))
-        except Exception as err:
+        except GLib.Error as err:
             print('xx-wm-helper: JobFinished not delivered: %s' % err,
                   file=sys.stderr)
 
@@ -2434,7 +2437,7 @@ class HelperService:
             # the success reply below.
             invocation.return_dbus_error(err.dbus_name, str(err))
             return
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001 (D-Bus reply boundary)
             invocation.return_dbus_error(ERROR_FAILED, str(err))
             return
         Gio, GLib = _require_gio()
@@ -2466,13 +2469,13 @@ def main(argv: list[str] | None = None) -> int:
     Gio, GLib = _require_gio()
     try:
         bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
-    except Exception as err:
+    except GLib.Error as err:
         print('xx-wm-helper: no system bus: %s' % err, file=sys.stderr)
         return 1
     service = HelperService(bus)
     try:
         service.register()
-    except Exception as err:
+    except GLib.Error as err:
         print('xx-wm-helper: cannot export object: %s' % err, file=sys.stderr)
         return 1
     Gio.bus_own_name_on_connection(

@@ -1,0 +1,7 @@
+# The root helper is held to more rules than the shell: no blind excepts
+# (each one left is a D-Bus reply boundary with its reason inline) and the
+# bandit security set.
+extend = "../../ruff.toml"
+
+[lint]
+extend-select = ["BLE", "S"]
