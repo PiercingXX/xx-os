@@ -902,6 +902,23 @@ def test_clear_wake_alarm_only_clears_own(rtc):
     assert not rtc.record.exists()
 
 
+def test_wake_alarm_follows_an_rtc_years_behind(rtc):
+    """The FLX1s RTC reads 2010 while the system clock is NTP-set: the
+    wake is written, compared and cleared in the RTC's clock."""
+    lag = 530_000_000
+    (rtc.path.parent / 'since_epoch').write_text(str(NOW - lag))
+    assert rtc.core.set_wake_alarm(NOW + 3600) == NOW + 3600
+    assert rtc.writes == ['0', str(NOW - lag + 3600)]
+    rtc.core.set_wake_alarm(NOW + 7200)              # re-arming our own
+    assert rtc.path.read_text() == str(NOW - lag + 7200)
+    assert rtc.core.clear_wake_alarm() is True
+    # Another program's pending wake, in RTC time, is still left alone.
+    rtc.path.write_text(str(NOW - lag + 600))
+    with pytest.raises(helper.HelperError):
+        rtc.core.set_wake_alarm(NOW + 3600)
+    assert rtc.path.read_text() == str(NOW - lag + 600)
+
+
 def test_wake_alarm_without_rtc_fails(layout, tmp_path):
     core = make_core(layout, now=lambda: NOW,
                      wake_file=str(tmp_path / 'wake.json'))
@@ -968,3 +985,24 @@ def test_client_wake_alarm_calls(fake_gio):
     helper_client.set_wake_alarm('later',
                                  lambda ok, res: done.append((ok, res)))
     assert done[-1][0] is False
+
+
+# ------------------------------------------------------- activation PATH
+
+def test_activation_without_path_gets_the_sbin_dirs():
+    """dbus-daemon starts the helper with no PATH: nft and rfkill live in
+    /usr/sbin, which the /bin:/usr/bin fallback misses (FLX1s: firewall
+    backend "none")."""
+    env = {}
+    helper.ensure_path(env)
+    dirs = env['PATH'].split(':')
+    assert '/usr/sbin' in dirs and '/usr/bin' in dirs and '/sbin' in dirs
+    env = {'PATH': ''}
+    helper.ensure_path(env)
+    assert env['PATH'] == helper.SAFE_PATH
+
+
+def test_a_set_path_is_kept():
+    env = {'PATH': '/opt/bin'}
+    helper.ensure_path(env)
+    assert env == {'PATH': '/opt/bin'}

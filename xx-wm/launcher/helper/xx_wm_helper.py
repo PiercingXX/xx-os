@@ -234,6 +234,10 @@ POLKIT_INTERACTIVE_TIMEOUT_MS = 2 ** 31 - 1
 # so a caller can neither wake the phone every few seconds nor park a
 # wake years away.
 RTC_WAKEALARM_REL = os.path.join('class', 'rtc', 'rtc0', 'wakealarm')
+# wakealarm is absolute in the RTC's own clock, which need not keep wall
+# time: the FLX1s RTC sits in 2010 while the system clock is NTP-set. The
+# offset between the two is read from since_epoch at every call.
+RTC_SINCE_EPOCH_REL = os.path.join('class', 'rtc', 'rtc0', 'since_epoch')
 WAKE_FILE_NAME = 'wake.json'
 WAKE_MIN_AHEAD_S = 5
 WAKE_MAX_AHEAD_S = 48 * 3600
@@ -1555,8 +1559,20 @@ class HelperCore:
     def wakealarm_path(self) -> str:
         return os.path.join(self.sysfs, RTC_WAKEALARM_REL)
 
+    def _rtc_offset(self) -> int:
+        """System clock minus RTC clock, in seconds; 0 when since_epoch
+        is missing or unreadable (the RTC is then taken to keep wall
+        time)."""
+        try:
+            with open(os.path.join(self.sysfs, RTC_SINCE_EPOCH_REL), 'r',
+                      encoding='ascii') as handle:
+                rtc_now = int(handle.read().strip())
+        except (OSError, ValueError):
+            return 0
+        return int(self._now()) - rtc_now if rtc_now > 0 else 0
+
     def _read_wakealarm(self) -> int | None:
-        """Pending wake as epoch seconds; None when unset (the kernel
+        """Pending wake in the RTC's clock; None when unset (the kernel
         reads back an empty file) or unreadable."""
         try:
             with open(self.wakealarm_path(), 'r', encoding='ascii') as handle:
@@ -1608,7 +1624,8 @@ class HelperCore:
         kernel refuses a new alarm while one is pending, so the old one is
         cleared with ``0`` first — but only when it is ours (or already
         past): another program's pending wake is left alone and the call
-        fails."""
+        fails. ``epoch`` is wall time; what is written, compared and
+        recorded is that instant in the RTC's own clock."""
         if isinstance(epoch, bool) or not isinstance(epoch, int):
             raise HelperError(ERROR_INVALID_ARGS, 'wake time is not an integer')
         now = int(self._now())
@@ -1623,11 +1640,13 @@ class HelperCore:
             raise _failed('no RTC wake alarm on this device')
         pending = self._read_wakealarm()
         owned = self._load_wake_owned()
-        if pending is not None and pending > now and pending != owned:
+        offset = self._rtc_offset()
+        rtc_epoch = epoch - offset
+        if pending is not None and pending > now - offset and pending != owned:
             raise _failed('RTC wake alarm already set by another program')
         self._write_file(path, '0')
-        self._write_file(path, str(epoch))
-        self._save_wake_owned(epoch)
+        self._write_file(path, str(rtc_epoch))
+        self._save_wake_owned(rtc_epoch)
         return epoch
 
     def clear_wake_alarm(self) -> bool:
@@ -2472,7 +2491,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# dbus-daemon starts system services with no PATH at all, so which() and
+# exec fell back to /bin:/usr/bin and missed nft and rfkill in /usr/sbin
+# (FLX1s: GetFirewallState answered backend "none").
+SAFE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+
+def ensure_path(environ=os.environ) -> None:
+    if not environ.get('PATH'):
+        environ['PATH'] = SAFE_PATH
+
+
 def main(argv: list[str] | None = None) -> int:
+    ensure_path()
     args = build_arg_parser().parse_args(argv)
     if args.apply_saved:
         applied = HelperCore().apply_saved()
