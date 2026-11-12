@@ -3,9 +3,9 @@
 # Runs ON THE PHONE. Fetches PiercingXX's update-system.sh from the
 # piercing-dots repo and installs it where piercing-dots' sync_scripts
 # puts it (~/.scripts/PiercingXX-Settings-Menu/update-system.sh, plus
-# ~/.scripts/lib/common.sh which the script sources). The script
-# self-updates from GitHub on every run afterwards, so this installer
-# only needs to run once. Opt out with XX_WM_NO_UPDATE_SCRIPT=1.
+# ~/.scripts/lib/common.sh which the script sources). The fresh clone
+# is the pinned commit PIN and nothing from it is run here; bump PIN to
+# take a newer script. Opt out with XX_WM_NO_UPDATE_SCRIPT=1.
 #
 # Nothing here applies an upstream profile that does not exist: the
 # installer only copies the update script and its library.
@@ -13,6 +13,7 @@
 set -eu
 
 REPO="https://github.com/PiercingXX/piercing-dots"
+PIN="d3d1bbcd82967b864dcae5525ac57ecb1e7bc4a2"
 SCRIPT_REL="resources/.scripts/PiercingXX-Settings-Menu/update-system.sh"
 LIB_REL="resources/.scripts/lib/common.sh"
 
@@ -32,7 +33,15 @@ if [ -d "${HOME}/piercing-dots" ]; then
 else
     DEST="${HOME}/.cache/piercing-dots"
     rm -rf "$DEST"
-    git clone --depth 1 "$REPO" "$DEST"
+    git init -q "$DEST"
+    git -C "$DEST" fetch -q --depth 1 "$REPO" "$PIN"
+    git -C "$DEST" -c advice.detachedHead=false checkout -q FETCH_HEAD
+    _head=$(git -C "$DEST" rev-parse HEAD)
+    if [ "$_head" != "$PIN" ]; then
+        echo "piercing-dots checkout is $_head, expected pinned $PIN; not installing" >&2
+        rm -rf "$DEST"
+        exit 1
+    fi
 fi
 
 install_one() {

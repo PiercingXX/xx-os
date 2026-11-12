@@ -25,18 +25,31 @@ LIB_TARGET_REL = '.scripts/lib/common.sh'
 
 
 def _write_stub_git(bindir: Path, log: Path) -> None:
-    """A git that only fakes `clone`: it materializes a piercing-dots
-    tree with the two files the installer copies."""
+    """A git that fakes `init`, `fetch`, `checkout` and `rev-parse`:
+    checkout materializes a piercing-dots tree with the two files the
+    installer copies, and rev-parse reports the fetched commit (or
+    $STUB_GIT_HEAD, to fake a checkout that is not the pin)."""
     bindir.mkdir(parents=True, exist_ok=True)
     (bindir / 'git').write_text(
         '#!/bin/sh\n'
         'echo "git $*" >> "%s"\n'
         'dest=""\n'
-        'for a in "$@"; do dest="$a"; done\n'
-        'mkdir -p "$dest/%s" "$dest/%s"\n'
-        'printf "#!/bin/sh\\n# owner update-system fixture\\n" '
+        'if [ "$1" = -C ]; then dest="$2"; shift 2; fi\n'
+        'while [ "$1" = -c ]; do shift 2; done\n'
+        'cmd="$1"\n'
+        'case "$cmd" in\n'
+        '  init) for a in "$@"; do dest="$a"; done; mkdir -p "$dest" ;;\n'
+        '  fetch) for a in "$@"; do last="$a"; done; '
+        'echo "$last" > "$dest/.stub-fetched" ;;\n'
+        '  checkout)\n'
+        '    mkdir -p "$dest/%s" "$dest/%s"\n'
+        '    printf "#!/bin/sh\\n# owner update-system fixture\\n" '
         '> "$dest/%s"\n'
-        'printf "# fixture common\\n" > "$dest/%s"\n'
+        '    printf "# fixture common\\n" > "$dest/%s" ;;\n'
+        '  rev-parse) if [ -n "${STUB_GIT_HEAD:-}" ]; then '
+        'echo "$STUB_GIT_HEAD"; else cat "$dest/.stub-fetched"; fi ;;\n'
+        '  *) exit 1 ;;\n'
+        'esac\n'
         % (log,
            os.path.dirname(SCRIPT_REL), os.path.dirname(LIB_REL),
            SCRIPT_REL, LIB_REL))
@@ -139,7 +152,7 @@ def test_installs_owner_script_from_fresh_clone(tmp_path):
     assert bool(os.stat(target).st_mode & stat.S_IXUSR)
     lib = home / LIB_TARGET_REL
     assert lib.is_file()
-    assert 'clone' in log.read_text()
+    assert 'fetch' in log.read_text()
     assert 'phone profile' not in result.stdout + result.stderr
 
 
@@ -197,6 +210,44 @@ def test_symlinked_target_is_never_overwritten(tmp_path):
     assert result.returncode == 0, result.stderr
     assert link.is_symlink()
     assert link.read_text() == '#!/bin/sh\n# dev\n'
+
+
+def _pin(script_text):
+    m = re.search(r'^PIN="([0-9a-f]{40})"$', script_text, re.M)
+    assert m, 'bootstrap-dots.sh must pin a full commit sha in PIN'
+    return m.group(1)
+
+
+def test_clone_is_pinned_to_a_commit(script_text):
+    _pin(script_text)
+    assert 'git clone' not in script_text
+    assert 'fetch -q --depth 1 "$REPO" "$PIN"' in script_text
+
+
+def test_fresh_clone_fetches_the_pinned_commit(tmp_path, script_text):
+    home = tmp_path / 'home'
+    home.mkdir()
+    bindir = tmp_path / 'bin'
+    log = tmp_path / 'git.log'
+    _write_stub_git(bindir, log)
+    result = _run_script(home, bindir)
+    assert result.returncode == 0, result.stderr
+    fetches = [ln for ln in log.read_text().splitlines() if ' fetch ' in ln]
+    assert fetches and fetches[0].endswith(' ' + _pin(script_text))
+    assert ' clone ' not in log.read_text()
+
+
+def test_checkout_other_than_pin_installs_nothing(tmp_path):
+    home = tmp_path / 'home'
+    home.mkdir()
+    bindir = tmp_path / 'bin'
+    _write_stub_git(bindir, tmp_path / 'git.log')
+    result = _run_script(home, bindir, {'STUB_GIT_HEAD': '0' * 40})
+    assert result.returncode != 0
+    assert 'expected pinned' in result.stderr
+    assert not (home / TARGET_REL).exists()
+    assert not (home / LIB_TARGET_REL).exists()
+    assert not (home / '.cache' / 'piercing-dots').exists()
 
 
 def test_missing_git_fails_loudly(tmp_path):
