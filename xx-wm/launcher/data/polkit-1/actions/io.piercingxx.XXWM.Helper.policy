@@ -36,12 +36,22 @@
   </action>
 
   <action id="io.piercingxx.XXWM.Helper1.clean-system">
-    <description>Clean package caches and the system journal</description>
-    <message>Authentication is required to clean system caches.</message>
+    <description>Clean package caches</description>
+    <message>Authentication is required to clean package caches.</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
       <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <action id="io.piercingxx.XXWM.Helper1.clean-journal">
+    <description>Delete old system journal entries</description>
+    <message>Authentication is required to delete system logs.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
     </defaults>
   </action>
 
@@ -51,7 +61,7 @@
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
-      <allow_active>yes</allow_active>
+      <allow_active>auth_admin_keep</allow_active>
     </defaults>
   </action>
 
@@ -92,6 +102,16 @@
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
       <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <action id="io.piercingxx.XXWM.Helper1.service-critical">
+    <description>Stop or disable the modem or network service</description>
+    <message>Authentication is required to stop the modem or network.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
     </defaults>
   </action>
 

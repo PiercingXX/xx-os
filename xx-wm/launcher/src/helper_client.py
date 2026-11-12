@@ -43,6 +43,8 @@ _METHOD_TIMEOUT_MS = {
     'UpgradeSystem': _NO_TIMEOUT_MS,
     'RemovePackage': _NO_TIMEOUT_MS,
     'ManageService': _NO_TIMEOUT_MS,
+    'ReadLog': _NO_TIMEOUT_MS,
+    'CleanSystem': _NO_TIMEOUT_MS,
     'SetInboundPreset': _NO_TIMEOUT_MS,
     'SetInboundAllowed': _NO_TIMEOUT_MS,
     'SetFirewallEnabled': _NO_TIMEOUT_MS,

@@ -37,12 +37,14 @@ ACTION_CHARGE = BUS_NAME + '.set-charge-limit'
 ACTION_NETWORK = BUS_NAME + '.app-network'
 ACTION_FREEZE = BUS_NAME + '.freeze'
 ACTION_CLEAN = BUS_NAME + '.clean-system'
+ACTION_CLEAN_JOURNAL = BUS_NAME + '.clean-journal'
 ACTION_READLOG = BUS_NAME + '.read-log'
 ACTION_REFRESH = BUS_NAME + '.refresh-packages'
 ACTION_UPGRADE = BUS_NAME + '.upgrade-system'
 ACTION_REMOVE = BUS_NAME + '.remove-package'
 ACTION_SERVICE = BUS_NAME + '.service-manage'
 ACTION_SERVICE_REMOTE = BUS_NAME + '.service-remote'
+ACTION_SERVICE_CRITICAL = BUS_NAME + '.service-critical'
 ACTION_RFKILL = BUS_NAME + '.rfkill'
 ACTION_FW_OPEN = BUS_NAME + '.firewall-open'
 ACTION_FW_RESTRICT = BUS_NAME + '.firewall-restrict'
@@ -147,6 +149,8 @@ NFT_DROPIN_NAME = '10-xxwm.nft'
 SERVICE_ALLOW = ('modem', 'eg25', 'network', 'bluetooth', 'ssh',
                  'tailscale', 'waydroid', 'adbd')
 SERVICE_ACTIONS = ('start', 'stop', 'restart', 'enable', 'disable')
+# Stopping or disabling these cuts calls, SMS and the network.
+CRITICAL_SERVICES = ('modem', 'eg25', 'network')
 SERVICE_UNITS = {
     'modem': {'systemd': ('ModemManager.service',),
               'openrc': ('modemmanager',)},
@@ -2028,8 +2032,9 @@ def check_polkit_authorization(connection, sender, action, callback,
 
 # Method -> (polkit action, interactive): interactive passes
 # AllowUserInteraction and is reserved for auth_admin_keep actions.
-# Argument-dependent methods (ManageService, SetInboundPreset,
-# SetInboundAllowed, SetFirewallEnabled) are NOT listed here:
+# Argument-dependent methods (ManageService, CleanSystem,
+# SetInboundPreset, SetInboundAllowed, SetFirewallEnabled) are NOT
+# listed here:
 # policy_for() below decides
 # them from the already-validated arguments. SetPowerProfile is listed
 # but policy_for() still allowlists its profile first, and SetWakeAlarm
@@ -2044,8 +2049,7 @@ _METHOD_ACTIONS = {
     'RefreshPackageIndex': (ACTION_REFRESH, False),
     'UpgradeSystem': (ACTION_UPGRADE, True),
     'RemovePackage': (ACTION_REMOVE, True),
-    'CleanSystem': (ACTION_CLEAN, False),
-    'ReadLog': (ACTION_READLOG, False),
+    'ReadLog': (ACTION_READLOG, True),
     'SetRfkill': (ACTION_RFKILL, False),
     'SetPowerProfile': (ACTION_POWER, False),
     'SetWakeAlarm': (ACTION_WAKE, False),
@@ -2058,7 +2062,8 @@ def policy_for(method: str, args) -> tuple | None:
 
     Every call goes through here. Plain methods map statically.
     Argument-dependent ones decide from the already-validated
-    arguments: opening remote access (ssh/adbd start/enable), opening an
+    arguments: opening remote access (ssh/adbd start/enable), stopping or
+    disabling the modem or network, vacuuming the journal, opening an
     inbound port, and turning the firewall on (it drops new inbound
     connections, SSH included unless sshd is up) or off need
     auth_admin_keep with user interaction (True); closing a port and
@@ -2096,7 +2101,19 @@ def policy_for(method: str, args) -> tuple | None:
             return None
         if name in ('ssh', 'adbd') and action in ('start', 'enable'):
             return (ACTION_SERVICE_REMOTE, True)
+        if name in CRITICAL_SERVICES and action in ('stop', 'disable'):
+            return (ACTION_SERVICE_CRITICAL, True)
         return (ACTION_SERVICE, False)
+    if method == 'CleanSystem':
+        try:
+            (cats,) = args
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(cats, (list, tuple)):
+            return None
+        if 'journal-vacuum' in cats:
+            return (ACTION_CLEAN_JOURNAL, True)
+        return (ACTION_CLEAN, False)
     if method == 'SetInboundPreset':
         try:
             name, allowed = args

@@ -290,14 +290,25 @@ def test_apply_saved_collects_errors_per_leg(layout):
 # ------------------------------------------------------ service/auth dispatch
 
 class FakeInvocation:
+    """Like Gio.DBusMethodInvocation: one reply only. GLib warns and
+    drops a second reply; here it fails the test."""
+
     def __init__(self):
         self.value = None
         self.error = None
+        self.replies = 0
+
+    def _reply(self):
+        self.replies += 1
+        if self.replies > 1:
+            raise AssertionError('second reply on one invocation')
 
     def return_value(self, value):
+        self._reply()
         self.value = value
 
     def return_dbus_error(self, name, message):
+        self._reply()
         self.error = (name, message)
 
 
@@ -487,6 +498,8 @@ class ScriptConn:
                               helper.ACTION_UPGRADE, helper.ACTION_REMOVE,
                               helper.ACTION_SERVICE,
                               helper.ACTION_SERVICE_REMOTE,
+                              helper.ACTION_SERVICE_CRITICAL,
+                              helper.ACTION_CLEAN_JOURNAL,
                               helper.ACTION_RFKILL, helper.ACTION_FW_OPEN,
                               helper.ACTION_FW_RESTRICT,
                               helper.ACTION_FW_ENABLE)
@@ -721,7 +734,6 @@ def test_shipped_policy_actions_and_defaults():
                    'io.piercingxx.XXWM.Helper1.app-network',
                    'io.piercingxx.XXWM.Helper1.freeze',
                    'io.piercingxx.XXWM.Helper1.clean-system',
-                   'io.piercingxx.XXWM.Helper1.read-log',
                    'io.piercingxx.XXWM.Helper1.refresh-packages',
                    'io.piercingxx.XXWM.Helper1.service-manage',
                    'io.piercingxx.XXWM.Helper1.rfkill',
@@ -733,12 +745,15 @@ def test_shipped_policy_actions_and_defaults():
                    'io.piercingxx.XXWM.Helper1.remove-package',
                    'io.piercingxx.XXWM.Helper1.service-remote',
                    'io.piercingxx.XXWM.Helper1.firewall-open',
-                   'io.piercingxx.XXWM.Helper1.firewall-enable'):
+                   'io.piercingxx.XXWM.Helper1.firewall-enable',
+                   'io.piercingxx.XXWM.Helper1.read-log',
+                   'io.piercingxx.XXWM.Helper1.clean-journal',
+                   'io.piercingxx.XXWM.Helper1.service-critical'):
         assert ('action id="%s"' % action) in text
-    assert text.count('<allow_active>yes</allow_active>') == 11
-    assert text.count('<allow_active>auth_admin_keep</allow_active>') == 5
-    assert text.count('<allow_inactive>no</allow_inactive>') == 16
-    assert text.count('<allow_any>no</allow_any>') == 16
+    assert text.count('<allow_active>yes</allow_active>') == 10
+    assert text.count('<allow_active>auth_admin_keep</allow_active>') == 8
+    assert text.count('<allow_inactive>no</allow_inactive>') == 18
+    assert text.count('<allow_any>no</allow_any>') == 18
 
 
 def test_shipped_bus_policy_allows_default_callers_without_at_console():
@@ -879,19 +894,8 @@ def test_wake_alarm_service_authorizes_and_replies_once(rtc):
     service = helper.HelperService(connection=object(), core=rtc.core,
                                    authorize=allow_all)
 
-    class OneReply(FakeInvocation):
-        replies = 0
-
-        def return_value(self, value):
-            self.replies += 1
-            super().return_value(value)
-
-        def return_dbus_error(self, name, message):
-            self.replies += 1
-            super().return_dbus_error(name, message)
-
     def call(method, args):
-        inv = OneReply()
+        inv = FakeInvocation()
         service._on_method_call(service.connection, ':1.7', '/p', 'i',
                                 method, SimpleNamespace(unpack=lambda: args),
                                 inv)

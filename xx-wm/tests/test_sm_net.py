@@ -1744,6 +1744,7 @@ def _every_branch():
         ('FreezeCgroup', ('/sys/fs/cgroup/user.slice/user-1000.slice/x',
                           False)),
         ('CleanSystem', (['apk-cache'],)),
+        ('CleanSystem', (['apt-clean', 'journal-vacuum'],)),
         ('ReadLog', ('dmesg',)),
         ('RefreshPackageIndex', ()),
         ('UpgradeSystem', ()),
@@ -1775,6 +1776,25 @@ class TestUnifiedPolicy:
             assert interactive is (defaults[action] == 'auth_admin_keep'), (
                 method, args, action, interactive)
 
+    def test_modem_and_network_stop_need_admin(self):
+        for name in ('modem', 'eg25', 'network'):
+            for action in ('stop', 'disable'):
+                assert helper.policy_for('ManageService', (name, action)) == (
+                    helper.ACTION_SERVICE_CRITICAL, True), (name, action)
+            for action in ('start', 'restart', 'enable'):
+                assert helper.policy_for('ManageService', (name, action)) == (
+                    helper.ACTION_SERVICE, False), (name, action)
+
+    def test_journal_vacuum_and_logs_need_admin(self):
+        assert helper.policy_for('CleanSystem', (['journal-vacuum'],)) == (
+            helper.ACTION_CLEAN_JOURNAL, True)
+        assert helper.policy_for('CleanSystem', (['apt-clean'],)) == (
+            helper.ACTION_CLEAN, False)
+        assert helper.policy_for('CleanSystem', ('apt-clean',)) is None
+        for name in helper.LOG_READ_ALLOWLIST:
+            assert helper.policy_for('ReadLog', (name,)) == (
+                helper.ACTION_READLOG, True)
+
     def test_ssh_remote_branches_are_interactive(self):
         for args in (('ssh', 'start'), ('ssh', 'enable')):
             assert helper.policy_for('ManageService', args) == (
@@ -1803,6 +1823,7 @@ class TestUnifiedPolicy:
             helper.ACTION_CLEAN, helper.ACTION_READLOG, helper.ACTION_REFRESH,
             helper.ACTION_UPGRADE, helper.ACTION_REMOVE,
             helper.ACTION_SERVICE, helper.ACTION_SERVICE_REMOTE,
+            helper.ACTION_SERVICE_CRITICAL, helper.ACTION_CLEAN_JOURNAL,
             helper.ACTION_RFKILL, helper.ACTION_FW_OPEN,
             helper.ACTION_FW_RESTRICT, helper.ACTION_FW_ENABLE,
             helper.ACTION_POWER, helper.ACTION_WAKE,

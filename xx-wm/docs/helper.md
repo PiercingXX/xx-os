@@ -76,7 +76,9 @@ below).
 `…upgrade-system`, `…remove-package`, `…service-remote` (ssh/adbd
 start/enable, which opens remote access), `…firewall-open` (opening an
 inbound port, disabling the firewall), `…firewall-enable` (turning the
-drop policy on, which can cut new inbound connections) — pass flags 1
+drop policy on, which can cut new inbound connections), `…service-critical`
+(stopping or disabling the modem or network), `…read-log` (system logs and
+dmesg) and `…clean-journal` (journal vacuum) — pass flags 1
 (AllowUserInteraction) so the in-shell polkit agent prompts for the
 device password. Closing a port and every other allowlisted service
 change stay non-interactive.
@@ -90,12 +92,14 @@ the service refuses those with InvalidArgs without contacting polkit.
 | `SetChargeLimit` | `…set-charge-limit` | `allow_active=yes` |
 | `SetAppNetwork` | `…app-network` | `allow_active=yes` |
 | `FreezeCgroup` | `…freeze` | `allow_active=yes` |
-| `CleanSystem` | `…clean-system` | `allow_active=yes` |
-| `ReadLog` | `…read-log` | `allow_active=yes` |
+| `CleanSystem` caches only | `…clean-system` | `allow_active=yes` |
+| `CleanSystem` with `journal-vacuum` | `…clean-journal` | `allow_active=auth_admin_keep` |
+| `ReadLog` | `…read-log` | `allow_active=auth_admin_keep` |
 | `RefreshPackageIndex` | `…refresh-packages` | `allow_active=yes` |
 | `UpgradeSystem` | `…upgrade-system` | `allow_active=auth_admin_keep` |
 | `RemovePackage` | `…remove-package` | `allow_active=auth_admin_keep` |
 | `ManageService` ssh/adbd start/enable | `…service-remote` | `allow_active=auth_admin_keep` |
+| `ManageService` modem/eg25/network stop/disable | `…service-critical` | `allow_active=auth_admin_keep` |
 | `ManageService` other allowlisted service/action | `…service-manage` | `allow_active=yes` |
 | `SetRfkill` | `…rfkill` | `allow_active=yes` |
 | `SetPowerProfile` | `…power-profile` | `allow_active=yes` |
