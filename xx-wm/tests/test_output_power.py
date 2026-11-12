@@ -545,9 +545,73 @@ class TestOutputPowerBackend:
             time.sleep(0.01)
         assert posted, 'worker never posted the main-loop connect'
         callback, args = posted[0]
-        assert callback == backend._connect_main
+        assert callback == backend._finish_connect
+        assert compositor.connected and compositor.binds
+        assert backend.available is False
         callback(*args)
         assert backend.available is True
+
+    def test_registry_round_trip_never_runs_on_main_thread(
+        self, quiet_backend, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(wayland_bindings, 'ensure_protocol_bindings',
+                            lambda _names, _classes: _power_bindings())
+        posted = threading.Event()
+        monkeypatch.setattr(output_power, '_post_to_main',
+                            lambda cb, *a: posted.set())
+        compositor = FakeCompositor([(7, 'wl_output', 4),
+                                     (8, 'zwlr_output_power_manager_v1', 1)])
+        threads: list[threading.Thread] = []
+        real_dispatch = compositor.dispatch
+
+        def _dispatch(block: bool = True) -> None:
+            threads.append(threading.current_thread())
+            real_dispatch(block)
+
+        compositor.dispatch = _dispatch
+        output_power.OutputPower(display=compositor)
+        assert posted.wait(timeout=10)
+        assert threads and threading.main_thread() not in threads
+
+    def test_dead_connection_reconnects_and_reapplies_wake(
+        self, quiet_backend, monkeypatch: pytest.MonkeyPatch) -> None:
+        globals_ = [(7, 'wl_output', 4), (8, 'zwlr_output_power_manager_v1', 1)]
+        first = FakeCompositor(globals_)
+        second = FakeCompositor(globals_)
+        later: list = []
+        monkeypatch.setattr(output_power, '_call_later',
+                            lambda secs, cb: later.append(cb))
+        monkeypatch.setattr(output_power, '_post_to_main',
+                            lambda cb, *a: cb(*a))
+
+        class _InlineThread:
+            def __init__(self, target, args=(), **_kw):
+                self._run = lambda: target(*args)
+
+            def start(self):
+                self._run()
+
+        monkeypatch.setattr(output_power.threading, 'Thread', _InlineThread)
+        backend = output_power.OutputPower(display=first,
+                                           display_factory=lambda: second)
+        backend._connect_main(_power_bindings())
+        assert backend.set_all(False) is True
+        backend._mark_dead()
+        assert backend.set_all(True) is False
+        assert len(later) == 1
+        later[0]()
+        assert backend.available is True
+        assert second.powers and second.powers[0].modes == [output_power.MODE_ON]
+
+    def test_injected_display_without_factory_never_reconnects(
+        self, quiet_backend, monkeypatch: pytest.MonkeyPatch) -> None:
+        later: list = []
+        monkeypatch.setattr(output_power, '_call_later',
+                            lambda secs, cb: later.append(cb), raising=False)
+        compositor = FakeCompositor([(7, 'wl_output', 4),
+                                     (8, 'zwlr_output_power_manager_v1', 1)])
+        backend = _connect(compositor)
+        backend._mark_dead()
+        assert later == []
 
 
 class _SyncGLib:

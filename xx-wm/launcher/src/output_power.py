@@ -6,11 +6,15 @@ the wlopm binary (not shipped on target devices). Protocol bindings are
 generated at runtime by the installed pywayland's own scanner (see
 wayland_bindings) into a version-keyed cache.
 
-Generation runs in a worker thread; the compositor connect runs on the GTK
-main loop via idle_add. Any failure (no pywayland, no bindings, no
-compositor, no manager, a set_mode `failed` event, a dead connection)
-leaves ``available`` False so DisplayManager falls back to backlight-only
-blanking instead of leaving the screen dark.
+Generation, the compositor connect and the first registry round trip run
+in a worker thread; only the fd watch and the ready listeners run on the
+GTK main loop. Any failure (no pywayland, no bindings, no compositor, no
+manager, a set_mode `failed` event, a dead connection) leaves
+``available`` False so DisplayManager falls back to backlight-only
+blanking instead of leaving the screen dark. A connection that dies after
+it worked is opened again with backoff, and the last mode the shell asked
+for is applied again, so outputs powered off before the loss do not stay
+dark until a restart.
 """
 
 from __future__ import annotations
@@ -27,6 +31,9 @@ CLASS_NAMES = wayland_bindings.OUTPUT_POWER_CLASS_NAMES
 
 MODE_OFF = 0
 MODE_ON = 1
+
+_RECONNECT_DELAYS = (1, 2, 5, 10, 30)
+_RECONNECT_MAX = 20
 
 try:
     from pywayland.client import Display
@@ -50,6 +57,16 @@ def _post_to_main(callback: object, *args: object) -> None:
     GLib.idle_add(callback, *args)
 
 
+def _call_later(seconds: int, callback: object) -> None:
+    from gi.repository import GLib
+
+    def _once() -> bool:
+        callback()  # type: ignore[operator]
+        return False
+
+    GLib.timeout_add_seconds(seconds, _once)
+
+
 class OutputPower:
     """pywayland client driving zwlr_output_power_manager_v1.
 
@@ -65,9 +82,18 @@ class OutputPower:
     changes made by someone else).
     """
 
-    def __init__(self, display: object | None = None) -> None:
+    def __init__(self, display: object | None = None,
+                 display_factory: object | None = None) -> None:
         self._lock = threading.Lock()
         self._display = display
+        # Only a connection this object opens can be opened again.
+        if display_factory is None and display is None and Display is not None:
+            display_factory = Display
+        self._display_factory = display_factory
+        self._bindings: dict | None = None
+        self._bindings_seen: dict | None = None
+        self._wanted: bool | None = None
+        self._reconnects = 0
         self._registry: object | None = None
         self._output_cls: object | None = None
         self._manager_cls: object | None = None
@@ -149,11 +175,12 @@ class OutputPower:
         tells DisplayManager to fall back to backlight-only blanking."""
         mode = MODE_ON if on else MODE_OFF
         with self._lock:
-            powers = list(self._powers.values())
+            self._wanted = bool(on)
             usable = (
                 self._connected and not self._failed
                 and self._manager is not None
             )
+            powers = list(self._powers.values()) if usable else []
         if not usable or not powers:
             return False
         try:
@@ -168,7 +195,47 @@ class OutputPower:
 
     def _mark_dead(self) -> None:
         with self._lock:
+            was = self._connected
             self._connected = False
+            source, self._fd_source = self._fd_source, None
+        if source is not None:
+            try:
+                from gi.repository import GLib
+                GLib.source_remove(source)
+            except Exception:  # noqa: BLE001 - already gone
+                pass
+        if was:
+            self._schedule_reconnect()
+
+    def _schedule_reconnect(self) -> None:
+        if self._display_factory is None or self._bindings is None:
+            return
+        if self._reconnects >= _RECONNECT_MAX:
+            log.error('output power: giving up on the compositor connection')
+            return
+        delay = _RECONNECT_DELAYS[min(self._reconnects, len(_RECONNECT_DELAYS) - 1)]
+        self._reconnects += 1
+        try:
+            _call_later(delay, self._reconnect)
+        except Exception as exc:  # noqa: BLE001 - no loop, no reconnect
+            log.warning('output power reconnect not scheduled: %s', exc)
+
+    def _reconnect(self) -> None:
+        old = self._display
+        with self._lock:
+            self._connected = False
+            self._manager = None
+            self._outputs = {}
+            self._powers = {}
+            self._display = None
+        try:
+            closer = getattr(old, 'disconnect', None)
+            if callable(closer):
+                closer()
+        except Exception:  # noqa: BLE001 - the socket is already dead
+            pass
+        threading.Thread(target=self._bind_and_post, args=(self._bindings,),
+                         name='xx-wm-output-power', daemon=True).start()
 
     def _prepare(self) -> None:
         if self._display is None and not _DISPLAY_AVAILABLE:
@@ -181,16 +248,31 @@ class OutputPower:
             return
         if bindings is None:
             return
-        _post_to_main(self._connect_main, bindings)
+        self._bind_and_post(bindings)
+
+    def _bind_and_post(self, bindings: dict[str, type]) -> None:
+        """Worker thread: connect and round-trip, then finish on the GTK
+        loop. A failed reconnect tries again later."""
+        if self._bind(bindings):
+            _post_to_main(self._finish_connect)
+        elif self._bindings is not None:
+            _post_to_main(self._schedule_reconnect)
 
     def _connect_main(self, bindings: dict[str, type]) -> None:
+        """Bind and finish in one go (tests and synchronous callers)."""
+        if self._bind(bindings):
+            self._finish_connect()
+
+    def _bind(self, bindings: dict[str, type]) -> bool:
         try:
             if self._display is None:
-                if Display is None:
+                factory = self._display_factory
+                if factory is None:
                     raise RuntimeError('pywayland is not available')
-                self._display = Display()
+                self._display = factory()  # type: ignore[operator]
             self._output_cls = bindings['WlOutput']
             self._manager_cls = bindings['ZwlrOutputPowerManagerV1']
+            self._bindings_seen = bindings
             self._display.connect()  # type: ignore[union-attr]
             # pywayland resolves new_id event args through the live
             # WlRegistry proxy, so it must stay referenced for the
@@ -205,13 +287,31 @@ class OutputPower:
             if self._manager is None:
                 raise RuntimeError(
                     'compositor does not offer zwlr_output_power_manager_v1')
+        except Exception as exc:  # noqa: BLE001 - degrade to backlight blanking
+            log.info('output power unavailable: %s', exc)
+            return False
+        return True
+
+    def _finish_connect(self) -> bool:
+        """GTK loop: watch the fd and go live; after a reconnect apply the
+        mode the shell last asked for; then tell the ready listeners."""
+        try:
             self._arm_fd_watch()
         except Exception as exc:  # noqa: BLE001 - degrade to backlight blanking
             log.info('output power unavailable: %s', exc)
-            return
+            return False
+        reconnected = self._bindings is not None
+        self._bindings = self._bindings_seen
         with self._lock:
             self._connected = True
+            wanted = self._wanted
+        if reconnected:
+            log.info('output power reconnected')
+            self._reconnects = 0
+            if wanted is not None:
+                self.set_all(wanted)
         self._fire_ready()
+        return False
 
     # -- GLib fd-watch -----------------------------------------------------
 
@@ -240,6 +340,7 @@ class OutputPower:
             # Compositor closed the socket; stop watching instead of spinning
             # on a dead fd forever.
             log.error('output power connection closed (HUP)')
+            self._fd_source = None
             self._mark_dead()
             return False
         try:
@@ -250,6 +351,7 @@ class OutputPower:
             self._display.flush()  # type: ignore[union-attr]
         except Exception as exc:  # noqa: BLE001 - compositor went away
             log.error('output power dispatch failed: %s', exc)
+            self._fd_source = None
             self._mark_dead()
             return False  # dispatch is unrecoverable; stop the fd-watch
         return True  # keep watching
