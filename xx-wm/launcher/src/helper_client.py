@@ -23,6 +23,37 @@ INTERFACE = BUS_NAME
 HELPER_NOT_INSTALLED = 'helper not installed'
 
 _CALL_TIMEOUT_MS = 25_000
+_QUICK_TIMEOUT_MS = 10_000
+# G_MAXINT: no client timeout. These calls may wait on the polkit agent
+# while the user types the device password; a helper that dies still
+# answers through the bus with NoReply.
+_NO_TIMEOUT_MS = 2 ** 31 - 1
+_METHOD_TIMEOUT_MS = {
+    'GetCapabilities': _QUICK_TIMEOUT_MS,
+    'GetFirewallState': _QUICK_TIMEOUT_MS,
+    'HasPin': _QUICK_TIMEOUT_MS,
+    'VerifyPin': _QUICK_TIMEOUT_MS,
+    'SetPin': _QUICK_TIMEOUT_MS,
+    'ClearPin': _QUICK_TIMEOUT_MS,
+    'SetChargeLimit': _QUICK_TIMEOUT_MS,
+    'SetRfkill': _QUICK_TIMEOUT_MS,
+    'SetPowerProfile': _QUICK_TIMEOUT_MS,
+    'SetWakeAlarm': _QUICK_TIMEOUT_MS,
+    'ClearWakeAlarm': _QUICK_TIMEOUT_MS,
+    'UpgradeSystem': _NO_TIMEOUT_MS,
+    'RemovePackage': _NO_TIMEOUT_MS,
+    'ManageService': _NO_TIMEOUT_MS,
+    'SetInboundPreset': _NO_TIMEOUT_MS,
+    'SetInboundAllowed': _NO_TIMEOUT_MS,
+    'SetFirewallEnabled': _NO_TIMEOUT_MS,
+}
+
+_DBUS_NAME = 'org.freedesktop.DBus'
+_DBUS_PATH = '/org/freedesktop/DBus'
+
+
+def call_timeout_ms(method: str) -> int:
+    return _METHOD_TIMEOUT_MS.get(method, _CALL_TIMEOUT_MS)
 
 ResultCallback = Callable[[bool, Any], None]
 
@@ -87,7 +118,117 @@ def _call_helper(method: str, params, on_done: ResultCallback, *,
         try:
             bus.call(
                 BUS_NAME, OBJECT_PATH, INTERFACE, method, params, None,
-                Gio.DBusCallFlags.NONE, _CALL_TIMEOUT_MS, None, _on_reply,
+                Gio.DBusCallFlags.NONE, call_timeout_ms(method), None,
+                _on_reply,
+            )
+        except Exception as err:
+            _fail(str(err))
+
+    try:
+        Gio.bus_get(Gio.BusType.SYSTEM, None, _on_bus)
+    except Exception as err:
+        _fail(str(err))
+
+
+def _run_job(method: str, params, on_done: ResultCallback) -> None:
+    """Start a helper package job and report when it ends.
+
+    The call itself only returns a job id (after the polkit prompt); the
+    result arrives as ``JobFinished(job_id, rc, tail)``, so the package
+    manager can run as long as it needs. ``on_done(True, tail)`` for
+    rc 0, ``(False, tail or 'exit N')`` otherwise, once. The helper
+    vanishing mid-job fails the job instead of waiting forever.
+    """
+    try:
+        Gio, _GLib = _gio()
+    except ImportError as err:
+        on_done(False, 'D-Bus unavailable: %s' % err)
+        return
+
+    state = {'bus': None, 'subs': [], 'job': None, 'done': False,
+             'vanished': False}
+    finished: dict[str, tuple] = {}
+
+    def _finish(ok: bool, result) -> None:
+        if state['done']:
+            return
+        state['done'] = True
+        bus = state['bus']
+        for sub in state['subs']:
+            try:
+                bus.signal_unsubscribe(sub)
+            except Exception:
+                pass
+        state['subs'] = []
+        on_done(ok, result)
+
+    def _fail(message: str) -> None:
+        _finish(False, HELPER_NOT_INSTALLED
+                if _is_missing_service(message) else message)
+
+    def _deliver(rc: int, tail: str) -> None:
+        if rc == 0:
+            _finish(True, tail)
+        else:
+            _finish(False, (tail or '').strip() or 'exit %d' % rc)
+
+    def _on_job_finished(_conn, _sender, _path, _iface, _signal, params,
+                         *_user_data) -> None:
+        try:
+            job_id, rc, tail = params.unpack()
+        except Exception:
+            return
+        if state['job'] is None:
+            finished[job_id] = (int(rc), str(tail))
+        elif job_id == state['job']:
+            _deliver(int(rc), str(tail))
+
+    def _on_owner_changed(_conn, _sender, _path, _iface, _signal, params,
+                          *_user_data) -> None:
+        try:
+            _name, _old, new = params.unpack()
+        except Exception:
+            return
+        # An old instance idle-exiting right before activation is not
+        # this job's helper going away.
+        state['vanished'] = not new
+        if new:
+            return
+        if state['job'] is not None:
+            _finish(False, 'helper stopped before the job finished')
+
+    def _on_bus(source, result) -> None:
+        try:
+            bus = Gio.bus_get_finish(result)
+        except Exception as err:
+            _fail(str(err))
+            return
+        state['bus'] = bus
+
+        def _on_reply(conn, reply_result) -> None:
+            try:
+                job_id = str(conn.call_finish(reply_result).unpack()[0])
+            except Exception as err:
+                _fail(str(err))
+                return
+            state['job'] = job_id
+            if job_id in finished:
+                _deliver(*finished.pop(job_id))
+            elif state['vanished']:
+                _finish(False, 'helper stopped before the job finished')
+
+        try:
+            # Subscribed before the call: JobFinished can race the reply.
+            state['subs'].append(bus.signal_subscribe(
+                BUS_NAME, INTERFACE, 'JobFinished', OBJECT_PATH, None,
+                Gio.DBusSignalFlags.NONE, _on_job_finished, None))
+            state['subs'].append(bus.signal_subscribe(
+                _DBUS_NAME, _DBUS_NAME, 'NameOwnerChanged', _DBUS_PATH,
+                BUS_NAME, Gio.DBusSignalFlags.NONE, _on_owner_changed, None))
+            bus.call(
+                BUS_NAME, OBJECT_PATH, INTERFACE, method, params, None,
+                Gio.DBusCallFlags.NONE, call_timeout_ms(method), None,
+                _on_reply,
             )
         except Exception as err:
             _fail(str(err))
@@ -221,20 +362,22 @@ def refresh_package_index(on_done: ResultCallback) -> None:
 
 
 def upgrade_system(on_done: ResultCallback) -> None:
-    """Run ``apk upgrade`` through the helper (``auth_admin_keep``: the
+    """Run ``apk upgrade`` as a helper job (``auth_admin_keep``: the
     in-shell polkit agent prompts for the device password).
 
     ``on_done(True, output)`` with the upgrade output tail for the
-    shell's update log, ``(False, error)`` otherwise.
+    shell's update log once JobFinished arrives, ``(False, error)``
+    otherwise.
     """
-    _call_helper('UpgradeSystem', None, on_done)
+    _run_job('UpgradeSystem', None, on_done)
 
 
 def remove_package(pkg: str, on_done: ResultCallback) -> None:
     """Remove one distro package (``auth_admin_keep``: the in-shell
     polkit agent prompts; the helper refuses the protected list).
 
-    ``on_done(True, None)`` on success, ``(False, error)`` otherwise.
+    ``on_done(True, None)`` once the removal job finished cleanly,
+    ``(False, error)`` otherwise.
     """
     try:
         _Gio, GLib = _gio()
@@ -242,8 +385,8 @@ def remove_package(pkg: str, on_done: ResultCallback) -> None:
     except ImportError as err:
         on_done(False, 'D-Bus unavailable: %s' % err)
         return
-    _call_helper('RemovePackage', params,
-                 lambda ok, _result: on_done(ok, None if ok else _result))
+    _run_job('RemovePackage', params,
+             lambda ok, _result: on_done(ok, None if ok else _result))
 
 
 def manage_service(name: str, action: str, on_done: ResultCallback) -> None:

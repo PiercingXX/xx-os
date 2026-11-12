@@ -27,14 +27,31 @@ Interface `io.piercingxx.XXWM.Helper1` at
 `/io/piercingxx/XXWM/Helper1`: `GetCapabilities() → a{sv}`,
 `SetChargeLimit(u)`, `SetAppNetwork(s, b)`, `FreezeCgroup(s, b)`,
 `CleanSystem(as) → as`, `ReadLog(s) → s`, `RefreshPackageIndex()`,
-`UpgradeSystem() → s`, `RemovePackage(s)`, `ManageService(s, s)`,
+`UpgradeSystem() → s`, `RemovePackage(s) → s`, `ManageService(s, s)`,
 `SetRfkill(s, b)`, `SetPowerProfile(s)`, `SetInboundPreset(s, b)`,
 `SetInboundAllowed(as)`, `SetFirewallEnabled(b)`,
 `GetFirewallState() → a{sv}`, `SetWakeAlarm(t)`, `ClearWakeAlarm()`,
 `HasPin() → b`, `VerifyPin(s) → (b, u, b)`, `SetPin(s, s) → (b, u)`,
-`ClearPin(s) → (b, u)`.
-The daemon exits after 60 s without a method call; the bus re-activates
-it on demand.
+`ClearPin(s) → (b, u)`, and the signal `JobFinished(s job_id, i rc,
+s tail)`.
+The daemon exits after 60 s without a method call, but never while a
+polkit check (an open password dialog) or a package job is still
+running; the bus re-activates it on demand.
+
+## Package jobs
+
+`UpgradeSystem` and `RemovePackage` start package jobs: after polkit
+and validation they reply at once with a job id and run the package
+manager on a worker thread with no kill timeout (SIGKILLing apk or
+pacman mid-transaction can break the system). When it exits, the
+helper sends `JobFinished(job_id, rc, tail)` to the calling bus name
+only: `rc` is the exit status (negative for a signal, -1 when it could
+not start) and `tail` the last 40 lines of its output (at most 4000
+characters; package progress only, never arguments or environment).
+One package job runs at a time; a second is refused with Failed.
+`CheckAuthorization` for interactive actions has no timeout, so the
+check lasts as long as the password dialog stays open; non-interactive
+checks give up after 10 s.
 
 ## Authorization
 
@@ -125,7 +142,8 @@ the service refuses those with InvalidArgs without contacting polkit.
   its action stays `allow_active=yes`.
 - `RefreshPackageIndex` runs only `apk update` (never a partial
   `pacman -Sy`); harmless, so its action stays `allow_active=yes`.
-- `UpgradeSystem` runs only `apk upgrade` and returns the output tail;
+- `UpgradeSystem` runs only `apk upgrade` as a package job (the reply
+  is the job id, the output tail comes with `JobFinished`);
   interactive `auth_admin_keep`.
 - `RemovePackage` accepts only a safe single package name (lowercase
   alnum plus `.+-_`, max 128 chars) and always refuses the protected
@@ -226,3 +244,11 @@ read the hash and brute-force it offline:
 each calling `on_done(ok, result)` exactly once on the main loop. An
 uninstalled or unactivatable helper reports `HELPER_NOT_INSTALLED`
 (`'helper not installed'`) instead of raising.
+`upgrade_system` and `remove_package` subscribe to `JobFinished` (sent
+by the helper's name) before the call and fire `on_done` when their
+job's signal arrives, not when the call returns; the helper vanishing
+mid-job fails it. Timeouts are per method: 10 s for quick calls (state
+probes, PIN, charge limit, rfkill, power profile, wake alarm), none for
+calls that may wait on the password dialog (`UpgradeSystem`,
+`RemovePackage`, `ManageService`, `SetInboundPreset`,
+`SetInboundAllowed`, `SetFirewallEnabled`), 25 s for the rest.

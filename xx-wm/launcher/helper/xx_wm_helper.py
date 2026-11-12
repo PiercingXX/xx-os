@@ -18,7 +18,9 @@ import posixpath
 import shutil
 import subprocess
 import sys
+import threading
 import time
+import uuid
 from pathlib import PurePosixPath
 
 BUS_NAME = 'io.piercingxx.XXWM.Helper1'
@@ -190,6 +192,18 @@ CHARGE_START_DELTA = 5
 
 IDLE_EXIT_SECONDS = 60
 
+# Package jobs (UpgradeSystem, RemovePackage) run with no kill timeout:
+# SIGKILLing apk/pacman mid-transaction can leave a half-installed system.
+# The method replies with a job id at once and JobFinished(job_id, rc,
+# tail) goes to the caller when the package manager exits.
+JOB_TAIL_LINES = 40
+JOB_TAIL_CHARS = 4000
+
+POLKIT_TIMEOUT_MS = 10_000
+# G_MAXINT: an interactive check waits for as long as the password dialog
+# is open (the bus still answers NoReply if polkitd goes away).
+POLKIT_INTERACTIVE_TIMEOUT_MS = 2 ** 31 - 1
+
 # RTC wake alarm (SetWakeAlarm/ClearWakeAlarm): automatic suspend arms one
 # hardware wake ahead of the next xx-clock alarm. The helper owns at most
 # one wake (recorded in WAKE_FILE_NAME because the daemon exits when idle)
@@ -249,11 +263,17 @@ INTROSPECT_XML = """\
     <method name="RefreshPackageIndex">
     </method>
     <method name="UpgradeSystem">
-      <arg name="output" type="s" direction="out"/>
+      <arg name="job_id" type="s" direction="out"/>
     </method>
     <method name="RemovePackage">
       <arg name="pkg" type="s" direction="in"/>
+      <arg name="job_id" type="s" direction="out"/>
     </method>
+    <signal name="JobFinished">
+      <arg name="job_id" type="s"/>
+      <arg name="rc" type="i"/>
+      <arg name="tail" type="s"/>
+    </signal>
     <method name="ManageService">
       <arg name="name" type="s" direction="in"/>
       <arg name="action" type="s" direction="in"/>
@@ -366,13 +386,48 @@ def _default_run(argv: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def job_tail(output: str) -> str:
+    """The last JOB_TAIL_LINES lines of a job's output, capped to
+    JOB_TAIL_CHARS: package manager progress, never arguments or env."""
+    lines = (output or '').rstrip().splitlines()[-JOB_TAIL_LINES:]
+    return '\n'.join(lines)[-JOB_TAIL_CHARS:]
+
+
+def _default_spawn(argv: list[str], on_exit) -> None:
+    """Run a long job on a worker thread with no timeout; ``on_exit(rc,
+    output)`` fires once on the helper's main loop. A job that cannot
+    start reports rc -1 with the reason as its output."""
+    _Gio, GLib = _require_gio()
+
+    def _post(rc: int, output: str) -> None:
+        def _deliver() -> bool:
+            on_exit(rc, output)
+            return False
+        GLib.idle_add(_deliver)
+
+    def _work() -> None:
+        try:
+            proc = subprocess.Popen(
+                argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT)
+            raw, _ = proc.communicate()
+        except OSError as err:
+            _post(-1, '%s failed to start: %s' % (argv[0], err))
+            return
+        _post(proc.returncode, raw.decode('utf-8', 'replace'))
+
+    threading.Thread(target=_work, name='xx-wm-helper-job',
+                     daemon=True).start()
+
+
 class HelperCore:
     """Pure helper logic: sysfs/nft/cgroup work with injectable roots.
 
     ``sysfs``/``cgroup_root``/``mounts_file``/``state_file``/``nft_bin``
     exist so tests can point the helper at tmp dirs and a fake ``nft``;
     in production they keep their defaults. ``run`` replaces
-    :func:`subprocess.run` (same argv-list contract, no shell).
+    :func:`subprocess.run` (same argv-list contract, no shell) for short
+    commands; ``spawn(argv, on_exit)`` starts the long package jobs.
     """
 
     def __init__(
@@ -387,6 +442,7 @@ class HelperCore:
         log_dir: str = LOG_DIR_DEFAULT,
         wake_file: str | None = None,
         run=_default_run,
+        spawn=_default_spawn,
         now=time.time,
     ) -> None:
         self.sysfs = sysfs
@@ -399,6 +455,7 @@ class HelperCore:
         self.wake_file = wake_file or os.path.join(
             os.path.dirname(state_file) or '.', WAKE_FILE_NAME)
         self._run = run
+        self.spawn = spawn
         self._now = now
 
     # ---------------------------------------------------------- capabilities
@@ -724,45 +781,23 @@ class HelperCore:
                 (getattr(proc, 'stderr', '') or '').strip()
                 or 'exit %d' % proc.returncode))
 
-    def upgrade_system(self, which=None) -> str:
-        """Run ``apk upgrade`` and return the combined output tail for the
-        shell's update log. Interactive ``auth_admin_keep``: the agent
-        prompts for the device password."""
+    def upgrade_argv(self, which=None) -> list[str]:
+        """argv for the ``apk upgrade`` job. Interactive
+        ``auth_admin_keep``: the agent prompts for the device password."""
         if (which or shutil.which)('apk') is None:
             raise _failed('apk not available on this system')
-        try:
-            proc = self._run(['apk', 'upgrade'])
-        except OSError as err:
-            raise _failed('apk upgrade failed to start: %s' % err) from None
-        output = ((getattr(proc, 'stdout', '') or '')
-                  + (getattr(proc, 'stderr', '') or ''))
-        if proc.returncode != 0:
-            raise _failed('apk upgrade: %s' % (
-                output.strip()[-2000:] or 'exit %d' % proc.returncode))
-        return output[-4000:]
+        return ['apk', 'upgrade']
 
-    def remove_package(self, pkg: str, which=None) -> str:
-        """Remove one validated, non-protected distro package.
-
-        ``auth_admin_keep`` with interaction: the agent prompts for the
-        device password. Returns the backend used ('apk' or 'pacman').
-        """
+    def remove_argv(self, pkg: str, which=None) -> list[str]:
+        """argv for the job removing one validated, non-protected distro
+        package. ``auth_admin_keep`` with interaction: the agent prompts
+        for the device password."""
         name = validate_package_name(pkg)
         backend = self._backend(which)
         if backend is None:
             raise _failed('no supported package manager on this system')
-        argv = (['apk', 'del', name] if backend == 'apk'
+        return (['apk', 'del', name] if backend == 'apk'
                 else ['pacman', '-Rns', '--noconfirm', name])
-        try:
-            proc = self._run(argv)
-        except OSError as err:
-            raise _failed('%s failed to start: %s' % (argv[0], err)) from None
-        if proc.returncode != 0:
-            raise _failed('%s %s: %s' % (
-                argv[0], name,
-                ((getattr(proc, 'stderr', '') or '').strip()
-                 or 'exit %d' % proc.returncode)))
-        return backend
 
     # ------------------------------------------------------- init/services
 
@@ -1697,7 +1732,10 @@ def check_polkit_authorization(connection, sender, action, callback,
             connection.call(
                 POLKIT_BUS, POLKIT_PATH, POLKIT_IFACE, 'CheckAuthorization',
                 params,
-                None, Gio.DBusCallFlags.NONE, 10_000, None, _on_checked,
+                None, Gio.DBusCallFlags.NONE,
+                POLKIT_INTERACTIVE_TIMEOUT_MS if interactive
+                else POLKIT_TIMEOUT_MS,
+                None, _on_checked,
             )
         except Exception as err:
             callback(False, uid, str(err))
@@ -1810,7 +1848,8 @@ class HelperService:
 
     ``authorize``/``get_uid`` are injectable for tests; in production
     they are :func:`check_polkit_authorization` (which also resolves the
-    uid). ``now`` injects the clock for the idle timer.
+    uid). ``now`` injects the clock for the idle timer, which is held
+    off while a polkit check or a package job is still running.
     """
 
     def __init__(self, connection=None, core=None, authorize=None,
@@ -1825,13 +1864,20 @@ class HelperService:
         self._now = now
         self._last_activity = self._now()
         self._registration_id: int | None = None
+        self._pending_auth = 0
+        # job_id -> caller's unique bus name (JobFinished goes only there).
+        self.jobs: dict[str, str | None] = {}
 
     def touch(self) -> None:
         self._last_activity = self._now()
 
     def idle_expired(self) -> bool:
-        """True once 60 s passed without a method call (pure; the GLib
-        timer in :func:`main` quits the loop on it)."""
+        """True once 60 s passed without a method call and nothing is in
+        flight (pure; the GLib timer in :func:`main` quits the loop on it).
+        Exiting during a password prompt or a package job would drop the
+        caller's reply or orphan the job's JobFinished."""
+        if self._pending_auth or self.jobs:
+            return False
         return (self._now() - self._last_activity) >= IDLE_EXIT_SECONDS
 
     # ------------------------------------------------------------- dispatch
@@ -1891,13 +1937,24 @@ class HelperService:
                 ERROR_INVALID_ARGS, 'unknown method: %s' % (method,))
             return
         action, interactive = policy
+        self._pending_auth += 1
+        answered = []
+
+        def _on_auth(ok, uid, err) -> None:
+            if answered:
+                return
+            answered.append(True)
+            self._pending_auth -= 1
+            self.touch()
+            self._on_authorized(invocation, method, args, ok, uid, err,
+                                sender=sender)
+
         try:
-            self._authorize(
-                conn, sender, action, interactive,
-                lambda ok, uid, err: self._on_authorized(
-                    invocation, method, args, ok, uid, err),
-            )
+            self._authorize(conn, sender, action, interactive, _on_auth)
         except Exception as err:
+            if not answered:
+                answered.append(True)
+                self._pending_auth -= 1
             invocation.return_dbus_error(ERROR_FAILED, str(err))
 
     def _dispatch_pin(self, conn, sender, method, args, invocation) -> None:
@@ -1947,8 +2004,40 @@ class HelperService:
         Gio, GLib = _require_gio()
         invocation.return_value(GLib.Variant(sig, out))
 
+    def _start_job(self, invocation, argv: list[str], sender) -> None:
+        """Reply with a fresh job id, then start ``argv``. One package
+        job at a time: apk and pacman hold an exclusive lock anyway."""
+        if self.jobs:
+            raise _failed('another package operation is still running')
+        job_id = uuid.uuid4().hex
+        self.jobs[job_id] = sender
+        Gio, GLib = _require_gio()
+        invocation.return_value(GLib.Variant('(s)', (job_id,)))
+        try:
+            self.core.spawn(argv, lambda rc, output: self._finish_job(
+                job_id, rc, output))
+        except Exception as err:
+            self._finish_job(job_id, -1, '%s failed to start: %s' % (
+                argv[0], type(err).__name__))
+
+    def _finish_job(self, job_id: str, rc, output) -> None:
+        if job_id not in self.jobs:
+            return
+        sender = self.jobs.pop(job_id)
+        self.touch()
+        if self.connection is None:
+            return
+        Gio, GLib = _require_gio()
+        try:
+            self.connection.emit_signal(
+                sender, OBJECT_PATH, INTERFACE, 'JobFinished',
+                GLib.Variant('(sis)', (job_id, int(rc), job_tail(output))))
+        except Exception as err:
+            print('xx-wm-helper: JobFinished not delivered: %s' % err,
+                  file=sys.stderr)
+
     def _on_authorized(self, invocation, method, args, authorized, uid,
-                       auth_error) -> None:
+                       auth_error, sender=None) -> None:
         if auth_error is not None or not authorized or uid is None:
             invocation.return_dbus_error(
                 ERROR_NOT_AUTHORIZED,
@@ -1983,13 +2072,13 @@ class HelperService:
             elif method == 'RefreshPackageIndex':
                 self.core.refresh_package_index()
             elif method == 'UpgradeSystem':
-                Gio, GLib = _require_gio()
-                invocation.return_value(
-                    GLib.Variant('(s)', (self.core.upgrade_system(),)))
+                self._start_job(invocation, self.core.upgrade_argv(), sender)
                 return
             elif method == 'RemovePackage':
                 (pkg,) = args
-                self.core.remove_package(str(pkg))
+                self._start_job(invocation, self.core.remove_argv(str(pkg)),
+                                sender)
+                return
             elif method == 'ManageService':
                 name, action = args
                 self.core.manage_service(str(name), str(action))

@@ -70,24 +70,17 @@ class TestRefreshPackageIndex:
 # ------------------------------------------------------------ UpgradeSystem
 
 class TestUpgradeSystem:
-    def test_runs_apk_upgrade_and_returns_output(self):
-        run = FakeRun(stdout='Upgrading foo\nOK\n')
+    def test_job_runs_apk_upgrade(self):
+        run = FakeRun()
         core = helper.HelperCore(run=run)
-        out = core.upgrade_system(which=_which_map({'apk'}))
-        assert run.cmds == [['apk', 'upgrade']]
-        assert 'Upgrading foo' in out
+        assert core.upgrade_argv(which=_which_map({'apk'})) == [
+            'apk', 'upgrade']
+        assert run.cmds == []
 
     def test_without_apk_fails(self):
         core = helper.HelperCore(run=FakeRun())
         with pytest.raises(helper.HelperError) as exc:
-            core.upgrade_system(which=_which_map({'pacman'}))
-        assert exc.value.dbus_name == helper.ERROR_FAILED
-
-    def test_failed_upgrade_surfaces(self):
-        run = FakeRun(returncode=1, stderr='boom\n')
-        core = helper.HelperCore(run=run)
-        with pytest.raises(helper.HelperError) as exc:
-            core.upgrade_system(which=_which_map({'apk'}))
+            core.upgrade_argv(which=_which_map({'pacman'}))
         assert exc.value.dbus_name == helper.ERROR_FAILED
 
 
@@ -109,43 +102,38 @@ class TestRemovePackage:
     def test_protected_list_refused(self, pkg):
         core = helper.HelperCore(run=FakeRun())
         with pytest.raises(helper.HelperError) as exc:
-            core.remove_package(pkg, which=_which_map({'apk'}))
+            core.remove_argv(pkg, which=_which_map({'apk'}))
         assert exc.value.dbus_name == helper.ERROR_NOT_AUTHORIZED
 
     @pytest.mark.parametrize('pkg', EVIL)
     def test_malformed_names_rejected(self, pkg):
         core = helper.HelperCore(run=FakeRun())
         with pytest.raises(helper.HelperError) as exc:
-            core.remove_package(pkg, which=_which_map({'apk'}))
+            core.remove_argv(pkg, which=_which_map({'apk'}))
         assert exc.value.dbus_name in (helper.ERROR_INVALID_ARGS,
                                        helper.ERROR_NOT_AUTHORIZED)
 
     def test_apk_removal_argv(self):
-        run = FakeRun()
-        core = helper.HelperCore(run=run)
-        assert core.remove_package('vim', which=_which_map({'apk'})) == 'apk'
-        assert run.cmds == [['apk', 'del', 'vim']]
+        core = helper.HelperCore(run=FakeRun())
+        assert core.remove_argv('vim', which=_which_map({'apk'})) == [
+            'apk', 'del', 'vim']
 
     def test_pacman_removal_argv(self):
-        run = FakeRun()
-        core = helper.HelperCore(run=run)
-        assert core.remove_package(
-            'vim', which=_which_map({'pacman'})) == 'pacman'
-        assert run.cmds == [['pacman', '-Rns', '--noconfirm', 'vim']]
+        core = helper.HelperCore(run=FakeRun())
+        assert core.remove_argv('vim', which=_which_map({'pacman'})) == [
+            'pacman', '-Rns', '--noconfirm', 'vim']
 
     def test_no_backend_fails(self):
         core = helper.HelperCore(run=FakeRun())
         with pytest.raises(helper.HelperError) as exc:
-            core.remove_package('vim', which=_which_map(set()))
+            core.remove_argv('vim', which=_which_map(set()))
         assert exc.value.dbus_name == helper.ERROR_FAILED
 
     def test_never_runs_a_shell(self):
-        run = FakeRun()
-        core = helper.HelperCore(run=run)
-        core.remove_package('htop', which=_which_map({'apk'}))
-        for cmd in run.cmds:
-            assert isinstance(cmd, list)
-            assert not any(';' in a or '|' in a for a in cmd)
+        core = helper.HelperCore(run=FakeRun())
+        cmd = core.remove_argv('htop', which=_which_map({'apk'}))
+        assert isinstance(cmd, list)
+        assert not any(';' in a or '|' in a for a in cmd)
 
 
 # ------------------------------------------- interactive authorization flags
@@ -219,14 +207,20 @@ class TestInteractiveFlags:
             assert conn.flags[action] == 0
 
     def test_service_dispatches_new_methods(self):
+        pytest.importorskip('gi')
         run = FakeRun(stdout='ok\n')
         seen = []
+        spawned = []
 
         def authorize(conn, sender, action, interactive, callback):
             seen.append(action)
             callback(True, UID, None)
 
-        core = helper.HelperCore(run=run)
+        def spawn(argv, on_exit):
+            spawned.append(list(argv))
+            on_exit(0, 'ok\n')
+
+        core = helper.HelperCore(run=run, spawn=spawn)
         service = helper.HelperService(connection=object(), core=core,
                                        authorize=authorize)
 
@@ -242,15 +236,12 @@ class TestInteractiveFlags:
                 self.error = (name, message)
 
         calls = [
-            ('RefreshPackageIndex', (),
-             _which_map({'apk'}), [['apk', 'update']]),
-            ('UpgradeSystem', (), _which_map({'apk'}),
-             [['apk', 'upgrade']]),
-            ('RemovePackage', ('vim',), _which_map({'apk'}),
-             [['apk', 'del', 'vim']]),
+            ('RefreshPackageIndex', (), _which_map({'apk'})),
+            ('UpgradeSystem', (), _which_map({'apk'})),
+            ('RemovePackage', ('vim',), _which_map({'apk'})),
         ]
         import unittest.mock as mock
-        for method, args, which, _expected in calls:
+        for method, args, which in calls:
             invocation = Invocation()
             with mock.patch('shutil.which', which):
                 service._on_method_call(
@@ -260,6 +251,8 @@ class TestInteractiveFlags:
             assert invocation.value is not None
         assert seen == [helper.ACTION_REFRESH, helper.ACTION_UPGRADE,
                         helper.ACTION_REMOVE]
+        assert run.cmds == [['apk', 'update']]
+        assert spawned == [['apk', 'upgrade'], ['apk', 'del', 'vim']]
 
     def test_introspection_lists_new_methods(self):
         assert 'name="RefreshPackageIndex"' in helper.INTROSPECT_XML
@@ -304,17 +297,37 @@ class FakeClientReply:
 
 
 class FakeClientConn:
-    def __init__(self, reply=None, error=None):
+    """``finish`` = (rc, tail): after the reply (a job id), JobFinished
+    for that id goes to the subscribers, like the helper's signal."""
+
+    def __init__(self, reply=None, error=None, finish=None):
         self.reply = reply
         self.error = error
+        self.finish = finish
         self.calls = []
         self.params = []
+        self.subs = {}
+
+    def signal_subscribe(self, sender, iface, member, path, arg0, flags,
+                         callback, user_data):
+        self.subs[len(self.subs) + 1] = (member, callback, user_data)
+        return len(self.subs)
+
+    def signal_unsubscribe(self, sub_id):
+        self.subs.pop(sub_id)
 
     def call(self, bus_name, path, iface, method, params, reply_type,
              flags, timeout, cancellable, callback):
         self.calls.append((bus_name, path, iface, method))
         self.params.append(params)
         callback(self, 'token')
+        if self.finish is not None and self.error is None:
+            rc, tail = self.finish
+            for member, cb, data in list(self.subs.values()):
+                if member == 'JobFinished':
+                    cb(self, ':1.5', path, iface, member,
+                       FakeVariant('(sis)', (self.reply.payload, rc, tail)),
+                       data)
 
     def call_finish(self, _token):
         if self.error is not None:
@@ -327,6 +340,9 @@ class FakeGio:
         SYSTEM = 'system'
 
     class DBusCallFlags:
+        NONE = 0
+
+    class DBusSignalFlags:
         NONE = 0
 
     Variant = FakeVariant
@@ -366,9 +382,11 @@ class TestNewClientCalls:
         done = []
         helper_client.refresh_package_index(
             lambda ok, res: done.append((ok, res)))
-        FakeGio.conn = FakeClientConn(FakeClientReply('out\n'))
+        FakeGio.conn = FakeClientConn(FakeClientReply('job-1'),
+                                      finish=(0, 'out\n'))
         helper_client.upgrade_system(lambda ok, res: done.append((ok, res)))
-        FakeGio.conn = FakeClientConn(FakeClientReply(None))
+        FakeGio.conn = FakeClientConn(FakeClientReply('job-2'),
+                                      finish=(0, 'removed\n'))
         helper_client.remove_package(
             'vim', lambda ok, res: done.append((ok, res)))
         assert done == [(True, None), (True, 'out\n'), (True, None)]
