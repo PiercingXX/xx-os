@@ -151,10 +151,12 @@ def test_28_timed_uses_per_date_offset():
     assert got == _utc("2026-11-05T14:00:00Z")
 
 
-def test_28_local_zone_is_iana_with_dst():
+def test_28_local_zone_is_iana_with_dst(monkeypatch):
     from xx_calendar.main import local_zone
 
+    monkeypatch.setenv("TZ", "America/New_York")
     zone = local_zone()
+    assert getattr(zone, "key", None) == "America/New_York"
     october = dt.datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc).astimezone(zone)
     november = dt.datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc).astimezone(zone)
     assert october.utcoffset() != november.utcoffset()
