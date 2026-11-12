@@ -305,10 +305,11 @@ def _callaudio_call(bus, method: str, params) -> None:
 
 
 class CallAudioRouter:
-    """In-call audio routing: callaudiod when it owns its session-bus name,
-    otherwise the pactl fallback. Backend presence is probed asynchronously
-    and cached; every bus call is async and every pactl run is a worker
-    thread, so the GTK loop never blocks."""
+    """In-call audio routing: callaudiod when it owns its session-bus name
+    or is D-Bus activatable (the first call starts it), otherwise the pactl
+    fallback. Backend presence is probed asynchronously and cached; every
+    bus call is async and every pactl run is a worker thread, so the GTK
+    loop never blocks."""
 
     def __init__(self, session_bus=None, run_pactl=None, run_mute=None) -> None:
         # Seams for tests: session_bus() -> connection|None,
@@ -337,16 +338,36 @@ class CallAudioRouter:
             pactl_fn()
             return
 
-        def _on_owner(conn, result) -> None:
+        def _on_activatable(conn, result) -> None:
             try:
-                present = bool(conn.call_finish(result).unpack()[0])
+                names = conn.call_finish(result).unpack()[0]
             except Exception:
-                present = False
+                # Unknown, not absent: probe again on the next action.
+                pactl_fn()
+                return
+            present = _CALLAUDIO_BUS_NAME in list(names or ())
             self._callaudio = present
             if present:
                 callaudio_fn(conn)
             else:
                 pactl_fn()
+
+        def _on_owner(conn, result) -> None:
+            try:
+                running = bool(conn.call_finish(result).unpack()[0])
+            except Exception:
+                running = False
+            if running:
+                self._callaudio = True
+                callaudio_fn(conn)
+                return
+            # Not running yet is not absent: callaudiod is normally
+            # started by D-Bus activation on its first call.
+            conn.call(
+                _DBUS_BUS_NAME, _DBUS_PATH, _DBUS_IFACE,
+                'ListActivatableNames', None, None,
+                Gio.DBusCallFlags.NONE, 2_000, None, _on_activatable,
+            )
 
         self._bus().call(
             _DBUS_BUS_NAME, _DBUS_PATH, _DBUS_IFACE, 'GetNameOwner',
@@ -739,6 +760,20 @@ def _resolve_modem_path() -> str | None:
         return None
 
 
+def _call_modem_path(call_path: str | None) -> str | None:
+    """The modem that owns ``call_path`` (recorded by the monitor at
+    CallAdded), else the first voice modem. Cached only, no bus I/O."""
+    try:
+        from modem_monitor import _last_monitor
+        if _last_monitor is not None and call_path:
+            modem = _last_monitor._call_modem.get(call_path)
+            if modem:
+                return modem
+    except Exception:
+        pass
+    return _resolve_modem_path()
+
+
 # Completion contract shared with modem_monitor: (success, error_message).
 CallResultCallback = Callable[[bool, str | None], None]
 # Injectable transport seam: start the async action, deliver via callback.
@@ -1016,6 +1051,7 @@ class CallUI(Gtk.Window):
         self._ringer = Ringer()
         self._audio = CallAudioRouter()
         self._proximity = ProximityMonitor()
+        self._lock_probe: Callable[[], bool] | None = None
 
         self._theme_provider = Gtk.CssProvider()
         Gtk.StyleContext.add_provider_for_display(
@@ -1039,6 +1075,21 @@ class CallUI(Gtk.Window):
     def bind_bar(self, bar) -> None:
         """Attach the CallBar: per-second timer updates and minimize target."""
         self._bar = bar
+
+    def set_lock_probe(self, probe: Callable[[], bool] | None) -> None:
+        """Lock state source: while locked this surface is the only way
+        to reach the call (the CallBar sits under the lock), so nothing
+        here hides it."""
+        self._lock_probe = probe
+
+    def _locked(self) -> bool:
+        probe = getattr(self, '_lock_probe', None)
+        if probe is None:
+            return False
+        try:
+            return bool(probe())
+        except Exception:
+            return False
 
     def apply_theme(self, preset: ThemePreset | None = None) -> None:
         """(Re)load this surface's display-level sheet. The shell window
@@ -1354,8 +1405,19 @@ class CallUI(Gtk.Window):
             self._call_start_mono = time.monotonic()
             self._timed_path = path
 
-    def _reset_toggles(self) -> None:
+    def _clear_mic_mute(self) -> None:
+        """Unmute the microphone if this surface muted it: a mute left on
+        the source would silence the mic for everything after the call."""
+        if not getattr(self, '_muted', False):
+            return
         self._muted = False
+        try:
+            self._audio.set_mic_mute(False)
+        except Exception:
+            pass
+
+    def _reset_toggles(self) -> None:
+        self._clear_mic_mute()
         self._speakerphone = False
         for btn, state in ((getattr(self, '_mute_btn', None), False),
                            (getattr(self, '_speaker_btn', None), False),
@@ -1507,7 +1569,10 @@ class CallUI(Gtk.Window):
         self.present()
 
     def minimize(self) -> None:
-        """Collapse to the CallBar (tap the bar to expand again)."""
+        """Collapse to the CallBar (tap the bar to expand again). Not while
+        locked: the bar sits under the lock, so the call would vanish."""
+        if self._locked():
+            return
         self._minimized = True
         if self._bar is not None:
             try:
@@ -1534,6 +1599,13 @@ class CallUI(Gtk.Window):
             self._ringer.stop()
         except Exception:
             pass
+        self._clear_mic_mute()
+        mute_tile = getattr(self, '_mute_btn', None)
+        if mute_tile is not None:
+            try:
+                mute_tile.set_active(False)
+            except Exception:
+                pass
         try:
             self._audio.exit_call()
         except Exception:
@@ -1569,8 +1641,11 @@ class CallUI(Gtk.Window):
 
     def _recover_close(self) -> None:
         """A failed Accept/Hangup closes the surface but keeps the call on
-        the CallBar, so the user can expand and retry."""
+        the CallBar, so the user can expand and retry. While locked the
+        surface stays up instead: the bar is under the lock."""
         self._hide_close()
+        if self._locked():
+            return
         try:
             self.hide()
         except Exception:
@@ -1714,6 +1789,7 @@ class CallUI(Gtk.Window):
     def _finish_accept(self, call_path: str, success: bool, error: str | None) -> None:
         if not success:
             _log_action_failure('accept', call_path, error)
+            self._ringer.stop()
             self._recover_close()
             return
         self._ringer.stop()
@@ -1727,6 +1803,7 @@ class CallUI(Gtk.Window):
     def _finish_decline(self, call_path: str, success: bool, error: str | None) -> None:
         if not success:
             _log_action_failure('decline', call_path, error)
+            self._ringer.stop()
             self._recover_close()
             return
         self._ringer.stop()
@@ -1749,7 +1826,7 @@ class CallUI(Gtk.Window):
         self.end_call()
 
     def _on_hold_answer_clicked(self, _btn: Gtk.Button) -> None:
-        modem = _resolve_modem_path()
+        modem = _call_modem_path(self._waiting_path)
         if modem is None:
             _log_action_failure('hold & answer', self._waiting_path, 'no modem found')
             return
@@ -1798,18 +1875,38 @@ class CallUI(Gtk.Window):
             except Exception:
                 pass
 
+    def _held_call(self):
+        from modem_monitor import _STATE_HELD
+        return next((c for c in self._live_snapshot
+                     if c.state == _STATE_HELD), None)
+
     def _on_hold_toggled(self, btn: Gtk.ToggleButton) -> None:
         # A waiting second call holds the active one for real (same action
-        # as the waiting banner); a lone call cannot hold over D-Bus, so
-        # the tile snaps back to the snapshot's HELD truth instead of
-        # faking a hold.
+        # as the waiting banner). A held call resumes through the same
+        # Voice.HoldAndAccept (it accepts the held call when none waits;
+        # with another call active the two swap). A lone active call
+        # cannot hold over D-Bus. The tile always shows the snapshot's
+        # HELD truth, never a local guess.
         if self._waiting_path is not None and btn.get_active():
             self._on_hold_answer_clicked(btn)
             return
+        held = self._held_call()
+        if held is not None and btn.get_active() != self._primary_held():
+            modem = _call_modem_path(held.path)
+            if modem is not None:
+                self._begin_call_action(
+                    'resume', modem, self._hold_accept_fn,
+                    self._finish_resume)
         try:
             btn.set_active(self._primary_held())
         except Exception:
             pass
+
+    def _finish_resume(self, modem_path: str, success: bool,
+                       error: str | None) -> None:
+        if not success:
+            _log_action_failure('resume', modem_path, error)
+        self._sync_hold_tile()
 
     def _on_add_call_toggled(self, btn: Gtk.ToggleButton) -> None:
         # Collapse to the CallBar so a second call can be placed from the

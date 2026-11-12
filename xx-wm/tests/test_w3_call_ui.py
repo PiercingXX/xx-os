@@ -696,7 +696,38 @@ class TestAudioRouter:
         router, pactl, _mute = self._router(bus)
         router.enter_call()
         bus.complete_next(Exception('no owner'))
+        assert bus.calls[-1][3] == 'ListActivatableNames'
+        bus.complete_next(FakeReply((['org.freedesktop.Notifications'],)))
         assert pactl == [True]
+        router.exit_call()
+        assert pactl == [True, False]  # absent is cached: no re-probe
+        assert bus.calls[-1][3] == 'ListActivatableNames'
+
+    def test_activatable_callaudiod_counts_as_present(self):
+        # Installed but not running (the FLX1 case): D-Bus activation
+        # starts it on the first SelectMode, so it is the backend.
+        bus = FakeBus()
+        router, pactl, _mute = self._router(bus)
+        router.enter_call()
+        bus.complete_next(Exception('no owner'))
+        bus.complete_next(FakeReply(
+            (['org.mobian_project.CallAudio', 'org.x.Other'],)))
+        assert bus.calls[-1][:4] == (
+            'org.mobian_project.CallAudio', '/org/mobian_project/CallAudio',
+            'org.mobian_project.CallAudio', 'SelectMode')
+        assert pactl == []
+        router.set_mic_mute(True)
+        assert bus.calls[-1][3] == 'MuteMic'  # cached present
+
+    def test_failed_probe_is_not_cached_absent(self):
+        bus = FakeBus()
+        router, pactl, _mute = self._router(bus)
+        router.enter_call()
+        bus.complete_next(Exception('no owner'))
+        bus.complete_next(Exception('timeout'))
+        assert pactl == [True]
+        router.set_speaker(True)
+        assert bus.calls[-1][3] == 'GetNameOwner'  # probes again
 
     def test_pactl_fallback_without_bus(self):
         router, pactl, _mute = self._router(None)
@@ -1360,3 +1391,160 @@ class TestCallTiles:
         btn.set_active(True)
         ui._on_bt_toggled(btn)
         assert btn.get_active() is False
+
+
+class LockProbe:
+    def __init__(self, locked):
+        self.locked = locked
+
+    def __call__(self):
+        return self.locked
+
+
+class TestLockedSurface:
+    """While locked the CallUI is the only way to reach the call: the
+    CallBar is a TOP surface under the OVERLAY lock."""
+
+    def test_minimize_while_locked_keeps_surface(self, monkeypatch):
+        _names(monkeypatch)
+        ui = _make_ui(_lock_probe=LockProbe(True))
+        ui.render_snapshot([_call(state=4, started_at=1.0)], display_mgr=None)
+        ui.minimize()
+        assert ui.hidden == 0
+        assert ui._minimized is False
+
+    def test_add_call_while_locked_keeps_surface(self, monkeypatch):
+        _names(monkeypatch)
+        ui = _make_ui(_lock_probe=LockProbe(True))
+        ui.render_snapshot([_call(state=4, started_at=1.0)], display_mgr=None)
+        btn = FakeToggle()
+        btn.set_active(True)
+        ui._on_add_call_toggled(btn)
+        assert btn.get_active() is False
+        assert ui.hidden == 0 and ui._minimized is False
+
+    def test_minimize_unlocked_still_collapses(self, monkeypatch):
+        _names(monkeypatch)
+        ui = _make_ui(_lock_probe=LockProbe(False))
+        ui.render_snapshot([_call(state=4, started_at=1.0)], display_mgr=None)
+        ui.minimize()
+        assert ui.hidden == 1 and ui._minimized is True
+
+    def test_failed_accept_stops_ringer_and_keeps_surface_locked(
+            self, monkeypatch):
+        _names(monkeypatch)
+        ui = _make_ui(accept_fn=lambda p, done: done(False, 'modem said no'),
+                      _lock_probe=LockProbe(True))
+        ui.render_snapshot([_call(state=3)], display_mgr=None)
+        ui._ringer.calls.clear()
+        ui._on_accept_clicked(None)
+        assert 'stop' in ui._ringer.calls
+        assert ui.hidden == 0
+        assert ui._pending_action is None  # Answer can be tapped again
+        assert ui._stack.visible == 'incoming'
+
+    def test_failed_decline_stops_ringer_and_keeps_surface_locked(
+            self, monkeypatch):
+        _names(monkeypatch)
+        ui = _make_ui(hangup_fn=lambda p, done: done(False, 'modem said no'),
+                      _lock_probe=LockProbe(True))
+        ui.render_snapshot([_call(state=3)], display_mgr=None)
+        ui._ringer.calls.clear()
+        ui._on_decline_clicked(None)
+        assert 'stop' in ui._ringer.calls
+        assert ui.hidden == 0
+
+    def test_failed_accept_unlocked_stops_ringer_and_keeps_bar(
+            self, monkeypatch):
+        _names(monkeypatch)
+        ui = _make_ui(accept_fn=lambda p, done: done(False, 'modem said no'),
+                      _lock_probe=LockProbe(False))
+        ui.render_snapshot([_call(state=3)], display_mgr=None)
+        ui._ringer.calls.clear()
+        ui._on_accept_clicked(None)
+        assert 'stop' in ui._ringer.calls
+        assert ui.hidden == 1
+        assert ui._bar.shown is True
+
+    def test_close_while_locked_keeps_surface(self):
+        ui = _make_ui(accept_fn=lambda p, done: None,
+                      _lock_probe=LockProbe(True))
+        ui.show_incoming('Mom', '+15550001111', CALL)
+        ui._on_accept_clicked(None)
+        ui._on_action_timeout()
+        ui._on_close_clicked(None)
+        assert ui._pending_action is None
+        assert ui.hidden == 0
+
+
+class TestHoldResume:
+    def test_held_call_resumes_with_hold_and_accept(self, monkeypatch):
+        held = []
+        ui = _make_ui(
+            _hold_accept_fn=lambda m, done: held.append(m) or done(True, None))
+        monkeypatch.setattr(call_ui, '_resolve_modem_path', lambda: MODEM)
+        ui._live_snapshot = [_call(state=5, started_at=1.0)]
+        btn = FakeToggle()
+        btn.set_active(True)            # HELD paints the tile active
+        btn.set_active(False)           # the tap
+        ui._on_hold_toggled(btn)
+        assert held == [MODEM]
+        assert btn.get_active() is True  # snapshot truth until it flips
+
+    def test_hold_uses_the_calls_own_modem(self, monkeypatch):
+        held = []
+        ui = _make_ui(
+            _hold_accept_fn=lambda m, done: held.append(m) or done(True, None))
+        monkeypatch.setattr(call_ui, '_resolve_modem_path', lambda: MODEM)
+        other = '/org/freedesktop/ModemManager1/Modem/1'
+        monkeypatch.setattr(modem_monitor, '_last_monitor',
+                            types.SimpleNamespace(_call_modem={CALL: other}))
+        ui._live_snapshot = [_call(state=5, started_at=1.0)]
+        btn = FakeToggle()
+        ui._on_hold_toggled(btn)
+        assert held == [other]
+
+    def test_waiting_answer_uses_the_waiting_calls_modem(self, monkeypatch):
+        _names(monkeypatch)
+        held = []
+        ui = _make_ui(
+            _hold_accept_fn=lambda m, done: held.append(m) or done(True, None))
+        monkeypatch.setattr(call_ui, '_resolve_modem_path', lambda: MODEM)
+        other = '/org/freedesktop/ModemManager1/Modem/1'
+        monkeypatch.setattr(modem_monitor, '_last_monitor',
+                            types.SimpleNamespace(_call_modem={CALL2: other}))
+        ui._waiting_path = CALL2
+        ui._on_hold_answer_clicked(None)
+        assert held == [other]
+
+    def test_failed_resume_keeps_surface(self, monkeypatch):
+        ui = _make_ui(_hold_accept_fn=lambda m, done: done(False, 'no'),
+                      _hold_btn=FakeToggle())
+        monkeypatch.setattr(call_ui, '_resolve_modem_path', lambda: MODEM)
+        ui._live_snapshot = [_call(state=5, started_at=1.0)]
+        ui._surface_live = True
+        btn = ui._hold_btn
+        ui._on_hold_toggled(btn)
+        assert ui.hidden == 0
+        assert btn.get_active() is True
+
+
+class TestMicMuteCleared:
+    def test_call_end_unmutes_the_mic(self, monkeypatch):
+        _names(monkeypatch)
+        ui = _make_ui()
+        ui.render_snapshot([_call(state=4, started_at=1.0)], display_mgr=None)
+        ui._mute_btn.set_active(True)
+        ui._on_mute_toggled(ui._mute_btn)
+        assert ('mute', True) in ui._audio.calls
+        ui.render_snapshot([], display_mgr=None)
+        assert ui._audio.calls[-2:] == [('mute', False), 'exit']
+        assert ui._muted is False
+        assert ui._mute_btn.get_active() is False
+
+    def test_unmuted_call_end_sends_no_mute(self, monkeypatch):
+        _names(monkeypatch)
+        ui = _make_ui()
+        ui.render_snapshot([_call(state=4, started_at=1.0)], display_mgr=None)
+        ui.render_snapshot([], display_mgr=None)
+        assert not [c for c in ui._audio.calls if c[0] == 'mute']
