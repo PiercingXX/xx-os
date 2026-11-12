@@ -228,6 +228,10 @@ _CAMERA_CLASSES = frozenset({'Stream/Input/Video'})
 _NODE_TYPE = 'PipeWire:Interface:Node'
 
 POLL_INTERVAL_SECONDS = 3.0
+# Screen off: nothing shows the indicators, so the location re-query
+# (and the fallback pw-dump poll) wait this long between passes; waking
+# the screen catches up at once.
+DARK_POLL_SECONDS = 60.0
 _MONITOR_ARGV = ('pw-dump', '--monitor')
 _BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
 _READ_CHUNK_BYTES = 65536
@@ -401,6 +405,7 @@ class PrivacyMonitor:
         self._poll_interval = max(1.0, float(poll_interval or 1.0))
         self._backoff = tuple(backoff) or (5.0,)
         self._screen_on = True
+        self._fallback_mode = False
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -418,8 +423,27 @@ class PrivacyMonitor:
                     for kind, apps in self._snapshot.items()}
 
     def set_screen_on(self, on: bool) -> None:
-        """Gate the pw-dump-absent fallback poll: no polling while off."""
-        self._screen_on = bool(on)
+        """Gate the location re-query and the pw-dump-absent fallback
+        poll: none while off; turning on catches up immediately."""
+        on = bool(on)
+        was_on, self._screen_on = self._screen_on, on
+        thread = self._thread
+        if on and not was_on and thread is not None and thread.is_alive():
+            try:
+                threading.Thread(target=self._catch_up, daemon=True,
+                                 name='xx-wm-privacy-wake').start()
+            except RuntimeError:
+                pass
+
+    def _catch_up(self) -> None:
+        if self._fallback_mode:
+            self.poll_once()
+        self.refresh_location()
+
+    def _interval(self) -> float:
+        if self._screen_on:
+            return self._poll_interval
+        return max(self._poll_interval, DARK_POLL_SECONDS)
 
     def note_screen_blank(self, blanked: bool) -> None:
         self.set_screen_on(not blanked)
@@ -610,12 +634,12 @@ class PrivacyMonitor:
             if fileno is not None:
                 try:
                     ready, _, _ = select.select(
-                        [fileno], [], [], self._poll_interval)
+                        [fileno], [], [], self._interval())
                 except (OSError, ValueError):
                     ready = []
             else:
                 ready = []
-                if self._stop_event.wait(self._poll_interval):
+                if self._stop_event.wait(self._interval()):
                     break
             if ready:
                 try:
@@ -632,9 +656,10 @@ class PrivacyMonitor:
         return self._stop_event.is_set()
 
     def _fallback_loop(self) -> None:
+        self._fallback_mode = True
         while not self._stop_event.is_set():
             self._fallback_tick()
-            if self._stop_event.wait(self._poll_interval):
+            if self._stop_event.wait(self._interval()):
                 break
 
     def _fallback_tick(self) -> bool:
