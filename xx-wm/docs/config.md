@@ -158,7 +158,7 @@ be disabled.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `medical_id` | dict | `{}` | Medical ID shown read-only from Emergency → Medical info: `{name, date_of_birth, blood_type, allergies, medications, conditions, organ_donor (bool), notes, emergency_contacts: [{name, number, relation}]}`. Every field is optional; bad types are ignored, never crash. User data, not a secret: included in backup export/restore. |
-| `lock_screen_medical_id` | bool | `true` | Show Medical info on the lock screen. `false` hides it; emergency calling stays available. |
+| `lock_screen_medical_id` | bool | `true` | Show Medical info on the lock screen. `false` hides it and the emergency-contact rows (their names and numbers are neither shown nor dialable without the PIN); emergency numbers (112, 911, the modem's list) stay dialable. |
 
 ### Smart Lock
 

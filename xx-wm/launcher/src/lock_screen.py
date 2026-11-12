@@ -485,6 +485,29 @@ def format_medical_info(medical: dict) -> str:
     return '\n'.join(lines)
 
 
+def lock_emergency_contacts(config) -> list[tuple[str, str]]:
+    """(label, number) emergency-contact rows the lock screen may show and
+    dial without the PIN. They are Medical ID data, so none while
+    ``lock_screen_medical_id`` is off (or unreadable)."""
+    try:
+        if config.lock_screen_medical_id is not True:
+            return []
+        contacts = config.medical_id.get('emergency_contacts', [])
+    except Exception:
+        return []
+    rows: list[tuple[str, str]] = []
+    for entry in contacts if isinstance(contacts, list) else ():
+        if not isinstance(entry, dict):
+            continue
+        number = entry.get('number')
+        if not isinstance(number, str) or not number:
+            continue
+        name = entry.get('name')
+        rows.append((f'{name} — {number}' if isinstance(name, str) and name
+                     else number, number))
+    return rows
+
+
 _FP_BUS = 'net.reactivated.Fprint'
 _FP_MANAGER_PATH = '/net/reactivated/Fprint/Manager'
 _FP_MANAGER_IFACE = 'net.reactivated.Fprint.Manager'
@@ -1259,11 +1282,15 @@ class LockScreen(Gtk.Window):
     def _emg_call(self, number: str, contact: bool = False) -> None:
         """Emergency dial: typed digits must match an emergency service
         (built-in union the modem's list); configured emergency-contact
-        rows are explicitly allowed from the lock screen. The created
-        ModemManager call reaches the in-call UI through the existing
-        monitor → render path, which presents above the lock."""
+        rows are explicitly allowed from the lock screen while Medical ID
+        is shown there. The created ModemManager call reaches the in-call
+        UI through the existing monitor → render path, which presents
+        above the lock."""
         if not number:
             return
+        if contact and number not in {
+                n for _label, n in lock_emergency_contacts(self._config)}:
+            contact = False
         if not contact:
             from dialer import EMERGENCY_REFUSAL, is_emergency_number
             if not is_emergency_number(number, self._modem_emergency_extra):
@@ -1312,20 +1339,7 @@ class LockScreen(Gtk.Window):
             nxt = child.get_next_sibling()
             box.remove(child)
             child = nxt
-        try:
-            contacts = self._config.medical_id.get('emergency_contacts', [])
-        except Exception:
-            contacts = []
-        if not isinstance(contacts, list):
-            return
-        for entry in contacts:
-            if not isinstance(entry, dict):
-                continue
-            number = entry.get('number')
-            if not isinstance(number, str) or not number:
-                continue
-            name = entry.get('name')
-            label = f'{name} — {number}' if isinstance(name, str) and name else number
+        for label, number in lock_emergency_contacts(self._config):
             btn = Gtk.Button(label=label)
             btn.add_css_class('emg-contact')
             inner = btn.get_child()

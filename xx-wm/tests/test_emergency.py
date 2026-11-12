@@ -804,3 +804,35 @@ class TestEmergencySurface:
         emg_lock.config.set_lock_screen_medical_id(True)
         lock_screen.LockScreen.open_emergency(lock)
         assert lock._emg_medical_btn.visible is True
+
+    def test_contacts_hidden_and_not_dialable_with_medical_off(
+            self, emg_lock, monkeypatch):
+        """Medical ID off: emergency contacts are Medical ID data, so no
+        names, no numbers and no PIN-less calls to them; 112 still dials."""
+        monitor = _modem_monitor()
+        dialer = _dialer()
+        lock_screen = emg_lock.module
+        lock = emg_lock.lock
+        emg_lock.config.set_medical_id({'emergency_contacts': [
+            {'name': 'Jo', 'number': '+15550102222'}]})
+        monkeypatch.setattr(lock_screen, 'Gtk',
+                            types.SimpleNamespace(Button=_FakeButton))
+        placed = []
+        monkeypatch.setattr(monitor, 'voice_create_and_start',
+                            lambda number, *a, **k: placed.append(number)
+                            or (True, '/c/9'))
+        lock._modem_emg_fetched = True
+        lock_screen.LockScreen.open_emergency(lock)
+        jo = lock._emg_contacts_box.children[0]
+        emg_lock.config.set_lock_screen_medical_id(False)
+        assert lock_screen.lock_emergency_contacts(emg_lock.config) == []
+        lock_screen.LockScreen.open_emergency(lock)
+        assert lock._emg_contacts_box.children == []
+        # A row drawn before the switch flipped dials nothing either.
+        signal, handler, args = jo.connected[0]
+        handler(jo, *args)
+        assert placed == []
+        assert lock._emg_status.text == dialer.EMERGENCY_REFUSAL
+        lock._emg_digits = '112'
+        lock_screen.LockScreen._on_emg_call(lock, None)
+        assert placed == ['112']
