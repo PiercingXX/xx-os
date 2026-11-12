@@ -619,16 +619,16 @@ def _focused_app_id(win) -> str | None:
 
 
 def _set_osk_visible(visible: bool) -> None:
-    """Toggle squeekboard's visibility over D-Bus (headless seam for 20.1).
+    """Show or hide the running on-screen keyboard (headless seam for 20.1).
 
     Both _show_keyboard() and _hide_keyboard() route through here. It is the
     headless seam the tap-outside test drives: monkeypatching Gio's
     bus_get_sync lets a test assert the SetVisible payload without a display.
 
-    The osk helper sends SetVisible with the async D-Bus call, so tap and
-    swipe paths never block on the round-trip and no worker thread is
-    needed. A D-Bus failure (squeekboard absent, bus down) is logged by
-    the helper rather than crashing the shell.
+    The osk helper finds which keyboard runs (xx-keyboard or squeekboard)
+    and who owns sm.puri.OSK0, all with async D-Bus calls, so tap and
+    swipe paths never block and no worker thread is needed; it asks the
+    keyboard only when that keyboard owns the name.
     """
     from osk import set_visible
     set_visible(bool(visible))
@@ -1925,11 +1925,11 @@ class ShellWindow(Adw.ApplicationWindow):
         return False
 
     def _show_keyboard(self) -> None:
-        """Force the on-screen keyboard up via squeekboard's D-Bus interface."""
+        """Force the on-screen keyboard up over sm.puri.OSK0."""
         _set_osk_visible(True)
 
     def _hide_keyboard(self) -> None:
-        """Hide squeekboard when focus leaves an editable widget (20.1)."""
+        """Hide the on-screen keyboard when focus leaves an editable (20.1)."""
         _set_osk_visible(False)
 
     def _set_layer_keyboard_exclusive(self, exclusive: bool) -> None:

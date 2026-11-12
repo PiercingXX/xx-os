@@ -78,23 +78,52 @@ def window():
 
 def _install_dbus(window):
     """Give the fake Gio/GLib the attributes _set_osk_visible needs, and
-    return a recorder that captures the SetVisible payloads."""
+    return a recorder that captures the SetVisible payloads.
+
+    The fake bus answers like the real async API: GetNameOwner says the
+    running keyboard owns sm.puri.OSK0, the owner-PID lookup fails (so the
+    owner is not ruled out), and the reply callback gets (bus, result)."""
+    import osk
     gio = window._TEST_GIO
     glib = window._TEST_GLIB
     calls = []
 
+    class _Reply:
+        def __init__(self, value):
+            self.value = value
+
+        def unpack(self):
+            return self.value
+
     class FakeBus:
+        def signal_subscribe(self, *args):
+            return 1
+
         def call(self, *args):
-            calls.append(args)
+            method, callback = args[3], args[9]
+            if method == 'GetNameOwner':
+                callback(self, _Reply((':1.42',)))
+            elif method == 'GetConnectionUnixProcessID':
+                callback(self, None)
+            else:
+                calls.append(args)
+
+        def call_finish(self, result):
+            if result is None:
+                raise RuntimeError('no such pid')
+            return result
 
     gio.BusType = types.SimpleNamespace(SESSION='session')
-    gio.DBusCallFlags = types.SimpleNamespace(NONE=0)
+    gio.DBusCallFlags = types.SimpleNamespace(NONE=0, NO_AUTO_START=1)
+    gio.DBusSignalFlags = types.SimpleNamespace(NONE=0)
     gio.bus_get_sync = lambda *a, **k: FakeBus()
 
     def variant(sig, value):
         return types.SimpleNamespace(signature=sig, value=value)
 
     glib.Variant = variant
+    glib.VariantType = types.SimpleNamespace(new=lambda sig: sig)
+    osk._LINK = None
     return calls
 
 
