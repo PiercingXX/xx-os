@@ -635,5 +635,37 @@ class TestTilesEndScheduledSessions:
         assert btn.active is False
 
 
+class TestNopeTileKeepsFriction:
+    def _nope(self, break_log=()):
+        from nope_mode import NopeState
+        return NopeState(_cfg(nope_enabled=True, nope_schedules=_ALL_DAY,
+                              nope_break_log=list(break_log)))
+
+    def _tap_off(self, nope):
+        panel, tile = _panel('nope', nope=nope)
+        btn = panel._tile_buttons['nope']
+        btn.set_active(False)
+        panel._on_tile_toggled(btn, tile)
+        return btn
+
+    def test_tap_off_in_a_schedule_is_a_bounded_break(self):
+        nope = self._nope()
+        assert nope.is_active()
+        btn = self._tap_off(nope)
+        assert nope.enabled
+        assert nope.override == 'break'
+        assert not nope.is_active()
+        assert btn.active is False
+
+    def test_refused_break_leaves_nope_on(self):
+        import time
+        now = time.time()
+        nope = self._nope(break_log=[now - 60, now - 120, now - 180])
+        btn = self._tap_off(nope)
+        assert nope.enabled
+        assert nope.is_active()
+        assert btn.active is True and 'active' in btn.css
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

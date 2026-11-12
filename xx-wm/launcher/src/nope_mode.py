@@ -75,12 +75,17 @@ class NopeState:
 
     def toggle(self, now: datetime | None = None,
                now_ts: float | None = None) -> bool:
-        """Shade tap: flip ForceOn like the Android tile (derived toggle)."""
+        """Shade tap: flip ForceOn like the Android tile (derived toggle).
+
+        Inside a schedule a tap off is a leave-early: the shortest bounded
+        break, refused (Nope stays on) when the break budget or the
+        interval between breaks says no. It never drops the master
+        switch, which would end every future schedule too."""
         now = now or datetime.now()
         now_ts = _time.time() if now_ts is None else now_ts
         if self.is_active(now, now_ts):
             if self.schedule_active(now):
-                self.set_enabled(False)
+                self.start_break(BREAK_MINUTES[0], now, now_ts)
             else:
                 self._config.data['nope_enabled'] = True
                 self.clear_override()

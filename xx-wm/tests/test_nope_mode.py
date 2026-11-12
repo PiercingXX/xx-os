@@ -113,11 +113,33 @@ class TestDerivedState:
         _on(nope, MON_NOON)
         assert not nope.toggle(MON_NOON, now_ts=1000.0)
 
-    def test_toggle_off_during_schedule_disables_master(self, nope):
+    def test_toggle_off_during_schedule_takes_a_bounded_break(self, nope):
         nope.set_enabled(True)
-        assert nope.is_active(MON_2100, now_ts=1000.0)
-        assert not nope.toggle(MON_2100, now_ts=1000.0)
-        assert not nope.enabled
+        now_ts = MON_2100.timestamp()
+        assert nope.is_active(MON_2100, now_ts=now_ts)
+        assert not nope.toggle(MON_2100, now_ts=now_ts)
+        assert nope.enabled
+        assert nope.override == 'break'
+        assert nope.override_until == now_ts + 5 * 60
+        assert nope.break_log[-1] == now_ts
+        assert nope.is_active(MON_2100, now_ts=now_ts + 5 * 60)
+
+    def test_toggle_off_during_schedule_respects_the_budget(self, nope):
+        nope.set_enabled(True)
+        start = MON_2100.timestamp()
+        nope._config.data['nope_break_log'] = [
+            start - 55 * 60, start - 50 * 60, start - 45 * 60]
+        nope._config.data['nope_budget'] = 3
+        assert nope.budget_remaining(MON_2100) == 0
+        assert nope.toggle(MON_2100, now_ts=start)
+        assert nope.enabled and nope.is_active(MON_2100, now_ts=start)
+
+    def test_toggle_off_during_schedule_respects_the_interval(self, nope):
+        nope.set_enabled(True)
+        start = MON_2100.timestamp()
+        nope._config.data['nope_break_log'] = [start - 10 * 60]
+        assert nope.toggle(MON_2100, now_ts=start)
+        assert nope.is_active(MON_2100, now_ts=start)
 
 
 class TestSchedules:
