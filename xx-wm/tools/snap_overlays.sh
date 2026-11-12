@@ -1,6 +1,6 @@
 #!/bin/sh
-# Render the shell overlay surfaces (recents, shade, call UI, HUD, power
-# menu, banner, back arrow) for every theme.
+# Render the shell overlay surfaces (recents, the shade in four states,
+# call UI, HUD, power menu, banner, back arrow) for every theme.
 #   xx-wm/tools/snap_overlays.sh OUTDIR [theme ...]
 # Sibling of snap_shell.sh (part 1): same seeded temp HOME, first boot
 # done, same hermetic Broadway rig. Full-screen surfaces must be exactly
@@ -93,8 +93,11 @@ GLib.timeout_add(500, lambda: (sw.refresh(
 win.set_visible(False)
 EOF
 
-nav shade <<EOF
-from gi.repository import Gtk
+# Shade states. SHADE_OPEN shows the sheet frozen open; SHADE_SEED
+# re-applies the staged tile states (and a brightness row: the rig has
+# no backlight node, a phone does) after the shell's own async state
+# refresh has run, so the render shows the designed state.
+SHADE_OPEN="from gi.repository import GLib, Gtk
 $SIZE360
 # Headless only: freeze the slide BEFORE it starts (setting the
 # transition type mid-flight can strand the panel off-screen and the
@@ -107,17 +110,62 @@ sh.unfullscreen()
 sh.set_decorated(False)
 sh.set_default_size(360, 720)
 sh.set_size_request(360, 720)
-sh.add_notification(21, 'Signal', 'Dinner at 7?', 'Running late, order without me')
-sh.add_notification(22, 'Bank', 'Card charged', 'Coffee Bar \$4.20')
-qa = sh.quick_actions
-qa._apply_tile_state('wifi', True, 'HomeNet')
-qa._apply_tile_state('bt', True, 'Pixel 8')
-sh.media_card._on_snapshot(PlayerSnapshot(
+qa = sh.quick_actions"
+
+SHADE_SEED="def _seed():
+    qa._apply_tile_state('wifi', True, 'HomeNet')
+    qa._apply_tile_state('bt', True, 'Pixel 8')
+    qa._apply_tile_state('data', False)
+    qa._apply_tile_state('airplane', False)
+    qa._bright_row.set_visible(True)
+    qa._bright_slider.set_value(72)
+    qa._vol_slider.set_value(40)
+    return False
+_seed()
+GLib.timeout_add(500, _seed)"
+
+SHADE_MEDIA="sh.media_card._on_snapshot(PlayerSnapshot(
     bus_name='org.mpris.MediaPlayer2.vlc', identity='VLC',
     desktop_entry='vlc', status='Playing', title='Night Owl',
     artist='Galimatias', album='', can_go_next=True,
     can_go_previous=True, can_play=True, can_pause=True,
-    length_us=240000000, position_us=90000000))
+    length_us=240000000, position_us=90000000))"
+
+nav shade <<EOF
+$SHADE_OPEN
+sh.add_notification(21, 'Signal', 'Dinner at 7?', 'Running late, order without me')
+sh.add_notification(22, 'Bank', 'Card charged', 'Coffee Bar \$4.20')
+$SHADE_MEDIA
+$SHADE_SEED
+win.set_visible(False)
+EOF
+
+# Tier 2 open: every tile, both sliders, one notification.
+nav shade-expanded <<EOF
+$SHADE_OPEN
+sh.add_notification(31, 'Calendar', 'Standup in 10 min', 'Room 4 · video link in the invite')
+sh._toggle_expand(None)
+$SHADE_SEED
+win.set_visible(False)
+EOF
+
+# Nothing to show: no player, no notifications (the section hides).
+nav shade-empty <<EOF
+$SHADE_OPEN
+$SHADE_SEED
+win.set_visible(False)
+EOF
+
+# Calendar open over a long, marked-up and grouped notification list.
+nav shade-long <<EOF
+$SHADE_OPEN
+sh.add_notification(41, 'Mail', 'Quarterly report', 'Draft attached.')
+sh.add_notification(42, 'Signal', 'Mara', 'see you there')
+sh.add_notification(43, 'Signal', 'Dez', 'Running late, order without me and save me a seat by the window if you can, the <b>blue</b> table near the back')
+sh.add_notification(44, 'Updates', 'XX apps updated', 'xx-phone, xx-contacts and xx-weather were updated to the latest versions; restart them to finish. This body is long on purpose so the clamp shows: it goes on, and on, and on past four lines of text at this width.')
+$SHADE_MEDIA
+sh._toggle_calendar()
+$SHADE_SEED
 win.set_visible(False)
 EOF
 
@@ -190,8 +238,18 @@ EOF
 
 # shot -> minimum expected size (WxH). Full-screen surfaces must be exactly
 # the snap size; overlay pills just need a sane non-empty window.
-SHOTS="recents-empty:$SIZE recents-cards:$SIZE shade:$SIZE call-incoming:$SIZE call-active:$SIZE power:$SIZE hud-volume:100x40 banner:200x60 back-arrow:40x40"
+SHOTS="recents-empty:$SIZE recents-cards:$SIZE shade:$SIZE shade-expanded:$SIZE shade-empty:$SIZE shade-long:$SIZE call-incoming:$SIZE call-active:$SIZE power:$SIZE hud-volume:100x40 banner:200x60 back-arrow:40x40"
 RECENTS_SLOW="recents-empty recents-cards"
+# SNAP_OVERLAYS_ONLY="shade shade-long" renders just those shots.
+if [ -n "${SNAP_OVERLAYS_ONLY:-}" ]; then
+    _only=""
+    for spec in $SHOTS; do
+        case " $SNAP_OVERLAYS_ONLY " in
+            *" ${spec%%:*} "*) _only="$_only $spec" ;;
+        esac
+    done
+    SHOTS=$_only
+fi
 
 run_one() {
     # $1 = home, $2 = out png, $3 = nav file, $4 = expected WxH,

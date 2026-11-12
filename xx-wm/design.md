@@ -113,10 +113,13 @@ lock screen (6-digit PIN, fingerprint when hardware supports), notification shad
 
 ### Notification shade & quick settings
 
-- **Header**: date + time on the left; tapping it expands an inline text-first month calendar (no events — just the month). A **Settings** entry on the right opens the Settings page and collapses the shade.
-- **Tiles**: WiFi, Bluetooth, Data, Airplane always visible; Torch, DnD, Focus, Auto-brightness, Location, Hotspot in the expanded tier. Hardware-gated tiles stay hidden until the device supports them.
-- **Brightness and volume sliders** always visible under the tiles (not gated on expand).
-- Notification list below: swipe to dismiss, clear all.
+- **One full-height sheet** on the theme's page color: everything below the content is the same sheet (no dim over the app), with a grab handle at the bottom edge. A tap below the content, a swipe up anywhere, Escape or back closes it.
+- **Header**: time over a caps date line on the left; tapping it expands an inline text-first month calendar (no events — just the month). A caps **SETTINGS** text action on the date line, right, opens the Settings page and collapses the shade. No power button: the power menu lives on the hardware key's long-press.
+- **Now playing** (only while a player exists): an outline card, title and source on the left, previous / play-pause / next glyph keys on the right (play-pause the one inverted key), a 2 px progress line under it.
+- **Tiles**: square-ish outline chips (8 px radius), inverted while on; the state line carries the real state (Wi-Fi network, Bluetooth device) when there is one. WiFi, Bluetooth, Data, Airplane always visible; Torch, DnD, Focus, Auto-brightness, Location, Hotspot in the expanded tier, opened by a quiet chevron centered under the tiles (no caption). Hardware-gated tiles stay hidden until the device supports them.
+- **Brightness and volume sliders** always visible under the tiles (not gated on expand): flat rows of glyph, 2 px track with a bar thumb, tabular value. No brightness HUD.
+- Notification list below, flat on the sheet like an inbox (hairlines between rows; title up to two lines, body up to four): swipe to dismiss, clear all. With nothing to show, the whole section is hidden.
+- One radius (8 px) and one 20 px gutter across header, media, tiles, sliders and notifications.
 
 ### Do Not Disturb
 
@@ -132,7 +135,7 @@ The in-shell Settings page holds system sections — the things a config file ca
 
 Theme presets are also offered as a dedicated Appearance surface on the Settings page so they can be changed without a keyboard.
 
-The page opens on a **category menu** (Android Settings style): Network & internet, Connected devices, Display & appearance, Home & launcher, Sound, Battery, Apps, Privacy & security, Storage & backup, System — each row with a live one-line summary, each opening a subpage with a back chevron (back returns to the menu, then to wherever Settings was opened from; `settings.open:<section>` deep links land on the subpage scrolled to that section). Every subpage uses one row grammar (`settings_ui.py`): caps caption, rounded card of rows with hairlines, title + muted status subtitle + one trailing control, at most one muted footnote; typed values open a sheet instead of sitting inline. Row titles 18 px, subtitles 14 px, captions 12 px (scaled by text size).
+The page opens on a **category menu** (Android Settings style): Network & internet, Connected devices, Display & appearance, Home & launcher, Sound, Battery, Apps, Privacy & security, Storage & backup, System — each row with a live one-line summary, each opening a subpage with a back chevron (back returns to the menu, then to wherever Settings was opened from; `settings.open:<section>` deep links land on the subpage scrolled to that section). Every subpage uses one row grammar (`settings_ui.py`), flat on the page like the Android xx-* apps' settings: caps caption, rows split by 1 px hairlines (none after the last), title + muted status subtitle + one trailing control (switch, thin muted chevron, or caps action), at most one muted footnote; typed values open a sheet instead of sitting inline; a continuous value is a slider row (title and tabular value on one line, a 2 px track with a bar thumb under them). The category menu is one flat list. Row titles are sentence case everywhere, 18 px; subtitles 14 px, captions 12 px (scaled by text size). A feature that is not on the phone has no row, and a reading that is unknown has no row.
 
 ## Non-goals
 
