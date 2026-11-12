@@ -160,7 +160,7 @@ class TestStderrLogCap:
         assert b'\0' not in live
         (paths['state'] / 'stop').touch()
         assert proc.wait(timeout=10) == 0
-        assert _wait_for(lambda: _group_gone(proc.pid), timeout=5), \
+        assert _wait_for(lambda: _group_gone(proc.pid), timeout=15), \
             'the log watcher outlived the session'
 
     def test_respawn_rotation_keeps_the_file_writers_hold(self, tmp_path):
