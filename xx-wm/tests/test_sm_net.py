@@ -1502,12 +1502,36 @@ class TestBtSelectedMenu:
         page, win = self._page(fake_gi)
         monkeypatch.setattr(
             system_settings, 'pair_bt_device',
-            lambda address: (True, 'Paired and connected'))
+            lambda address, ask=None: (True, 'Paired and connected'))
         win._refresh_bluetooth = lambda scan=False: None
         dev = SimpleNamespace(name='Pods', address='AA:BB', paired=False,
                               connected=False)
         page._on_bt_selected(dev)
         assert win._statuses and 'Pairing' in win._statuses[0]
+
+    def test_pairing_questions_need_the_user(self, fake_gi):
+        page, win = self._page(fake_gi)
+        dev = SimpleNamespace(name='Pods', address='AA:BB', paired=False,
+                              connected=False)
+        answers = []
+        page._show_pairing_question(
+            dev, 'RequestConfirmation', '123456',
+            lambda ok, value=None: answers.append((ok, value)))
+        title, choices = win._menus[-1]
+        assert title == 'Pair with Pods? Code 123456'
+        assert answers == []
+        dict(choices)['Cancel']()
+        assert answers == [(False, None)]
+        page._show_pairing_question(
+            dev, 'RequestPasskey', '',
+            lambda ok, value=None: answers.append((ok, value)))
+        (args, _kw), = win._entries
+        args[-1]('12ab')
+        args[-1]('0042')
+        assert answers[1:] == [(False, None), (True, 42)]
+        page._show_pairing_question(dev, 'DisplayPasskey', '000042',
+                                    lambda ok, value=None: None)
+        assert win._statuses[-1] == 'Type 000042 on Pods'
 
     def test_paired_row_offers_menu(self, fake_gi):
         page, win = self._page(fake_gi)

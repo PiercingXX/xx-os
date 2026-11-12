@@ -2016,7 +2016,9 @@ class SettingsPage:
         if not dev.paired:
             win._show_status(f'Pairing {dev.name}…')
             win._run_bg(
-                lambda: system_settings.pair_bt_device(dev.address),
+                lambda: system_settings.pair_bt_device(
+                    dev.address,
+                    ask=lambda *args: self._ask_pairing(dev, *args)),
                 lambda result: (win._show_status(
                     result[1] if result else 'Bluetooth error.'),
                     win._refresh_bluetooth()),
@@ -2029,6 +2031,47 @@ class SettingsPage:
             [(link, lambda: self._on_bt_link(dev)),
              ('Forget', lambda: self._forget_bt(dev)),
              ('Rename', lambda: self._on_bt_rename(dev))])
+
+    def _ask_pairing(self, dev, method: str, _device: str, detail: str,
+                     reply) -> None:
+        """The pairing agent's question, asked on the main loop: a code
+        to compare, a yes/no, or a PIN to type. Nothing pairs unless the
+        user says so here."""
+        from gi.repository import GLib
+
+        def _show() -> bool:
+            self._show_pairing_question(dev, method, detail, reply)
+            return False
+
+        GLib.idle_add(_show)
+
+    def _show_pairing_question(self, dev, method: str, detail: str,
+                               reply) -> None:
+        win = self._win
+        name = dev.name or dev.address
+        anchor = getattr(win, '_bt_list_box', None)
+        if method in ('DisplayPinCode', 'DisplayPasskey'):
+            win._show_status(f'Type {detail} on {name}')
+            return
+        if method in ('RequestPinCode', 'RequestPasskey'):
+            numeric = method == 'RequestPasskey'
+
+            def _entered(text: str) -> None:
+                text = (text or '').strip()
+                if not text or (numeric and not text.isdigit()):
+                    reply(False)
+                    return
+                reply(True, int(text) if numeric else text)
+
+            win.item_actions._show_entry_dialog(
+                anchor, f'PIN for {name}', '', 'Pair', _entered)
+            return
+        title = f'Pair with {name}?'
+        if detail:
+            title = f'Pair with {name}? Code {detail}'
+        win.item_actions._show_action_menu(
+            anchor, title,
+            [('Pair', lambda: reply(True)), ('Cancel', lambda: reply(False))])
 
     def _on_bt_link(self, dev) -> None:
         import system_settings

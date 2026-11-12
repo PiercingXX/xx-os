@@ -752,7 +752,11 @@ _DEVICE_IFACE = 'org.bluez.Device1'
 _AGENT_IFACE = 'org.bluez.Agent1'
 _AGENT_MGR = 'org.bluez.AgentManager1'
 _AGENT_PATH = '/org/xxwm/Agent'
-_AGENT_CAPABILITY = 'NoInputNoOutput'
+_AGENT_CAPABILITY = 'DisplayYesNo'
+_BLUEZ_REJECTED = 'org.bluez.Error.Rejected'
+# Agent requests that need the user's answer before BlueZ goes on.
+PAIRING_QUESTIONS = ('RequestConfirmation', 'RequestAuthorization',
+                     'RequestPinCode', 'RequestPasskey')
 
 _AGENT_XML = (
     '<node><interface name="org.bluez.Agent1">'
@@ -855,36 +859,100 @@ def _ensure_adapter_powered(bus, adapter: str) -> None:
         pass
 
 
-def _on_agent_method(_conn, _sender, _path, _iface, method: str,
-                     _params, invocation) -> None:
-    """NoInputNoOutput agent: confirm everything, display nothing."""
-    from gi.repository import GLib
-    try:
-        if method == 'RequestPinCode':
-            invocation.return_value(GLib.Variant('(s)', ('',)))
-        elif method == 'RequestPasskey':
-            invocation.return_value(GLib.Variant('(u)', (0,)))
-        else:
-            invocation.return_value(None)
-    except Exception as error:
-        with contextlib.suppress(Exception):
-            invocation.return_error_literal(0, 'Rejected',
-                                            getattr(error, 'message', None)
-                                            or str(error))
+class PairingAgent:
+    """org.bluez.Agent1 for one pairing the user started from Settings.
+
+    Only requests about ``device`` (the object path being paired) are
+    considered; anything about another device is rejected. Each request
+    that needs a decision goes to ``ask(method, device, detail, reply)``
+    and is answered when ``reply(ok, value=None)`` is called; without an
+    ``ask`` every request is rejected. Display requests pass their code to
+    ``ask`` and are acknowledged at once. Gio runs ``handle`` on the main
+    loop (the agent is registered from a worker with no thread-default
+    context), so ``ask`` may show a menu and reply later."""
+
+    def __init__(self, device: str, ask=None) -> None:
+        self.device = device
+        self.ask = ask
+
+    def handle(self, _conn, _sender, _path, _iface, method: str,
+               params, invocation) -> None:
+        from gi.repository import GLib
+
+        def _reject() -> None:
+            with contextlib.suppress(Exception):
+                invocation.return_dbus_error(_BLUEZ_REJECTED,
+                                             'Rejected by the user')
+
+        if method in ('Release', 'Cancel'):
+            with contextlib.suppress(Exception):
+                invocation.return_value(None)
+            return
+        try:
+            args = params.unpack() if params is not None else ()
+        except Exception:
+            args = ()
+        device = str(args[0]) if args else ''
+        if device != self.device or self.ask is None:
+            _reject()
+            return
+        if method in ('DisplayPinCode', 'DisplayPasskey'):
+            code = (str(args[1]) if method == 'DisplayPinCode'
+                    else '%06d' % int(args[1]))
+            with contextlib.suppress(Exception):
+                self.ask(method, device, code, lambda ok, value=None: None)
+            with contextlib.suppress(Exception):
+                invocation.return_value(None)
+            return
+        if method == 'AuthorizeService':
+            # The device the user is pairing asks to use a profile.
+            with contextlib.suppress(Exception):
+                invocation.return_value(None)
+            return
+        if method not in PAIRING_QUESTIONS:
+            _reject()
+            return
+        replied: list = []
+
+        def _reply(ok: bool, value=None) -> None:
+            if replied:
+                return
+            replied.append(True)
+            if not ok:
+                _reject()
+                return
+            try:
+                if method == 'RequestPinCode':
+                    invocation.return_value(GLib.Variant('(s)', (str(value),)))
+                elif method == 'RequestPasskey':
+                    invocation.return_value(GLib.Variant('(u)', (int(value),)))
+                else:
+                    invocation.return_value(None)
+            except Exception:
+                _reject()
+
+        detail = ('%06d' % int(args[1])
+                  if method == 'RequestConfirmation' else '')
+        try:
+            self.ask(method, device, detail, _reply)
+        except Exception:
+            _reply(False)
 
 
-def _register_agent(bus, capability: str = _AGENT_CAPABILITY):
-    """Export the pairing agent and make it the default. Returns the
-    registration id, or None when BlueZ refused (pairing still attempted)."""
+def _register_agent(bus, capability: str = _AGENT_CAPABILITY,
+                    handler=None):
+    """Export the pairing agent for this connection's own Pair call.
+    It is NOT made the default agent, so pairing requests that other
+    devices start never reach it. Returns the registration id, or None
+    when BlueZ refused (pairing still attempted)."""
     from gi.repository import Gio, GLib
+    if handler is None:
+        handler = PairingAgent('').handle
     try:
         iface = Gio.DBusNodeInfo.new_for_xml(_AGENT_XML).interfaces[0]
-        reg_id = bus.register_object(_AGENT_PATH, iface, _on_agent_method)
+        reg_id = bus.register_object(_AGENT_PATH, iface, handler)
         bus.call_sync(_BLUEZ, '/org/bluez', _AGENT_MGR, 'RegisterAgent',
                       GLib.Variant('(os)', (_AGENT_PATH, capability)),
-                      None, Gio.DBusCallFlags.NONE, 5000, None)
-        bus.call_sync(_BLUEZ, '/org/bluez', _AGENT_MGR, 'RequestDefaultAgent',
-                      GLib.Variant('(o)', (_AGENT_PATH,)),
                       None, Gio.DBusCallFlags.NONE, 5000, None)
         return reg_id
     except Exception:
@@ -961,9 +1029,10 @@ def _stop_bt_discovery(adapter: str | None = None) -> bool:
 
 def pair_bt_device(address: str,
                    agent_capability: str = _AGENT_CAPABILITY,
-                   ) -> tuple[bool, str]:
-    """Pair, trust, then connect. The agent is registered only for the
-    duration of the pairing. Device-gated for real verification."""
+                   ask=None) -> tuple[bool, str]:
+    """Pair, trust, then connect. The agent (see PairingAgent; ``ask``
+    answers its questions) is registered only for the duration of the
+    pairing. Device-gated for real verification."""
     try:
         bus = _bluez_bus()
     except Exception as error:
@@ -973,12 +1042,14 @@ def pair_bt_device(address: str,
         return False, 'No Bluetooth adapter found'
     _ensure_adapter_powered(bus, adapter)
     path = _device_path(bus, adapter, address)
-    reg_id = _register_agent(bus, agent_capability)
+    reg_id = _register_agent(bus, agent_capability,
+                             PairingAgent(path, ask).handle)
     try:
         from gi.repository import Gio
         try:
+            # Long enough for the user to read the code and answer.
             bus.call_sync(_BLUEZ, path, _DEVICE_IFACE, 'Pair',
-                          None, None, Gio.DBusCallFlags.NONE, 30000, None)
+                          None, None, Gio.DBusCallFlags.NONE, 60000, None)
         except Exception as error:
             message = getattr(error, 'message', None) or str(error)
             if 'AlreadyExists' in message:

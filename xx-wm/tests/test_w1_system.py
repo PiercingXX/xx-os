@@ -251,9 +251,24 @@ class TestPairingAgent:
         reg_calls = [call for call in bus.calls if call[3] == 'RegisterAgent']
         assert len(reg_calls) == 1
         assert reg_calls[0][4].unpack() == (
-            system_settings._AGENT_PATH, 'NoInputNoOutput')
+            system_settings._AGENT_PATH, 'DisplayYesNo')
         assert bus.unregistered == [7]
         assert 'UnregisterAgent' in bus.methods()
+
+    def test_agent_is_never_the_default_agent(self, monkeypatch):
+        bus = _fake_bluez(monkeypatch, FakeBluez())
+        system_settings.pair_bt_device(FakeBluez.ADDRESS)
+        assert 'RequestDefaultAgent' not in bus.methods()
+
+    def test_handler_is_scoped_to_the_paired_device(self, monkeypatch):
+        bus = _fake_bluez(monkeypatch, FakeBluez())
+        handlers = []
+        bus.register_object = lambda path, iface, handler: (
+            handlers.append(handler), 7)[1]
+        system_settings.pair_bt_device(FakeBluez.ADDRESS)
+        agent = handlers[0].__self__
+        assert agent.device == FakeBluez.DEVICE
+        assert agent.ask is None
 
     def test_trusted_set_between_pair_and_connect(self, monkeypatch):
         bus = _fake_bluez(monkeypatch, FakeBluez())
@@ -625,3 +640,92 @@ class TestWindowWiring:
     def test_no_hardcoded_hci0_left(self):
         assert '/org/bluez/hci0' not in SRC.joinpath(
             'system_settings.py').read_text()
+
+
+class _AgentInvocation:
+    def __init__(self):
+        self.replies = []
+
+    def return_value(self, value):
+        assert not self.replies, 'second reply'
+        self.replies.append(('ok', value.unpack() if value is not None
+                             else None))
+
+    def return_dbus_error(self, name, message):
+        assert not self.replies, 'second reply'
+        self.replies.append(('error', name))
+
+
+def _agent_call(agent, method, *args):
+    from gi.repository import GLib
+    sigs = {'RequestConfirmation': '(ou)', 'RequestAuthorization': '(o)',
+            'RequestPinCode': '(o)', 'RequestPasskey': '(o)',
+            'DisplayPasskey': '(ouq)', 'AuthorizeService': '(os)'}
+    params = GLib.Variant(sigs[method], args)
+    inv = _AgentInvocation()
+    agent.handle(None, ':1.5', system_settings._AGENT_PATH,
+                 'org.bluez.Agent1', method, params, inv)
+    return inv
+
+
+class TestPairingAgentAsks:
+    DEVICE = FakeBluez.DEVICE
+    OTHER = '/org/bluez/hci1/dev_11_22_33_44_55_66'
+
+    def test_no_ask_rejects_everything(self):
+        agent = system_settings.PairingAgent(self.DEVICE)
+        for method, args in (('RequestConfirmation', (self.DEVICE, 123456)),
+                             ('RequestAuthorization', (self.DEVICE,)),
+                             ('RequestPinCode', (self.DEVICE,))):
+            inv = _agent_call(agent, method, *args)
+            assert inv.replies == [('error', 'org.bluez.Error.Rejected')]
+
+    def test_other_devices_are_rejected_without_asking(self):
+        asked = []
+        agent = system_settings.PairingAgent(
+            self.DEVICE, ask=lambda *a: asked.append(a))
+        inv = _agent_call(agent, 'RequestConfirmation', self.OTHER, 1)
+        assert inv.replies == [('error', 'org.bluez.Error.Rejected')]
+        inv = _agent_call(agent, 'AuthorizeService', self.OTHER, 'x')
+        assert inv.replies == [('error', 'org.bluez.Error.Rejected')]
+        assert asked == []
+
+    def test_confirmation_waits_for_the_user(self):
+        asked = []
+        agent = system_settings.PairingAgent(
+            self.DEVICE, ask=lambda *a: asked.append(a))
+        inv = _agent_call(agent, 'RequestConfirmation', self.DEVICE, 4321)
+        assert inv.replies == []
+        method, device, detail, reply = asked[0]
+        assert (method, device, detail) == (
+            'RequestConfirmation', self.DEVICE, '004321')
+        reply(True)
+        reply(False)
+        assert inv.replies == [('ok', None)]
+
+    def test_declined_is_rejected(self):
+        asked = []
+        agent = system_settings.PairingAgent(
+            self.DEVICE, ask=lambda *a: asked.append(a))
+        inv = _agent_call(agent, 'RequestAuthorization', self.DEVICE)
+        asked[0][3](False)
+        assert inv.replies == [('error', 'org.bluez.Error.Rejected')]
+
+    def test_pin_and_passkey_come_from_the_user(self):
+        asked = []
+        agent = system_settings.PairingAgent(
+            self.DEVICE, ask=lambda *a: asked.append(a))
+        inv = _agent_call(agent, 'RequestPinCode', self.DEVICE)
+        asked[-1][3](True, '0000')
+        assert inv.replies == [('ok', ('0000',))]
+        inv = _agent_call(agent, 'RequestPasskey', self.DEVICE)
+        asked[-1][3](True, 12)
+        assert inv.replies == [('ok', (12,))]
+
+    def test_display_passkey_is_shown_and_acknowledged(self):
+        asked = []
+        agent = system_settings.PairingAgent(
+            self.DEVICE, ask=lambda *a: asked.append(a))
+        inv = _agent_call(agent, 'DisplayPasskey', self.DEVICE, 42, 0)
+        assert inv.replies == [('ok', None)]
+        assert asked[0][:3] == ('DisplayPasskey', self.DEVICE, '000042')
