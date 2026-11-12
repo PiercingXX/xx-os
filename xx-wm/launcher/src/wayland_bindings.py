@@ -91,6 +91,13 @@ _SCANNER_TIMEOUT_SECONDS = 180
 _GENERATE_LOCK = threading.Lock()
 _COMPLETE_MARKER = '.complete'
 
+# Every protocol set imports under the one PROTO_PACKAGE_NAME, so loading
+# swaps sys.modules entries. The shell's workers load at the same time at
+# startup; unserialized, one swapped the package out under another's
+# import and that set came back None (FLX1s: output power, ~1 in 3 loads
+# in a five-thread stress run).
+_LOAD_LOCK = threading.RLock()
+
 _logged_once: set[str] = set()
 
 
@@ -287,9 +294,10 @@ def _ensure_packages_importable(package_dir: Path) -> None:
 
 
 def _drop_cached_modules(package_name: str) -> None:
-    for name in [n for n in sys.modules
-                 if n == package_name or n.startswith(package_name + '.')]:
-        sys.modules.pop(name, None)
+    with _LOAD_LOCK:
+        for name in [n for n in sys.modules
+                     if n == package_name or n.startswith(package_name + '.')]:
+            sys.modules.pop(name, None)
 
 
 def _install_package(package_dir: Path) -> str:
@@ -338,6 +346,12 @@ def load_classes_from(
     package_dir = Path(package_dir)
     if not package_dir.is_dir():
         return None
+    with _LOAD_LOCK:
+        return _load_classes_locked(package_dir, wanted)
+
+
+def _load_classes_locked(package_dir: Path,
+                         wanted: tuple[str, ...]) -> dict[str, type] | None:
     try:
         package_name = _install_package(package_dir)
         py_files = sorted(package_dir.rglob('*.py'))

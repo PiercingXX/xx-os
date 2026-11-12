@@ -52,3 +52,41 @@ def test_failed_scanner_leaves_no_half_written_cache(tmp_path, monkeypatch):
         wb.generate_protocol_bindings(target, [base, other])
     assert not target.exists()
     assert not [p for p in target.parent.iterdir() if '.tmp-' in p.name]
+
+
+def test_concurrent_loads_of_different_sets_all_succeed(tmp_path):
+    """Every set imports under one package name; the shell's workers load
+    theirs at the same time at startup. Unserialized, one swapped the
+    package out under another's import and that set came back None (the
+    FLX1s lost output power that way)."""
+    import sys
+    import wayland_bindings as wb
+    sets = []
+    for i in range(5):
+        pkg = tmp_path / f'set{i}' / 'xx_wm_race_proto'
+        (pkg / 'proto').mkdir(parents=True)
+        (pkg / '__init__.py').write_text('')
+        (pkg / 'proto' / '__init__.py').write_text('')
+        (pkg / 'proto' / 'mod.py').write_text(
+            f'import time\ntime.sleep(0.01)\nclass Set{i}:\n    pass\n')
+        sets.append((pkg, (f'Set{i}',)))
+    results = {}
+
+    def load(index):
+        pkg, names = sets[index]
+        results[index] = wb.load_classes_from(pkg, names)
+
+    try:
+        for _round in range(10):
+            wb._drop_cached_modules('xx_wm_race_proto')
+            results.clear()
+            threads = [threading.Thread(target=load, args=(i,))
+                       for i in range(len(sets))]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join()
+            assert all(results[i] is not None for i in range(len(sets))), results
+    finally:
+        wb._drop_cached_modules('xx_wm_race_proto')
+        sys.modules.pop('xx_wm_race_proto', None)
