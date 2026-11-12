@@ -92,6 +92,14 @@ pkg_install() {
     elif [ "$PKG" = pacman ]; then
         $SUDO pacman -S --needed --noconfirm "$@" || echo "warn: some packages failed: $*" >&2
     else
+        # Once per run: lists older than the mirror name .debs it has
+        # already dropped, and apt then fails with 404 (the Librem 5's
+        # gir1.2-polkit-1.0 did).
+        if [ "${_APT_LISTS_FRESH:-0}" != 1 ]; then
+            $SUDO apt-get update -qq || \
+                echo "warn: apt-get update failed; installing from the old lists" >&2
+            _APT_LISTS_FRESH=1
+        fi
         $SUDO apt install -y "$@" || echo "warn: some packages failed: $*" >&2
     fi
 }
@@ -170,6 +178,9 @@ install_deps() {
         pkg_install network-manager
         pkg_install brightnessctl
         pkg_install wlsunset
+        # pactl: the shell reads and sets the volume through it, and
+        # Mobian's PipeWire install does not ship it.
+        pkg_install pulseaudio-utils
     fi
     install_portals
     install_media_deps
