@@ -634,7 +634,7 @@ class XXWMApplication(Adw.Application):
         self, notif_id: int, app_name: str, summary: str, body: str,
         desktop_entry: str, hints: dict, actions: list | None = None,
     ) -> None:
-        _log.info('notification %d from %s: %s', notif_id, app_name, summary)
+        _log.info('notification %d from %s', notif_id, app_name)
         if self._shell is None:
             return
         # Standby 60 s exemption: remember which app owns this notification

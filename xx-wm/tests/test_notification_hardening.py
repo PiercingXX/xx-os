@@ -215,5 +215,64 @@ class TestExpiryRemovesRow:
         assert nid not in daemon._notif_hints
 
 
+# -- main.py routing ---------------------------------------------------------
+
+def _app():
+    import main
+    app = main.XXWMApplication()
+    app._maybe_banner = lambda *args, **kwargs: None
+    app._usage_tracker = None
+    return app
+
+
+def _shell(**overrides):
+    import types
+    config = types.SimpleNamespace(
+        is_app_muted=lambda app_id: False, sound_notifications=False)
+    shown: list = []
+    shade = types.SimpleNamespace(
+        add_notification=lambda *args: shown.append(args),
+        dismiss=lambda *args, **kwargs: None)
+    ns = dict(config=config, focus_state=None, dnd_state=None,
+              nope_state=None, _ensure_shade=lambda: shade, _shade=shade,
+              shown=shown)
+    ns.update(overrides)
+    return types.SimpleNamespace(**ns)
+
+
+class _Records:
+    def __init__(self) -> None:
+        import logging
+        self.records: list = []
+        self.handler = logging.Handler(logging.DEBUG)
+        self.handler.emit = self.records.append
+
+    def __enter__(self):
+        import logging
+        self.logger = logging.getLogger('piercing.main')
+        self.level = self.logger.level
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.addHandler(self.handler)
+        return self
+
+    def __exit__(self, *exc):
+        self.logger.removeHandler(self.handler)
+        self.logger.setLevel(self.level)
+
+
+class TestNotificationLogging:
+    def test_log_carries_id_and_app_only(self):
+        app = _app()
+        app._shell = _shell()
+        with _Records() as rec:
+            app._on_notification(
+                7, 'Messages', 'Your code is 482913', 'from the bank',
+                'org.example.Messages', {})
+        text = '\n'.join(r.getMessage() for r in rec.records)
+        assert 'notification 7 from Messages' in text
+        assert '482913' not in text
+        assert 'from the bank' not in text
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
