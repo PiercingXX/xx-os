@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -524,6 +525,15 @@ _FP_MANAGER_PATH = '/net/reactivated/Fprint/Manager'
 _FP_MANAGER_IFACE = 'net.reactivated.Fprint.Manager'
 _FP_DEVICE_IFACE = 'net.reactivated.Fprint.Device'
 _FP_DBUS_TIMEOUT_MS = 5000
+_FP_VERIFY_TIMEOUT_S = 30
+_FP_MATCH_RE = re.compile(r'(?<![\w-])verify-match(?![\w-])')
+
+
+def fp_verify_matched(returncode: int | None, stdout: str) -> bool:
+    """fprintd-verify unlocks only on a clean exit that reports
+    verify-match; verify-no-match, retry prompts, timeouts and a killed
+    process all count as no match."""
+    return returncode == 0 and bool(_FP_MATCH_RE.search(stdout or ''))
 
 
 def _fp_probe_sync() -> bool:
@@ -1644,6 +1654,7 @@ class LockScreen(Gtk.Window):
         if self._lockout_src is not None:
             GLib.source_remove(self._lockout_src)
             self._lockout_src = None
+        LockScreen._stop_fingerprint(self)
         LockScreen._stop_clock_tick(self)
         LockScreen._wipe_pin(self)
         open_shade = self._open_shade_after_unlock
@@ -1675,6 +1686,7 @@ class LockScreen(Gtk.Window):
         self._lockout_until = GLib.get_monotonic_time() + secs * 1_000_000
         self._set_keypad_sensitive(False)
         self._tick_lockout()
+        LockScreen._stop_fingerprint(self)
 
     def _tick_lockout(self) -> bool:
         remaining_us = self._lockout_until - GLib.get_monotonic_time()
@@ -1683,6 +1695,9 @@ class LockScreen(Gtk.Window):
             self._set_keypad_sensitive(True)
             self.lockout_label.set_text('')
             self.error_label.set_text('Enter your PIN')
+            retry = getattr(self, 'try_fingerprint_unlock', None)
+            if retry is not None:
+                retry()
             return GLib.SOURCE_REMOVE
         secs = (remaining_us + 999_999) // 1_000_000
         self.lockout_label.set_text(f'Try again in {secs}s')
@@ -1697,6 +1712,12 @@ class LockScreen(Gtk.Window):
     # Fingerprint unlock
     # ------------------------------------------------------------------
 
+    # One verify process at a time; the generation retires a cancelled
+    # run so its late result can never unlock.
+    _fp_proc: subprocess.Popen | None = None
+    _fp_gen = 0
+    _fp_proc_guard = threading.Lock()
+
     def try_fingerprint_unlock(self) -> None:
         if not self.get_visible():
             return
@@ -1706,34 +1727,75 @@ class LockScreen(Gtk.Window):
             return
         if not self._fp_available():
             return
+        if LockScreen._screen_blanked(self):
+            return
+        with LockScreen._fp_proc_guard:
+            self._fp_gen = getattr(self, '_fp_gen', 0) + 1
+            gen = self._fp_gen
         self._fp_running = True
         self._fp_hint.set_label('Checking fingerprint…')
-        threading.Thread(target=self._fp_thread, daemon=True, name='fp-verify').start()
+        threading.Thread(target=self._fp_thread, args=(gen,), daemon=True,
+                         name='fp-verify').start()
 
-    def _fp_thread(self) -> None:
-        try:
-            r = subprocess.run(
-                ['fprintd-verify'],
-                timeout=10, capture_output=True,
-            )
-            matched = r.returncode == 0
-        except FileNotFoundError:
-            matched = False  # fprintd not installed
-        except Exception:
-            matched = False
-        GLib.idle_add(self._fp_result, matched)
-
-    def _fp_result(self, matched: bool) -> bool:
+    def _stop_fingerprint(self) -> None:
+        with LockScreen._fp_proc_guard:
+            self._fp_gen = getattr(self, '_fp_gen', 0) + 1
+            proc = getattr(self, '_fp_proc', None)
+            self._fp_proc = None
+        was_running = getattr(self, '_fp_running', False)
         self._fp_running = False
-        if matched:
+        if proc is not None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+        if was_running and getattr(self, '_fp_hint', None) is not None:
+            LockScreen._update_fp_hint(self)
+
+    def _fp_thread(self, gen: int = 0) -> None:
+        try:
+            proc = subprocess.Popen(
+                ['fprintd-verify'], stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True)
+        except OSError:
+            GLib.idle_add(self._fp_result, False, gen)
+            return
+        with LockScreen._fp_proc_guard:
+            current = gen == getattr(self, '_fp_gen', 0)
+            if current:
+                self._fp_proc = proc
+        if not current:
+            proc.terminate()
+        try:
+            out, _err = proc.communicate(timeout=_FP_VERIFY_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            out = ''
+        except Exception:
+            out = ''
+        with LockScreen._fp_proc_guard:
+            if getattr(self, '_fp_proc', None) is proc:
+                self._fp_proc = None
+        GLib.idle_add(self._fp_result,
+                      fp_verify_matched(proc.returncode, out), gen)
+
+    def _fp_result(self, matched: bool, gen: int = 0) -> bool:
+        if gen != getattr(self, '_fp_gen', 0):
+            return GLib.SOURCE_REMOVE
+        self._fp_running = False
+        if (matched and self.get_visible() and self._lockout_src is None
+                and not LockScreen._screen_blanked(self)):
             self._unlock()
         else:
             self._update_fp_hint()
         return GLib.SOURCE_REMOVE
 
     def _update_fp_hint(self) -> None:
+        usable = (self._fp_available()
+                  and getattr(self, '_lockout_src', None) is None)
         self._fp_hint.set_label(
-            'Touch fingerprint sensor to unlock' if self._fp_available() else '')
+            'Touch fingerprint sensor to unlock' if usable else '')
 
     def on_shown(self) -> None:
         """The shell calls this after every present(): refresh the
@@ -1777,7 +1839,8 @@ class LockScreen(Gtk.Window):
             self._update_fp_hint()
             if (usable and self.get_visible() and not self._pin
                     and self._lockout_src is None
-                    and not self._fp_running):
+                    and not self._fp_running
+                    and not LockScreen._screen_blanked(self)):
                 self.try_fingerprint_unlock()
         except Exception:
             pass
@@ -1811,14 +1874,16 @@ class LockScreen(Gtk.Window):
         return bool(getattr(mgr, 'blanked', False))
 
     def on_blank_changed(self, blanked: bool) -> None:
-        """Shell callback for every blank/wake: the clock tick runs only
-        while the lock is visible on a lit screen."""
+        """Shell callback for every blank/wake: fingerprint verify and
+        the clock tick run only while the lock is visible on a lit screen."""
         if blanked:
+            LockScreen._stop_fingerprint(self)
             LockScreen._stop_clock_tick(self)
             return
         if not self.get_visible():
             return
         LockScreen._start_clock_tick(self)
+        self.try_fingerprint_unlock()
 
     def _start_clock_tick(self) -> None:
         if getattr(self, '_clock_src', None) is not None:

@@ -400,15 +400,26 @@ class TestFingerprintVerifyArgv:
     positional (defaulting to the invoking user). '-f <user>' can never match,
     so fingerprint unlock previously always failed."""
 
+    @staticmethod
+    def _proc(out, returncode):
+        proc = types.SimpleNamespace(returncode=None)
+
+        def _communicate(timeout=None):
+            proc.returncode = returncode
+            return out, None
+
+        proc.communicate = _communicate
+        return proc
+
     def test_verify_invocation_is_bare_fprintd_verify(self, monkeypatch):
         lock_screen = _lock_screen_module()
         calls = []
 
-        def _fake_run(cmd, **kwargs):
+        def _fake_popen(cmd, **kwargs):
             calls.append((cmd, kwargs))
-            return types.SimpleNamespace(returncode=0)
+            return self._proc('Verify result: verify-match (done)\n', 0)
 
-        monkeypatch.setattr(lock_screen.subprocess, 'run', _fake_run)
+        monkeypatch.setattr(lock_screen.subprocess, 'Popen', _fake_popen)
         idle = []
         monkeypatch.setattr(
             lock_screen.GLib, 'idle_add',
@@ -416,35 +427,35 @@ class TestFingerprintVerifyArgv:
 
         results = []
         lock = types.SimpleNamespace(
-            _fp_running=False,
-            _fp_result=lambda matched: results.append(matched),
+            _fp_running=False, _fp_gen=4,
+            _fp_result=lambda matched, gen: results.append((matched, gen)),
         )
-        lock_screen.LockScreen._fp_thread(lock)
+        lock_screen.LockScreen._fp_thread(lock, 4)
 
         # Exact argv pin, mirroring the nmcli discipline in test_quick_tiles.
         assert [cmd for cmd, _kw in calls] == [['fprintd-verify']]
-        assert calls[0][1] == {'timeout': 10, 'capture_output': True}
 
-        assert idle and idle[0][1] == (True,)
-        idle[0][0](True)
-        assert results == [True]
+        assert idle and idle[0][1] == (True, 4)
+        idle[0][0](*idle[0][1])
+        assert results == [(True, 4)]
 
     def test_verify_failure_still_reports_not_matched(self, monkeypatch):
         lock_screen = _lock_screen_module()
         monkeypatch.setattr(
-            lock_screen.subprocess, 'run',
-            lambda cmd, **k: types.SimpleNamespace(returncode=1))
+            lock_screen.subprocess, 'Popen',
+            lambda cmd, **k: self._proc(
+                'Verify result: verify-no-match (done)\n', 1))
         idle = []
         monkeypatch.setattr(
             lock_screen.GLib, 'idle_add',
             lambda cb, *a: idle.append((cb, a)) or 1)
 
         lock = types.SimpleNamespace(
-            _fp_running=False,
-            _fp_result=lambda matched: None,
+            _fp_running=False, _fp_gen=0,
+            _fp_result=lambda matched, gen: None,
         )
-        lock_screen.LockScreen._fp_thread(lock)
-        assert idle[0][1] == (False,)
+        lock_screen.LockScreen._fp_thread(lock, 0)
+        assert idle[0][1] == (False, 0)
 
 
 def test_revealed_keypad_sits_low_and_clock_clears_cutout(monkeypatch):

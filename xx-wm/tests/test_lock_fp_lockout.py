@@ -262,3 +262,210 @@ class TestLockoutFailsClosed:
             lock._unlock()
         assert lock.unlocked == 1
         assert 'lockout state not cleared' in caplog.text
+
+
+# ---------------------------------------------------------------- fingerprint
+
+class TestFingerprintLifecycle:
+    def test_wake_while_locked_starts_verify(self, glib, threads):
+        lock = _lock()
+        _ls().LockScreen.on_blank_changed(lock, False)
+        assert [t['name'] for t in threads] == ['fp-verify']
+        assert lock._fp_running is True
+
+    def test_wake_with_lock_hidden_starts_nothing(self, glib, threads):
+        lock = _lock()
+        lock.visible = False
+        _ls().LockScreen.on_blank_changed(lock, False)
+        assert threads == []
+
+    def test_probe_done_on_dark_screen_does_not_verify(self, glib, threads):
+        lock = _lock(blanked=True)
+        _ls().LockScreen._fp_probe_done(lock, True)
+        assert threads == []
+        assert lock._fp_running is False
+
+    def test_try_on_dark_screen_does_not_verify(self, glib, threads):
+        lock = _lock(blanked=True)
+        _ls().LockScreen.try_fingerprint_unlock(lock)
+        assert threads == []
+
+    def test_blank_kills_running_verify(self, glib, threads):
+        lock = _lock()
+        proc = _Proc()
+        lock._fp_proc = proc
+        lock._fp_running = True
+        _ls().LockScreen.on_blank_changed(lock, True)
+        assert proc.terminated
+        assert lock._fp_running is False
+
+    def test_unlock_kills_running_verify(self, glib, threads):
+        lock = _lock()
+        proc = _Proc()
+        lock._fp_proc = proc
+        lock._fp_running = True
+        lock._unlock()
+        assert proc.terminated
+        assert lock._fp_running is False
+
+    def test_lockout_kills_running_verify(self, glib, threads, monkeypatch):
+        lock = _lock()
+        proc = _Proc()
+        lock._fp_proc = proc
+        lock._fp_running = True
+        lock._start_lockout(30)
+        assert proc.terminated
+        assert lock._fp_running is False
+        assert lock._fp_hint.text == ''
+
+    def test_lockout_end_restarts_verify(self, glib, threads, monkeypatch):
+        ls = _ls()
+        lock = _lock()
+        now = [0]
+        monkeypatch.setattr(ls.GLib, 'get_monotonic_time', lambda: now[0])
+        lock._start_lockout(30)
+        assert threads == []
+        now[0] = 31 * 1_000_000
+        lock._tick_lockout()
+        assert lock._lockout_src is None
+        assert [t['name'] for t in threads] == ['fp-verify']
+
+    def test_cancelled_run_result_never_unlocks(self, glib, threads):
+        ls = _ls()
+        lock = _lock()
+        ls.LockScreen.try_fingerprint_unlock(lock)
+        (gen,) = threads[0]['args']
+        ls.LockScreen.on_blank_changed(lock, True)
+        lock._fp_result(True, gen)
+        assert lock.unlocked == 0
+
+    def test_current_run_match_unlocks(self, glib, threads):
+        ls = _ls()
+        lock = _lock()
+        ls.LockScreen.try_fingerprint_unlock(lock)
+        (gen,) = threads[0]['args']
+        lock._fp_result(True, gen)
+        assert lock.unlocked == 1
+        assert lock.visible is False
+
+    def test_fingerprint_unlock_mid_typing_clears_buffer(self, glib, threads):
+        ls = _ls()
+        lock = _lock()
+        ls.LockScreen.try_fingerprint_unlock(lock)
+        (gen,) = threads[0]['args']
+        lock._pin = '12'
+        lock.dots_label.set_text('●●')
+        lock._fp_result(True, gen)
+        assert lock._pin == ''
+        assert lock.dots_label.text == ''
+
+
+class TestVerifyMatch:
+    def test_only_verify_match_counts(self):
+        matched = _ls().fp_verify_matched
+        assert matched(0, 'Verify result: verify-match (done)\n')
+        assert not matched(0, 'Verify result: verify-no-match (done)\n')
+        assert not matched(0, '')
+        assert not matched(0, 'Verify result: verify-retry-scan\n')
+        assert not matched(1, 'Verify result: verify-match (done)\n')
+        assert not matched(None, 'verify-match')
+
+    def _run(self, monkeypatch, glib, proc, gen=7):
+        ls = _ls()
+        monkeypatch.setattr(ls.subprocess, 'Popen',
+                            lambda cmd, **kw: proc)
+        lock = _lock()
+        lock._fp_gen = gen
+        ls.LockScreen._fp_thread(lock, gen)
+        assert glib.idle
+        cb, args = glib.idle[-1]
+        return args
+
+    def test_clean_exit_without_match_is_no_match(self, monkeypatch, glib):
+        assert self._run(monkeypatch, glib, _Proc(out='', returncode=0)) \
+            == (False, 7)
+
+    def test_match_line_unlocks(self, monkeypatch, glib):
+        proc = _Proc(out='Verify result: verify-match (done)\n')
+        assert self._run(monkeypatch, glib, proc) == (True, 7)
+
+    def test_timeout_kills_and_is_no_match(self, monkeypatch, glib):
+        proc = _Proc(hang=True)
+        assert self._run(monkeypatch, glib, proc) == (False, 7)
+        assert proc.killed
+
+    def test_argv_is_bare_fprintd_verify(self, monkeypatch, glib):
+        ls = _ls()
+        calls = []
+
+        def _popen(cmd, **kw):
+            calls.append((cmd, kw))
+            return _Proc(out='verify-match')
+
+        monkeypatch.setattr(ls.subprocess, 'Popen', _popen)
+        ls.LockScreen._fp_thread(_lock(), 0)
+        assert [cmd for cmd, _kw in calls] == [['fprintd-verify']]
+        assert calls[0][1]['stdout'] == subprocess.PIPE
+
+    def test_missing_fprintd_is_no_match(self, monkeypatch, glib):
+        ls = _ls()
+
+        def _popen(cmd, **kw):
+            raise FileNotFoundError(cmd[0])
+
+        monkeypatch.setattr(ls.subprocess, 'Popen', _popen)
+        ls.LockScreen._fp_thread(_lock(), 3)
+        assert glib.idle[-1][1] == (False, 3)
+
+
+class TestRealVerifyProcess:
+    """A real child process stands in for fprintd-verify on PATH."""
+
+    @staticmethod
+    def _fake_verify(tmp_path, monkeypatch, body):
+        script = tmp_path / 'fprintd-verify'
+        script.write_text('#!/bin/sh\n' + body + '\n')
+        script.chmod(0o755)
+        monkeypatch.setenv('PATH', f'{tmp_path}:/usr/bin:/bin')
+
+    def test_match_output_reports_match(self, tmp_path, monkeypatch, glib):
+        self._fake_verify(tmp_path, monkeypatch,
+                          'echo "Verify result: verify-match (done)"')
+        lock = _lock()
+        lock._fp_gen = 2
+        _ls().LockScreen._fp_thread(lock, 2)
+        assert glib.idle[-1][1] == (True, 2)
+
+    def test_no_match_exit_zero_reports_no_match(
+            self, tmp_path, monkeypatch, glib):
+        self._fake_verify(tmp_path, monkeypatch,
+                          'echo "Verify result: verify-no-match (done)"')
+        lock = _lock()
+        _ls().LockScreen._fp_thread(lock, 0)
+        assert glib.idle[-1][1] == (False, 0)
+
+    def test_stop_terminates_waiting_verify(self, tmp_path, monkeypatch,
+                                            glib):
+        import threading
+        import time
+        ls = _ls()
+        self._fake_verify(tmp_path, monkeypatch, 'exec sleep 60')
+        lock = _lock()
+        lock._fp_gen = 1
+        lock._fp_running = True
+        worker = threading.Thread(target=ls.LockScreen._fp_thread,
+                                  args=(lock, 1))
+        worker.start()
+        deadline = time.monotonic() + 5
+        while getattr(lock, '_fp_proc', None) is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        proc = lock._fp_proc
+        ls.LockScreen._stop_fingerprint(lock)
+        worker.join(5)
+        assert not worker.is_alive()
+        assert proc.returncode is not None
+        cb, args = glib.idle[-1]
+        assert args == (False, 1)
+        cb(*args)
+        assert lock.unlocked == 0
