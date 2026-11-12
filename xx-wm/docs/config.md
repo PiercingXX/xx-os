@@ -453,14 +453,13 @@ strip is passed through to whatever is under it.
 | `swipe_up_short` | `home` | Bottom strip → `gesture.home`. Verb-rebindable. A quick flick up from the bottom goes home from any screen (including recents). Missing/corrupt JSON uses this mapped default, not `gesture.keyboard`. |
 | `swipe_up_long` | `app_switcher` | Bottom strip → `gesture.switcher`. Verb-rebindable. Swipe up and pause (or release slowly past a quarter of the screen) to open full-screen recents. Swipe down, tap the dim, or back resumes the current app. |
 | `swipe_left_edge` | `back` | lisgd → `gesture.back` on both edges. Verb-rebindable. |
-| `long_press_bottom` | `search` | |
 | `double_tap_home` | `none` | Android "Double Tap to Lock": `lock_screen` or `none` (any older action loads as `none`). The clock keeps its own double-tap-to-lock. |
 | `long_press_home` | `edit` | Long-press on the home background: `edit` opens slot edit mode, `settings` opens Settings, `none` does nothing. |
 | `swipe_left_home` | `none` | Android "Swipe Left App". `none` = no app chosen: the swipe opens the camera. Seeded to `launch:<skippy>` when Skippy is installed. |
 | `swipe_right_home` | `none` | Android "Swipe Right App". `none` = no app chosen: the swipe opens the dialer. Seeded to `camera` on first boot. |
-| `squeeze` | `assistant` | Hardware-gated (Active Edge); needs device support. |
-| `fingerprint_swipe` | `notification_shade` | Hardware-gated; needs device support. |
-| `double_press_power` | `camera` | Hardware-gated; needs device support. |
+
+`long_press_bottom`, `squeeze`, `fingerprint_swipe` and `double_press_power` were
+slots nothing ever fired; older files and backups that carry them load without them.
 
 ## Not in these files
 

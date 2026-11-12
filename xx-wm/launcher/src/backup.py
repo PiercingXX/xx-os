@@ -410,8 +410,11 @@ def validate_backup(payload: dict) -> tuple[bool, str | None]:
         return False, 'gestures must be a dict'
     # gesture_config's own slot/value rule: actions are valid everywhere,
     # IPC verbs (gesture_bindings lisgd slots) only on the system-level slots.
-    from gesture_config import _DEFAULTS, _is_valid_value, is_valid_action
+    from gesture_config import (
+        _DEFAULTS, RETIRED_SLOTS, _is_valid_value, is_valid_action)
     for key, action in gestures.items():
+        if key in RETIRED_SLOTS:
+            continue
         if key not in _DEFAULTS:
             return False, f'unknown gesture: {key}'
         # Older backups may bind double-tap to any action; restore turns
@@ -508,9 +511,11 @@ def restore_backup(config, payload: dict) -> bool:
 
     if 'gestures' in payload:
         try:
-            from gesture_config import GestureConfig
+            from gesture_config import RETIRED_SLOTS, GestureConfig
             gc = GestureConfig()
             for key, action in payload['gestures'].items():
+                if key in RETIRED_SLOTS:
+                    continue
                 if key == 'double_tap_home' and action != 'lock_screen':
                     action = 'none'
                 gc._map[key] = action

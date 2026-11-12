@@ -176,7 +176,16 @@ class TestGestureVerbSlots:
     def test_actions_still_accepted_on_any_slot(self):
         ok, error = validate_backup(self._payload({
             'double_tap_home': 'camera',
-            'squeeze': 'launch:org.some.App.desktop',
+            'swipe_left_home': 'launch:org.some.App.desktop',
+        }))
+        assert ok and error is None
+
+    def test_retired_slots_in_old_backups_are_skipped(self):
+        ok, error = validate_backup(self._payload({
+            'squeeze': 'assistant',
+            'long_press_bottom': 'search',
+            'fingerprint_swipe': 'notification_shade',
+            'double_press_power': 'camera',
         }))
         assert ok and error is None
 

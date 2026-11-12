@@ -195,7 +195,7 @@ class TestRebinding:
 
     def test_non_system_slots_are_ignored(self, tmp_path):
         (tmp_path / 'gestures.json').write_text(
-            '{"squeeze": "gesture.home", "double_tap_home": "gesture.shade"}',
+            '{"swipe_left_home": "gesture.home", "double_tap_home": "gesture.shade"}',
             encoding='utf-8',
         )
         assert generate_bindings('/usr/bin') == DEFAULT_BINDINGS
@@ -213,16 +213,32 @@ class TestGestureConfigVerbValues:
 
     def test_verb_rejected_for_non_lisgd_slot(self):
         with pytest.raises(ValueError):
-            GestureConfig().set('squeeze', 'gesture.home')
+            GestureConfig().set('swipe_left_home', 'gesture.home')
 
     def test_unknown_verb_rejected(self):
         with pytest.raises(ValueError):
             GestureConfig().set('swipe_up_short', 'gesture.explode')
 
     def test_load_ignores_verb_for_non_lisgd_slot(self, tmp_path):
-        (tmp_path / 'gestures.json').write_text('{"squeeze": "gesture.home"}',
-                                                encoding='utf-8')
-        assert GestureConfig().get('squeeze') == 'assistant'
+        (tmp_path / 'gestures.json').write_text(
+            '{"swipe_left_home": "gesture.home"}', encoding='utf-8')
+        assert GestureConfig().get('swipe_left_home') == 'none'
+
+    def test_unfired_slots_are_gone(self, tmp_path):
+        import gesture_config
+        for slot in ('long_press_bottom', 'squeeze', 'fingerprint_swipe',
+                     'double_press_power'):
+            assert slot not in gesture_config._DEFAULTS
+            assert slot not in gesture_config.GESTURE_LABELS
+            with pytest.raises(ValueError):
+                GestureConfig().set(slot, 'camera')
+        assert 'assistant' not in gesture_config.VALID_ACTIONS
+        (tmp_path / 'gestures.json').write_text(
+            '{"squeeze": "assistant", "swipe_right_home": "camera"}',
+            encoding='utf-8')
+        gc = GestureConfig()
+        assert gc.get('swipe_right_home') == 'camera'
+        assert 'squeeze' not in dict(gc.all())
 
 
 class TestLisgdRestart:

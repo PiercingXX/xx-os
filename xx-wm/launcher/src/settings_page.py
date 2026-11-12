@@ -175,7 +175,7 @@ _ACTION_LABELS = {
     'home': 'Home', 'app_switcher': 'App switcher',
     'notification_shade': 'Notification shade', 'back': 'Back',
     'search': 'Search', 'lock_screen': 'Lock screen', 'settings': 'Settings',
-    'camera': 'Camera', 'dialer': 'Dialer', 'assistant': 'Assistant',
+    'camera': 'Camera', 'dialer': 'Dialer',
     'none': 'None',
 }
 

@@ -16,7 +16,6 @@ _DEFAULTS: dict[str, str] = {
     'swipe_up_short':        'home',
     'swipe_up_long':         'app_switcher',
     'swipe_left_edge':       'back',
-    'long_press_bottom':     'search',
     # Android launcher parity: "Double Tap to Lock" is off by default,
     # and an unset home swipe ('none') opens its default app (left:
     # camera, right: dialer — see home_swipe_action).
@@ -24,15 +23,17 @@ _DEFAULTS: dict[str, str] = {
     'long_press_home':       'edit',
     'swipe_left_home':       'none',
     'swipe_right_home':      'none',
-    'squeeze':               'assistant',
-    'fingerprint_swipe':     'notification_shade',
-    'double_press_power':    'camera',
 }
+
+# Slots nothing ever fired (no detector on any device). Old gestures.json
+# files and backups may still carry them; they are dropped silently.
+RETIRED_SLOTS: frozenset[str] = frozenset({
+    'long_press_bottom', 'squeeze', 'fingerprint_swipe', 'double_press_power',
+})
 
 VALID_ACTIONS: frozenset[str] = frozenset({
     'home', 'app_switcher', 'notification_shade', 'back',
-    'search', 'lock_screen', 'settings', 'camera', 'dialer',
-    'assistant', 'none',
+    'search', 'lock_screen', 'settings', 'camera', 'dialer', 'none',
 })
 
 # Slots materialized as system-level lisgd bindings at session start (see
@@ -101,7 +102,6 @@ ACTION_LABELS: dict[str, str] = {
     'settings':            'Settings',
     'camera':              'Camera',
     'dialer':              'Dialer',
-    'assistant':           'Assistant',
     'none':                'Do Nothing',
 }
 
@@ -110,14 +110,10 @@ GESTURE_LABELS: dict[str, str] = {
     'swipe_up_short':       'Short swipe up from bottom',
     'swipe_up_long':        'Long swipe up from bottom',
     'swipe_left_edge':      'Swipe in from right edge',
-    'long_press_bottom':    'Long-press bottom edge',
     'double_tap_home':      'Double-tap home background',
     'long_press_home':      'Long-press home background',
     'swipe_left_home':      'Swipe left on home',
     'swipe_right_home':     'Swipe right on home',
-    'squeeze':              'Squeeze (Active Edge)',
-    'fingerprint_swipe':    'Fingerprint sensor swipe',
-    'double_press_power':   'Double-press power button',
 }
 
 
