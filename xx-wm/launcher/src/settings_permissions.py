@@ -11,6 +11,7 @@ import time
 
 import settings_page
 import settings_ui as ui
+from shell_log import log_exc
 
 PERM_KINDS = (('camera', 'Camera'), ('microphone', 'Microphone'),
               ('location', 'Location'), ('network', 'Network'))
@@ -162,7 +163,7 @@ def set_network_denied(win, app_id: str, denied: bool) -> None:
     try:
         win.config.set_network_denied_apps(kept)
     except Exception:
-        pass
+        log_exc('set_network_denied: config.set_network_denied_apps')
 
 
 def age_text(seen: float, now: float) -> str:
@@ -224,7 +225,7 @@ class PermissionsSection(settings_page._Section):
         try:
             switch.set_active(self._indicators_on(win))
         except Exception:
-            pass
+            log_exc('settings_permissions._sync_indicators: switch.set_active')
         finally:
             win._perm_updating = False
 
@@ -234,7 +235,7 @@ class PermissionsSection(settings_page._Section):
         try:
             win.config.set_privacy_indicators(bool(switch.get_active()))
         except Exception:
-            pass
+            log_exc('_on_indicators_flipped: config.set_privacy_indicators')
 
     def _query_caps(self, win) -> None:
         try:
@@ -282,7 +283,7 @@ class PermissionsSection(settings_page._Section):
             denied = getattr(win.config, 'network_denied_apps', None) or ()
             counts['network'] = len(list(denied))
         except Exception:
-            pass
+            log_exc('settings_permissions._perm_counts: getattr')
         return counts
 
     def _render_recent(self, win, recent, at: float) -> None:

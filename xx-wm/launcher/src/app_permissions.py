@@ -21,7 +21,8 @@ from __future__ import annotations
 import os
 from pathlib import PurePath
 
-from shell_log import get_logger
+from shell_log import get_logger, log_exc
+
 
 _log = get_logger('permissions')
 
@@ -136,8 +137,8 @@ def enforce_network_policy(app_id: str, cgroup_path: str | None,
         return False
     try:
         set_network(cgroup_path, False)
-    except Exception as error:
-        _log.info('network block for %s failed: %s', app_id, error)
+    except Exception:
+        log_exc('app_permissions: network block for %s' % app_id)
         return False
     return True
 
@@ -157,8 +158,8 @@ def default_network_blocker(cgroup_path: str, allowed: bool) -> None:
 
     try:
         helper_client.set_app_network(cgroup_path, bool(allowed), _done)
-    except Exception as error:
-        _log.info('network block for %s failed: %s', cgroup_path, error)
+    except Exception:
+        log_exc('app_permissions: set_app_network')
 
 
 def _glib():

@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from shell_log import log_exc
 
 BUS_NAME = 'io.piercingxx.Captions1'
 OBJECT_PATH = '/io/piercingxx/Captions1'
@@ -113,7 +114,7 @@ def captions_installed() -> bool:
         if shutil.which('xx-captions') is not None:
             return True
     except Exception:
-        pass
+        log_exc('captions.captions_installed: shutil.which')
     try:
         for base in _data_dirs():
             if (base / 'applications' / DESKTOP_ENTRY).is_file():
@@ -121,7 +122,7 @@ def captions_installed() -> bool:
             if (base / 'dbus-1' / 'services' / ACTIVATION_FILE).is_file():
                 return True
     except Exception:
-        pass
+        log_exc('captions.captions_installed: _data_dirs')
     return False
 
 
@@ -272,7 +273,7 @@ class CaptionsController:
             try:
                 self.on_text(str(text), bool(final))
             except Exception:
-                pass
+                log_exc('captions._on_text: on_text')
 
     def _on_properties_changed(self, _conn, _sender, _path, _iface,
                                _signal, params) -> None:
@@ -332,7 +333,7 @@ class CaptionsController:
             if self._launch():
                 self._overlay_started = True
         except Exception:
-            pass
+            log_exc('captions._ensure_overlay: _launch')
 
     def _start_playback(self, generation: int) -> None:
         bus = self._bus
@@ -418,7 +419,7 @@ class CaptionsController:
                 Gio.DBusCallFlags.NO_AUTO_START, 5000, None,
                 lambda conn, result: self._finish_refresh(conn, result))
         except Exception:
-            pass
+            log_exc('captions.refresh: bus.call')
 
     def _finish_refresh(self, conn, result) -> None:
         try:
@@ -445,7 +446,7 @@ class CaptionsController:
         try:
             self._on_change()
         except Exception:
-            pass
+            log_exc('captions._fire: _on_change')
 
     def close(self) -> None:
         bus = self._bus

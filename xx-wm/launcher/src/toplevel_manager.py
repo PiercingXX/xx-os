@@ -24,6 +24,7 @@ import threading
 from dataclasses import dataclass
 
 import wayland_bindings
+from shell_log import log_exc
 
 log = logging.getLogger(__name__)
 
@@ -560,7 +561,7 @@ class WaylandToplevelBackend:
                 if callable(disconnect):
                     disconnect()
             except Exception:
-                pass
+                log_exc('toplevel_manager._teardown: getattr')
             for attr in ('_wakeup_r', '_wakeup_w'):
                 fd = getattr(self, attr)
                 if fd is not None:
@@ -607,7 +608,7 @@ class DeferredWaylandBackend:
                 if callable(shutdown):
                     shutdown()
             except Exception:
-                pass
+                log_exc('toplevel_manager.shutdown: getattr')
 
     def available(self) -> bool:
         with self._lock:
@@ -848,7 +849,7 @@ class ToplevelManager:
                 callback(*args)  # type: ignore[operator]
                 return
         except Exception:
-            pass
+            log_exc('toplevel_manager._marshal_to_main: default().is_owner')
         GLib.idle_add(self._run_once, callback, args)
 
     @staticmethod

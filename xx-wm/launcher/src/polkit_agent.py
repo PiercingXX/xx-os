@@ -30,6 +30,7 @@ import re
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from shell_log import log_exc
 
 OBJECT_PATH = '/org/xxwm/PolkitAgent'
 
@@ -101,7 +102,7 @@ def display_name_for_uid(uid) -> str:
         if name:
             return str(name)
     except Exception:
-        pass
+        log_exc('polkit_agent.display_name_for_uid: pwd.getpwuid')
     return 'user %s' % (uid,)
 
 
@@ -179,7 +180,7 @@ class Pending:
         try:
             self.finish(False)
         except Exception:
-            pass
+            log_exc('polkit_agent.cancel: finish')
 
 
 def _complete_auth(listener, callback, user_data) -> None:
@@ -193,7 +194,7 @@ def _complete_auth(listener, callback, user_data) -> None:
         task.return_boolean(True)
         callback(listener, task, user_data)
     except Exception:
-        pass
+        log_exc('polkit_agent._complete_auth: Task.new')
 
 
 # ------------------------------------------------------------------- dialog
@@ -231,7 +232,7 @@ def build_auth_dialog(action_text: str, user_name: str, on_authenticate,
         attach(entry, on_show=lambda: set_visible(True),
                on_hide=lambda: set_visible(False))
     except Exception:
-        pass
+        log_exc('polkit_agent.build_auth_dialog: attach')
     body.append(entry)
 
     note = widgets.wrap_label('')
@@ -285,7 +286,7 @@ def build_auth_dialog(action_text: str, user_name: str, on_authenticate,
         try:
             window.present()
         except Exception:
-            pass
+            log_exc('polkit_agent._present: window.present')
 
     return SimpleNamespace(window=window, entry=entry, set_note=_set_note,
                            close=_close, present=_present)
@@ -309,7 +310,7 @@ def _on_dialog_authenticate(pending: Pending, secret: str) -> None:
     try:
         session.response(secret)
     except Exception:
-        pass
+        log_exc('polkit_agent: session.response')
 
 
 # ------------------------------------------------------------------ listener
@@ -368,7 +369,7 @@ if _HAVE_AGENT:
                     cancellable.connect(
                         lambda *_a, p=pending: p.cancel('cancelled'))
                 except Exception:
-                    pass
+                    log_exc('do_initiate_authentication: cancellable.connect')
                 if pending.done:
                     return None
             try:
@@ -404,7 +405,7 @@ if _HAVE_AGENT:
                     dialog.set_note(note)
                 dialog.present()
             except Exception:
-                pass
+                log_exc('polkit_agent._on_session_request: meaningful_prompt')
 
         def _on_session_info(self, session, text, pending) -> None:
             if session is not pending.session:
@@ -413,7 +414,7 @@ if _HAVE_AGENT:
                 if pending.dialog is not None:
                     pending.dialog.set_note(str(text or ''))
             except Exception:
-                pass
+                log_exc('polkit_agent._on_session_info: dialog.set_note')
 
         def _on_session_error(self, session, text, pending) -> None:
             if session is not pending.session:
@@ -424,7 +425,7 @@ if _HAVE_AGENT:
                         str(text or 'Authentication failed.'),
                         clear_entry=True)
             except Exception:
-                pass
+                log_exc('polkit_agent._on_session_error: dialog.set_note')
 
         def _retry(self, pending) -> bool:
             """Wrong password: a fresh session on the same cookie, the
@@ -441,7 +442,7 @@ if _HAVE_AGENT:
                                         clear_entry=True)
                 pending.dialog.present()
             except Exception:
-                pass
+                log_exc('polkit_agent._retry: dialog.set_note')
             try:
                 session.initiate()
             except Exception:
@@ -460,7 +461,7 @@ if _HAVE_AGENT:
                         log.info('authentication failed for %s, retrying',
                                  pending.action_id)
                     except Exception:
-                        pass
+                        log_exc('polkit_agent._on_session_completed: log.info')
                 if self._retry(pending):
                     return
             if log is not None:
@@ -469,7 +470,7 @@ if _HAVE_AGENT:
                              'granted' if gained else 'denied',
                              pending.action_id)
                 except Exception:
-                    pass
+                    log_exc('polkit_agent._on_session_completed: log.info')
             dialog, finish = pending.dialog, pending.finish
             pending.dialog = None
             pending.session = None
@@ -482,7 +483,7 @@ if _HAVE_AGENT:
             try:
                 finish(True)
             except Exception:
-                pass
+                log_exc('polkit_agent._on_session_completed: finish')
 
 
 def start_agent():

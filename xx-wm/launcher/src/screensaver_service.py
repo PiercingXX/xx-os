@@ -28,7 +28,7 @@ from __future__ import annotations
 import time
 from typing import Callable, NamedTuple
 
-from shell_log import get_logger
+from shell_log import get_logger, log_exc
 
 _log = get_logger('screensaver')
 
@@ -217,7 +217,7 @@ class ScreenSaverService:
                 from gi.repository import Gio
                 Gio.bus_unown_name(self._name_id)
             except Exception:
-                pass
+                log_exc('screensaver_service.stop: Gio.bus_unown_name')
             self._name_id = 0
         self._unregister()
 
@@ -253,7 +253,7 @@ class ScreenSaverService:
                 invocation.return_dbus_error(
                     'org.freedesktop.DBus.Error.Failed', str(exc))
             except Exception:
-                pass
+                log_exc('_on_method_call: invocation.return_dbus_error')
 
     # -- behaviour (callable without a bus) --------------------------------
 
@@ -347,4 +347,4 @@ class ScreenSaverService:
             from gi.repository import Gio
             Gio.bus_unwatch_name(watch_id)
         except Exception:
-            pass
+            log_exc('screensaver_service._unwatch: Gio.bus_unwatch_name')

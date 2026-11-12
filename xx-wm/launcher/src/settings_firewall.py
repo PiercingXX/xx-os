@@ -33,6 +33,7 @@ from pathlib import Path
 
 import settings_page
 import settings_ui as ui
+from shell_log import log_exc
 
 
 def _ports(*specs) -> tuple:
@@ -385,13 +386,13 @@ class FirewallSection(settings_page._Section):
                 self._status.set_text(subtitle_for_allowed(
                     have, enabled=self._is_on(), backend=backend))
             except Exception:
-                pass
+                log_exc('settings_firewall._show_state: _status.set_text')
         if self._switch is not None:
             self._updating = True
             try:
                 self._switch.set_active(self._is_on())
             except Exception:
-                pass
+                log_exc('settings_firewall._show_state: _switch.set_active')
             finally:
                 self._updating = False
         ui.say(self._note, self._note_text())
@@ -433,7 +434,7 @@ class FirewallSection(settings_page._Section):
                     win._show_status(
                         f'Could not follow features: {detail}')
                 except Exception:
-                    pass
+                    log_exc('settings_firewall._re_done: win._show_status')
 
         try:
             helper_client.set_firewall_enabled(bool(enabled), _done)

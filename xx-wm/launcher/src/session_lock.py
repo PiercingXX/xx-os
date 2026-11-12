@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
+from shell_log import log_exc
 
 log = logging.getLogger('session_lock')
 
@@ -257,7 +258,7 @@ class LockHosted:
                 if self._lock_hosted.can_host_surface():
                     return True
             except Exception:
-                pass
+                log_exc('_enter_lock: _lock_hosted.can_host_surface')
             self._leave_lock()
         host = self._lock_host_target()
         if host is None:

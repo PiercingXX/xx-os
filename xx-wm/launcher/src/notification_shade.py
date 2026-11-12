@@ -27,6 +27,7 @@ from quick_actions import QuickActionsPanel
 from media_controls import MediaCard
 from privacy_monitor import detail_text, format_indicator
 from config import ShellConfig, ThemePreset, same_app_id
+from shell_log import log_exc
 
 
 def notifs_for_app(notifications: object, app_id: str) -> list[int]:
@@ -104,7 +105,7 @@ def _spawn_shade_thread(target: Callable[[], None]):
         try:
             target()
         except Exception:
-            pass
+            log_exc('notification_shade._spawn_shade_thread: target')
         return None
 
 
@@ -120,7 +121,7 @@ def _post_to_main(callback: Callable, *args):
     try:
         idle_add(callback, *args)
     except Exception:
-        pass
+        log_exc('notification_shade._post_to_main: idle_add')
 
 
 # Shell-internal notification ids never came from the daemon (e.g. the
@@ -460,7 +461,7 @@ def _no_ellipsis(label) -> None:
         from gi.repository import Pango
         label.set_ellipsize(Pango.EllipsizeMode.NONE)
     except Exception:
-        pass
+        log_exc('notification_shade._no_ellipsis: label.set_ellipsize')
 
 
 def _clamp_lines(label, lines: int) -> None:
@@ -472,7 +473,7 @@ def _clamp_lines(label, lines: int) -> None:
         label.set_lines(lines)
         label.set_ellipsize(Pango.EllipsizeMode.END)
     except Exception:
-        pass
+        log_exc('notification_shade._clamp_lines: label.set_wrap_mode')
 
 
 def format_shade_date(now: datetime, battery: int | None = None) -> str:
@@ -690,13 +691,13 @@ class NotificationShade(Gtk.Window):
             try:
                 panel.apply_theme(resolved)
             except Exception:
-                pass
+                log_exc('notification_shade.apply_theme: panel.apply_theme')
         card = getattr(self, 'media_card', None)
         if card is not None:
             try:
                 card.apply_theme(resolved)
             except Exception:
-                pass
+                log_exc('notification_shade.apply_theme: card.apply_theme')
 
     def _build_content(self) -> Gtk.Widget:
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -792,7 +793,7 @@ class NotificationShade(Gtk.Window):
                 panel.insert_child_after(self._expand_btn, anchor)
                 expand_placed = True
             except Exception:
-                pass
+                log_exc('_build_content: panel.insert_child_after')
 
         notif_label = widgets.section_label('Notifications')
         notif_label.set_valign(Gtk.Align.CENTER)
@@ -859,12 +860,12 @@ class NotificationShade(Gtk.Window):
             try:
                 media_card.set_margin_top(20)
             except Exception:
-                pass
+                log_exc('_build_content: media_card.set_margin_top')
             root.append(media_card)
         try:
             self.quick_actions.set_margin_top(20)
         except Exception:
-            pass
+            log_exc('_build_content: quick_actions.set_margin_top')
         root.append(self.quick_actions)
         if not expand_placed:
             root.append(self._expand_btn)
@@ -930,7 +931,7 @@ class NotificationShade(Gtk.Window):
                     detail_text(getattr(self, '_privacy_snapshot', None)
                                 or {}))
         except Exception:
-            pass
+            log_exc('_refresh_privacy_indicator: btn.set_label')
 
     def _toggle_privacy_detail(self, _btn: Gtk.Button) -> None:
         """Tap the indicator: reveal which apps hold each kind."""
@@ -942,7 +943,7 @@ class NotificationShade(Gtk.Window):
             self._privacy_revealer.set_reveal_child(
                 not self._privacy_revealer.get_reveal_child())
         except Exception:
-            pass
+            log_exc('notification_shade._toggle_privacy_detail: getattr')
 
     def _on_settings_clicked(self, _btn: Gtk.Button) -> None:
         self._open_settings_section(None)
@@ -964,7 +965,7 @@ class NotificationShade(Gtk.Window):
                 LayerShell.set_keyboard_mode(self, LayerShell.KeyboardMode.NONE)
             self.hide()
         except Exception:
-            pass
+            log_exc('_open_settings_section: GLib.source_remove')
         self.hide_shade()
         callback = self._on_open_settings
         if not callable(callback):
@@ -975,7 +976,7 @@ class NotificationShade(Gtk.Window):
             try:
                 callback()
             except Exception:
-                pass
+                log_exc('notification_shade._open_settings_section: callback')
 
     def _open_uri(self, uri: str) -> None:
         """Open a link from a tile (Tailscale sign-in) in the default
@@ -1071,7 +1072,7 @@ class NotificationShade(Gtk.Window):
             if daemon is not None and daemon.owns_name():
                 return
         except Exception:
-            pass
+            log_exc('notification_shade._on_dbus_closed: daemon.owns_name')
         try:
             notif_id = int(params.unpack()[0])
         except Exception:
@@ -1099,7 +1100,7 @@ class NotificationShade(Gtk.Window):
                     self._external_hint.set_visible(False)
                     return
             except Exception:
-                pass
+                log_exc('_check_external_notif_daemon: daemon.owns_name')
         predicate = getattr(self, '_is_own_daemon', None)
         if predicate is not None:
             try:
@@ -1107,11 +1108,11 @@ class NotificationShade(Gtk.Window):
                     self._external_hint.set_visible(False)
                     return
             except Exception:
-                pass
+                log_exc('_check_external_notif_daemon: predicate')
         try:
             self._spawn_shade_worker(self._probe_external_daemon_in_worker)
         except Exception:
-            pass
+            log_exc('_check_external_notif_daemon: _spawn_shade_worker')
 
     def _probe_external_daemon_in_worker(self) -> None:
         try:
@@ -1142,7 +1143,7 @@ class NotificationShade(Gtk.Window):
                     'org.freedesktop.Notifications owned by an external '
                     'daemon — shade cannot capture notifications')
             except Exception:
-                pass
+                log_exc('_finish_external_probe: get_logger().info')
         return False
 
     def add_notification(
@@ -1229,19 +1230,19 @@ class NotificationShade(Gtk.Window):
             try:
                 on_count(total)
             except Exception:
-                pass
+                log_exc('notification_shade._sync_rows: on_count')
         for widget in getattr(self, '_notif_section', ()):
             try:
                 widget.set_visible(total > 0)
             except Exception:
-                pass
+                log_exc('notification_shade._sync_rows: widget.set_visible')
         count = getattr(self, '_notif_count', None)
         if count is not None:
             try:
                 count.set_text(f'{total:02d}')
                 count.set_visible(total > 0)
             except Exception:
-                pass
+                log_exc('notification_shade._sync_rows: count.set_text')
         rows = self._row_map()
         for group in group_notification_runs(self._notifications):
             for index, notif in enumerate(group):
@@ -1369,7 +1370,7 @@ class NotificationShade(Gtk.Window):
         try:
             self.hide_shade()
         except Exception:
-            pass
+            log_exc('notification_shade._nope_blocks_notif: hide_shade')
         try:
             text = nope.notice_text(
                 notif.app_name or notif.desktop_entry or 'App')
@@ -1387,7 +1388,7 @@ class NotificationShade(Gtk.Window):
             banner.show_notification(
                 999906, 'Nope-Mode', 'Nope.', text, '', [], None)
         except Exception:
-            pass
+            log_exc('_show_nope_banner: banner.show_notification')
 
     def _on_notif_tapped(self, notif: Notification) -> None:
         if self._nope_blocks_notif(notif):
@@ -1410,7 +1411,7 @@ class NotificationShade(Gtk.Window):
             try:
                 daemon.invoke_action(notif.id, action_key)
             except Exception:
-                pass
+                log_exc('_invoke_notif_action: daemon.invoke_action')
         if bool((notif.hints or {}).get('resident', False)):
             self.hide_shade()
             return
@@ -1431,7 +1432,7 @@ class NotificationShade(Gtk.Window):
                 self.hide_shade()
                 return
         except (GLib.Error, Exception):
-            pass
+            log_exc('notification_shade._launch_notif_app: DesktopAppInfo.new')
         # Fallback: gtk-launch
         try:
             subprocess.Popen(['gtk-launch', desktop_entry], close_fds=True)
@@ -1487,7 +1488,7 @@ class NotificationShade(Gtk.Window):
         try:
             self.quick_actions.refresh_states()
         except Exception:
-            pass
+            log_exc('show_shade: quick_actions.refresh_states')
         qa = getattr(self, 'quick_actions', None)
         if qa is not None:
             # Slider reads spawn brightnessctl/pactl: never on the show path.
@@ -1529,7 +1530,7 @@ class NotificationShade(Gtk.Window):
         try:
             self.hide()
         except Exception:
-            pass
+            log_exc('notification_shade._hide_now: hide')
         return False
 
     def clear_all(self) -> None:

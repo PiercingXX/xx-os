@@ -19,6 +19,7 @@ import time
 import urllib.request
 from pathlib import Path
 from typing import Callable
+from shell_log import log_exc
 
 REFRESH_SECONDS = 15 * 60
 # Offline, cached conditions older than this are not shown as current.
@@ -182,7 +183,7 @@ def _geoclue_fix_sync(bus_factory: Callable[[], object] | None = None,
                     flags, timeout, None,
                 )
             except Exception:
-                pass
+                log_exc('weather._geoclue_fix_sync: bus.call_sync')
         if not isinstance(props, dict):
             return None
         lat = float(_variant_value(props.get('Latitude')))

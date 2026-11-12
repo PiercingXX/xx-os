@@ -23,6 +23,7 @@ import logging
 import threading
 
 import wayland_bindings
+from shell_log import log_exc
 
 log = logging.getLogger(__name__)
 
@@ -267,7 +268,7 @@ class OutputPower:
                 from gi.repository import GLib
                 GLib.source_remove(source)
             except Exception:  # noqa: BLE001 - already gone
-                pass
+                log_exc('output_power._mark_dead: GLib.source_remove')
         if was:
             self._schedule_reconnect()
 

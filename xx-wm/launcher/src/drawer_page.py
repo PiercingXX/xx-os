@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from app_index import AppEntry
 
 from app_index import fold_for_search
+from shell_log import log_exc
 
 _WEB_SEARCH_URL = 'https://duckduckgo.com/?q='
 
@@ -170,7 +171,7 @@ def set_row_accessible_label(row, text: str) -> None:
         value.set_string(text)
         row.update_property([Gtk.AccessibleProperty.LABEL], [value])
     except Exception:
-        pass
+        log_exc('drawer_page.set_row_accessible_label: GObject.Value')
 
 
 def decide_drawer_swipe_down(top_edge_origin: bool,
@@ -436,7 +437,7 @@ class DrawerPage:
         try:
             win._sort_btn.set_label(drawer_sort_label(nxt))
         except Exception:
-            pass
+            log_exc('drawer_page._toggle_sort_mode: _sort_btn.set_label')
         win._populate_apps(win.apps_search.get_text())
 
     def _home_slot_app_ids(self) -> set[str]:

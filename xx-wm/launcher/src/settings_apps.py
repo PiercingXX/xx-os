@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import settings_page
 import settings_ui as ui
+from shell_log import log_exc
 
 # Mirror of the helper's protected list for UX pre-checks (the helper
 # enforces it server-side; a test pins both to the same verdicts).
@@ -43,7 +44,7 @@ def _status(win, message: str) -> None:
     try:
         win._show_status(message)
     except Exception:
-        pass
+        log_exc('settings_apps._status: win._show_status')
 
 
 def _display_name(win, entry) -> str:
@@ -241,15 +242,15 @@ def _refresh_apps(win) -> None:
     try:
         win.app_index.refresh()
     except Exception:
-        pass
+        log_exc('settings_apps._refresh_apps: app_index.refresh')
     try:
         win._populate_apps('')
     except Exception:
-        pass
+        log_exc('settings_apps._refresh_apps: win._populate_apps')
     try:
         win._refresh_apps_section()
     except Exception:
-        pass
+        log_exc('settings_apps._refresh_apps: win._refresh_apps_section')
 
 
 # ------------------------------------------------------------------ section

@@ -6,6 +6,7 @@ from __future__ import annotations
 import settings_page
 import settings_ui as ui
 from dock_controller import CONFIG_KEY, MODE_LABELS, MODES, current, mode_of
+from shell_log import log_exc
 
 
 def docking_available() -> bool:
@@ -27,7 +28,7 @@ def choose_mode(win, mode: str) -> None:
     try:
         win.config.set(CONFIG_KEY, mode)
     except Exception:
-        pass
+        log_exc('settings_dock.choose_mode: config.set')
 
 
 class DockSection(settings_page._Section):

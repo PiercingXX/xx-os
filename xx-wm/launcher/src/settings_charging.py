@@ -13,6 +13,7 @@ import settings_page
 import settings_ui as ui
 
 import os
+from shell_log import log_exc
 
 CHARGE_MIN = 50
 CHARGE_MAX = 100
@@ -209,7 +210,7 @@ class ChargingSection(settings_page._Section):
             try:
                 win.config.set_charge_limit(value)
             except Exception:
-                pass
+                log_exc('settings_charging._done: config.set_charge_limit')
             self._current = getattr(win.config, 'charge_limit', None)
             self._render_options(win)
             self._say('')

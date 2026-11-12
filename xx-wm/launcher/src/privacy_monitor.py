@@ -28,6 +28,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from shell_log import log_exc
 
 MIC = 'mic'
 CAMERA = 'camera'
@@ -377,7 +378,7 @@ def _end_child(proc) -> None:
             proc.kill()
             proc.wait(timeout=1)
         except Exception:
-            pass
+            log_exc('privacy_monitor._end_child: proc.kill')
 
 
 def _default_pw_dump_once() -> str:
@@ -548,13 +549,13 @@ class PrivacyMonitor:
             try:
                 self._usage_log.note_snapshot(current)
             except Exception:
-                pass
+                log_exc('_maybe_emit: _usage_log.note_snapshot')
         if not changed or self._on_change is None:
             return
         try:
             self._on_change({k: set(v) for k, v in current.items()})
         except Exception:
-            pass
+            log_exc('privacy_monitor._maybe_emit: _on_change')
 
     def start(self) -> None:
         self.stop()
@@ -580,7 +581,7 @@ class PrivacyMonitor:
             if callable(flush):
                 flush()
         except Exception:
-            pass
+            log_exc('privacy_monitor.stop: getattr')
 
     def _run(self) -> None:
         if shutil.which('pw-dump') is None:

@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from typing import Callable
+from shell_log import log_exc
 
 _RunFn = Callable[..., subprocess.CompletedProcess]
 
@@ -540,7 +541,7 @@ def apply_apn(apn: str, user: str, pwd: str, bus=None) -> tuple[bool, str]:
                         secrets.get_child_value(0)).items():
                     current.setdefault(group, {}).update(props)
             except Exception:
-                pass
+                log_exc('system_settings.apply_apn: _nm_call')
             settings = gsm_apn_settings(current, apn, user, pwd)
             _nm_call(bus, path, _NM_CONNECTION_IFACE, 'Update',
                      GLib.Variant(_NM_SETTINGS_TYPE, (settings,)), None,
@@ -813,7 +814,7 @@ def _adapter_path(bus=None) -> str | None:
             if _ADAPTER_IFACE in ifaces:
                 return str(path)
     except Exception:
-        pass
+        log_exc('system_settings._adapter_path: _bluez_bus')
     return None
 
 
@@ -826,7 +827,7 @@ def _device_path(bus, adapter: str, address: str) -> str:
             if props and str(props.get('Address', '')).upper() == address.upper():
                 return str(path)
     except Exception:
-        pass
+        log_exc('system_settings._device_path: _managed_objects().items')
     return adapter + '/dev_' + address.upper().replace(':', '_')
 
 
@@ -857,7 +858,7 @@ def _ensure_adapter_powered(bus, adapter: str) -> None:
         if not _get_prop(bus, adapter, _ADAPTER_IFACE, 'Powered'):
             _set_prop(bus, adapter, _ADAPTER_IFACE, 'Powered', 'b', True)
     except Exception:
-        pass
+        log_exc('system_settings._ensure_adapter_powered: _get_prop')
 
 
 class PairingAgent:
@@ -1024,7 +1025,7 @@ def _stop_bt_discovery(adapter: str | None = None) -> bool:
                  'StopDiscovery', None, None,
                  Gio.DBusCallFlags.NONE, 5000, None, None)
     except Exception:
-        pass
+        log_exc('system_settings._stop_bt_discovery: _bluez_bus')
     return False
 
 
@@ -1059,7 +1060,7 @@ def pair_bt_device(address: str,
         try:
             _set_prop(bus, path, _DEVICE_IFACE, 'Trusted', 'b', True)
         except Exception:
-            pass
+            log_exc('system_settings.pair_bt_device: _set_prop')
         try:
             bus.call_sync(_BLUEZ, path, _DEVICE_IFACE, 'Connect',
                           None, None, Gio.DBusCallFlags.NONE, 30000, None)

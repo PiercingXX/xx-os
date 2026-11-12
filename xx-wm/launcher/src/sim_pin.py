@@ -33,6 +33,7 @@ from __future__ import annotations
 import re
 from types import SimpleNamespace
 from typing import Callable
+from shell_log import log_exc
 
 _MM1 = 'org.freedesktop.ModemManager1'
 _SIM_IFACE = 'org.freedesktop.ModemManager1.Sim'
@@ -391,7 +392,7 @@ def build_view(info, on_submit, on_later):
             attach(entry, on_show=lambda: set_visible(True),
                    on_hide=lambda: set_visible(False))
         except Exception:
-            pass
+            log_exc('sim_pin._entry: attach')
         body.append(entry)
         return entry
 

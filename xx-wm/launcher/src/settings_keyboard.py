@@ -15,6 +15,7 @@ import subprocess
 import settings_page
 import settings_ui as ui
 from keyboard_layouts import xkb_for
+from shell_log import log_exc
 
 DEFAULT_KEY = 'us'
 
@@ -158,7 +159,7 @@ class KeyboardSection(settings_page._Section):
         try:
             win.config.set('keyboard_layout', key)
         except Exception:
-            pass
+            log_exc('settings_keyboard._pick: config.set')
         # xx-keyboard follows the key; xkb gets the hardware keymap.
         apply_keyboard_layout(*parse_layout_key(xkb_for(key)))
         self._say('')

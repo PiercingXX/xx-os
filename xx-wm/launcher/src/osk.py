@@ -20,6 +20,7 @@ import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from shell_log import log_exc
 
 OSK_NAME = 'sm.puri.OSK0'
 OSK_PATH = '/sm/puri/OSK0'
@@ -283,7 +284,7 @@ def set_layer_keyboard(window: object, exclusive: bool) -> None:
     try:
         LayerShell.set_keyboard_mode(window, mode)
     except Exception:
-        pass
+        log_exc('osk.set_layer_keyboard: LayerShell.set_keyboard_mode')
 
 
 def attach(widget: object, on_show: Callable[[], None],

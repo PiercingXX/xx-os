@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
+from shell_log import log_exc
 
 if TYPE_CHECKING:
     from app_index import AppEntry
@@ -195,7 +196,7 @@ class HomePage:
             try:
                 widget.set_xalign(xalign)
             except Exception:
-                pass
+                log_exc('home_page._apply_widget_alignment: widget.set_xalign')
 
     def _build_widget_block(self) -> None:
         win = self._win
@@ -401,7 +402,7 @@ class HomePage:
                 bar.set_flags(win.dnd_state.is_active(now),
                               win.focus_state.is_active(now))
             except Exception:
-                pass
+                log_exc('home_page._refresh_clock: bar.set_time')
         desk = getattr(win, '_desk', None)
         if desk is not None:
             try:
@@ -409,7 +410,7 @@ class HomePage:
                 desk.set_flags(win.dnd_state.is_active(now),
                                win.focus_state.is_active(now))
             except Exception:
-                pass
+                log_exc('home_page._refresh_clock: desk.set_clock')
 
     def _tick_clock(self) -> bool:
         self._refresh_clock()
@@ -432,7 +433,7 @@ class HomePage:
             try:
                 win.status_strip.set_text(line)
             except Exception:
-                pass
+                log_exc('home_page._done: status_strip.set_text')
 
         def _snapshot(snapshot: dict) -> None:
             # Same poll feeds the top status bar; kept for a bar built later.
@@ -461,11 +462,11 @@ class HomePage:
                 try:
                     target.set_privacy(any(win._privacy_snapshot.values()))
                 except Exception:
-                    pass
+                    log_exc('set_privacy_snapshot: target.set_privacy')
         try:
             win._refresh_status()
         except Exception:
-            pass
+            log_exc('home_page.set_privacy_snapshot: win._refresh_status')
 
     def _tick_status(self) -> bool:
         self._refresh_status()

@@ -19,6 +19,7 @@ import logging
 _log = logging.getLogger('hud')
 
 from config import ShellConfig, ThemePreset
+from shell_log import log_exc
 
 _HAS_GTK = True
 try:
@@ -75,7 +76,7 @@ def _screen_height() -> int:
         if height:
             return int(height)
     except Exception:
-        pass
+        log_exc('hud._screen_height: Display.get_default')
     return _HUD_FALLBACK_SCREEN_PX
 
 
@@ -278,7 +279,7 @@ if _HAS_GTK:
                         self, LayerShell.Edge.TOP,
                         hud_top_margin(_screen_height(), natural))
                 except Exception:
-                    pass
+                    log_exc('_place_at_top_fraction: LayerShell.set_margin')
 
         def _flash(self, text: str, pct: int) -> None:
             self._place_at_top_fraction()

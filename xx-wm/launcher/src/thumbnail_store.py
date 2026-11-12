@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from array import array
 from dataclasses import dataclass
+from shell_log import log_exc
 
 _OWN_APP_ID = 'io.piercingxx.XXWM'
 _MAX_ITEMS = 8
@@ -127,7 +128,7 @@ class ThumbnailStore:
             try:
                 cb()  # type: ignore[operator]
             except Exception:
-                pass
+                log_exc('thumbnail_store.put: cb')
 
     def on_change(self, callback: object) -> None:
         self._callbacks.append(callback)

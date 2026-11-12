@@ -16,6 +16,7 @@ every other surface uses stay untouched.
 from __future__ import annotations
 
 from pathlib import Path
+from shell_log import log_exc
 
 # Settings-only type sizes (px at scale 1.0) and row geometry.
 TITLE_PX = 18
@@ -156,7 +157,7 @@ def ensure_icons() -> None:
         if path not in list(icon_theme.get_search_path() or []):
             icon_theme.add_search_path(path)
     except Exception:
-        pass
+        log_exc('settings_ui.ensure_icons: Display.get_default')
 
 
 def chevron():
@@ -327,7 +328,7 @@ def set_subtitle(target, text: str) -> None:
         label.set_text(text or '')
         label.set_visible(bool(text))
     except Exception:
-        pass
+        log_exc('settings_ui.set_subtitle: label.set_text')
 
 
 def set_title(target, text: str) -> None:
@@ -336,7 +337,7 @@ def set_title(target, text: str) -> None:
         try:
             label.set_text(text)
         except Exception:
-            pass
+            log_exc('settings_ui.set_title: label.set_text')
 
 
 def card(rows=()):
@@ -349,7 +350,7 @@ def card(rows=()):
     try:
         box.set_overflow(Gtk.Overflow.HIDDEN)
     except Exception:
-        pass
+        log_exc('settings_ui.card: box.set_overflow')
     for item in rows:
         box.append(item)
     return box
@@ -371,7 +372,7 @@ def fill(target, rows, hide_empty: bool = False) -> None:
             try:
                 widget.set_visible(visible)
             except Exception:
-                pass
+                log_exc('settings_ui.fill: widget.set_visible')
 
 
 def caption(text: str):
@@ -400,7 +401,7 @@ def say(note, text: str) -> None:
         note.set_text(text or '')
         note.set_visible(bool(text))
     except Exception:
-        pass
+        log_exc('settings_ui.say: note.set_text')
 
 
 def group(caption_text: str, rows=(), note: str | None = None) -> list:
@@ -434,7 +435,7 @@ def _keyboard(win, show: bool) -> None:
         try:
             callback(show)
         except Exception:
-            pass
+            log_exc('settings_ui._keyboard: callback')
 
 
 def form_sheet(win, anchor, title: str, fields, commit_label: str,

@@ -6,6 +6,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from shell_log import log_exc
 
 
 CONTACTS_BUS = 'io.piercingxx.Contacts'
@@ -174,7 +175,7 @@ class ContactBook:
                 if name and nums:
                     out.append(Contact(name=name, numbers=nums))
         except Exception:
-            pass
+            log_exc('contacts._load_local_json: json.loads')
 
     def _load_vcf(self, out: list) -> None:
         for path in _VCF_SEARCH_PATHS:
@@ -184,7 +185,7 @@ class ContactBook:
                         path.read_text(encoding='utf-8', errors='replace'),
                         out)
                 except Exception:
-                    pass
+                    log_exc('contacts._load_vcf: _parse_vcf')
                 break
 
     def _parse_vcf(self, text: str, out: list) -> None:
@@ -328,7 +329,7 @@ class ContactBook:
                     try:
                         on_error(exc)
                     except Exception:
-                        pass
+                        log_exc('contacts._on_bus: on_error')
                 _fail(exc)
                 return
             try:
@@ -393,7 +394,7 @@ class ContactBook:
             try:
                 save()
             except Exception:
-                pass
+                log_exc('contacts.sync_starred_to_dnd: save')
         return merged
 
     def refresh(self) -> None:
@@ -433,13 +434,13 @@ class ContactBook:
                         CONTACTS_PATH, None, Gio.DBusSignalFlags.NONE,
                         self._on_changed)
                 except Exception:
-                    pass
+                    log_exc('contacts._on_bus: conn.signal_subscribe')
             self._list_async(conn, self._dbus_revision)
 
         try:
             Gio.bus_get(Gio.BusType.SESSION, None, _on_bus)
         except Exception:
-            pass
+            log_exc('contacts._start_async_refresh: Gio.bus_get')
 
     def _list_async(self, conn, since_revision: int) -> None:
         _Gio, GLib = _gi()
@@ -466,7 +467,7 @@ class ContactBook:
                 _Gio.DBusCallFlags.NONE,
                 _CALL_TIMEOUT_MS, None, _on_reply)
         except Exception:
-            pass
+            log_exc('contacts._list_async: conn.call')
 
     def _apply_list_result(self, conn, revision: int, changed: list,
                            deleted: list) -> None:
@@ -543,7 +544,7 @@ class ContactBook:
             try:
                 self.sync_starred_to_dnd()
             except Exception:
-                pass
+                log_exc('contacts._finish_refresh: sync_starred_to_dnd')
 
     def _on_changed(self, _conn, _sender, _path, _iface, _signal,
                     params) -> None:
@@ -555,7 +556,7 @@ class ContactBook:
             if int(revision) <= self._dbus_revision:
                 return
         except Exception:
-            pass
+            log_exc('contacts._on_changed: int')
         bus = self._bus
         if bus is None:
             self._start_async_refresh()
@@ -563,7 +564,7 @@ class ContactBook:
         try:
             self._list_async(bus, self._dbus_revision)
         except Exception:
-            pass
+            log_exc('contacts._on_changed: _list_async')
 
 
 _SHARED: "ContactBook | None" = None

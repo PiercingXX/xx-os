@@ -14,6 +14,7 @@ from gi.repository import Gdk, GLib, Gio, Gtk
 from als_brightness import ALSBrightness, apply_backlight_pct
 import backlight
 from config import ShellConfig, ThemePreset
+from shell_log import log_exc
 
 
 def _spawn_worker_thread(target: Callable[[], None]):
@@ -30,7 +31,7 @@ def _spawn_worker_thread(target: Callable[[], None]):
         try:
             target()
         except Exception:
-            pass
+            log_exc('quick_actions._spawn_worker_thread: target')
         return None
 
 
@@ -46,7 +47,7 @@ def _post_to_main(callback: Callable, *args):
     try:
         idle_add(callback, *args)
     except Exception:
-        pass
+        log_exc('quick_actions._post_to_main: idle_add')
 
 
 _NM_PATH = '/org/freedesktop/NetworkManager'
@@ -176,7 +177,7 @@ def ensure_shade_icons(display=None) -> None:
         if path not in list(icon_theme.get_search_path() or []):
             icon_theme.add_search_path(path)
     except Exception:
-        pass
+        log_exc('quick_actions.ensure_shade_icons: Display.get_default')
 
 
 # --- DBus helpers (best-effort, all failures are silent) ---
@@ -603,7 +604,7 @@ class LocationState:
                 Gio.BusNameWatcherFlags.NONE,
                 self._on_owner_appeared, self._on_owner_vanished)
         except Exception:
-            pass
+            log_exc('quick_actions.__init__: Gio.bus_watch_name')
 
     def active_clients(self, bus=None) -> list[str]:
         """Desktop ids with a live location fix (clients that called Start
@@ -707,7 +708,7 @@ class LocationState:
         try:
             self.on_change()
         except Exception:
-            pass
+            log_exc('quick_actions._fire_change: on_change')
 
     def _register(self, bus: Gio.DBusConnection) -> bool:
         """Export the agent and ask geoclue for the slot without waiting:
@@ -758,7 +759,7 @@ class LocationState:
             try:
                 conn.call_finish(result)
             except Exception:
-                pass
+                log_exc('quick_actions._done: conn.call_finish')
 
         try:
             bus.call(
@@ -768,7 +769,7 @@ class LocationState:
                 Gio.DBusCallFlags.NONE, 2000, None, _done,
             )
         except Exception:
-            pass
+            log_exc('quick_actions._unregister: bus.call')
         self._drop_export(bus)
 
     def _drop_export(self, bus: Gio.DBusConnection | None) -> None:
@@ -821,7 +822,7 @@ class LocationState:
                 max_accuracy_changed_params(self._max_accuracy()),
             )
         except Exception:
-            pass
+            log_exc('quick_actions._notify_max_accuracy: bus.emit_signal')
 
     def _on_method_call(self, _conn, _sender, _path, _iface, method,
                         params, invocation) -> None:
@@ -903,7 +904,7 @@ def _get_volume_pct() -> int:
             if token.endswith('%'):
                 return int(token.rstrip('%'))
     except Exception:
-        pass
+        log_exc('quick_actions._get_volume_pct: subprocess.check_output')
     return _SLIDER_DEFAULT_PCT
 
 
@@ -952,7 +953,7 @@ def _set_record_state(value: bool) -> None:
         import capture
         capture.get_recorder().set_recording(bool(value))
     except Exception:
-        pass
+        log_exc('_set_record_state: get_recorder().set_recording')
 
 
 def _night_light_available() -> bool:
@@ -982,7 +983,7 @@ def _set_night_state(value: bool) -> None:
     try:
         _display_module().tile_set_night(bool(value))
     except Exception:
-        pass
+        log_exc('_set_night_state: _display_module().tile_set_night')
 
 
 def _tailscale_available() -> bool:
@@ -1025,7 +1026,7 @@ def _set_captions_state(panel: object, value: bool) -> None:
     try:
         ctrl.set_enabled(bool(value))
     except Exception:
-        pass
+        log_exc('quick_actions._set_captions_state: ctrl.set_enabled')
 
 
 def _make_captions_controller(on_change) -> object | None:
@@ -1041,7 +1042,7 @@ def _open_captions_overlay() -> None:
         import captions
         captions.open_overlay()
     except Exception:
-        pass
+        log_exc('quick_actions._open_captions_overlay: captions.open_overlay')
 
 
 # Last Tailscale status read by the tile-state worker; the detail query in
@@ -1074,7 +1075,7 @@ def _set_saver_state(value: bool) -> None:
         from app_standby import get_standby
         get_standby().set_saver(bool(value))
     except Exception:
-        pass
+        log_exc('quick_actions._set_saver_state: get_standby().set_saver')
 
 
 def _get_caffeine_state() -> bool | None:
@@ -1094,7 +1095,7 @@ def _set_caffeine_state(value: bool, config: object = None) -> None:
         from idle_inhibit import caffeine_minutes, get_hub
         get_hub().set_caffeine(bool(value), caffeine_minutes(config))
     except Exception:
-        pass
+        log_exc('quick_actions._set_caffeine_state: get_hub().set_caffeine')
 
 
 _TILES: list[_TileDef] = [
@@ -1206,7 +1207,7 @@ class QuickActionsPanel(Gtk.Box):
             self._theme_provider.load_from_data(
                 theme_css(resolved).encode('utf-8'))
         except Exception:
-            pass
+            log_exc('apply_theme: _theme_provider.load_from_data')
 
     def _display_preset(self) -> ThemePreset:
         """Preset this panel renders with: window.resolve_theme over the
@@ -1382,11 +1383,11 @@ class QuickActionsPanel(Gtk.Box):
                 self.tier2_grid.attach(
                     buttons[tile.key], idx % 4, idx // 4, 1, 1)
         except Exception:
-            pass
+            log_exc('quick_actions._finish_slow_gates: buttons.get')
         try:
             self.refresh_states()
         except Exception:
-            pass
+            log_exc('quick_actions._finish_slow_gates: refresh_states')
         return False
 
     def _build(self) -> None:
@@ -1467,7 +1468,7 @@ class QuickActionsPanel(Gtk.Box):
                 else:
                     _open_captions_overlay()
             except Exception:
-                pass
+                log_exc('_on_tile_long_press: ctrl.open_model_screen')
             return
         callback = getattr(self, '_on_open_settings', None)
         if not callable(callback):
@@ -1479,7 +1480,7 @@ class QuickActionsPanel(Gtk.Box):
             try:
                 callback()
             except Exception:
-                pass
+                log_exc('quick_actions._on_tile_long_press: callback')
 
     def _build_sliders(self) -> None:
         # Two flat rows: glyph, 2 px track with a 4x20 thumb, numeric
@@ -1533,7 +1534,7 @@ class QuickActionsPanel(Gtk.Box):
         try:
             readout.set_text(str(int(pct)))
         except Exception:
-            pass
+            log_exc('quick_actions._set_readout: readout.set_text')
 
     def _on_brightness_changed(self, pct: int) -> None:
         """Brightness slider moved: the trailing value is applied (with a HUD
@@ -1594,7 +1595,7 @@ class QuickActionsPanel(Gtk.Box):
             try:
                 tile.set_state(new_state)
             except Exception:
-                pass
+                log_exc('quick_actions._work: tile.set_state')
             try:
                 actual = tile.get_state()
             except Exception:
@@ -1630,7 +1631,7 @@ class QuickActionsPanel(Gtk.Box):
             try:
                 tile.set_state(new_state)
             except Exception:
-                pass
+                log_exc('quick_actions._on_tile_toggled: tile.set_state')
         if tile.key == 'location':
             # Registration may have failed: show the actual state, never the
             # requested one.
@@ -1687,13 +1688,13 @@ class QuickActionsPanel(Gtk.Box):
         try:
             self.refresh_states()
         except Exception:
-            pass
+            log_exc('quick_actions._set_nope: refresh_states')
         callback = getattr(self, '_on_nope_changed', None)
         if callable(callback):
             try:
                 callback(active)
             except Exception:
-                pass
+                log_exc('quick_actions._set_nope: callback')
 
     def _set_tailscale(self, enabled: bool) -> None:
         def _work() -> None:
@@ -1716,7 +1717,7 @@ class QuickActionsPanel(Gtk.Box):
             try:
                 opener(result.auth_url)
             except Exception:
-                pass
+                log_exc('quick_actions._apply_tailscale: opener')
         return False
 
     def _toggle_auto_brightness(self, enabled: bool) -> None:
@@ -1772,7 +1773,7 @@ class QuickActionsPanel(Gtk.Box):
             try:
                 ctrl.connect()
             except Exception:
-                pass
+                log_exc('quick_actions._work: ctrl.connect')
 
         self._spawn_panel_worker(_work)
 
@@ -1780,7 +1781,7 @@ class QuickActionsPanel(Gtk.Box):
         try:
             self._refresh_captions_ui()
         except Exception:
-            pass
+            log_exc('quick_actions._on_captions_changed: _refresh_captions_ui')
 
     def _captions_visual(self) -> tuple:
         """(button_active, highlighted, label, error) from the controller."""
@@ -1803,7 +1804,7 @@ class QuickActionsPanel(Gtk.Box):
             if btn is not None:
                 btn.set_active(button_active)
         except Exception:
-            pass
+            log_exc('quick_actions._refresh_captions_ui: () or {}).get')
         finally:
             self._updating = False
         self._paint_captions_tile()
@@ -1821,7 +1822,7 @@ class QuickActionsPanel(Gtk.Box):
                 else:
                     btn.remove_css_class('active')
             except Exception:
-                pass
+                log_exc('_paint_captions_tile: btn.add_css_class')
             try:
                 starting = _captions_controller(self).tile_state == 'starting'
             except Exception:
@@ -1831,13 +1832,13 @@ class QuickActionsPanel(Gtk.Box):
                 try:
                     btn.set_tooltip_text(str(error))
                 except Exception:
-                    pass
+                    log_exc('_paint_captions_tile: btn.set_tooltip_text')
         lbl = (getattr(self, '_state_labels', None) or {}).get('captions')
         if lbl is not None:
             try:
                 lbl.set_text(label)
             except Exception:
-                pass
+                log_exc('quick_actions._paint_captions_tile: lbl.set_text')
 
     def _query_tile_states(self) -> dict[str, bool]:
         """Read every tile state; blocking D-Bus goes here, off-thread."""
@@ -1865,7 +1866,7 @@ class QuickActionsPanel(Gtk.Box):
             try:
                 self._tile_details = dict(details)
             except Exception:
-                pass
+                log_exc('quick_actions._apply_queried_states: dict')
         for key, state in (states or {}).items():
             try:
                 if details is None:
@@ -1873,7 +1874,7 @@ class QuickActionsPanel(Gtk.Box):
                 else:
                     self._apply_tile_state(key, state, details.get(key))
             except Exception:
-                pass
+                log_exc('_apply_queried_states: _apply_tile_state')
         return False
 
     def _refresh_all_states(self) -> bool:
@@ -1907,7 +1908,7 @@ class QuickActionsPanel(Gtk.Box):
                 self._on_hardware_properties_changed, None,
             )
         except Exception:
-            pass
+            log_exc('_subscribe_hardware_signals: bus.signal_subscribe')
 
     def _on_hardware_properties_changed(
         self, _conn, _sender, path, _iface, _signal, params, _user_data,
@@ -1925,7 +1926,7 @@ class QuickActionsPanel(Gtk.Box):
                 if 'Powered' in changed:
                     self.refresh_states()
         except Exception:
-            pass
+            log_exc('quick_actions._on_hardware_properties_changed: any')
 
     def _apply_tile_state(self, key: str, state: bool,
                             detail: str | None = None) -> None:
@@ -1975,7 +1976,7 @@ class QuickActionsPanel(Gtk.Box):
             else:
                 btn.remove_css_class(css)
         except Exception:
-            pass
+            log_exc('quick_actions._set_tile_class: btn.add_css_class')
 
     def expand(self, expanded: bool) -> None:
         self.tier2_grid.set_visible(expanded)
@@ -2050,7 +2051,7 @@ class QuickActionsPanel(Gtk.Box):
                     if detail:
                         details['nope'] = detail
             except Exception:
-                pass
+                log_exc('quick_actions._work: getattr')
             _post_to_main(self._apply_queried_states, states, details, gens)
 
         self._spawn_panel_worker(_work)

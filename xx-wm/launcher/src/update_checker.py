@@ -10,7 +10,7 @@ from typing import Callable
 
 from gi.repository import GLib
 
-from shell_log import get_logger
+from shell_log import get_logger, log_exc
 
 _log = get_logger('update')
 
@@ -96,7 +96,7 @@ def xx_apply_suffix(which=None) -> str:
         if probe('xx-apps-update'):
             return ' && xx-apps-update --apply'
     except Exception:
-        pass
+        log_exc('update_checker.xx_apply_suffix: probe')
     return ''
 
 

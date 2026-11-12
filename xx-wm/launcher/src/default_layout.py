@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import shutil
 from typing import Callable
+from shell_log import log_exc
 
 
 def _gio() -> object:
@@ -113,7 +114,7 @@ def _find_browser() -> tuple[str, str] | None:
         if info:
             return (info.get_id() or '', info.get_display_name() or 'Internet')
     except Exception:
-        pass
+        log_exc('default_layout._find_browser: AppInfo.get_default_for_type')
     return None
 
 
@@ -132,7 +133,7 @@ def _find_by_name(name: str) -> str | None:
             if display.casefold() == wanted:
                 return info.get_id()
     except Exception:
-        pass
+        log_exc('default_layout._find_by_name: AppInfo.get_all')
     return None
 
 

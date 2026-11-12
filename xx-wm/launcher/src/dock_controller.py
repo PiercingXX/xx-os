@@ -31,6 +31,7 @@ import threading
 import weakref
 from pathlib import Path
 from typing import NamedTuple
+from shell_log import log_exc
 
 log = logging.getLogger('dock')
 
@@ -178,7 +179,7 @@ def gdk_monitor_for(display, out: Output | None):
                 if monitor.get_connector() == out.name:
                     return monitor
             except Exception:
-                pass
+                log_exc('gdk_monitor_for: monitor.get_connector')
     for monitor in monitors:
         try:
             geo = monitor.get_geometry()
@@ -538,7 +539,7 @@ class DockController:
                     if not window.get_visible():
                         window.present()
                 except Exception:
-                    pass
+                    log_exc('_place_surfaces: window.get_visible')
 
     def _lock_ui_on_handset(self) -> bool:
         try:
@@ -581,7 +582,7 @@ class DockController:
                 from gi.repository import Gtk4LayerShell as LayerShell
                 LayerShell.set_monitor(self._cover, handset)
             except Exception:
-                pass
+                log_exc('dock_controller._show_cover: LayerShell.set_monitor')
             self._cover_monitor = handset
         if not self._cover.get_visible():
             self._cover.present()
@@ -710,7 +711,7 @@ class DockController:
                 import osk
                 osk.set_visible(False)
             except Exception:
-                pass
+                log_exc('dock_controller._set_osk_off: osk.set_visible')
         elif marker.exists():
             _set_osk_enabled(True)
             try:

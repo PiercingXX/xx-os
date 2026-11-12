@@ -36,6 +36,7 @@ from dataclasses import dataclass, replace
 from typing import Callable
 
 from gi.repository import GLib, Gio
+from shell_log import log_exc
 
 _MM1 = 'org.freedesktop.ModemManager1'
 _MM1_PATH = '/org/freedesktop/ModemManager1'
@@ -414,7 +415,7 @@ def _refresh_activatable() -> None:
     try:
         Gio.bus_get(Gio.BusType.SESSION, None, _on_bus)
     except Exception:  # noqa: BLE001 - optional
-        pass
+        log_exc('modem_monitor._refresh_activatable: Gio.bus_get')
 
 
 def start_bus_name(name: str) -> None:
@@ -441,7 +442,7 @@ def start_bus_name(name: str) -> None:
     try:
         Gio.bus_get(Gio.BusType.SESSION, None, _on_bus)
     except Exception:  # noqa: BLE001 - optional
-        pass
+        log_exc('modem_monitor.start_bus_name: Gio.bus_get')
 
 
 def _pick_modem_path(objects: dict, interface: str) -> str | None:
@@ -559,7 +560,7 @@ def _delete_created_call(bus, modem: str, call_path: str,
             Gio.DBusCallFlags.NONE, timeout_ms, None,
         )
     except Exception:  # noqa: BLE001 - already gone is fine
-        pass
+        log_exc('modem_monitor._delete_created_call: bus.call_sync')
 
 
 _SMS_STATE_RECEIVING = 2
@@ -962,7 +963,7 @@ class ModemMonitor:
             try:
                 conn.call_finish(result)
             except Exception:  # noqa: BLE001 - already gone is fine
-                pass
+                log_exc('modem_monitor._on_deleted: conn.call_finish')
 
         try:
             self._bus.call(
@@ -971,7 +972,7 @@ class ModemMonitor:
                 Gio.DBusCallFlags.NONE, _CALL_TIMEOUT_MS, None, _on_deleted,
             )
         except Exception:  # noqa: BLE001 - best effort cleanup
-            pass
+            log_exc('modem_monitor._delete_call: _bus.call')
 
     def _screen_waiting(self, call_path: str) -> None:
         """Consult the dialer policy (CheckNumber) for a second incoming
@@ -1005,7 +1006,7 @@ class ModemMonitor:
         try:
             _consult_check_number(number, _on_verdict)
         except Exception:  # noqa: BLE001 - screening fails open (rings)
-            pass
+            log_exc('modem_monitor._screen_waiting: _consult_check_number')
 
     def _await_number(self, call: CallInfo) -> bool:
         """True while ``call`` has no number yet and still waits for
@@ -1377,4 +1378,4 @@ class ModemMonitor:
                 Gio.DBusCallFlags.NONE, _CALL_TIMEOUT_MS, None, _on_deleted,
             )
         except Exception:  # noqa: BLE001 - best effort cleanup
-            pass
+            log_exc('modem_monitor._delete_sms: _bus.call')

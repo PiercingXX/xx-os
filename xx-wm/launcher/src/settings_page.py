@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import settings_ui as ui
+from shell_log import log_exc
 
 
 # Settings sections a quick-tile long-press can deep-link to (quick_actions
@@ -73,7 +74,7 @@ def quick_summaries(win) -> dict:
         out['display'] = '%s · %s' % (theme,
                                        settings_launcher._font_label(win))
     except Exception:
-        pass
+        log_exc('settings_page.quick_summaries: str')
     try:
         align = str(config.home_alignment).capitalize()
         count = sum(1 for _k, conf in config.ordered_widgets()
@@ -81,12 +82,12 @@ def quick_summaries(win) -> dict:
         out['home'] = '%s · %d widget%s' % (align, count,
                                              '' if count == 1 else 's')
     except Exception:
-        pass
+        log_exc('settings_page.quick_summaries: str().capitalize')
     try:
         count = len(list(win.app_index.entries))
         out['apps'] = '%d installed' % count
     except Exception:
-        pass
+        log_exc('settings_page.quick_summaries: len')
     try:
         pin = 'PIN on' if config.pin_hash else 'No PIN'
         import settings_smart_lock
@@ -151,7 +152,7 @@ def slow_summaries() -> dict:
         if free is not None:
             out['storage'] = '%s free' % settings_storage.format_bytes(free)
     except Exception:
-        pass
+        log_exc('settings_page.slow_summaries: settings_storage.fs_usage')
     return out
 
 
@@ -223,7 +224,7 @@ def _run_bg(work, on_done) -> None:
         try:
             result = work()
         except Exception:
-            pass
+            log_exc('settings_page._worker: work')
         GLib.idle_add(lambda: on_done(result) and False or False)
 
     threading.Thread(target=_worker, daemon=True).start()
@@ -293,7 +294,7 @@ class SystemSection(_Section):
             reason = settings_updates.reboot_required() or ''
             found = settings_updates.latest_update_log()
         except Exception:
-            pass
+            log_exc('settings_page.refresh: settings_updates.reboot_required')
         rows = [self._row, self._xx_row]
         if reason:
             ui.set_subtitle(self._reboot, reason)
@@ -732,7 +733,7 @@ class MobileSection(_Section):
             import sim_pin
             sim_pin.controller().reopen()
         except Exception:
-            pass
+            log_exc('settings_page._reopen_sim_prompt: controller().reopen')
 
     def _open_sheet(self, win, anchor):
         data = win.config.data
@@ -912,7 +913,7 @@ class RecordingSection(_Section):
                 if recorder.is_recording():
                     return 'Recording…'
             except Exception:
-                pass
+                log_exc('settings_page._state: capture.get_recorder')
             return 'Not recording'
 
         _run_bg(_state, self._render)
@@ -1256,7 +1257,7 @@ class SettingsPage:
                 try:
                     self._sections[name].refresh(win)
                 except Exception:
-                    pass
+                    log_exc('show_category: _sections[name].refresh')
 
     def back(self) -> None:
         """Back from a subpage returns to the menu; back from the menu
@@ -1296,7 +1297,7 @@ class SettingsPage:
             saver = 'saver on' if settings_standby.saver_is_on(win) \
                 else 'saver off'
         except Exception:
-            pass
+            log_exc('_show_summaries: settings_standby.saver_is_on')
         if res.get('battery'):
             res['battery'] = '%s · %s' % (res['battery'], saver) \
                 if saver else res['battery']
@@ -1689,7 +1690,7 @@ class SettingsPage:
             try:
                 switch.set_active(bool(res.get('enabled')))
             except Exception:
-                pass
+                log_exc('settings_page._show_wifi_full: switch.set_active')
             finally:
                 win._wifi_switch_updating = False
         self._show_wifi(res.get('networks'))
@@ -1947,7 +1948,7 @@ class SettingsPage:
             try:
                 switch.set_active(bool(res.get('powered')))
             except Exception:
-                pass
+                log_exc('settings_page._show_bt_full: switch.set_active')
             finally:
                 win._bt_switch_updating = False
         blocked = bool(isinstance(res, dict) and res.get('blocked'))
@@ -1956,7 +1957,7 @@ class SettingsPage:
             try:
                 unblock.set_visible(blocked)
             except Exception:
-                pass
+                log_exc('settings_page._show_bt_full: unblock.set_visible')
         self._show_bt_service(devices, res if isinstance(res, dict) else {})
 
     def _show_bt_service(self, devices, res=None) -> None:
@@ -2020,7 +2021,7 @@ class SettingsPage:
                 win._refresh_bluetooth()
                 return
         except Exception:
-            pass
+            log_exc('_on_bt_unblock: system_settings.rfkill_unblock')
         win._show_status('Unblocking Bluetooth…')
         try:
             import helper_client
@@ -2243,7 +2244,7 @@ class SettingsPage:
             if section is not None and section._status is not None:
                 section._status.set_text(text)
         except Exception:
-            pass
+            log_exc('settings_page._update_status_text: _sections.get')
         win._show_status(text)
 
     def _on_update_clicked(self, _btn=None) -> None:
@@ -2321,7 +2322,7 @@ class SettingsPage:
                 ui.set_title(row, title)
                 ui.set_subtitle(row, subtitle)
         except Exception:
-            pass
+            log_exc('settings_page._on_xx_checked: _sections.get')
 
     def _on_counted(self, result, refresh_err=None) -> None:
         import settings_updates
@@ -2546,7 +2547,7 @@ class SettingsPage:
                     _UPDATE_RESULT_ID, 'System', 'System update finished',
                     body)
             except Exception:
-                pass
+                log_exc('_on_owner_done: _ensure_shade().add_notification')
             self._update_status_text('System update finished.')
         elif returncode == -1:
             self._update_status_text(
@@ -2570,7 +2571,7 @@ class SettingsPage:
                 _UPDATE_RESULT_ID, 'System', 'System update finished',
                 body)
         except Exception:
-            pass
+            log_exc('_announce_owner_finished: add_notification')
         self._update_status_text('System update finished.')
 
     def _on_chained_xx_done(self, result, log_path, summary, reason) -> None:
@@ -2673,7 +2674,7 @@ class SettingsPage:
                     _UPDATE_RESULT_ID, 'System', 'System update finished',
                     body)
             except Exception:
-                pass
+                log_exc('_on_flatpak_updated: add_notification')
             self._update_status_text('System update finished.')
         else:
             self._update_status_text('Flatpak update failed: %s' % output)
@@ -2685,7 +2686,7 @@ class SettingsPage:
             if section is not None:
                 section.refresh(self._win)
         except Exception:
-            pass
+            log_exc('settings_page._refresh_updates_section: _sections.get')
 
     def _refresh_apps_section(self) -> None:
         try:
@@ -2693,7 +2694,7 @@ class SettingsPage:
             if section is not None and self.is_built('apps'):
                 section.refresh(self._win)
         except Exception:
-            pass
+            log_exc('settings_page._refresh_apps_section: _sections.get')
 
     def _snooze_updates(self) -> None:
         win = self._win
@@ -2792,7 +2793,7 @@ class SettingsPage:
             try:
                 win.config.set_charge_limit(limit)
             except Exception:
-                pass
+                log_exc('settings_page._done: config.set_charge_limit')
 
         try:
             import helper_client

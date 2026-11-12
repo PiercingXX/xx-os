@@ -42,6 +42,7 @@ except (ImportError, ValueError):
     _HAS_GTK = False
 
 from config import DEFAULT_CONFIG, THEME_PRESETS, ThemePreset
+from shell_log import log_exc
 
 _MPRIS_PREFIX = 'org.mpris.MediaPlayer2.'
 _MPRIS_PATH = '/org/mpris/MediaPlayer2'
@@ -669,7 +670,7 @@ def _ensure_icons() -> None:
         if path not in list(icon_theme.get_search_path() or []):
             icon_theme.add_search_path(path)
     except Exception:
-        pass
+        log_exc('media_controls._ensure_icons: Display.get_default')
 
 
 _card_provider = None
@@ -694,7 +695,7 @@ def _shared_card_provider():
                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 2,
             )
         except Exception:
-            pass
+            log_exc('_shared_card_provider: add_provider_for_display')
     return _card_provider
 
 
@@ -837,7 +838,7 @@ if _HAS_GTK:
                 self._theme_provider.load_from_data(
                     theme_css(resolved).encode('utf-8'))
             except Exception:
-                pass
+                log_exc('apply_theme: _theme_provider.load_from_data')
 
         def _on_snapshot(self, snapshot: PlayerSnapshot | None) -> None:
             self._snapshot = snapshot
@@ -879,14 +880,14 @@ if _HAS_GTK:
                         self._on_raise(
                             snapshot.desktop_entry, snapshot.bus_name)
                     except Exception:
-                        pass
+                        log_exc('media_controls._on_title_pressed: _on_raise')
                     return
                 self._launch_desktop_entry(snapshot.desktop_entry)
             elif self._watcher is not None:
                 try:
                     self._watcher.raise_player(snapshot.bus_name)
                 except Exception:
-                    pass
+                    log_exc('_on_title_pressed: _watcher.raise_player')
 
         def _launch_desktop_entry(self, desktop_entry: str) -> None:
             try:
@@ -895,7 +896,7 @@ if _HAS_GTK:
                     app_info.launch([], None)
                     return
             except Exception:
-                pass
+                log_exc('_launch_desktop_entry: DesktopAppInfo.new')
             try:
                 subprocess.Popen(['gtk-launch', desktop_entry], close_fds=True)
             except (FileNotFoundError, OSError):
@@ -914,7 +915,7 @@ if _HAS_GTK:
                 else:
                     watcher.play_pause(snapshot.bus_name)
             except Exception:
-                pass
+                log_exc('media_controls._control: watcher.next_track')
 
         def _is_shown(self) -> bool:
             try:
@@ -964,7 +965,7 @@ if _HAS_GTK:
                 try:
                     watcher.fetch_position(snapshot.bus_name)
                 except Exception:
-                    pass
+                    log_exc('_on_position_tick: watcher.fetch_position')
             return GLib.SOURCE_CONTINUE
 
 else:

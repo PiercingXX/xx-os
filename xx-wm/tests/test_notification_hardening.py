@@ -322,6 +322,36 @@ class TestOnlyAlarmsPassDndAndFocus:
         assert len(app._held_notifications) == 1
 
 
+class TestBannerLockStateFailsClosed:
+    """An error reading the lock state must never put a banner over the
+    lock screen."""
+
+    @staticmethod
+    def _broken():
+        raise RuntimeError('lock state unreadable')
+
+    def test_is_locked_error_counts_as_locked(self):
+        app = _app()
+        app._shell = _shell(is_locked=self._broken)
+        assert app._banner_locked() is True
+
+    def test_lock_visibility_error_counts_as_locked(self):
+        import types
+        app = _app()
+        app._shell = _shell(
+            _lock_screen=types.SimpleNamespace(get_visible=self._broken))
+        assert app._banner_locked() is True
+
+    def test_readable_states_pass_through(self):
+        import types
+        app = _app()
+        app._shell = _shell(is_locked=lambda: False)
+        assert app._banner_locked() is False
+        app._shell = _shell(
+            _lock_screen=types.SimpleNamespace(get_visible=lambda: True))
+        assert app._banner_locked() is True
+
+
 class TestFocusHolds:
     def _app(self, focus, entries=()):
         import types

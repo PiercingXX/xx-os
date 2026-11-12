@@ -27,6 +27,7 @@ from typing import Callable
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gdk, GLib, Gtk
+from shell_log import log_exc
 
 # The sheet never covers the top of the screen: the page under it stays
 # readable, like the Android bottom sheet (~85% max height).
@@ -201,7 +202,7 @@ class SheetHost:
         try:
             self.overlay.remove_overlay(target.layer)
         except Exception:
-            pass
+            log_exc('action_sheet.close: overlay.remove_overlay')
         target._fire_closed()
         return True
 

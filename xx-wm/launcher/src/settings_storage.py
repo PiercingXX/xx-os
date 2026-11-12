@@ -14,6 +14,7 @@ import subprocess
 
 import settings_page
 import settings_ui as ui
+from shell_log import log_exc
 
 USER_CLEAN_CATEGORIES = ('thumbnails', 'trash', 'browsers',
                          'flatpak-unused', 'flatpak-caches')
@@ -570,7 +571,7 @@ class StorageSection(settings_page._Section):
         try:
             self._reports.set_visible(bool(counts))
         except Exception:
-            pass
+            log_exc('settings_storage._render_reports: _reports.set_visible')
 
     def _show_reports(self, win, anchor) -> None:
         win.item_actions._show_action_menu(

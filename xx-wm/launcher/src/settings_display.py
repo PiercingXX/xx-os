@@ -20,6 +20,7 @@ import night_light
 import power_profiles
 import settings_page
 import settings_ui as ui
+from shell_log import log_exc
 
 DEFAULT_TEMP = 2200
 MIN_TEMP = 2200
@@ -221,7 +222,7 @@ def apply_profile_async(profile: str, backend: str, bus: str | None,
             try:
                 on_done(bool(ok))
             except Exception:
-                pass
+                log_exc('settings_display._done: on_done')
 
         _run_bg(_work, _done)
         return
@@ -231,14 +232,14 @@ def apply_profile_async(profile: str, backend: str, bus: str | None,
         try:
             on_done(False)
         except Exception:
-            pass
+            log_exc('settings_display.apply_profile_async: on_done')
         return
 
     def _done(ok: bool, _result) -> None:
         try:
             on_done(bool(ok))
         except Exception:
-            pass
+            log_exc('settings_display._done: on_done')
 
     try:
         helper_client.set_power_profile(profile, _done)
@@ -267,12 +268,12 @@ def reapply_power_profile(config, saver_on: bool,
                 wanted, state.get('backend'), state.get('bus'),
                 on_done or (lambda _ok: None))
         except Exception:
-            pass
+            log_exc('settings_display._done: isinstance')
 
     try:
         _run_bg(_work, _done)
     except Exception:
-        pass
+        log_exc('settings_display.reapply_power_profile: _run_bg')
 
 
 def set_power_profile(name: str, profile: str) -> bool:
@@ -310,7 +311,7 @@ def tile_set_night(enabled: bool) -> None:
             scheduler.manual_set(bool(enabled))
             return
         except Exception:
-            pass
+            log_exc('settings_display.tile_set_night: scheduler.manual_set')
     set_night_light(bool(enabled))
 
 
@@ -322,7 +323,7 @@ def night_coords(win):
         import weather
         return weather.WeatherProvider(win.config).coordinates()
     except Exception:
-        pass
+        log_exc('settings_display.night_coords: WeatherProvider().coordinates')
     try:
         lat = win.config.data.get('weather_lat')
         lon = win.config.data.get('weather_lon')
@@ -331,7 +332,7 @@ def night_coords(win):
     except (TypeError, ValueError, AttributeError):
         pass
     except Exception:
-        pass
+        log_exc('settings_display.night_coords: data.get')
     return None
 
 
@@ -384,7 +385,7 @@ def ensure_night_scheduler(win):
         try:
             callback()
         except Exception:
-            pass
+            log_exc('settings_display._scheduler_fire: callback')
         return False
 
     def _disarm(handle) -> None:
@@ -417,7 +418,7 @@ def refresh_night_scheduler(reason: str = '') -> None:
     try:
         scheduler.refresh(reason)
     except Exception:
-        pass
+        log_exc('settings_display.refresh_night_scheduler: scheduler.refresh')
 
 
 class DisplaySection(settings_page._Section):
@@ -465,7 +466,7 @@ class DisplaySection(settings_page._Section):
         try:
             ensure_night_scheduler(win)
         except Exception:
-            pass
+            log_exc('settings_display.refresh: ensure_night_scheduler')
 
     def _on_probed(self, win, res) -> None:
         if not isinstance(res, dict):
@@ -578,7 +579,7 @@ class DisplaySection(settings_page._Section):
             if coords is not None:
                 return coords
         except Exception:
-            pass
+            log_exc('settings_display._coords: night_coords')
         try:
             return (win.config.data.get('weather_lat'),
                     win.config.data.get('weather_lon'))
@@ -601,7 +602,7 @@ class DisplaySection(settings_page._Section):
                     win.config.set('night_light', bool(enabled))
                     return
                 except Exception:
-                    pass
+                    log_exc('_on_night_flipped: scheduler.manual_set')
         lat, lon = self._coords(win)
         scheduled = self._sunset_active(win)
         if enabled and scheduled:
@@ -614,7 +615,7 @@ class DisplaySection(settings_page._Section):
         try:
             win.config.set('night_light', bool(enabled and ok))
         except Exception:
-            pass
+            log_exc('settings_display._on_night_flipped: config.set')
         self._say('' if ok or not enabled else 'Could not start night light.')
 
     def _on_temp_changed(self, win, scale, row=None) -> None:
@@ -624,7 +625,7 @@ class DisplaySection(settings_page._Section):
         try:
             win.config.set('night_light_temp', temp)
         except Exception:
-            pass
+            log_exc('settings_display._on_temp_changed: config.set')
         if not night_light_running():
             return
         # A drag emits a value per step: restart wlsunset once it settles,
@@ -663,7 +664,7 @@ class DisplaySection(settings_page._Section):
             win.config.set('night_light_mode', mode)
             win.config.set('night_light_schedule', mode == 'sunset')
         except Exception:
-            pass
+            log_exc('settings_display._set_mode: config.set')
         self._render_night(win)
         refresh_night_scheduler('mode')
 
@@ -684,7 +685,7 @@ class DisplaySection(settings_page._Section):
                     else 'night_light_to',
                     night_light.format_hhmm(picked))
             except Exception:
-                pass
+                log_exc('settings_display._commit: config.set')
             self._render_night(win)
             refresh_night_scheduler('time')
             return None
@@ -699,7 +700,7 @@ class DisplaySection(settings_page._Section):
         try:
             win.config.set('power_profile', profile)
         except Exception:
-            pass
+            log_exc('settings_display._on_profile: config.set')
         ui.set_subtitle(self._profile_row, self._current_profile(win))
         apply_profile_async(
             profile, self._backend, self._profile_name,
@@ -743,7 +744,7 @@ class DisplaySection(settings_page._Section):
         try:
             win.config.set(status_bar.CONFIG_KEY, height)
         except Exception:
-            pass
+            log_exc('settings_display._on_status_bar_height: config.set')
         bar = getattr(win, '_status_bar', None)
         if bar is not None:
             bar.apply_config()

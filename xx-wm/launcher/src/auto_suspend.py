@@ -53,7 +53,7 @@ import os
 import time
 from typing import Callable, NamedTuple
 
-from shell_log import get_logger
+from shell_log import get_logger, log_exc
 
 _log = get_logger('auto_suspend')
 
@@ -428,7 +428,7 @@ def modem_alive_check_async() -> None:
     try:
         Gio.bus_get(Gio.BusType.SYSTEM, None, _bus)
     except Exception:
-        pass
+        log_exc('auto_suspend.modem_alive_check_async: Gio.bus_get')
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +505,7 @@ class AutoSuspendController:
                 remove = GLib.source_remove
             remove(src)
         except Exception:
-            pass
+            log_exc('auto_suspend._cancel: remove')
 
     def _arm(self, seconds: int) -> None:
         self._cancel()
@@ -542,7 +542,7 @@ class AutoSuspendController:
         try:
             self._add(MODEM_CHECK_DELAY_S, self._run_modem_check)
         except Exception:
-            pass
+            log_exc('auto_suspend.note_resumed: _add')
         self._gen += 1
         self._backoff = None
         if self._safe(self._is_blanked) and suspend_after_secs(self._config):

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import settings_page
 import settings_ui as ui
+from shell_log import log_exc
 
 WIDGET_ORDER = ('time', 'date', 'weather', 'battery')
 
@@ -93,7 +94,7 @@ def _config_set(win, key: str, value) -> None:
     try:
         win.config.set(key, value)
     except Exception:
-        pass
+        log_exc('settings_launcher._config_set: config.set')
 
 
 def _tap_text(win, key: str) -> str:
@@ -108,7 +109,7 @@ def _tap_text(win, key: str) -> str:
                 if entry.app_id == app_id:
                     return win.config.label_for(app_id, entry.name)
         except Exception:
-            pass
+            log_exc('settings_launcher._tap_text: config.label_for')
         return app_id
     return _TAP_LABELS.get(tap, _TAP_LABELS['default'])
 
@@ -141,7 +142,7 @@ def _font_label(win) -> str:
             if family:
                 return str(family)
         except Exception:
-            pass
+            log_exc('settings_launcher._font_label: data.get')
     return _FONT_LABELS[key]
 
 
@@ -211,7 +212,7 @@ def open_logs(win) -> None:
         dialog.set_transient_for(win)
         dialog.set_modal(True)
     except Exception:
-        pass
+        log_exc('settings_launcher.open_logs: dialog.set_transient_for')
     dialog.set_decorated(False)
     dialog.set_default_size(360, 720)
 
@@ -237,7 +238,7 @@ def open_logs(win) -> None:
         try:
             view.get_buffer().set_text(text or 'No log yet.')
         except Exception:
-            pass
+            log_exc('settings_launcher._show: get_buffer().set_text')
 
     def _fetch(tab: str) -> None:
         state['tab'] = tab
@@ -290,14 +291,14 @@ def open_logs(win) -> None:
                 display.get_clipboard().set(copied)
                 status.set_text('Copied.')
         except Exception:
-            pass
+            log_exc('settings_launcher._copy: _visible_text')
 
     def _share() -> None:
         ok, message = share_log_text(_visible_text(view))
         try:
             status.set_text(message)
         except Exception:
-            pass
+            log_exc('settings_launcher._share: status.set_text')
         _ = ok
 
     header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -328,7 +329,7 @@ def open_logs(win) -> None:
     try:
         dialog.present()
     except Exception:
-        pass
+        log_exc('settings_launcher.open_logs: dialog.present')
 
 
 def reset_home_layout(config, gesture_config) -> None:
@@ -340,7 +341,7 @@ def reset_home_layout(config, gesture_config) -> None:
         try:
             gesture_config.reset(key)
         except Exception:
-            pass
+            log_exc('reset_home_layout: gesture_config.reset')
     config.set_default_layout_applied(False)
     from default_layout import apply_default_layout
     apply_default_layout(config, gesture_config)
@@ -382,7 +383,7 @@ def _status(win, message: str) -> None:
     try:
         win._show_status(message)
     except Exception:
-        pass
+        log_exc('settings_launcher._status: win._show_status')
 
 
 def _close(win) -> None:
@@ -399,7 +400,7 @@ def _app_names(win) -> dict:
             names[entry.app_id] = win.config.label_for(entry.app_id,
                                                        entry.name)
     except Exception:
-        pass
+        log_exc('settings_launcher._app_names: config.label_for')
     return names
 
 
@@ -453,7 +454,7 @@ def confirm_reset_home(win, anchor=None):
         try:
             win._refresh_after_item_action()
         except Exception:
-            pass
+            log_exc('settings_launcher._reset: win._refresh_after_item_action')
 
     box.append(widgets.danger_button('Reset', _reset))
     shown['popover'] = actions._show_popover(
@@ -617,7 +618,7 @@ class LauncherSection(settings_page._Section):
                     try:
                         switch.set_active(bool(value))
                     except Exception:
-                        pass
+                        log_exc('_sync_switches: switch.set_active')
         finally:
             win._launcher_updating = False
 
@@ -679,7 +680,7 @@ class LauncherSection(settings_page._Section):
         try:
             win._apply_config_change()
         except Exception:
-            pass
+            log_exc('settings_launcher._set_bool: win._apply_config_change')
 
     # -- Home Screen ----------------------------------------------------
 
@@ -704,7 +705,7 @@ class LauncherSection(settings_page._Section):
         try:
             win._apply_config_change()
         except Exception:
-            pass
+            log_exc('_set_alignment: win._apply_config_change')
 
     def _set_date_time(self, win, value: str) -> None:
         try:
@@ -714,7 +715,7 @@ class LauncherSection(settings_page._Section):
         try:
             win._build_widget_block()
         except Exception:
-            pass
+            log_exc('_set_date_time: win._build_widget_block')
 
     def _on_status_bar(self, win, on: bool) -> None:
         self._set_bool(win, 'set_status_bar_visible', on)
@@ -724,14 +725,14 @@ class LauncherSection(settings_page._Section):
         try:
             win._refresh_clock()
         except Exception:
-            pass
+            log_exc('settings_launcher._set_clock: win._refresh_clock')
 
     def _refresh_home(self, win) -> None:
         try:
             win._home_launcher.refresh()
             win._populate_apps(win.apps_search.get_text())
         except Exception:
-            pass
+            log_exc('settings_launcher._refresh_home: _home_launcher.refresh')
 
     # -- Widgets ----------------------------------------------------------
 
@@ -814,7 +815,7 @@ class LauncherSection(settings_page._Section):
             win.config.set_widget_enabled(key, bool(on))
             win._build_widget_block()
         except Exception:
-            pass
+            log_exc('_flip_widget: config.set_widget_enabled')
 
     def _move_widget(self, win, key: str, delta: int, rebuild) -> None:
         keys = _widget_keys(win)
@@ -829,7 +830,7 @@ class LauncherSection(settings_page._Section):
             if win.config.set_widget_order(keys):
                 win._build_widget_block()
         except Exception:
-            pass
+            log_exc('settings_launcher._move_widget: config.set_widget_order')
         rebuild()
 
     def _pick_tap(self, win, anchor, key: str) -> None:
@@ -857,7 +858,7 @@ class LauncherSection(settings_page._Section):
         try:
             win.config.set_widget_tap(key, tap)
         except Exception:
-            pass
+            log_exc('settings_launcher._set_tap: config.set_widget_tap')
         self._open_widgets(win, anchor)
 
     def _pick_tap_app(self, win, anchor, key: str) -> None:
@@ -874,14 +875,14 @@ class LauncherSection(settings_page._Section):
         try:
             win._refresh_weather()
         except Exception:
-            pass
+            log_exc('settings_launcher._set_temp_unit: win._refresh_weather')
 
     def _on_auto_loc(self, win, on: bool) -> None:
         _config_set(win, 'weather_auto_location', bool(on))
         try:
             win._refresh_weather(force=True)
         except Exception:
-            pass
+            log_exc('settings_launcher._on_auto_loc: win._refresh_weather')
 
     def _open_location(self, win, anchor):
         try:
@@ -917,7 +918,7 @@ class LauncherSection(settings_page._Section):
         try:
             win._refresh_weather(force=True)
         except Exception:
-            pass
+            log_exc('settings_launcher._save_location: win._refresh_weather')
         return None
 
     # -- App Drawer -------------------------------------------------------
@@ -926,7 +927,7 @@ class LauncherSection(settings_page._Section):
         try:
             win.config.set_auto_show_keyboard(bool(on))
         except Exception:
-            pass
+            log_exc('_on_auto_keyboard: config.set_auto_show_keyboard')
 
     def _set_sort(self, win, value: str) -> None:
         try:
@@ -937,17 +938,17 @@ class LauncherSection(settings_page._Section):
             from drawer_page import drawer_sort_label
             win._sort_btn.set_label(drawer_sort_label(value))
         except Exception:
-            pass
+            log_exc('settings_launcher._set_sort: _sort_btn.set_label')
         try:
             win._populate_apps(win.apps_search.get_text())
         except Exception:
-            pass
+            log_exc('settings_launcher._set_sort: win._populate_apps')
 
     def _on_auto_launch(self, win, on: bool) -> None:
         try:
             win.config.set_search_auto_launch(bool(on))
         except Exception:
-            pass
+            log_exc('_on_auto_launch: config.set_search_auto_launch')
 
     def _open_hidden_apps(self, win, anchor) -> None:
         """Android Hidden Apps: the hidden apps by name; a tap shows one
@@ -979,7 +980,7 @@ class LauncherSection(settings_page._Section):
         try:
             win._populate_apps(win.apps_search.get_text())
         except Exception:
-            pass
+            log_exc('settings_launcher._unhide: win._populate_apps')
 
     # -- Gestures ---------------------------------------------------------
 
@@ -1008,13 +1009,13 @@ class LauncherSection(settings_page._Section):
         try:
             win._refresh_gesture_labels()
         except Exception:
-            pass
+            log_exc('_set_swipe_app: win._refresh_gesture_labels')
 
     def _set_swipe_down(self, win, value: str) -> None:
         try:
             win.config.set_swipe_down_action(value)
         except Exception:
-            pass
+            log_exc('_set_swipe_down: config.set_swipe_down_action')
 
     def _double_tap_on(self, win) -> bool:
         try:
@@ -1088,7 +1089,7 @@ class LauncherSection(settings_page._Section):
         try:
             win._apply_config_change()
         except Exception:
-            pass
+            log_exc('settings_launcher._set_mode: win._apply_config_change')
 
     def _build_scale(self, win):
         from gi.repository import Gtk
@@ -1129,11 +1130,11 @@ class LauncherSection(settings_page._Section):
         try:
             percent.set_text('%d%%' % round(value * 100))
         except Exception:
-            pass
+            log_exc('settings_launcher._on_scale: percent.set_text')
         try:
             win._apply_theme()
         except Exception:
-            pass
+            log_exc('settings_launcher._on_scale: win._apply_theme')
 
     def _render_font(self, win) -> None:
         ui.set_subtitle(getattr(win, '_launcher_font_box', None),
@@ -1157,7 +1158,7 @@ class LauncherSection(settings_page._Section):
         try:
             win._apply_theme()
         except Exception:
-            pass
+            log_exc('settings_launcher._set_font: win._apply_theme')
         self._render_font(win)
 
     def _import_font(self, win) -> None:
@@ -1193,7 +1194,7 @@ class LauncherSection(settings_page._Section):
         try:
             dialog.open(win, None, _done)
         except Exception:
-            pass
+            log_exc('settings_launcher._import_font: dialog.open')
 
     def _on_font_installed(self, win, done) -> None:
         ok, message = done if isinstance(done, tuple) else (False, 'Import failed.')
@@ -1208,11 +1209,11 @@ class LauncherSection(settings_page._Section):
                 f'Font installed: {message}' if ok
                 else f'Font import failed: {message}')
         except Exception:
-            pass
+            log_exc('settings_launcher._on_font_installed: win._show_status')
         if not ok:
             return
         try:
             win._apply_theme()
         except Exception:
-            pass
+            log_exc('settings_launcher._on_font_installed: win._apply_theme')
         self._render_font(win)

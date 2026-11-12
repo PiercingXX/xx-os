@@ -19,6 +19,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import GLib, Gtk
 
 from config import ThemePreset
+from shell_log import log_exc
 
 
 def _pt(base: float, scale: float) -> str:
@@ -192,7 +193,7 @@ def _set_accessible(widget: Gtk.Widget, label: str | None = None,
         if props:
             Gtk.Accessible.update_property(widget, props, values)
     except Exception:
-        pass
+        log_exc('home_launcher._set_accessible: props.append')
 
 
 class HomeLauncher(Gtk.Box):

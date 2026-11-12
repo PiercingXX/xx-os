@@ -11,6 +11,7 @@ call ends. Never probes for the name first: the service is
 D-Bus-activatable, so the consult call itself starts it.
 """
 from __future__ import annotations
+from shell_log import log_exc
 
 BUS_NAME = "io.piercingxx.XXDialer.Policy"
 OBJECT_PATH = "/io/piercingxx/XXDialer/Policy"
@@ -49,7 +50,7 @@ def consult_check_number(number, on_verdict, bus=None, gio=None,
             try:
                 on_reached(bool(reached))
             except Exception:
-                pass
+                log_exc('call_screen._report_reached: on_reached')
 
     try:
         gio, glib = _gio_glib(gio, glib)

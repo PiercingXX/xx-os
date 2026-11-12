@@ -11,6 +11,7 @@ import os
 import re
 import socket
 import subprocess
+from shell_log import log_exc
 
 BACKUP_DIRNAME = 'xx-backup'
 
@@ -221,7 +222,7 @@ def run_transfer(src: str, dest: str, mirror: bool, total: int = 0,
                     try:
                         on_progress(fraction)
                     except Exception:
-                        pass
+                        log_exc('filebackup.run_transfer: on_progress')
         code = proc.wait(timeout=3600)
     except Exception as err:
         try:
@@ -237,7 +238,7 @@ def run_transfer(src: str, dest: str, mirror: bool, total: int = 0,
         try:
             on_progress(1.0)
         except Exception:
-            pass
+            log_exc('filebackup.run_transfer: on_progress')
     return True, None
 
 

@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from lock_lines import _FAIL_THRESHOLD
+from shell_log import log_exc
 
 TRUST_MAX_PIN_AGE_S = 4 * 3600
 
@@ -214,7 +215,7 @@ def note_pin_unlock(config, now: float | None = None) -> None:
         config.record_smart_lock_pin_time(
             now if now is not None else time.time())
     except Exception:
-        pass
+        log_exc('note_pin_unlock: config.record_smart_lock_pin_time')
 
 
 def note_explicit_lock() -> None:
@@ -495,7 +496,7 @@ class SmartLockMonitor:
                 self._on_nm_objects,
             )
         except Exception:
-            pass
+            log_exc('smart_lock.refresh: _bus.call')
 
     def stop(self) -> None:
         bus, self._bus = self._bus, None
@@ -543,7 +544,7 @@ class SmartLockMonitor:
                 try:
                     listener()
                 except Exception:
-                    pass
+                    log_exc('smart_lock._emit_if_changed: listener')
 
     def _on_bluez_objects(self, conn, result) -> None:
         # Gio replies are tuples of out-args: GetManagedObjects is (a{...},).
@@ -564,7 +565,7 @@ class SmartLockMonitor:
                 self._config.set_smart_lock_bt_devices(
                     [entry for entry in trusted if entry not in gone])
             except Exception:
-                pass
+                log_exc('_on_bluez_objects: _config.set_smart_lock_bt_devices')
         self._emit_if_changed(bt=_parse_bluez_objects(objects, trusted))
 
     def _on_nm_objects(self, conn, result) -> None:
@@ -633,7 +634,7 @@ class SmartLockMonitor:
                 self._on_bluez_objects,
             )
         except Exception:
-            pass
+            log_exc('smart_lock._enum_bluez: _bus.call')
 
     def _enum_nm(self) -> None:
         if self._bus is None:
@@ -645,7 +646,7 @@ class SmartLockMonitor:
                 self._on_nm_objects,
             )
         except Exception:
-            pass
+            log_exc('smart_lock._enum_nm: _bus.call')
 
 
 _LIVE: SmartLockMonitor | None = None
@@ -681,7 +682,7 @@ def _reset_live_monitor() -> None:
         try:
             live.stop()
         except Exception:
-            pass
+            log_exc('smart_lock._reset_live_monitor: live.stop')
 
 
 def refresh() -> None:
@@ -690,7 +691,7 @@ def refresh() -> None:
         try:
             _LIVE.refresh()
         except Exception:
-            pass
+            log_exc('smart_lock.refresh: _LIVE.refresh')
 
 
 def current_state(config, fail_count: int = 0, lockout_active: bool = False,

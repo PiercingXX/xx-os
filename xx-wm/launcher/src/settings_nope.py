@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import settings_page
 import settings_ui as ui
+from shell_log import log_exc
 
 BREAK_CHOICES = (5, 15, 30)
 
@@ -307,7 +308,7 @@ class NopeSection(settings_page._Section):
             else:
                 state.set_enabled(False)
         except Exception:
-            pass
+            log_exc('settings_nope._set_enabled: state.set_enabled')
         self.refresh(win)
 
     def _set_blocked(self, win, app_id: str, blocked: bool) -> None:
@@ -317,7 +318,7 @@ class NopeSection(settings_page._Section):
         try:
             state.set_app_blocked(app_id, blocked)
         except Exception:
-            pass
+            log_exc('settings_nope._set_blocked: state.set_app_blocked')
         self._render_apps(win)
 
     def _remove_schedule(self, win, index: int) -> None:
@@ -331,7 +332,7 @@ class NopeSection(settings_page._Section):
         except (IndexError, TypeError, ValueError):
             pass
         except Exception:
-            pass
+            log_exc('settings_nope._remove_schedule: list')
         self.refresh(win)
 
     def _add_schedule(self, win, anchor) -> None:
@@ -369,5 +370,5 @@ class NopeSection(settings_page._Section):
             try:
                 win._show_status(str(reason))
             except Exception:
-                pass
+                log_exc('settings_nope._start_break: win._show_status')
         self.refresh(win)

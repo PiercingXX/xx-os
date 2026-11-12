@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from shell_log import log_exc
 
 _HAS_GTK = True
 try:
@@ -516,7 +517,7 @@ if _HAS_GTK:
                 from quick_actions import ensure_shade_icons
                 ensure_shade_icons(self.get_display())
             except Exception:
-                pass
+                log_exc('status_bar.__init__: ensure_shade_icons')
             self._theme_provider = Gtk.CssProvider()
             Gtk.StyleContext.add_provider_for_display(
                 self.get_display(), self._theme_provider,

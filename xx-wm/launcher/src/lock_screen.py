@@ -37,6 +37,7 @@ from lock_lines import (
 from media_controls import MediaCard
 
 import smart_lock
+from shell_log import log_exc
 
 _log = logging.getLogger('lock_screen')
 
@@ -699,14 +700,14 @@ class LockScreen(Gtk.Window):
         try:
             self.add_tick_callback(lambda *_a: _report())
         except Exception:
-            pass
+            log_exc('lock_screen._on_map: add_tick_callback')
         GLib.timeout_add(_LOCK_MAPPED_FALLBACK_MS, _report)
 
     def _on_visible_changed(self, *_args) -> None:
         try:
             logind_session().set_locked_hint(bool(self.get_visible()))
         except Exception:
-            pass
+            log_exc('_on_visible_changed: logind_session().set_locked_hint')
 
     def _init_overlay_surface(self) -> None:
         if _LAYER_SHELL and LayerShell.is_supported():
@@ -851,7 +852,7 @@ class LockScreen(Gtk.Window):
                 import session_lock
                 session_lock.fall_back('the session lock failed')
             except Exception:
-                pass
+                log_exc('_on_session_ended: session_lock.fall_back')
             self._use_session_lock = False
             self._session = None
             self._init_overlay_surface()
@@ -886,7 +887,7 @@ class LockScreen(Gtk.Window):
             try:
                 media.apply_theme(resolved)
             except Exception:
-                pass
+                log_exc('lock_screen.apply_theme: media.apply_theme')
 
     # ------------------------------------------------------------------
     # Build UI
@@ -1105,7 +1106,7 @@ class LockScreen(Gtk.Window):
                 if height <= 0:
                     height = geo.height
             except Exception:
-                pass
+                log_exc('_fit_keypad_to_screen: get_default().get_monitors')
         if width <= 0:
             return
         avail_h = (height - _COLLAPSED_CLOCK_RESERVE - _KEYPAD_HEIGHT_MARGIN
@@ -1176,13 +1177,13 @@ class LockScreen(Gtk.Window):
             smart_lock.ensure_monitor(
                 self._config, on_trust_changed=self._on_smart_lock_changed)
         except Exception:
-            pass
+            log_exc('lock_screen._start_smart_lock: smart_lock.ensure_monitor')
 
     def _on_smart_lock_changed(self) -> None:
         try:
             GLib.idle_add(self._refresh_trust_line)
         except Exception:
-            pass
+            log_exc('lock_screen._on_smart_lock_changed: GLib.idle_add')
 
     def _smart_lock_requires_pin(self) -> bool:
         """True unless Smart Lock currently waives the keypad. Fails
@@ -1220,7 +1221,7 @@ class LockScreen(Gtk.Window):
             if hasattr(label, 'set_visible'):
                 label.set_visible(bool(line))
         except Exception:
-            pass
+            log_exc('lock_screen._refresh_trust_line: label.set_text')
         return False
 
     def _set_clock_compact(self, compact: bool) -> None:
@@ -1263,7 +1264,7 @@ class LockScreen(Gtk.Window):
         try:
             smart_lock.refresh()
         except Exception:
-            pass
+            log_exc('lock_screen.prepare: smart_lock.refresh')
         # getattr-tolerant like the swipe gate: pre-Smart-Lock harnesses
         # have no line method and simply skip the re-render.
         refresh_line = getattr(self, '_refresh_trust_line', None)
@@ -1298,11 +1299,11 @@ class LockScreen(Gtk.Window):
             try:
                 media.apply_theme(self._display_preset())
             except Exception:
-                pass
+                log_exc('lock_screen.prepare: media.apply_theme')
             try:
                 media.refresh()
             except Exception:
-                pass
+                log_exc('lock_screen.prepare: media.refresh')
 
     def refresh_notifications(self) -> None:
         """Re-read the list while locked, so arrivals and withdrawals show
@@ -1538,7 +1539,7 @@ class LockScreen(Gtk.Window):
                 watch_call_end(path, lambda end, p=path:
                                self._emg_call_ended(p, end))
             except Exception:
-                pass
+                log_exc('lock_screen._emg_call_done: watch_call_end')
         elif detail == EMERGENCY_REFUSAL:
             text = EMERGENCY_REFUSAL
         else:
@@ -1669,7 +1670,7 @@ class LockScreen(Gtk.Window):
             try:
                 smart_lock.note_pin_unlock(self._config)
             except Exception:
-                pass
+                log_exc('_on_pin_result: smart_lock.note_pin_unlock')
             self._unlock()
         elif error is not None:
             # Helper unreachable: fail closed without counting a miss.
@@ -1765,7 +1766,7 @@ class LockScreen(Gtk.Window):
             import sim_pin
             sim_pin.on_shell_unlocked()
         except Exception:
-            pass
+            log_exc('lock_screen._unlock: sim_pin.on_shell_unlocked')
 
     def _wipe_pin(self) -> None:
         self._pin = ''
@@ -1939,7 +1940,7 @@ class LockScreen(Gtk.Window):
                     and not LockScreen._screen_blanked(self)):
                 self.try_fingerprint_unlock()
         except Exception:
-            pass
+            log_exc('lock_screen._fp_probe_done: _update_fp_hint')
         return GLib.SOURCE_REMOVE
 
     # ------------------------------------------------------------------

@@ -17,6 +17,7 @@ import time
 import settings_page
 import settings_ui as ui
 from pin_rules import MIN_PIN, valid_pin
+from shell_log import log_exc
 
 
 def _lockout_remaining(config) -> int:
@@ -47,7 +48,7 @@ def _note_wrong_pin(config, fail_count: int) -> None:
         else:
             config.set_lockout_state(fail_count, 0.0)
     except Exception:
-        pass
+        log_exc('settings_lock._note_wrong_pin: time.time')
 
 
 def validate_new_pin(current: str, new: str, confirm: str) -> str | None:
@@ -71,7 +72,7 @@ def _helper_change(config, current: str, new: str, on_async) -> None:
             try:
                 config.clear_lockout_state()
             except Exception:
-                pass
+                log_exc('settings_lock._done: config.clear_lockout_state')
             on_async(True, 'PIN changed.')
         elif error is not None:
             on_async(False, 'Could not reach the PIN service.')
@@ -135,7 +136,7 @@ def change_pin(config, current: str, new: str, confirm: str,
     try:
         config.clear_lockout_state()
     except Exception:
-        pass
+        log_exc('settings_lock.change_pin: config.clear_lockout_state')
     return True, 'PIN changed.'
 
 
@@ -187,7 +188,7 @@ def verify_current_pin(config, pin: str, on_result) -> None:
     try:
         config.clear_lockout_state()
     except Exception:
-        pass
+        log_exc('settings_lock.verify_current_pin: config.clear_lockout_state')
     on_result(True, '')
 
 
@@ -220,7 +221,7 @@ def ask_pin(win, anchor, title: str, commit_label: str, on_ok):
             try:
                 entry.set_text('')
             except Exception:
-                pass
+                log_exc('settings_lock._commit: entry.set_text')
         if not early:
             return None
         ok, message = early[0]
@@ -240,7 +241,7 @@ def _status(win, message: str) -> None:
     try:
         win._show_status(message)
     except Exception:
-        pass
+        log_exc('settings_lock._status: win._show_status')
 
 
 def remove_pin(config, current: str,
@@ -265,7 +266,7 @@ def remove_pin(config, current: str,
                     config.clear_pin()
                     config.clear_lockout_state()
                 except Exception:
-                    pass
+                    log_exc('settings_lock._reply: config.clear_pin')
                 on_async(True, 'PIN removed.')
                 return
             on_async(False, _helper_verdict(
@@ -354,7 +355,7 @@ class LockSection(settings_page._Section):
             try:
                 win._show_status(message)
             except Exception:
-                pass
+                log_exc('settings_lock._later: win._show_status')
 
         ok, message = change_pin(win.config, values.get('current', ''),
                                  values.get('new', ''),
@@ -364,7 +365,7 @@ class LockSection(settings_page._Section):
             try:
                 entry.set_text('')
             except Exception:
-                pass
+                log_exc('settings_lock._on_change_pin: entry.set_text')
         if ok is None:
             # The helper answers async: the sheet closes, the verdict
             # lands in the section note and a status toast.
@@ -377,7 +378,7 @@ class LockSection(settings_page._Section):
         try:
             win._show_status('PIN changed.')
         except Exception:
-            pass
+            log_exc('settings_lock._on_change_pin: win._show_status')
         return None
 
     def _open_remove(self, win, anchor):
@@ -400,7 +401,7 @@ class LockSection(settings_page._Section):
             try:
                 entry.set_text('')
             except Exception:
-                pass
+                log_exc('settings_lock._on_remove_pin: entry.set_text')
         if ok is False:
             return message
         self._say(message)
@@ -416,7 +417,7 @@ class LockSection(settings_page._Section):
             try:
                 win._show_status('Password prompt opened in terminal.')
             except Exception:
-                pass
+                log_exc('settings_lock._on_change_password: win._show_status')
 
     def _say(self, text: str) -> None:
         ui.say(self._status, text)

@@ -12,6 +12,10 @@
 # On top of that classic set the gate opts into bug-finding families that
 # cost nothing on correct code: flake8-bugbear (B), pylint errors (PLE),
 # subprocess.run without an explicit check= (PLW1510) and flake8-async.
+# launcher/helper/ruff.toml adds blind-except and bandit for the root helper.
+# S110 (try-except-pass) in launcher/src is a per-file ratchet instead of a
+# rule here: tests/test_s110_baseline.py.
+
 
 [lint]
 select = ["E4", "E7", "E9", "F", "B", "PLE", "PLW1510", "ASYNC"]

@@ -18,6 +18,7 @@ import subprocess
 _log = logging.getLogger('banner')
 
 from config import ShellConfig, ThemePreset
+from shell_log import log_exc
 
 _HAS_GTK = True
 try:
@@ -206,14 +207,14 @@ def dispatch_tap(state: BannerState, daemon, launch_fn,
             if not allow_fn(current.get('desktop_entry') or ''):
                 return 'blocked'
         except Exception:
-            pass
+            log_exc('banner.dispatch_tap: allow_fn')
     notif_id = current.get('id')
     if target == 'default':
         if daemon is not None:
             try:
                 daemon.invoke_action(notif_id, 'default')
             except Exception:
-                pass
+                log_exc('banner.dispatch_tap: daemon.invoke_action')
             try:
                 resident = bool((current.get('hints') or {}).get(
                     'resident', False))
@@ -230,7 +231,7 @@ def dispatch_tap(state: BannerState, daemon, launch_fn,
             try:
                 launch_fn(current.get('desktop_entry'))
             except Exception:
-                pass
+                log_exc('banner.dispatch_tap: launch_fn')
         if daemon is not None:
             try:
                 daemon.close_from_shell(notif_id)
@@ -256,7 +257,7 @@ def _launch_desktop_entry(desktop_entry: str) -> None:
             app_info.launch([], None)
             return
     except Exception:
-        pass
+        log_exc('banner._launch_desktop_entry: DesktopAppInfo.new')
     try:
         subprocess.Popen(['gtk-launch', entry], close_fds=True,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -447,7 +448,7 @@ if _HAS_GTK:
                 import dock_controller
                 dock_controller.sync_surface(self)
             except Exception:
-                pass
+                log_exc('show_notification: dock_controller.sync_surface')
             self.set_visible(True)
             self.present()
             self._revealer.set_reveal_child(True)
@@ -465,7 +466,7 @@ if _HAS_GTK:
             try:
                 self._revealer.set_reveal_child(False)
             except Exception:
-                pass
+                log_exc('banner.hide_banner: _revealer.set_reveal_child')
             if self._hide_id is not None:
                 try:
                     GLib.source_remove(self._hide_id)
@@ -482,7 +483,7 @@ if _HAS_GTK:
             try:
                 self.set_visible(False)
             except Exception:
-                pass
+                log_exc('banner._hide_now: set_visible')
             return False
 
         def _on_timeout(self) -> bool:

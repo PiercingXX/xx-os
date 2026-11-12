@@ -25,6 +25,7 @@ from keyboard_layouts import xkb_for
 # Single source of truth with Settings › Change PIN; MAX_PIN is the lock
 # screen's entry cap (a longer PIN could never be typed back).
 from pin_rules import MAX_PIN, MIN_PIN, valid_pin
+from shell_log import log_exc
 
 
 def theme_css(preset: ThemePreset) -> str:
@@ -423,7 +424,7 @@ def _report_shell_ready() -> None:
         import wayland_bindings
         wayland_bindings.shell_state().note_shell_ready()
     except Exception:
-        pass
+        log_exc('_report_shell_ready: shell_state().note_shell_ready')
 
 
 def _store_pin(config, pin: str) -> None:
@@ -508,7 +509,7 @@ class FirstBootWizard(Gtk.Window):
                 import helper_client
                 helper_client.pin_sync(self._config)
             except Exception:
-                pass
+                log_exc('first_boot.__init__: helper_client.pin_sync')
         self._pin_entered = ''
         self._pin_buf = ''
         self._confirm_buf = ''

@@ -25,6 +25,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Callable
+from shell_log import log_exc
 
 log = logging.getLogger(__name__)
 
@@ -71,12 +72,12 @@ def _post_to_main(callback: Callable, *args) -> None:
         try:
             callback(*args)
         except Exception:
-            pass
+            log_exc('capture._post_to_main: callback')
         return
     try:
         idle_add(callback, *args)
     except Exception:
-        pass
+        log_exc('capture._post_to_main: idle_add')
 
 
 # Shell hook: main.py installs a provider returning the live shell window
@@ -119,7 +120,7 @@ def _shade() -> object | None:
         if callable(ensure):
             return ensure()
     except Exception:
-        pass
+        log_exc('capture._shade: getattr')
     return getattr(shell, '_shade', None)
 
 
@@ -142,7 +143,7 @@ def _dismiss_notif(notif_id: int) -> None:
     try:
         shade.dismiss(notif_id, notify_daemon=False)
     except Exception:
-        pass
+        log_exc('capture._dismiss_notif: shade.dismiss')
 
 
 # Shell-internal ids: never came from the notification daemon, so the
@@ -283,7 +284,7 @@ def flash() -> None:
     try:
         _FlashOverlay().present()
     except Exception:
-        pass
+        log_exc('capture.flash: _FlashOverlay().present')
 
 
 if _HAS_GTK:
@@ -322,7 +323,7 @@ if _HAS_GTK:
                 if surface is not None:
                     surface.set_input_region(cairo.Region())
             except Exception:
-                pass
+                log_exc('capture._on_realize: get_surface')
 
         def _on_timeout(self) -> bool:
             try:
@@ -496,7 +497,7 @@ if _HAS_GTK:
                 if surface is not None:
                     surface.set_input_region(cairo.Region())
             except Exception:
-                pass
+                log_exc('capture._on_realize: get_surface')
 
         def _on_tick(self) -> bool:
             self._steps.pop(0)
@@ -508,12 +509,12 @@ if _HAS_GTK:
                 try:
                     self._on_done()
                 except Exception:
-                    pass
+                    log_exc('capture._on_tick: _on_done')
                 return False
             try:
                 self._label.set_text(str(self._steps[0]))
             except Exception:
-                pass
+                log_exc('capture._on_tick: _label.set_text')
             return True
 
 
@@ -783,7 +784,7 @@ def _screen_height() -> int:
         if height:
             return int(height)
     except Exception:
-        pass
+        log_exc('capture._screen_height: Display.get_default')
     return 720
 
 
@@ -904,7 +905,7 @@ class VirtualScroller:
                 display.flush()
                 display.disconnect()
             except Exception:
-                pass
+                log_exc('capture.close: display.flush')
 
 
 def capture_scrolling() -> None:
@@ -922,7 +923,7 @@ def _hide_shell_surfaces() -> None:
             if callable(fn):
                 fn()
         except Exception:
-            pass
+            log_exc('capture._hide_shell_surfaces: getattr')
     for attr in ('_banner', '_switcher'):
         try:
             surface = getattr(shell, attr, None)
@@ -931,7 +932,7 @@ def _hide_shell_surfaces() -> None:
             if callable(hide):
                 hide()
         except Exception:
-            pass
+            log_exc('capture._hide_shell_surfaces: getattr')
 
 
 def _scrolling_work() -> None:

@@ -7,6 +7,7 @@ from itertools import pairwise
 from app_names import fallback_app_name
 from config import DANGER_RED, DESTRUCTIVE_TINT_BG, ShellConfig, ThemePreset
 from toplevel_manager import ToplevelManager
+from shell_log import log_exc
 
 log = logging.getLogger(__name__)
 
@@ -723,7 +724,7 @@ class AppSwitcher(_AppSwitcherBase):
                 try:
                     callback(app)
                 except Exception:
-                    pass
+                    log_exc('app_switcher._focus_app: callback')
             return
         self._focus_app_with_manager(self._manager, app, self._on_activated,
                                      standby=self._standby())

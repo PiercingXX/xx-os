@@ -18,7 +18,7 @@ from ipc import (
     IPCServer, parse_page_command, queue_pending_command, suppress_during_tour,
 )
 from notif_daemon import NotificationDaemon
-from shell_log import get_logger, setup_logging
+from shell_log import get_logger, log_exc, setup_logging
 from window import ShellWindow
 
 _log = get_logger('main')
@@ -158,7 +158,7 @@ class WizardTelephony:
                 try:
                     getattr(surface, method)()
                 except Exception:
-                    pass
+                    log_exc('main.close: getattr()')
 
 
 class XXWMApplication(Adw.Application):
@@ -770,7 +770,7 @@ class XXWMApplication(Adw.Application):
                 standby.note_notification_shown(
                     notif_id, desktop_entry or app_name)
             except Exception:
-                pass
+                log_exc('_on_notification: standby.note_notification_shown')
         # "Disable for…" mute: notifications from a muted app are discarded
         # outright until the deadline passes
         config = getattr(self._shell, 'config', None)
@@ -858,19 +858,22 @@ class XXWMApplication(Adw.Application):
             return False
 
     def _banner_locked(self) -> bool:
+        """An unreadable lock state counts as locked: no banner over it."""
         shell = self._shell
         is_locked = getattr(shell, 'is_locked', None)
         if callable(is_locked):
             try:
                 return bool(is_locked())
             except Exception:
-                pass
+                log_exc('banner lock state')
+                return True
         lock = getattr(shell, '_lock_screen', None)
         try:
             if lock is not None and hasattr(lock, 'get_visible'):
                 return bool(lock.get_visible())
         except Exception:
-            pass
+            log_exc('banner lock visibility')
+            return True
         return False
 
     def _ensure_banner(self):
@@ -884,13 +887,13 @@ class XXWMApplication(Adw.Application):
             try:
                 self._banner.set_application(self)
             except Exception:
-                pass
+                log_exc('main._ensure_banner: _banner.set_application')
             try:
                 from window import resolve_appearance_preset
                 self._banner.apply_theme(
                     resolve_appearance_preset(self._shell.config))
             except Exception:
-                pass
+                log_exc('main._ensure_banner: _banner.apply_theme')
         return self._banner
 
     def _shade_visible(self) -> bool:
@@ -900,7 +903,7 @@ class XXWMApplication(Adw.Application):
             if shade is not None and hasattr(shade, 'get_visible'):
                 return bool(shade.get_visible())
         except Exception:
-            pass
+            log_exc('main._shade_visible: hasattr')
         return False
 
     def _maybe_banner(self, notif_id, app_name, summary, body,
@@ -924,7 +927,7 @@ class XXWMApplication(Adw.Application):
                 actions if actions is not None else [],
                 hints if isinstance(hints, dict) else None)
         except Exception:
-            pass
+            log_exc('notification banner')
 
     def _arm_focus_release(self) -> None:
         """Check for the end of Focus only while it holds something."""
@@ -968,7 +971,7 @@ class XXWMApplication(Adw.Application):
             try:
                 standby.note_notification_closed(notif_id)
             except Exception:
-                pass
+                log_exc('_on_notification_closed: note_notification_closed')
         if self._shell is None:
             return
         shade = getattr(self._shell, '_shade', None)
@@ -1101,7 +1104,7 @@ class XXWMApplication(Adw.Application):
         try:
             GLib.idle_add(self._apply_privacy_snapshot, dict(snapshot))
         except Exception:
-            pass
+            log_exc('main._on_privacy_changed: GLib.idle_add')
 
     def _apply_privacy_snapshot(self, snapshot: dict) -> bool:
         try:
@@ -1150,13 +1153,13 @@ class XXWMApplication(Adw.Application):
             try:
                 standby.note_screen_blank(blanked)
             except Exception:
-                pass
+                log_exc('main._on_display_blank: standby.note_screen_blank')
         monitor = getattr(self, '_privacy_monitor', None)
         if monitor is not None:
             try:
                 monitor.set_screen_on(not blanked)
             except Exception:
-                pass
+                log_exc('main._on_display_blank: monitor.set_screen_on')
         tracker = getattr(self, '_usage_tracker', None)
         if tracker is not None:
             try:
@@ -1206,7 +1209,7 @@ class XXWMApplication(Adw.Application):
                 import settings_firewall
                 settings_firewall.reapply(shell, _on_xxdb_firewall_done)
             except Exception:
-                pass
+                log_exc('_on_xxdb_state_changed: settings_firewall.reapply')
 
         def _on_xxdb_firewall_done(ok: bool, detail) -> None:
             if not ok:
@@ -1214,7 +1217,7 @@ class XXWMApplication(Adw.Application):
                     shell._show_status(
                         'Could not update firewall: %s' % detail)
                 except Exception:
-                    pass
+                    log_exc('main._on_xxdb_firewall_done: shell._show_status')
 
         def _on_xxdb_changed() -> None:
             self._arm_xxdb_idle()
@@ -1392,19 +1395,20 @@ class XXWMApplication(Adw.Application):
             try:
                 dock.stop()
             except Exception:
-                pass
+                log_exc('main.do_shutdown: dock.stop')
         screensaver = getattr(self, '_screensaver', None)
         if screensaver is not None:
             try:
                 screensaver.stop()
             except Exception:
-                pass
+                log_exc('main.do_shutdown: screensaver.stop')
         standby = getattr(self, '_standby', None)
         if standby is not None:
             try:
                 standby.shutdown_thaw()
             except Exception:
-                pass
+                log_exc('standby thaw on shutdown')
+
         shell = getattr(self, '_shell', None)
         desk = getattr(shell, '_desk', None)
         if desk is not None:

@@ -23,6 +23,7 @@ import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from shell_log import log_exc
 
 _EXCLUDED_KEYS = ('pin_hash', 'lock_screen_lockout',
                   'smart_lock_bt_devices', 'smart_lock_wifi_ssids',
@@ -226,7 +227,7 @@ def export_backup(config) -> dict:
         from gesture_config import GestureConfig
         backup['gestures'] = dict(GestureConfig().all())
     except Exception:
-        pass
+        log_exc('backup.export_backup: dict')
 
     return backup
 
@@ -521,6 +522,6 @@ def restore_backup(config, payload: dict) -> bool:
                 gc._map[key] = action
             gc.save()
         except Exception:
-            pass
+            log_exc('backup.restore_backup: GestureConfig')
 
     return True

@@ -34,3 +34,19 @@ def setup_logging() -> None:
 
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(f'piercing.{name}')
+
+
+_logged_exc: set[tuple[str, str]] = set()
+
+
+def log_exc(where: str) -> None:
+    """Log the exception being handled; call it from an ``except`` block
+    in place of ``pass``. The first failure per (where, exception type)
+    is a warning with its traceback; repeats drop to debug, so a handler
+    on a hot path cannot flood shell.log."""
+    exc = sys.exc_info()[1]
+    key = (where, type(exc).__name__)
+    level = logging.DEBUG if key in _logged_exc else logging.WARNING
+    _logged_exc.add(key)
+    logging.getLogger('piercing.exc').log(
+        level, '%s failed: %r', where, exc, exc_info=exc is not None)

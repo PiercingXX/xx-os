@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import settings_page
 import settings_ui as ui
+from shell_log import log_exc
 
 TIMEOUT_CHOICES = ((5, '5 min'), (15, '15 min'), (30, '30 min'),
                    (0, 'Never'))
@@ -106,7 +107,7 @@ def display_name(win, app_id: str) -> str:
                 except Exception:
                     return entry.name
     except Exception:
-        pass
+        log_exc('settings_standby.display_name: getattr')
     return str(app_id)
 
 
@@ -201,7 +202,7 @@ class StandbySection(settings_page._Section):
         try:
             win.config.set('suspend_after', int(secs))
         except Exception:
-            pass
+            log_exc('settings_standby._set_suspend: config.set')
         self._render_suspend(win)
 
     def _pick_caffeine(self, win, anchor) -> None:
@@ -218,7 +219,7 @@ class StandbySection(settings_page._Section):
         try:
             win.config.set('caffeine_minutes', int(minutes))
         except Exception:
-            pass
+            log_exc('settings_standby._set_caffeine: config.set')
         self._render_suspend(win)
 
     def refresh(self, win) -> None:
@@ -250,11 +251,11 @@ class StandbySection(settings_page._Section):
             try:
                 ctl.set_saver(on)
             except Exception:
-                pass
+                log_exc('settings_standby._on_saver_flipped: ctl.set_saver')
         try:
             win.config.set_battery_saver(on)
         except Exception:
-            pass
+            log_exc('_on_saver_flipped: config.set_battery_saver')
         self._render_frozen(win)
 
     def _on_auto_flipped(self, win, switch) -> None:
@@ -263,7 +264,7 @@ class StandbySection(settings_page._Section):
         try:
             win.config.set_battery_saver_auto(bool(switch.get_active()))
         except Exception:
-            pass
+            log_exc('_on_auto_flipped: config.set_battery_saver_auto')
 
     def _render_threshold(self, win) -> None:
         pct = _threshold_pct(win)
@@ -282,7 +283,7 @@ class StandbySection(settings_page._Section):
         try:
             win.config.set_battery_saver_auto_pct(pct)
         except Exception:
-            pass
+            log_exc('_set_threshold: config.set_battery_saver_auto_pct')
         self._render_threshold(win)
 
     def _timeout_label(self, win) -> str:
@@ -312,7 +313,7 @@ class StandbySection(settings_page._Section):
         try:
             win.config.set_app_standby_minutes(minutes)
         except Exception:
-            pass
+            log_exc('_set_timeout: config.set_app_standby_minutes')
         self._render_timeout(win)
 
     def _render_exempt(self, win) -> None:
@@ -338,7 +339,7 @@ class StandbySection(settings_page._Section):
             win.stack.set_visible_child_name('apps')
             win._show_status('Tap an app to never freeze.')
         except Exception:
-            pass
+            log_exc('_on_add_exempt: stack.set_visible_child_name')
 
     def _on_remove_exempt(self, win, app_id: str) -> None:
         try:
@@ -355,7 +356,7 @@ class StandbySection(settings_page._Section):
                     if normalize_app_id(entry) != wanted]
             win.config.set_standby_exempt(kept)
         except Exception:
-            pass
+            log_exc('settings_standby._on_remove_exempt: normalize_app_id')
         self._render_exempt(win)
 
     def _render_frozen(self, win) -> None:
@@ -364,7 +365,7 @@ class StandbySection(settings_page._Section):
             try:
                 label.set_text(_frozen_text(win))
             except Exception:
-                pass
+                log_exc('settings_standby._render_frozen: label.set_text')
 
 
 def _threshold_pct(win) -> int:
@@ -372,7 +373,7 @@ def _threshold_pct(win) -> int:
         from app_standby import saver_auto_threshold
         return saver_auto_threshold(getattr(win, 'config', None))
     except Exception:
-        pass
+        log_exc('settings_standby._threshold_pct: saver_auto_threshold')
     return int(_cfg(win, 'battery_saver_auto_pct', 15) or 15)
 
 

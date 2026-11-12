@@ -10,6 +10,7 @@ from __future__ import annotations
 import settings_lock
 import settings_page
 import settings_ui as ui
+from shell_log import log_exc
 
 
 def trust_status(win) -> tuple[str, str]:
@@ -78,7 +79,7 @@ class SmartLockSection(settings_page._Section):
                 built.extend(ui.group('On body', [ui.switch_row(
                     'Stay unlocked while on body', '', False)]))
         except Exception:
-            pass
+            log_exc('settings_smart_lock.build: smart_lock.on_body_supported')
         self.refresh(win)
         return built
 
@@ -125,7 +126,7 @@ class SmartLockSection(settings_page._Section):
                     if str(entry).strip().upper() != str(address).strip().upper()]
             win.config.set_smart_lock_bt_devices(kept)
         except Exception:
-            pass
+            log_exc('settings_smart_lock._remove_bt: trusted_bt')
         self._render_bt(win)
         self._render_status(win)
 
@@ -134,7 +135,7 @@ class SmartLockSection(settings_page._Section):
             kept = [entry for entry in trusted_ssids(win) if entry != network]
             win.config.set_smart_lock_wifi_ssids(kept)
         except Exception:
-            pass
+            log_exc('settings_smart_lock._remove_ssid: trusted_ssids')
         self._render_wifi(win)
         self._render_status(win)
 
@@ -173,7 +174,7 @@ class SmartLockSection(settings_page._Section):
             win.config.set_smart_lock_bt_devices(
                 trusted_bt(win) + [address])
         except Exception:
-            pass
+            log_exc('_add_bt: config.set_smart_lock_bt_devices')
         self._render_bt(win)
         self._render_status(win)
 
@@ -206,7 +207,7 @@ class SmartLockSection(settings_page._Section):
             win.config.set_smart_lock_wifi_ssids(
                 trusted_ssids(win) + [network])
         except Exception:
-            pass
+            log_exc('_add_ssid: config.set_smart_lock_wifi_ssids')
         self._render_wifi(win)
         self._render_status(win)
 
@@ -215,7 +216,7 @@ class SmartLockSection(settings_page._Section):
         try:
             win._show_status(text)
         except Exception:
-            pass
+            log_exc('settings_smart_lock._announce: win._show_status')
 
 
 def _device_label(dev) -> str:

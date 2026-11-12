@@ -18,6 +18,7 @@ import datetime
 import math
 import re
 import time
+from shell_log import log_exc
 
 MODES = ('off', 'custom', 'sunset')
 
@@ -291,7 +292,7 @@ class NightScheduler:
             try:
                 self._disarm(timer)
             except Exception:
-                pass
+                log_exc('night_light._drop_timer: _disarm')
 
     def _snapshot(self):
         try:
@@ -353,7 +354,7 @@ class NightScheduler:
         try:
             self._apply(bool(wanted))
         except Exception:
-            pass
+            log_exc('night_light.refresh: _apply')
         self._retime(wake - now, lambda: self.refresh('boundary'))
         return bool(wanted)
 
@@ -366,7 +367,7 @@ class NightScheduler:
             try:
                 self._apply(bool(enabled))
             except Exception:
-                pass
+                log_exc('night_light.manual_set: _apply')
             return bool(enabled)
         use_mode = 'custom' if mode == '__fallback__' else mode
         try:
@@ -384,7 +385,7 @@ class NightScheduler:
         try:
             self._apply(bool(enabled))
         except Exception:
-            pass
+            log_exc('night_light.manual_set: _apply')
         self._retime(self._override_until - now,
                      lambda: self.refresh('boundary'))
         return bool(enabled)
@@ -430,7 +431,7 @@ def _system_tz(localtime: str = '/etc/localtime') -> datetime.tzinfo:
         with open(localtime, 'rb') as fh:
             return zoneinfo.ZoneInfo.from_file(fh)
     except Exception:
-        pass
+        log_exc('night_light._system_tz: open')
     try:
         return datetime.datetime.now().astimezone().tzinfo
     except Exception:

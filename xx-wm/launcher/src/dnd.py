@@ -20,7 +20,7 @@ import time as _time
 from datetime import datetime, timedelta
 
 from config import ShellConfig
-from shell_log import get_logger
+from shell_log import get_logger, log_exc
 
 try:
     from xx_phone import numbers_match as _shared_numbers_match
@@ -147,7 +147,7 @@ class DndState:
             try:
                 callback()
             except Exception:
-                pass
+                log_exc('dnd._changed: callback')
 
     def __init__(self, config: ShellConfig) -> None:
         self._config = config

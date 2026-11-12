@@ -15,6 +15,7 @@ import settings_page
 import settings_ui as ui
 
 import datetime
+from shell_log import log_exc
 
 _SCREEN_TIME_NOTIF_ID = 999905
 
@@ -261,7 +262,7 @@ class ScreenTimeSection(settings_page._Section):
             try:
                 win._screen_time_cache = {'day': day, 'totals': dict(totals)}
             except Exception:
-                pass
+                log_exc('settings_screentime._done: dict')
             self._check_limits(win, totals, day)
 
         settings_page._run_bg(_work, _done)
@@ -311,7 +312,7 @@ class ScreenTimeSection(settings_page._Section):
                 per_app = tracker.notifications(today) or {}
                 notifs = sum(per_app.values())
             except Exception:
-                pass
+                log_exc('settings_screentime._gather: tracker.daily_totals')
         if not week:
             week = [(today - _dt.timedelta(days=i), 0)
                     for i in range(6, -1, -1)]
@@ -334,7 +335,7 @@ class ScreenTimeSection(settings_page._Section):
         try:
             win._screen_time_cache = {'day': day, 'totals': dict(totals)}
         except Exception:
-            pass
+            log_exc('settings_screentime._render: dict')
         self._check_limits(win, totals, day)
         self._render_apps(win, totals, day)
 
@@ -463,14 +464,14 @@ class ScreenTimeSection(settings_page._Section):
             try:
                 repopulate('')
             except Exception:
-                pass
+                log_exc('settings_screentime._ignore: repopulate')
         else:
             refresh_parent = getattr(win, '_refresh_after_item_action', None)
             if callable(refresh_parent):
                 try:
                     refresh_parent()
                 except Exception:
-                    pass
+                    log_exc('settings_screentime._ignore: refresh_parent')
         self.refresh(win)
 
     def _display_name(self, win, app_id: str) -> str:

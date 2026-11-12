@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+from shell_log import log_exc
 
 log = logging.getLogger('trackpad')
 
@@ -421,7 +422,7 @@ class VirtualPointer:
                 from gi.repository import GLib
                 GLib.source_remove(source)
             except Exception:
-                pass
+                log_exc('trackpad.close: GLib.source_remove')
         pointer, self._pointer = self._pointer, None
         display, self._display = self._display, None
         self._registry = None
@@ -435,4 +436,4 @@ class VirtualPointer:
                 display.flush()
                 display.disconnect()
             except Exception:
-                pass
+                log_exc('trackpad.close: display.flush')

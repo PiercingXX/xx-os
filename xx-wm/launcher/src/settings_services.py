@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 import settings_page
 import settings_ui as ui
+from shell_log import log_exc
 
 try:
     from power_menu import ConfirmState
@@ -137,12 +138,12 @@ def _follow_firewall(win) -> None:
             try:
                 win._show_status('Could not update firewall: %s' % detail)
             except Exception:
-                pass
+                log_exc('settings_services._report: win._show_status')
 
     try:
         firewall.reapply(win, _report)
     except Exception:
-        pass
+        log_exc('settings_services._follow_firewall: firewall.reapply')
 
 
 def visible_system_entries(eg25: bool = False, adbd: bool = False) -> list:
@@ -222,7 +223,7 @@ class ServicesSection(settings_page._Section):
                     states[entry.key] = self._openrc_state(
                         system_settings, entry)
         except Exception:
-            pass
+            log_exc('settings_services._probe: _systemd_state')
         try:
             eg25 = self._eg25_present(system_settings, init)
         except Exception:
@@ -343,7 +344,7 @@ class ServicesSection(settings_page._Section):
                         bool(ssh_net.get('listening')),
                         ssh_net.get('address'), ssh_pw)
                 except Exception:
-                    pass
+                    log_exc('settings_services._render: connect.describe_ssh')
             row = ui.nav_row(
                 entry.title, subtitle,
                 lambda r, e=entry: self._on_service_menu(win, e, r))
@@ -491,7 +492,7 @@ class ServicesSection(settings_page._Section):
         try:
             win._show_status('Tap Stop again to stop the service.')
         except Exception:
-            pass
+            log_exc('settings_services._on_stop: win._show_status')
         return 'armed'
 
     def _on_user_stop(self, win, stop_key: str) -> str:
@@ -507,7 +508,7 @@ class ServicesSection(settings_page._Section):
         try:
             win._show_status('Tap Stop again to stop the service.')
         except Exception:
-            pass
+            log_exc('settings_services._on_user_stop: win._show_status')
         return 'armed'
 
     def _apply(self, win, entry, action: str) -> None:

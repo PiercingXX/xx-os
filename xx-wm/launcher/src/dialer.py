@@ -7,6 +7,7 @@ import subprocess
 import time
 
 from gi.repository import Gio, GLib
+from shell_log import log_exc
 
 
 _CALL_PATH_RE = re.compile(r'/org/freedesktop/ModemManager1/Call/\d+')
@@ -164,7 +165,7 @@ def get_modem_emergency_numbers(bus=None, modem: str | None = None,
             ).unpack()[0])
             found.extend(_str_list(props.get('EmergencyNumbers')))
         except Exception:
-            pass
+            log_exc('dialer.get_modem_emergency_numbers: dict')
         try:
             sim_path = bus.call_sync(
                 _MM_BUS, modem, _PROPS_IFACE, 'Get',
@@ -182,7 +183,7 @@ def get_modem_emergency_numbers(bus=None, modem: str | None = None,
                 ).unpack()[0])
                 found.extend(_str_list(sim_props.get('EmergencyNumbers')))
             except Exception:
-                pass
+                log_exc('dialer.get_modem_emergency_numbers: dict')
         seen: set[str] = set()
         out: list[str] = []
         for number in found:
@@ -239,7 +240,7 @@ def ensure_radio_on(bus=None, modem: str | None = None,
             )
             changed = True
     except Exception:
-        pass
+        log_exc('dialer.ensure_radio_on: NONE, timeout_ms, None).unpack')
     modem = _voice_modem(modem)
     if not modem:
         return changed
@@ -260,7 +261,7 @@ def ensure_radio_on(bus=None, modem: str | None = None,
             )
             changed = True
         except Exception:
-            pass
+            log_exc('dialer.ensure_radio_on: bus.call_sync')
     return changed
 
 

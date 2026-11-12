@@ -33,6 +33,7 @@ from datetime import datetime, timedelta
 
 from config import ShellConfig
 from dnd import schedule_matches
+from shell_log import log_exc
 
 BREAK_MINUTES = (5, 15, 30)
 MAX_BREAK_MINUTES = 30
@@ -434,7 +435,7 @@ def blocks_window(win: object, app_id: object, label: str = '') -> bool:
         try:
             win._show_nope_notice(label or str(app_id))
         except Exception:
-            pass
+            log_exc('nope_mode.blocks_window: win._show_nope_notice')
     return blocked
 
 

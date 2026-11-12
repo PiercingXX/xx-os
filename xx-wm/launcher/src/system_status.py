@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import threading
 from pathlib import Path
+from shell_log import log_exc
 
 _SUPPLY_ROOT = Path('/sys/class/power_supply')
 
@@ -137,7 +138,7 @@ def mobile_signal() -> str | None:
                 bars = min(4, pct // 25)
                 return '▂▄▆█'[:bars] if bars > 0 else '·'
     except Exception:
-        pass
+        log_exc('system_status.mobile_signal: subprocess.check_output')
     return None
 
 
@@ -199,7 +200,7 @@ def status_line_async(callback, on_snapshot=None) -> None:
                 try:
                     on_snapshot(snapshot)
                 except Exception:
-                    pass
+                    log_exc('system_status._deliver: on_snapshot')
             return False
         GLib.idle_add(_deliver)
 

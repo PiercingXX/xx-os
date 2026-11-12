@@ -20,7 +20,7 @@ if _HAS_LAYER:
 
 from config import DANGER_RED, ShellConfig, ThemePreset
 from session_lock import LockHosted
-from shell_log import get_logger
+from shell_log import get_logger, log_exc
 
 _log = get_logger('power')
 
@@ -407,7 +407,7 @@ class PowerMenu(LockHosted, Gtk.Window):
             import dock_controller
             dock_controller.sync_surface(self)
         except Exception:
-            pass
+            log_exc('power_menu.show_menu: dock_controller.sync_surface')
         self.set_visible(True)
         self.present()
 
@@ -425,13 +425,13 @@ class PowerMenu(LockHosted, Gtk.Window):
             from smart_lock import note_explicit_lock
             note_explicit_lock()
         except Exception:
-            pass
+            log_exc('power_menu._lock: note_explicit_lock')
         # Locking ends Caffeine (keep-screen-on is for the session at hand).
         try:
             from idle_inhibit import get_hub
             get_hub().clear_caffeine('lock')
         except Exception:
-            pass
+            log_exc('power_menu._lock: get_hub().clear_caffeine')
         if self._on_lock is not None:
             try:
                 self._on_lock()

@@ -30,6 +30,7 @@ from config import (
     is_dark_color,
 )
 from gesture_config import GestureConfig
+from shell_log import log_exc
 
 _APP_RESCAN_DELAY_MS = 1000
 
@@ -166,7 +167,7 @@ def _home_press_to_recents(win) -> bool:
             if surface is not None and surface.get_visible():
                 return False
         except Exception:
-            pass
+            log_exc('window._home_press_to_recents: getattr')
     return True
 
 
@@ -664,7 +665,7 @@ class ShellWindow(Adw.ApplicationWindow):
             from contacts import shared_book
             shared_book(self.config)
         except Exception:
-            pass
+            log_exc('window.__init__: shared_book')
         self.app_index = AppIndex()
         self.app_index.refresh()
 
@@ -673,12 +674,13 @@ class ShellWindow(Adw.ApplicationWindow):
             apply_default_layout(self.config, self.gesture_config)
             remap_superseded_home(self.config, self.app_index)
         except Exception:
-            pass  # first-boot seeding must never block the shell
+            # First-boot seeding must never block the shell.
+            log_exc('window.__init__: apply_default_layout')
         try:
             from config import migrate_launcher_prefs
             migrate_launcher_prefs(self.config, self.gesture_config)
         except Exception:
-            pass
+            log_exc('window.__init__: migrate_launcher_prefs')
 
         # Blank-driven auto-lock: DisplayManager reports blank/wake via
         # on_blank_changed; _lock_src is the pending "dark long enough"
@@ -904,7 +906,7 @@ class ShellWindow(Adw.ApplicationWindow):
             if self._call_live():
                 return True
         except Exception:
-            pass
+            log_exc('window._overlays_block_capture: _call_live')
         if getattr(self, '_layer_is_top', False):
             return True
         if self._switcher is not None and self._switcher.get_visible():
@@ -1041,7 +1043,7 @@ class ShellWindow(Adw.ApplicationWindow):
                     try:
                         self.apps_search.grab_focus()
                     except Exception:
-                        pass
+                        log_exc('_on_stack_swipe: apps_search.grab_focus')
                 else:
                     # Bottom bezel is lisgd (short = home, long = recents).
                     # Mid-display swipe-up on home still opens the app drawer.
@@ -1157,7 +1159,7 @@ class ShellWindow(Adw.ApplicationWindow):
             self.apps_search.set_position(-1)
             self.apps_search.grab_focus()
         except Exception:
-            pass
+            log_exc('window._open_web_search_prompt: apps_search.set_text')
         self._arm_search_keyboard()
 
     def _dispatch_gesture_action(self, action: str) -> None:
@@ -1214,11 +1216,11 @@ class ShellWindow(Adw.ApplicationWindow):
         try:
             self.item_actions._show_action_menu(self.stack, text, actions)
         except Exception:
-            pass
+            log_exc('window._show_nope_notice: item_actions._show_action_menu')
         try:
             self._show_status(text)
         except Exception:
-            pass
+            log_exc('window._show_nope_notice: _show_status')
 
     def _start_nope_break(self, minutes: int) -> None:
         try:
@@ -1229,7 +1231,7 @@ class ShellWindow(Adw.ApplicationWindow):
         try:
             self.quick_actions_refresh()
         except Exception:
-            pass
+            log_exc('window._start_nope_break: quick_actions_refresh')
         self._show_status(
             f'Nope paused for {minutes} minutes.' if ok else str(reason))
 
@@ -1238,7 +1240,7 @@ class ShellWindow(Adw.ApplicationWindow):
             label = getattr(app, 'app_id', None) or getattr(app, 'title', '')
             self._show_nope_notice(str(label))
         except Exception:
-            pass
+            log_exc('window._on_switcher_nope: getattr')
 
     def _turn_off_nope(self) -> None:
         try:
@@ -1249,7 +1251,7 @@ class ShellWindow(Adw.ApplicationWindow):
         try:
             self.quick_actions_refresh()
         except Exception:
-            pass
+            log_exc('window._turn_off_nope: quick_actions_refresh')
         self._show_status('Nope turned off.')
 
     def _on_nope_changed(self, active: bool) -> None:
@@ -1262,11 +1264,11 @@ class ShellWindow(Adw.ApplicationWindow):
             close_blocked_windows(
                 self._ensure_toplevel_manager(), self.nope_state)
         except Exception:
-            pass
+            log_exc('window._on_nope_turned_on: close_blocked_windows')
         try:
             self.quick_actions_refresh()
         except Exception:
-            pass
+            log_exc('window._on_nope_turned_on: quick_actions_refresh')
 
     def quick_actions_refresh(self) -> None:
         shade = getattr(self, '_shade', None)
@@ -1276,7 +1278,7 @@ class ShellWindow(Adw.ApplicationWindow):
                 panel.refresh_states()
                 return
             except Exception:
-                pass
+                log_exc('window.quick_actions_refresh: panel.refresh_states')
 
     def _start_focus_break(self, minutes: int) -> None:
         self.focus_state.start_break(minutes)
@@ -1312,7 +1314,7 @@ class ShellWindow(Adw.ApplicationWindow):
                 if self.nope_state.is_blocked(app_id):
                     continue
             except Exception:
-                pass
+                log_exc('window.preload_gesture_apps: nope_state.is_blocked')
             try:
                 info = Gio.DesktopAppInfo.new(app_id)
                 if info is not None:
@@ -1418,7 +1420,7 @@ class ShellWindow(Adw.ApplicationWindow):
             if callable(on_change):
                 on_change(self._on_foreign_toplevels)
         except Exception:
-            pass
+            log_exc('window._wire_foreign_toplevels: ToplevelManager')
 
     def _on_foreign_toplevels(self) -> None:
         manager = getattr(self, '_toplevel_manager', None)
@@ -1457,7 +1459,7 @@ class ShellWindow(Adw.ApplicationWindow):
             if current or generation == old_generation:
                 self._known_app_ids = set(current_ids)
         except Exception:
-            pass
+            log_exc('window._on_foreign_toplevels: set')
         if (current - known and generation == old_generation
                 and current_ids - known_ids):
             self._yield_to_foreign_app()
@@ -1470,7 +1472,7 @@ class ShellWindow(Adw.ApplicationWindow):
             if stack is not None:
                 stack.set_visible_child_name('home')
         except Exception:
-            pass
+            log_exc('window._yield_to_foreign_app: getattr')
         try:
             self._drawer_open_folder = None
         except Exception:
@@ -1482,15 +1484,15 @@ class ShellWindow(Adw.ApplicationWindow):
                 if surface is not None and surface.get_visible():
                     getattr(surface, hide)()
             except Exception:
-                pass
+                log_exc('window._yield_to_foreign_app: getattr')
         try:
             self.drop_to_background()
         except Exception:
-            pass
+            log_exc('window._yield_to_foreign_app: drop_to_background')
         try:
             self._apply_layer_policy()
         except Exception:
-            pass
+            log_exc('window._yield_to_foreign_app: _apply_layer_policy')
 
     def _launch_app_id(self, app_id: str) -> None:
         if self._nope_blocks(app_id, str(app_id)):
@@ -1508,7 +1510,7 @@ class ShellWindow(Adw.ApplicationWindow):
             try:
                 tracker.thaw_for_launch(app_id)
             except Exception:
-                pass
+                log_exc('window._launch_app_id: tracker.thaw_for_launch')
         try:
             if tracker is not None:
                 from app_standby import launch_with_pid
@@ -1552,13 +1554,13 @@ class ShellWindow(Adw.ApplicationWindow):
                 if launcher.close_folder():
                     return
             except Exception:
-                pass
+                log_exc('window._handle_back: launcher.close_folder')
             try:
                 if launcher.edit_mode:
                     launcher.set_edit_mode(False)
                     return
             except Exception:
-                pass
+                log_exc('window._handle_back: launcher.set_edit_mode')
         # Overlay first (switcher sits above the shade), then the shade.
         if self._switcher and self._switcher.get_visible():
             self._switcher.hide_switcher()
@@ -1865,7 +1867,7 @@ class ShellWindow(Adw.ApplicationWindow):
         try:
             _settings(self).open_settings(section)
         except Exception:
-            pass
+            log_exc('window.open_settings: _settings().open_settings')
 
     def _scroll_settings_to(self, section: str | None) -> bool:
         return _settings(self)._scroll_settings_to(section)
@@ -1893,7 +1895,7 @@ class ShellWindow(Adw.ApplicationWindow):
             try:
                 self.apps_search.grab_focus()
             except Exception:
-                pass
+                log_exc('_auto_show_drawer_keyboard: apps_search.grab_focus')
             self._arm_search_keyboard()
         return False
 
@@ -2013,7 +2015,7 @@ class ShellWindow(Adw.ApplicationWindow):
             try:
                 self._scroll_settings_to(section)
             except Exception:
-                pass
+                log_exc('window._open_settings: _scroll_settings_to')
 
     def _leave_settings(self) -> None:
         self._disarm_search_keyboard()
@@ -2074,7 +2076,7 @@ class ShellWindow(Adw.ApplicationWindow):
         try:
             manager.resync()
         except Exception:
-            pass
+            log_exc('window._show_switcher: manager.resync')
         if self._switcher is None:
             from app_switcher import AppSwitcher
             self._switcher = AppSwitcher(
@@ -2090,14 +2092,14 @@ class ShellWindow(Adw.ApplicationWindow):
             try:
                 self._switcher.attach_manager(manager)
             except Exception:
-                pass
+                log_exc('window._show_switcher: _switcher.attach_manager')
         from shell_log import get_logger
         try:
             get_logger('window').info(
                 'showing switcher (%d toplevels, available=%s)',
                 len(manager.list()), manager.available)
         except Exception:
-            pass
+            log_exc('window._show_switcher: get_logger().info')
         # The switcher reads the thumbnails: capture the focused app while
         # it is still visible, instead of polling for it on a timer.
         self._maybe_capture_thumb()
@@ -2126,11 +2128,11 @@ class ShellWindow(Adw.ApplicationWindow):
             get_logger('window').info(
                 'switcher refresh (%d toplevels, available=%s)', n, avail)
         except Exception:
-            pass
+            log_exc('window._refresh_switcher_if_visible: len')
         try:
             switcher.refresh()
         except Exception:
-            pass
+            log_exc('window._refresh_switcher_if_visible: switcher.refresh')
         return False
 
     # -- app drawer (drawer_page.py) ------------------------------------------
@@ -2192,17 +2194,17 @@ class ShellWindow(Adw.ApplicationWindow):
             try:
                 self._disarm_search_keyboard()
             except Exception:
-                pass
+                log_exc('_on_stack_page_changed: _disarm_search_keyboard')
         if name != 'settings' and getattr(self, '_raised_for_settings', False):
             self._raised_for_settings = False
             try:
                 self.drop_to_background()
             except Exception:
-                pass
+                log_exc('window._on_stack_page_changed: drop_to_background')
         try:
             self._apply_layer_policy()
         except Exception:
-            pass
+            log_exc('window._on_stack_page_changed: _apply_layer_policy')
 
     def _gesture_binding_text(self, key: str) -> str:
         return _settings(self)._gesture_binding_text(key)
@@ -2251,7 +2253,7 @@ class ShellWindow(Adw.ApplicationWindow):
                     'System gestures updated.' if ok
                     else 'System gestures apply at the next session.')
             except Exception:
-                pass
+                log_exc('window._sync_system_gestures: _show_status')
         return False
 
     def _pick_gesture_app(self, key: str, title: str) -> None:
@@ -2601,7 +2603,7 @@ class ShellWindow(Adw.ApplicationWindow):
             try:
                 daemon.close_for_mute(notif_id)
             except Exception:
-                pass
+                log_exc('_mute_app_notifications: daemon.close_for_mute')
 
     # -- home edit mode (home_page.py) -----------------------------------------
 
@@ -2718,7 +2720,7 @@ class ShellWindow(Adw.ApplicationWindow):
             self._home_launcher.refresh(preserve_folder=True)
             self._populate_apps(self.apps_search.get_text())
         except Exception:
-            pass
+            log_exc('window._reload_app_index: getattr')
         return GLib.SOURCE_REMOVE
 
     def _sync_home_labels_from_index(self) -> None:
@@ -2726,14 +2728,14 @@ class ShellWindow(Adw.ApplicationWindow):
         try:
             _sync_home_labels(self.config, self.app_index.entries)
         except Exception:
-            pass
+            log_exc('window._sync_home_labels_from_index: _sync_home_labels')
 
     def _purge_uninstalled_apps(self, removed: set[str]) -> None:
         """Drop uninstalled app ids from the home config (monitor path)."""
         try:
             _purge_removed_from_config(self.config, removed)
         except Exception:
-            pass
+            log_exc('_purge_uninstalled_apps: _purge_removed_from_config')
 
     def _setup_config_monitor(self) -> None:
         """Hot reload: editing ~/.config/xx-wm/* in a terminal is a
@@ -2859,7 +2861,7 @@ class ShellWindow(Adw.ApplicationWindow):
         try:
             self._refresh_theme_buttons()
         except Exception:
-            pass
+            log_exc('window._retheme_surfaces: _refresh_theme_buttons')
 
     def on_blank_changed(self, blanked: bool) -> None:
         """DisplayManager callback: the screen locks after

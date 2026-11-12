@@ -15,6 +15,7 @@ from datetime import datetime
 from app_names import fallback_app_name
 from config import ShellConfig, same_app_id
 from dnd import schedule_matches, schedule_skipped, scheduled_session_end
+from shell_log import log_exc
 
 BREAK_MINUTES = (5, 10, 15)
 
@@ -34,7 +35,7 @@ class FocusState:
             try:
                 callback()
             except Exception:
-                pass
+                log_exc('focus_mode._changed: callback')
 
     def __init__(self, config: ShellConfig) -> None:
         self._config = config

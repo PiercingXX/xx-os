@@ -17,7 +17,7 @@ from datetime import datetime
 
 import desk_bar
 import xxwm_backend
-from shell_log import get_logger
+from shell_log import get_logger, log_exc
 
 _log = get_logger('desk')
 
@@ -57,7 +57,7 @@ class DeskSession:
                 from quick_actions import ensure_shade_icons
                 ensure_shade_icons(display)
             except Exception:
-                pass
+                log_exc('desk_session.start: ensure_shade_icons')
             self._monitors = display.get_monitors()
             self._monitors_handler = self._monitors.connect(
                 'items-changed', lambda *_a: self._reconcile())

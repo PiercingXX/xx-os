@@ -17,6 +17,7 @@ gi.require_version('Gtk', '4.0')
 from gi.repository import Gdk, Gio, GLib, Gtk
 from config import DESTRUCTIVE_TINT_BG, DANGER_RED, ON_DANGER_FG, ShellConfig, ThemePreset
 from session_lock import LockHosted
+from shell_log import log_exc
 
 if _LAYER_SHELL:
     from gi.repository import Gtk4LayerShell as LayerShell
@@ -556,7 +557,7 @@ class Ringer:
             try:
                 conn.call_finish(result)
             except Exception:
-                pass
+                log_exc('call_ui._on_ended: conn.call_finish')
 
         try:
             bus.call(
@@ -694,7 +695,7 @@ class ProximityMonitor:
             try:
                 self._surface.set_sensitive(not near)
             except Exception:
-                pass
+                log_exc('call_ui._apply_near: _surface.set_sensitive')
         if self._display is None:
             return
         try:
@@ -705,7 +706,7 @@ class ProximityMonitor:
                 self._blanked_by_us = False
                 self._display.wake()
         except Exception:
-            pass
+            log_exc('call_ui._apply_near: _display._blank')
 
     def _release(self, bus) -> None:
         try:
@@ -735,7 +736,7 @@ class ProximityMonitor:
             try:
                 self._surface.set_sensitive(True)
             except Exception:
-                pass
+                log_exc('call_ui.stop: _surface.set_sensitive')
             self._surface = None
         display, self._display = self._display, None
         if self._blanked_by_us and display is not None:
@@ -743,7 +744,7 @@ class ProximityMonitor:
             try:
                 display.wake()
             except Exception:
-                pass
+                log_exc('call_ui.stop: display.wake')
 
 
 def _resolve_call_path() -> str | None:
@@ -772,7 +773,7 @@ def _call_modem_path(call_path: str | None) -> str | None:
             if modem:
                 return modem
     except Exception:
-        pass
+        log_exc('call_ui._call_modem_path: _call_modem.get')
     return _resolve_modem_path()
 
 
@@ -989,7 +990,7 @@ def _sync_dock(window) -> None:
         import dock_controller
         dock_controller.sync_surface(window)
     except Exception:
-        pass
+        log_exc('call_ui._sync_dock: dock_controller.sync_surface')
 
 
 def _fit_page(page):
@@ -1186,7 +1187,7 @@ class CallUI(LockHosted, Gtk.Window):
             else:
                 avatar.add_css_class('dashed')
         except Exception:
-            pass
+            log_exc('call_ui._set_avatar: caller_initials')
 
     def _paint_avatar(self, key: str, name: str) -> None:
         """Repaint a page's avatar disc from the caller name. The getattr
@@ -1435,7 +1436,7 @@ class CallUI(LockHosted, Gtk.Window):
         try:
             self._audio.set_mic_mute(False)
         except Exception:
-            pass
+            log_exc('call_ui._clear_mic_mute: _audio.set_mic_mute')
 
     def _reset_toggles(self) -> None:
         self._clear_mic_mute()
@@ -1449,13 +1450,13 @@ class CallUI(LockHosted, Gtk.Window):
                 try:
                     btn.set_active(state)
                 except Exception:
-                    pass
+                    log_exc('call_ui._reset_toggles: btn.set_active')
         grid = getattr(self, '_keypad_grid', None)
         if grid is not None:
             try:
                 grid.set_visible(False)
             except Exception:
-                pass
+                log_exc('call_ui._reset_toggles: grid.set_visible')
 
     def render_snapshot(self, calls: list, display_mgr=None) -> None:
         """Rebuild the surface from the modem monitor snapshot.
@@ -1493,14 +1494,14 @@ class CallUI(LockHosted, Gtk.Window):
             try:
                 self._ringer.stop()
             except Exception:
-                pass
+                log_exc('call_ui.render_snapshot: _ringer.stop')
         self._update_audio(live)
         self._update_proximity(live)
         if self._bar is not None:
             try:
                 self._bar.show_bar(title)
             except Exception:
-                pass
+                log_exc('call_ui.render_snapshot: _bar.show_bar')
         self._ensure_tick()
 
     def _primary_held(self) -> bool:
@@ -1525,7 +1526,7 @@ class CallUI(LockHosted, Gtk.Window):
             if hold.get_active() != held:
                 hold.set_active(held)
         except Exception:
-            pass
+            log_exc('call_ui._sync_hold_tile: hold.get_active')
 
     def _render_active_call(self, primary, waiting, name: str, number: str) -> None:
         self._primary_path = primary.path
@@ -1560,7 +1561,7 @@ class CallUI(LockHosted, Gtk.Window):
             try:
                 self._audio.enter_call()
             except Exception:
-                pass
+                log_exc('call_ui._update_audio: _audio.enter_call')
 
     def _update_proximity(self, live: list) -> None:
         from modem_monitor import _STATE_ACTIVE
@@ -1569,12 +1570,12 @@ class CallUI(LockHosted, Gtk.Window):
             try:
                 self._proximity.start(self._display_mgr, self)
             except Exception:
-                pass
+                log_exc('call_ui._update_proximity: _proximity.start')
         else:
             try:
                 self._proximity.stop()
             except Exception:
-                pass
+                log_exc('call_ui._update_proximity: _proximity.stop')
 
     def follow_dock(self, monitor) -> None:
         """Docked: a call card down the right of the monitor, below its
@@ -1613,7 +1614,7 @@ class CallUI(LockHosted, Gtk.Window):
                 self._bar.show_bar(
                     self._current_caller or self._current_number or 'In call')
             except Exception:
-                pass
+                log_exc('call_ui.minimize: _bar.show_bar')
         self.hide()
 
     def expand(self) -> None:
@@ -1632,22 +1633,22 @@ class CallUI(LockHosted, Gtk.Window):
         try:
             self._ringer.stop()
         except Exception:
-            pass
+            log_exc('call_ui._close_all: _ringer.stop')
         self._clear_mic_mute()
         mute_tile = getattr(self, '_mute_btn', None)
         if mute_tile is not None:
             try:
                 mute_tile.set_active(False)
             except Exception:
-                pass
+                log_exc('call_ui._close_all: mute_tile.set_active')
         try:
             self._audio.exit_call()
         except Exception:
-            pass
+            log_exc('call_ui._close_all: _audio.exit_call')
         try:
             self._proximity.stop()
         except Exception:
-            pass
+            log_exc('call_ui._close_all: _proximity.stop')
         self._live_snapshot = []
         self._incoming_call_path = None
         self._incoming_path = None
@@ -1667,11 +1668,11 @@ class CallUI(LockHosted, Gtk.Window):
             try:
                 self._bar.hide_bar()
             except Exception:
-                pass
+                log_exc('call_ui._close_all: _bar.hide_bar')
         try:
             self.hide()
         except Exception:
-            pass
+            log_exc('call_ui._close_all: hide')
 
     def _recover_close(self) -> None:
         """A failed Accept/Hangup closes the surface but keeps the call on
@@ -1683,7 +1684,7 @@ class CallUI(LockHosted, Gtk.Window):
         try:
             self.hide()
         except Exception:
-            pass
+            log_exc('call_ui._recover_close: hide')
         if self._bar is not None and self._live_snapshot:
             primary = primary_call(self._live_snapshot)
             if primary is not None:
@@ -1692,7 +1693,7 @@ class CallUI(LockHosted, Gtk.Window):
                 try:
                     self._bar.show_bar(title)
                 except Exception:
-                    pass
+                    log_exc('call_ui._recover_close: _bar.show_bar')
 
     def _ensure_tick(self) -> None:
         if self._timer_id is None and self._live_snapshot:
@@ -1719,7 +1720,7 @@ class CallUI(LockHosted, Gtk.Window):
         try:
             self._act_timer.set_text(self._timer_text())
         except Exception:
-            pass
+            log_exc('call_ui._refresh_timer_label: _act_timer.set_text')
 
     def _tick_timer(self) -> bool:
         if not self._live_snapshot:
@@ -1736,7 +1737,7 @@ class CallUI(LockHosted, Gtk.Window):
                         self._timer_text(),
                     )
                 except Exception:
-                    pass
+                    log_exc('call_ui._tick_timer: _bar.update')
         return True
 
     def _show_close(self) -> None:
@@ -1744,14 +1745,14 @@ class CallUI(LockHosted, Gtk.Window):
             try:
                 btn.set_visible(True)
             except Exception:
-                pass
+                log_exc('call_ui._show_close: btn.set_visible')
 
     def _hide_close(self) -> None:
         for btn in self._close_btns:
             try:
                 btn.set_visible(False)
             except Exception:
-                pass
+                log_exc('call_ui._hide_close: btn.set_visible')
 
     def _cancel_action_timeout(self) -> None:
         if self._close_src is not None:
@@ -1907,7 +1908,7 @@ class CallUI(LockHosted, Gtk.Window):
             try:
                 grid.set_visible(btn.get_active())
             except Exception:
-                pass
+                log_exc('call_ui._on_keypad_toggled: grid.set_visible')
 
     def _held_call(self):
         from modem_monitor import _STATE_HELD
@@ -1934,7 +1935,7 @@ class CallUI(LockHosted, Gtk.Window):
         try:
             btn.set_active(self._primary_held())
         except Exception:
-            pass
+            log_exc('call_ui._on_hold_toggled: btn.set_active')
 
     def _finish_resume(self, modem_path: str, success: bool,
                        error: str | None) -> None:
@@ -1949,7 +1950,7 @@ class CallUI(LockHosted, Gtk.Window):
             try:
                 btn.set_active(False)
             except Exception:
-                pass
+                log_exc('call_ui._on_add_call_toggled: btn.set_active')
         self.minimize()
 
     def _on_mute_toggled(self, btn: Gtk.ToggleButton) -> None:
@@ -1957,14 +1958,14 @@ class CallUI(LockHosted, Gtk.Window):
         try:
             self._audio.set_mic_mute(self._muted)
         except Exception:
-            pass
+            log_exc('call_ui._on_mute_toggled: _audio.set_mic_mute')
 
     def _on_speaker_toggled(self, btn: Gtk.ToggleButton) -> None:
         self._speakerphone = btn.get_active()
         try:
             self._audio.set_speaker(self._speakerphone)
         except Exception:
-            pass
+            log_exc('call_ui._on_speaker_toggled: _audio.set_speaker')
         self._update_proximity(self._live_snapshot)
 
     def _set_microphone_mute(self, muted: bool) -> None:

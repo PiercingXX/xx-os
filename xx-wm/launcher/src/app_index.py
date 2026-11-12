@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from gi.repository import Gio, GLib
 
 from app_standby import launch_with_pid
+from shell_log import log_exc
 
 
 # Separators dropped from both sides of the folded search comparison,
@@ -239,7 +240,7 @@ class AppIndex:
             try:
                 tracker.thaw_for_launch(entry.app_id)
             except Exception:
-                pass
+                log_exc('app_index.launch: tracker.thaw_for_launch')
         try:
             if tracker is not None:
                 launch_with_pid(

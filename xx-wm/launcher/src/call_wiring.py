@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shell_log import log_exc
 
 
 #: Screening reasons that mean "unknown caller, allowed to ring" (the
@@ -112,7 +113,7 @@ class CallWiring:
                 win._call_ui.set_lock_host(
                     lambda: getattr(win, '_lock_screen', None))
             except Exception:
-                pass
+                log_exc('_ensure_call_surfaces: _call_ui.set_lock_probe')
         if win._call_bar is None:
             win._call_bar = CallBar(on_expand=win._expand_call_ui,
                                     config=win.config)
@@ -121,7 +122,7 @@ class CallWiring:
         try:
             win._call_ui.bind_bar(win._call_bar)
         except Exception:
-            pass
+            log_exc('call_wiring._ensure_call_surfaces: _call_ui.bind_bar')
         return win._call_ui, win._call_bar
 
     def silence_ringer(self) -> bool:
@@ -145,7 +146,7 @@ class CallWiring:
                 import sound
                 sound.stop()
             except Exception:
-                pass
+                log_exc('call_wiring.silence_ringer: sound.stop')
         if not was_ringing:
             return False
         display_mgr = getattr(win, '_display_mgr', None)
@@ -230,7 +231,7 @@ class CallWiring:
                         and (call.number or '') == number):
                     return call.path
         except Exception:
-            pass
+            log_exc('call_wiring._incoming_call_path: _last_monitor.calls')
         try:
             from modem_monitor import active_call_path
             return active_call_path()
@@ -243,7 +244,7 @@ class CallWiring:
             try:
                 display_mgr.wake()
             except Exception:
-                pass
+                log_exc('call_wiring._wake_for_call: display_mgr.wake')
 
     def _on_call_incoming(self, caller: str, number: str) -> None:
         from shell_log import get_logger
@@ -320,23 +321,23 @@ class CallWiring:
                         from modem_monitor import hangup_call
                         hangup_call(path, lambda _ok, _err: None)
                     except Exception:
-                        pass
+                        log_exc('call_wiring._on_verdict: hangup_call')
                 try:
                     call_ui.end_call()
                 except Exception:
-                    pass
+                    log_exc('call_wiring._on_verdict: call_ui.end_call')
                 try:
                     bar = getattr(win, '_call_bar', None)
                     if bar is not None:
                         bar.hide_bar()
                 except Exception:
-                    pass
+                    log_exc('call_wiring._on_verdict: getattr')
                 return
             if verdict == 'silence':
                 try:
                     call_ui.stop_ringing()
                 except Exception:
-                    pass
+                    log_exc('call_wiring._on_verdict: call_ui.stop_ringing')
                 return
             try:
                 rings_now = (not win.dnd_state.is_active()
@@ -353,7 +354,7 @@ class CallWiring:
                     call_ui.start_ringing(
                         ringer_tone_for(verdict, reason))
                 except Exception:
-                    pass
+                    log_exc('call_wiring._on_verdict: call_ui.start_ringing')
 
         try:
             consult_check_number(raw, _on_verdict)
@@ -373,7 +374,7 @@ class CallWiring:
                     or pending.get('declined') or pending.get('reported')):
                 return True
         except Exception:
-            pass
+            log_exc('call_wiring._verdict_is_stale: getattr')
         try:
             tracked = getattr(win, '_screen_tracked', None)
             if isinstance(tracked, dict):
@@ -383,7 +384,7 @@ class CallWiring:
                             and info.get('answered')):
                         return True
         except Exception:
-            pass
+            log_exc('call_wiring._verdict_is_stale: getattr')
         try:
             from modem_monitor import _STATE_RINGING_IN, _last_monitor
             monitor = _last_monitor
@@ -400,7 +401,7 @@ class CallWiring:
                 except Exception:
                     return False
         except Exception:
-            pass
+            log_exc('call_wiring._verdict_is_stale: monitor.calls')
         return False
 
     def _resolve_incoming_path(self, number: str) -> str | None:
@@ -423,7 +424,7 @@ class CallWiring:
                 if call.number == number:
                     return call.path
         except Exception:
-            pass
+            log_exc('call_wiring._resolve_incoming_path: monitor.calls')
         return None
 
     def _report_call_end(self, number: str, direction: str, started_ms: int,
@@ -451,7 +452,7 @@ class CallWiring:
             try:
                 done.pop()
             except Exception:
-                pass
+                log_exc('call_wiring._report_call_end: done.pop')
         try:
             now_ms = int(_time.time() * 1000)
             duration_ms = max(0, now_ms - int(started_ms))
@@ -462,7 +463,7 @@ class CallWiring:
             note_call(number, direction, int(started_ms), duration_ms,
                       'answered' if answered else 'missed')
         except Exception:
-            pass
+            log_exc('call_wiring._report_call_end: note_call')
 
     def _sync_call_inhibit(self, calls: list) -> None:
         """Hold the display awake and block system sleep while any call is
@@ -484,7 +485,7 @@ class CallWiring:
                 try:
                     inhibit_sleep('call', live)
                 except Exception:
-                    pass
+                    log_exc('call_wiring._sync_call_inhibit: inhibit_sleep')
         # A blank during the call skipped the auto-lock; arm it now that the
         # last call is gone, or the phone stays unlocked in the pocket.
         was_live = getattr(win, '_call_was_live', False)
@@ -557,16 +558,16 @@ class CallWiring:
                             and pending.get('number') == info.get('number')):
                         pending['reported'] = True
                 except Exception:
-                    pass
+                    log_exc('call_wiring._track_snapshot: getattr')
             except Exception:
-                pass
+                log_exc('call_wiring._track_snapshot: _report_call_end')
 
     def _on_calls_changed(self, calls: list) -> None:
         win = self._win
         try:
             self._track_snapshot(calls)
         except Exception:
-            pass
+            log_exc('call_wiring._on_calls_changed: _track_snapshot')
         win._sync_call_inhibit(calls)
         desk = getattr(win, '_desk', None)
         if desk is not None:
@@ -574,7 +575,7 @@ class CallWiring:
                 from call_ui import select_page
                 desk.set_call(select_page(calls))
             except Exception:
-                pass
+                log_exc('call_wiring._on_calls_changed: desk.set_call')
         # The snapshot drives the whole surface: incoming, outgoing
         # dialing (full page with Hang up, not just the bar), active,
         # waiting, and the empty close. The legacy adapters stay as the
@@ -621,7 +622,7 @@ class CallWiring:
             if win.is_locked():
                 return True
         except Exception:
-            pass
+            log_exc('call_wiring._cover_lock: win.is_locked')
         ui = getattr(win, '_call_ui', None)
         return bool(getattr(ui, '_surface_live', False))
 
@@ -661,7 +662,7 @@ class CallWiring:
             try:
                 win.dnd_state.note_call(number)
             except Exception:
-                pass
+                log_exc('call_wiring._note_waiting_calls: dnd_state.note_call')
             noted[path] = number
         for path in [p for p in noted if p not in current]:
             del noted[path]
@@ -690,7 +691,7 @@ class CallWiring:
             try:
                 show(text)
             except Exception:
-                pass
+                log_exc('call_wiring._show_end_reason: show')
 
     def _on_call_answered(self, caller: str, number: str) -> None:
         import sound
@@ -701,7 +702,7 @@ class CallWiring:
             if isinstance(pending, dict) and pending.get('number') == number:
                 pending['answered'] = True
         except Exception:
-            pass
+            log_exc('call_wiring._on_call_answered: getattr')
         try:
             tracked = getattr(win, '_screen_tracked', None)
             if isinstance(tracked, dict):
@@ -709,14 +710,14 @@ class CallWiring:
                     if info.get('number') == number:
                         info['answered'] = True
         except Exception:
-            pass
+            log_exc('call_wiring._on_call_answered: getattr')
         sound.stop()
         if win._call_ui is None:
             return
         try:
             win._call_ui.stop_ringing()
         except Exception:
-            pass
+            log_exc('call_wiring._on_call_answered: _call_ui.stop_ringing')
         win._call_ui.show_active(caller or 'Active call', number)
         if win._call_bar is not None:
             win._call_bar.show_bar(caller or number)
@@ -733,13 +734,13 @@ class CallWiring:
                                       bool(pending.get('answered', False)))
             win._screen_pending = None
         except Exception:
-            pass
+            log_exc('call_wiring._on_call_ended: getattr')
         sound.stop()
         if win._call_ui is not None:
             try:
                 win._call_ui.end_call()
             except Exception:
-                pass
+                log_exc('call_wiring._on_call_ended: _call_ui.end_call')
         if win._call_bar is not None:
             win._call_bar.hide_bar()
         self._show_end_reason()
@@ -820,6 +821,6 @@ class CallWiring:
                 call_ui.render_snapshot(
                     calls, display_mgr=getattr(win, '_display_mgr', None))
         except Exception:
-            pass
+            log_exc('_reassert_call_ui_above_lock: _modem_monitor.calls')
         if win._call_ui is not None:
             win._call_ui.present()

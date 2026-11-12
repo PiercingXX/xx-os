@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 from gi.repository import Gio, GLib
 
-from shell_log import get_logger
+from shell_log import get_logger, log_exc
 
 _log = get_logger('standby')
 
@@ -400,18 +400,18 @@ def _default_desktop_lookup(app_id: str) -> dict:
     try:
         facts['wm_class'] = info.get_startup_wm_class() or ''
     except Exception:
-        pass
+        log_exc('_default_desktop_lookup: info.get_startup_wm_class')
     try:
         facts['categories'] = [c for c in (info.get_categories() or '')
                                .split(';') if c]
     except Exception:
-        pass
+        log_exc('app_standby._default_desktop_lookup: () or '').split')
     try:
         filename = info.get_filename() or ''
         facts['flatpak'] = ('flatpak' in filename.split(os.sep)
                             or bool(info.has_key('X-Flatpak')))
     except Exception:
-        pass
+        log_exc('app_standby._default_desktop_lookup: info.get_filename')
     try:
         facts['dbus_activatable'] = bool(info.get_boolean('DBusActivatable'))
     except Exception:
@@ -655,7 +655,7 @@ def query_mpris_players(session_bus: object,
                               'org.mpris.MediaPlayer2', 'DesktopEntry')
             player['entry'] = str(entry) if entry else ''
         except Exception:
-            pass
+            log_exc('app_standby.query_mpris_players: _get_prop')
     return players
 
 
@@ -720,7 +720,7 @@ def launch_with_pid(info: object, on_pid: object = None) -> object:
             try:
                 on_pid(int(pid))
             except Exception:
-                pass
+                log_exc('app_standby._on_pid: on_pid')
         return as_manager([], None, GLib.SpawnFlags.SEARCH_PATH,
                            None, None, _on_pid, None)
     return info.launch([], None)
@@ -1643,12 +1643,12 @@ class StandbyController:
                             app_id = cand
                         break
             except Exception:
-                pass
+                log_exc('app_standby._handle_manager_activated: _manager.list')
         if app_id:
             try:
                 self.note_activated(app_id)
             except Exception:
-                pass
+                log_exc('_handle_manager_activated: note_activated')
 
     # -- saver ------------------------------------------------------------------
 
@@ -1777,7 +1777,7 @@ class StandbyController:
                 try:
                     batt = query_battery(sysbus)
                 except Exception:
-                    pass
+                    log_exc('app_standby._work: query_battery')
             try:
                 GLib.idle_add(self._apply_battery, batt)
             except Exception as error:
@@ -1815,11 +1815,11 @@ class StandbyController:
                 try:
                     players = query_mpris_players(bus, skip_pids=frozen_pids)
                 except Exception:
-                    pass
+                    log_exc('app_standby._work: query_mpris_players')
                 try:
                     calls_pid = query_calls_owner_pid(bus)
                 except Exception:
-                    pass
+                    log_exc('app_standby._work: query_calls_owner_pid')
             try:
                 audio = audio_pids_or_unknown(self._pw_dump())
             except Exception:
@@ -1855,7 +1855,7 @@ class StandbyController:
                 try:
                     batt = query_battery(sysbus)
                 except Exception:
-                    pass
+                    log_exc('app_standby._work: query_battery')
             try:
                 GLib.idle_add(self._apply_exemptions, mpris, calls_pid,
                               audio, batt, extra)
@@ -2030,6 +2030,8 @@ class StandbyController:
                 except Exception as error:
                     if _unit_gone(error):
                         thawed.add(unit)
+                    else:
+                        log_exc('app_standby.shutdown_thaw: ThawUnit')
             try:
                 expired = deadline - time.monotonic() <= 0
             except Exception:
@@ -2044,11 +2046,11 @@ class StandbyController:
         try:
             self._clear_stopped()
         except Exception:
-            pass
+            log_exc('app_standby.shutdown_thaw: _clear_stopped')
         try:
             self._forget_frozen_units(thawed)
         except Exception:
-            pass
+            log_exc('app_standby.shutdown_thaw: _forget_frozen_units')
 
     def stop(self) -> None:
         for attr in ('_sweep_src', '_refresh_src'):
@@ -2058,7 +2060,7 @@ class StandbyController:
                     from ticker import get_ticker
                     get_ticker().remove(src)
                 except Exception:
-                    pass
+                    log_exc('app_standby.stop: get_ticker().remove')
                 setattr(self, attr, None)
 
     # -- screen + notifications ---------------------------------------------------
@@ -2109,7 +2111,7 @@ class StandbyController:
                 if app_id:
                     controller.note_notification_action(app_id)
             except Exception:
-                pass
+                log_exc('app_standby._invoke: _notif_apps.get')
             return original(notif_id, action_key)
 
         try:

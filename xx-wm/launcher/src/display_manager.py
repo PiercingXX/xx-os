@@ -49,6 +49,7 @@ import backlight
 from als_brightness import (
     SerialWorker, login1_set_brightness, run_backlight_io, set_display_blanked,
 )
+from shell_log import log_exc
 
 try:
     from output_power import OutputPower
@@ -224,7 +225,7 @@ def _detect_output() -> str:
             if len(parts) == 2 and parts[1] in ('on', 'off'):
                 return parts[0]
     except Exception:
-        pass
+        log_exc('display_manager._detect_output: subprocess.check_output')
     return '*'
 
 
@@ -339,7 +340,7 @@ def _get_volume_pct() -> int:
             if token.endswith('%'):
                 return max(0, min(100, int(token.rstrip('%'))))
     except Exception:
-        pass
+        log_exc('display_manager._get_volume_pct: subprocess.check_output')
     return 50
 
 
@@ -857,7 +858,7 @@ class DisplayManager:
                     try:
                         consumed = self._on_power_press() is True
                     except Exception:
-                        pass
+                        log_exc('display_manager._on_event: _on_power_press')
                 self._power_held = True
                 self._power_dev = path
                 self._power_long_fired = False
@@ -929,7 +930,7 @@ class DisplayManager:
                     try:
                         callback(_MEDIA_KEY_ACTIONS[code])
                     except Exception:
-                        pass
+                        log_exc('display_manager._on_event: callback')
             return GLib.SOURCE_REMOVE
 
         # --- Tap-to-wake panel: the controller's double-tap gesture

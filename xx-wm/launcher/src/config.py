@@ -11,6 +11,7 @@ import stat
 import threading
 import time
 from pathlib import Path
+from shell_log import log_exc
 
 
 # Theme truth lives in common/xx_ui (installed as the xx_ui package);
@@ -1607,12 +1608,12 @@ def install_font_file(path: str, run: object = None) -> tuple[bool, str]:
         if scanned:
             family = scanned
     except Exception:
-        pass
+        log_exc('config.install_font_file: runner')
 
     try:
         runner(['fc-cache', '-f'], capture_output=True, timeout=30)
     except Exception:
-        pass
+        log_exc('config.install_font_file: runner')
     return True, family
 
 
