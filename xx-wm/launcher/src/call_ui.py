@@ -950,6 +950,18 @@ class CallBar(Gtk.Window):
         root.append(expand_btn)
         return root
 
+    def follow_dock(self, monitor) -> None:
+        """Docked: a strip at the top right of the monitor; back across
+        the top of the phone otherwise (dock_controller)."""
+        import dock_controller
+        dock_controller.place_layer_surface(
+            self, monitor, ('top', 'left', 'right'), ('top', 'right'),
+            desk_size=(360, 48), phone_exclusive=48, desk_exclusive=0)
+
+    def present(self) -> None:
+        _sync_dock(self)
+        super().present()
+
     def show_bar(self, number: str) -> None:
         text = number or 'In call'
         if self._shown and self._label.get_text() == text:
@@ -967,6 +979,16 @@ class CallBar(Gtk.Window):
 
     def update(self, caller: str, timer_text: str) -> None:
         self._label.set_text(f'{caller}  ·  {timer_text}')
+
+
+def _sync_dock(window) -> None:
+    """Put a call surface on the output it belongs on (the monitor while
+    docked) before it shows."""
+    try:
+        import dock_controller
+        dock_controller.sync_surface(window)
+    except Exception:
+        pass
 
 
 def _fit_page(page):
@@ -1552,6 +1574,20 @@ class CallUI(LockHosted, Gtk.Window):
                 self._proximity.stop()
             except Exception:
                 pass
+
+    def follow_dock(self, monitor) -> None:
+        """Docked: a call card down the right of the monitor, below its
+        top bar, where the user is looking; full screen on the phone
+        otherwise."""
+        import dock_controller
+        dock_controller.place_layer_surface(
+            self, monitor, ('top', 'bottom', 'left', 'right'),
+            ('top', 'bottom', 'right'), desk_size=(400, -1),
+            phone_exclusive=-1, desk_exclusive=0)
+
+    def present(self) -> None:
+        _sync_dock(self)
+        super().present()
 
     def _maybe_present(self, path: str | None, page: str) -> None:
         """Map the surface, but never steal it back: outgoing dialing stays

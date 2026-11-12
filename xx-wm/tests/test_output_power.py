@@ -435,8 +435,16 @@ class TestOutputPowerBackend:
                                      (8, 'zwlr_output_power_manager_v1', 1)])
         backend = _connect(compositor)
         assert backend.available is True
+        # The verdict waits until a removal of the output could arrive
+        # (an unplugged monitor also gets `failed`); run it now.
+        later: list = []
+        quiet_backend.setattr(output_power, '_post_later',
+                              lambda cb, *args: later.append((cb, args)))
         power = compositor.powers[0]
         power.dispatcher['failed'](power)
+        assert backend.available is True
+        for cb, args in later:
+            cb(*args)
         assert backend.available is False
         assert backend.set_all(False) is False
         assert power.destroyed is True
@@ -601,6 +609,42 @@ class TestOutputPowerBackend:
         later[0]()
         assert backend.available is True
         assert second.powers and second.powers[0].modes == [output_power.MODE_ON]
+
+    def test_reconnect_keeps_a_docked_phone_output_off(
+        self, quiet_backend, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The dock's held-off output (Off while docked) stays off across
+        a reconnect, and the wake re-applied by the reconnect skips it."""
+        globals_ = [(7, 'wl_output', 4), (8, 'zwlr_output_power_manager_v1', 1)]
+        first = FakeCompositor(globals_)
+        second = FakeCompositor(globals_)
+        later: list = []
+        monkeypatch.setattr(output_power, '_call_later',
+                            lambda secs, cb: later.append(cb))
+        monkeypatch.setattr(output_power, '_post_to_main',
+                            lambda cb, *a: cb(*a))
+
+        class _InlineThread:
+            def __init__(self, target, args=(), **_kw):
+                self._run = lambda: target(*args)
+
+            def start(self):
+                self._run()
+
+        monkeypatch.setattr(output_power.threading, 'Thread', _InlineThread)
+        backend = output_power.OutputPower(display=first,
+                                           display_factory=lambda: second)
+        backend._connect_main(_power_bindings())
+        assert backend.set_output(7, False) is True
+        assert first.powers[0].modes == [output_power.MODE_OFF]
+        assert backend.set_all(True) is False          # nothing but held
+        backend._mark_dead()
+        later[0]()
+        assert backend.available is True
+        assert backend.held_off() == frozenset({7})
+        assert second.powers[0].modes == [output_power.MODE_OFF]
+        assert backend.set_output(7, True) is True
+        assert second.powers[0].modes[-1] == output_power.MODE_ON
+        assert backend.held_off() == frozenset()
 
     def test_injected_display_without_factory_never_reconnects(
         self, quiet_backend, monkeypatch: pytest.MonkeyPatch) -> None:

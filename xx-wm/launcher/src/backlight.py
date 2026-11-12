@@ -51,3 +51,28 @@ def read_pct(found: Backlight | None = None) -> int | None:
     except (OSError, ValueError):
         return None
     return int(current * 100 / maximum) if maximum else None
+
+
+def read_raw(found: Backlight | None = None) -> int | None:
+    """Current raw brightness from sysfs (unprivileged read)."""
+    found = find() if found is None else found
+    if found is None:
+        return None
+    try:
+        return int(found.path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+# While docked with the phone screen dark (dock_controller), automatic
+# brightness must not light the handset again.
+_dark_hold = False
+
+
+def hold_dark(held: bool) -> None:
+    global _dark_hold
+    _dark_hold = bool(held)
+
+
+def dark_held() -> bool:
+    return _dark_hold

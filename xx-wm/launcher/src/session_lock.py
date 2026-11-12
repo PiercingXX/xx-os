@@ -128,6 +128,7 @@ def _reset() -> None:
     global _choice
     _choice = None
     _engaged.clear()
+    _ui_monitors.clear()
 
 
 def handset_index(monitors: list) -> int | None:
@@ -164,6 +165,47 @@ def handset_monitor(display):
 
 
 _engaged: set[int] = set()
+# Docked (dock_controller): the lock UI goes where the picker says (the
+# monitor), covers can be decorated (the handset cover is the trackpad),
+# and listeners hear when a lock starts or ends.
+_ui_monitor_picker: Callable[[], object] | None = None
+_cover_hook: Callable[[object, object], None] | None = None
+_state_listeners: list = []
+_ui_monitors: dict[int, object] = {}
+
+
+def set_ui_monitor_picker(picker: Callable[[], object] | None) -> None:
+    """``picker()`` returns the GdkMonitor for the next lock's UI, or
+    None for the handset rule."""
+    global _ui_monitor_picker
+    _ui_monitor_picker = picker
+
+
+def set_cover_hook(hook: Callable[[object, object], None] | None) -> None:
+    """``hook(cover_window, monitor)`` runs for every new cover."""
+    global _cover_hook
+    _cover_hook = hook
+
+
+def add_state_listener(callback: Callable[[], None]) -> None:
+    """``callback()`` runs when a lock is confirmed and when one ends."""
+    if callback not in _state_listeners:
+        _state_listeners.append(callback)
+
+
+def ui_monitor():
+    """The GdkMonitor holding the active lock's UI, or None."""
+    for monitor in _ui_monitors.values():
+        return monitor
+    return None
+
+
+def _notify_state() -> None:
+    for callback in list(_state_listeners):
+        try:
+            callback()
+        except Exception as exc:  # noqa: BLE001 - a listener never breaks the lock
+            log.warning('lock state listener failed: %s', exc)
 
 
 def engaged() -> bool:
@@ -344,6 +386,14 @@ class SessionLock:
             self._unlock_pending = True
 
     def _target_monitor(self):
+        picker = _ui_monitor_picker
+        if picker is not None:
+            try:
+                picked = picker()
+            except Exception:
+                picked = None
+            if picked is not None:
+                return picked
         display = self._display
         if display is None:
             from gi.repository import Gdk
@@ -357,9 +407,16 @@ class SessionLock:
             target = self._target_monitor()
             if target is None or target == monitor:
                 self._ui_placed = True
+                _ui_monitors[id(self)] = monitor
                 instance.assign_window_to_monitor(self._make_ui(), monitor)
                 return
         cover = self._make_cover()
+        hook = _cover_hook
+        if hook is not None:
+            try:
+                hook(cover, monitor)
+            except Exception as exc:  # noqa: BLE001
+                log.warning('lock cover hook failed: %s', exc)
         self._covers.append(cover)
         instance.assign_window_to_monitor(cover, monitor)
 
@@ -369,6 +426,7 @@ class SessionLock:
         if self._unlock_pending:
             self._unlock_pending = False
             self._instance.unlock()
+        _notify_state()
 
     def _on_failed(self, *_args) -> None:
         log.error('session lock failed (another client holds the lock?)')
@@ -384,7 +442,9 @@ class SessionLock:
         self.active = False
         self.locked = False
         _engaged.discard(id(self))
+        _ui_monitors.pop(id(self), None)
         self._covers.clear()
         callback, self._on_ended = self._on_ended, None
         if callback is not None:
             callback(failed)
+        _notify_state()

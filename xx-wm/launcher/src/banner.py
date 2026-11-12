@@ -403,6 +403,14 @@ if _HAS_GTK:
             from window import resolve_appearance_preset
             return resolve_appearance_preset(self._config)
 
+        def follow_dock(self, monitor) -> None:
+            """Docked: a card at the top right of the monitor; across
+            the top of the phone otherwise (dock_controller)."""
+            import dock_controller
+            dock_controller.place_layer_surface(
+                self, monitor, ('top', 'left', 'right'), ('top', 'right'),
+                desk_size=(400, -1), phone_margin=8)
+
         def show_notification(
             self,
             notif_id: int,
@@ -435,6 +443,11 @@ if _HAS_GTK:
             if self._hide_id is not None:
                 GLib.source_remove(self._hide_id)
                 self._hide_id = None
+            try:
+                import dock_controller
+                dock_controller.sync_surface(self)
+            except Exception:
+                pass
             self.set_visible(True)
             self.present()
             self._revealer.set_reveal_child(True)

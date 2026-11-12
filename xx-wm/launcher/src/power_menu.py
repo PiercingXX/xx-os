@@ -392,9 +392,22 @@ class PowerMenu(LockHosted, Gtk.Window):
         self._scroll = scroll
         return scrim
 
+    def follow_dock(self, monitor) -> None:
+        """Docked: the menu opens on the monitor (dock_controller). A
+        non-resizable layer surface keeps its natural size on river's
+        monitor instead of filling it, so there it is resizable."""
+        if _HAS_LAYER and LayerShell.is_supported():
+            self.set_resizable(monitor is not None)
+            LayerShell.set_monitor(self, monitor)
+
     def show_menu(self) -> None:
         # A call may have started or ended since the last open.
         self._on_can_suspend(getattr(self, '_can_suspend', None))
+        try:
+            import dock_controller
+            dock_controller.sync_surface(self)
+        except Exception:
+            pass
         self.set_visible(True)
         self.present()
 

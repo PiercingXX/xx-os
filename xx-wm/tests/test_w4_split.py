@@ -168,7 +168,7 @@ def test_settings_registry_order_and_shape():
                     'apps', 'nope', 'appearance', 'display', 'keyboard',
                     'launcher', 'standby', 'permissions', 'smart_lock',
                     'medical',
-                    'recording', 'captions', 'nearby', 'findmy',
+                    'recording', 'captions', 'nearby', 'dock', 'findmy',
                     'about', 'shell', 'developer', 'gestures']
     for key, cls in settings_page.SETTINGS_SECTIONS:
         section = cls()

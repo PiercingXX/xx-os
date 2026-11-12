@@ -415,8 +415,9 @@ class ALSBrightness:
         with self._write_lock:
             value, self._write_value_pending = self._write_value_pending, None
         # Checked again on the worker: a blank queued just before this job
-        # already switched the panel off, and it must stay off.
-        if value is None or _display_blanked:
+        # already switched the panel off, and it must stay off; so must a
+        # phone screen docked dark (dock_controller).
+        if value is None or _display_blanked or backlight.dark_held():
             return
         self._write_value(value)
 

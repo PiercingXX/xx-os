@@ -189,6 +189,7 @@ class XXWMApplication(Adw.Application):
         self._pin_proven_at: float | None = None
         self._setup_finishing = False
         self._banner = None
+        self._dock = None
         from focus_mode import HeldNotifications
         self._held_notifications = HeldNotifications()
         GLib.timeout_add_seconds(30, self._tick_focus_release)
@@ -491,10 +492,29 @@ class XXWMApplication(Adw.Application):
         self._start_status_bar()
         self._start_bottom_gesture()
         self._start_desk()
+        self._start_dock()
 
         if self._replay_welcome:
             self._replay_welcome = False
             self._show_welcome_tour()
+
+    def _start_dock(self) -> None:
+        """Docked mode (river/xxwm only): the phone screen as trackpad,
+        dark or second screen while a monitor is connected; calls,
+        banners, menus and the lock on the monitor."""
+        try:
+            import xxwm_backend
+            if not xxwm_backend.present():
+                return
+            from dock_controller import DockController
+            self._dock = DockController(
+                self._shell.config,
+                output_power=getattr(self._display_mgr, '_output_power', None),
+                is_locked=self._shell.is_locked)
+            self._shell._dock = self._dock
+            self._dock.start()
+        except Exception as exc:
+            _log.warning('dock controller unavailable: %s', exc)
 
     def _start_status_bar(self) -> None:
         """Top status bar: reserves the camera area (exclusive zone) over
@@ -1096,6 +1116,9 @@ class XXWMApplication(Adw.Application):
             _log.warning('capture blank hook failed: %s', exc)
         if self._shell is not None:
             self._shell.on_blank_changed(blanked)
+        dock = getattr(self, '_dock', None)
+        if dock is not None:
+            dock.on_blank_changed(blanked)
         self._idle_blank_hooks(blanked)
         if not blanked:
             try:
@@ -1319,6 +1342,12 @@ class XXWMApplication(Adw.Application):
             _log.warning('session power re-apply failed: %s', exc)
 
     def do_shutdown(self) -> None:
+        dock = getattr(self, '_dock', None)
+        if dock is not None:
+            try:
+                dock.stop()
+            except Exception:
+                pass
         screensaver = getattr(self, '_screensaver', None)
         if screensaver is not None:
             try:

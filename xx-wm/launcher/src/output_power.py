@@ -34,6 +34,10 @@ MODE_ON = 1
 
 _RECONNECT_DELAYS = (1, 2, 5, 10, 30)
 _RECONNECT_MAX = 20
+# How long a `failed` waits for the removal of its output (an unplugged
+# monitor gets `failed` just before its global goes) before it counts
+# as the compositor refusing.
+_FAILED_SETTLE_MS = 500
 
 try:
     from pywayland.client import Display
@@ -65,6 +69,18 @@ def _call_later(seconds: int, callback: object) -> None:
         return False
 
     GLib.timeout_add_seconds(seconds, _once)
+
+
+def _post_later(callback: object, *args: object) -> None:
+    """Run ``callback`` on the GTK main loop after _FAILED_SETTLE_MS;
+    directly when GLib is unavailable."""
+    try:
+        from gi.repository import GLib
+    except Exception:
+        callback(*args)  # type: ignore[operator]
+        return
+    GLib.timeout_add(_FAILED_SETTLE_MS,
+                     lambda: (callback(*args), False)[1])  # type: ignore[operator]
 
 
 class OutputPower:
@@ -112,6 +128,20 @@ class OutputPower:
         self._ready_listeners: list[object] = []
         self._mode_listeners: list[object] = []
         self._fail_listeners: list[object] = []
+        # Several outputs (docked): listeners hear the phone's display
+        # state, not one output's. wl_output global names the dock
+        # controller powered off on its own (the dark handset while
+        # docked) are held: blank/wake leave them alone, their mode events
+        # are no blank, and a reconnect powers them off again.
+        self._held_off: set[int] = set()
+        # Outputs being powered back on: river replays their old "off"
+        # first, which is no blank either.
+        self._waking: set[int] = set()
+        # Last reported mode per output (global name).
+        self._modes: dict[int, bool] = {}
+        # Power objects of outputs whose global went away: their late
+        # events are not about the phone.
+        self._orphans: list = []
         thread = threading.Thread(
             target=self._prepare, name='xx-wm-output-power', daemon=True,
         )
@@ -180,7 +210,8 @@ class OutputPower:
                 self._connected and not self._failed
                 and self._manager is not None
             )
-            powers = list(self._powers.values()) if usable else []
+            powers = ([power for name, power in self._powers.items()
+                       if name not in self._held_off] if usable else [])
         if not usable or not powers:
             return False
         try:
@@ -192,6 +223,39 @@ class OutputPower:
             self._mark_dead()
             return False
         return True
+
+    def set_output(self, global_name: int, on: bool) -> bool:
+        """Power one output (by wl_output global name) off or back on,
+        outside blank/wake: while off it is held, so ``set_all`` skips
+        it, its mode events are not reported, and a reconnect powers it
+        off again. False (never raises) when the output or the protocol
+        is not there."""
+        with self._lock:
+            power = self._powers.get(global_name)
+            usable = (self._connected and not self._failed
+                      and self._manager is not None)
+        if not usable or power is None:
+            return False
+        try:
+            power.set_mode(MODE_ON if on else MODE_OFF)  # type: ignore[attr-defined]
+            self._display.flush()  # type: ignore[union-attr]
+        except Exception as exc:  # noqa: BLE001 - never trap an output dark
+            log.error('output power set_mode failed: %s', exc)
+            self._mark_dead()
+            return False
+        with self._lock:
+            if on:
+                if global_name in self._held_off:
+                    self._waking.add(global_name)
+                self._held_off.discard(global_name)
+            else:
+                self._held_off.add(global_name)
+                self._waking.discard(global_name)
+        return True
+
+    def held_off(self) -> frozenset:
+        with self._lock:
+            return frozenset(self._held_off)
 
     def _mark_dead(self) -> None:
         with self._lock:
@@ -227,6 +291,9 @@ class OutputPower:
             self._manager = None
             self._outputs = {}
             self._powers = {}
+            self._modes = {}
+            self._waking = set()
+            self._orphans = []
             self._display = None
         try:
             closer = getattr(old, 'disconnect', None)
@@ -310,8 +377,28 @@ class OutputPower:
             self._reconnects = 0
             if wanted is not None:
                 self.set_all(wanted)
+            self._reapply_held()
         self._fire_ready()
         return False
+
+    def _reapply_held(self) -> None:
+        """After a reconnect: outputs the dock held off stay off (the
+        compositor kept their mode, but a fresh control object starts
+        from whatever it reports)."""
+        with self._lock:
+            held = [(n, self._powers.get(n)) for n in self._held_off]
+        for _name, power in held:
+            if power is None:
+                continue
+            try:
+                power.set_mode(MODE_OFF)  # type: ignore[attr-defined]
+            except Exception as exc:  # noqa: BLE001
+                log.warning('output power: held output not re-applied: %s',
+                            exc)
+        try:
+            self._display.flush()  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001 - the fd watch notices
+            pass
 
     # -- GLib fd-watch -----------------------------------------------------
 
@@ -371,8 +458,22 @@ class OutputPower:
                 self._ensure_power(pending)
 
     def _on_registry_global_remove(self, _registry, name: int) -> None:
-        self._powers.pop(name, None)
+        power = self._powers.pop(name, None)
+        if power is not None:
+            # Let go of the output's power control now: river keeps a
+            # disabled output and gives it a new wl_output global when it
+            # comes back, and a second control object for the same output
+            # gets `failed`. Late events for this one are not the phone's.
+            self._orphans.append(power)
+            try:
+                power.destroy()  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 - object already invalid
+                pass
         self._outputs.pop(name, None)
+        with self._lock:
+            self._held_off.discard(name)
+            self._waking.discard(name)
+            self._modes.pop(name, None)
 
     def _ensure_power(self, name: int) -> None:
         if self._manager is None or name in self._powers:
@@ -386,9 +487,65 @@ class OutputPower:
         self._powers[name] = power
 
     def _on_mode(self, _power, _mode: int) -> None:
-        self._fire_mode(bool(_mode == MODE_ON))
+        """Listeners hear the phone's display state, not one output's:
+        on as soon as any output is on, off once every output is off. A
+        monitor switched off or unplugged while the phone screen is on is
+        not a blank (it locked the phone on every undock)."""
+        on = _mode == MODE_ON
+        if any(p is _power for p in self._orphans):
+            return
+        with self._lock:
+            name = next((n for n, p in self._powers.items() if p is _power),
+                        None)
+            if name is not None:
+                if name in self._held_off:
+                    return
+                if name in self._waking:
+                    # river replays the old "off" while our "on" is on its
+                    # way; only the "on" ends the hold.
+                    if not on:
+                        return
+                    self._waking.discard(name)
+                self._modes[name] = on
+                # A held output is dark by the dock's choice, not blanked:
+                # it counts as lit, so unplugging the monitor in the dark
+                # "off" mode is no blank either.
+                lit = any(n in self._held_off or self._modes.get(n, True)
+                          for n in self._powers)
+                if not on and lit:
+                    return
+        self._fire_mode(on)
 
     def _on_failed(self, power) -> None:
+        if any(p is power for p in self._orphans):
+            self._orphans = [p for p in self._orphans if p is not power]
+            log.info('output power: an output went away')
+            return
+        with self._lock:
+            name = next((n for n, p in self._powers.items() if p is power),
+                        None)
+        if name is not None:
+            _post_later(self._settle_failed, name, power)
+            return
+        self._refused(power)
+
+    def _settle_failed(self, name: int, power) -> None:
+        with self._lock:
+            gone = name not in self._outputs
+            if self._powers.get(name) is power:
+                self._powers.pop(name, None)
+            if gone:
+                self._held_off.discard(name)
+        if gone:
+            log.info('output power: output %s went away', name)
+            try:
+                power.destroy()  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 - object already invalid
+                pass
+            return
+        self._refused(power)
+
+    def _refused(self, power) -> None:
         log.error('output power set_mode failed by compositor; '
                   'falling back to backlight blanking')
         with self._lock:

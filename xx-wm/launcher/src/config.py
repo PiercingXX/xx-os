@@ -48,6 +48,8 @@ DANGER_RED = '#ff6b6b'
 ON_DANGER_FG = '#ffffff'
 WARNING_ORANGE = '#ff9a3c'
 DESTRUCTIVE_TINT_BG = '#2a1010'
+# The phone screen while docked as a trackpad or off: no light at all.
+SCREEN_OFF_BLACK = '#000000'
 
 # Stored pin_hash formats: legacy bare sha256 hex, or
 # pbkdf2$<iterations>$<salt_hex>$<hash_hex> (self-describing so the
@@ -159,6 +161,9 @@ DEFAULT_CONFIG = {
     # Top status bar height in logical px; None = the device default
     # (status_bar.resolve_height). Device-local: not in backups.
     'status_bar_height': None,
+    # What the phone screen does while a monitor is connected (river):
+    # 'trackpad', 'second-screen' or 'off'. Device-local: not in backups.
+    'docked_phone_screen': 'trackpad',
 }
 
 _WEATHER_TEMP_UNITS = ('fahrenheit', 'celsius')

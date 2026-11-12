@@ -24,7 +24,7 @@ _SETTINGS_SECTION_KEYS = ('wifi', 'bluetooth', 'mobile', 'apps', 'appearance',
 # options and its running services.
 SETTINGS_CATEGORIES: tuple = (
     ('network', 'Network & internet', ('wifi', 'mobile')),
-    ('devices', 'Connected devices', ('bluetooth', 'nearby')),
+    ('devices', 'Connected devices', ('bluetooth', 'nearby', 'dock')),
     ('display', 'Display & appearance', ('appearance', 'display')),
     # The Android launcher's preference screen (docs/launcher-settings-
     # parity.md); the system-wide edge swipes live under System.
@@ -1006,6 +1006,7 @@ import settings_apps
 import settings_battery_use
 import settings_charging
 import settings_display
+import settings_dock
 import settings_firewall
 import settings_keyboard
 import settings_launcher
@@ -1051,6 +1052,7 @@ def _settings_sections() -> list[tuple[str, type[_Section]]]:
         ('recording', RecordingSection),
         ('captions', CaptionsSection),
         ('nearby', NearbySection),
+        ('dock', settings_dock.DockSection),
         ('findmy', FindMySection),
         ('about', AboutSection),
         ('shell', ShellSection),

@@ -33,6 +33,8 @@ The rules (owner, "minimal"):
   - `bluetooth`: Bluetooth switch (Unblock and Start service while
     blocked or down), Devices (known and found, Scan)
   - `nearby`: Nearby share (opens LocalSend; no row unless installed)
+  - `dock`: When docked › Phone screen: Trackpad / Second screen / Off
+    (only on river with xxwm, the session that docks)
 - **Display & appearance**
   - `appearance`: Theme swatches; Look (Mode, Font, Import font, Text
     size)

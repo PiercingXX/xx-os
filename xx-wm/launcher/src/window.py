@@ -2792,6 +2792,9 @@ class ShellWindow(Adw.ApplicationWindow):
         bar = getattr(self, '_status_bar', None)
         if bar is not None:
             bar.apply_config()
+        dock = getattr(self, '_dock', None)
+        if dock is not None:
+            dock.apply_config()
 
     def _retheme_surfaces(self) -> None:
         """Fan the freshly resolved preset out to every constructed overlay
