@@ -18,9 +18,12 @@ to None with a single log line.
 from __future__ import annotations
 
 import importlib
+import importlib.machinery
+import importlib.util
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -102,6 +105,34 @@ def cache_root() -> Path:
     """Base cache dir: ``$XDG_CACHE_HOME/xx-wm/wayland_proto``."""
     base = os.environ.get('XDG_CACHE_HOME') or str(Path.home() / '.cache')
     return Path(base) / 'xx-wm' / 'wayland_proto'
+
+
+def _private_dir(path: Path) -> None:
+    """mkdir -p with every level it creates 0700 (generated bindings are
+    code the shell imports); the protocol cache itself is tightened too
+    when an older shell left it world-readable."""
+    path = Path(path)
+    missing = []
+    probe = path
+    while not probe.exists():
+        missing.append(probe)
+        if probe.parent == probe:
+            break
+        probe = probe.parent
+    for level in reversed(missing):
+        try:
+            os.mkdir(level, 0o700)
+        except FileExistsError:
+            pass
+    root = cache_root()
+    for level in (path, root):
+        if level != path and root not in path.parents:
+            continue
+        try:
+            if stat.S_IMODE(level.stat().st_mode) != 0o700:
+                os.chmod(level, 0o700)
+        except OSError:
+            pass
 
 
 def _xml_digest(xml_names: Sequence[str] | None = None) -> str:
@@ -186,7 +217,7 @@ def generate_protocol_bindings(
     if not targets:
         raise RuntimeError('no protocol XMLs to generate bindings for')
     package_dir = Path(package_dir)
-    package_dir.parent.mkdir(parents=True, exist_ok=True)
+    _private_dir(package_dir.parent)
     import fcntl
     with _GENERATE_LOCK, open(package_dir.parent / '.generate.lock', 'w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -260,6 +291,38 @@ def _drop_cached_modules(package_name: str) -> None:
         sys.modules.pop(name, None)
 
 
+def _install_package(package_dir: Path) -> str:
+    """Import ``package_dir`` as its package without touching sys.path.
+
+    Every protocol set generates into its own cache dir under the same
+    package name, so another set's package may already be imported: drop
+    it, then register this dir as the package, so submodules resolve here
+    and nothing else in the cache dir is ever importable."""
+    package_name = package_dir.name
+    loaded = sys.modules.get(package_name)
+    if loaded is not None and [str(Path(p)) for p in
+                               getattr(loaded, '__path__', [])] == [str(package_dir)]:
+        return package_name
+    _drop_cached_modules(package_name)
+    init = package_dir / '__init__.py'
+    if init.is_file():
+        spec = importlib.util.spec_from_file_location(
+            package_name, init, submodule_search_locations=[str(package_dir)])
+    else:
+        spec = importlib.machinery.ModuleSpec(package_name, None,
+                                              is_package=True)
+        spec.submodule_search_locations = [str(package_dir)]
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[package_name] = module
+    try:
+        if spec.loader is not None:
+            spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(package_name, None)
+        raise
+    return package_name
+
+
 def load_classes_from(
     package_dir: Path, class_names: Sequence[str] | None = None,
 ) -> dict[str, type] | None:
@@ -274,21 +337,10 @@ def load_classes_from(
     package_dir = Path(package_dir)
     if not package_dir.is_dir():
         return None
-    # Every protocol set generates into its own cache dir under the same
-    # package name, so another set's package may already be imported (and
-    # earlier on sys.path): put this dir first and drop the other one.
-    parent = str(package_dir.parent)
-    if parent in sys.path:
-        sys.path.remove(parent)
-    sys.path.insert(0, parent)
-    package_name = package_dir.name
-    loaded = sys.modules.get(package_name)
-    if loaded is not None and [str(Path(p)) for p in
-                               getattr(loaded, '__path__', [])] != [str(package_dir)]:
-        _drop_cached_modules(package_name)
     try:
+        package_name = _install_package(package_dir)
         py_files = sorted(package_dir.rglob('*.py'))
-    except OSError:
+    except Exception:
         return None
     found: dict[str, type] = {}
     for path in py_files:
@@ -483,7 +535,7 @@ def ensure_phosh_private_bindings() -> dict[str, type] | None:
                   'phosh-private.xml not found; phoc shell state not reported')
         return None
     try:
-        package_dir.parent.mkdir(parents=True, exist_ok=True)
+        _private_dir(package_dir.parent)
         stripped = strip_unknown_interfaces(
             phosh_xml.read_text(encoding='utf-8'),
             _declared_interfaces(wayland_xml))

@@ -12,6 +12,9 @@ cache (see launcher/src/wayland_bindings.py). These tests cover:
   package-per-protocol), using fake generated trees in tmp_path;
 - degrade-on-failure: any failure yields None and never raises.
 """
+import importlib
+import os
+import stat
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -392,6 +395,70 @@ def test_ensure_degrades_when_generated_tree_unusable(
                         lambda package_dir, *_args: Path(package_dir).mkdir(
                             parents=True, exist_ok=True))
     assert wayland_bindings.ensure_bindings() is None
+
+
+def test_load_leaves_sys_path_alone(tmp_path: Path, isolated_imports) -> None:
+    """The cache dir never goes on sys.path, let alone ahead of the shell's
+    own modules: a module dropped next to the bindings is not importable."""
+    package_dir = tmp_path / 'cache' / wayland_bindings.PROTO_PACKAGE_NAME
+    _write_single_file_tree(package_dir)
+    (package_dir.parent / 'xx_shadow_probe.py').write_text('SHADOW = 1\n')
+    before = list(sys.path)
+    classes = wayland_bindings.load_classes_from(package_dir)
+    assert classes is not None and set(classes) == set(NEEDED)
+    assert sys.path == before
+    with pytest.raises(ImportError):
+        importlib.import_module('xx_shadow_probe')
+
+
+def test_load_switches_between_protocol_sets(
+    tmp_path: Path, isolated_imports,
+) -> None:
+    """Every set generates under the same package name in its own dir;
+    loading a second set must not resolve through the first one."""
+    first = tmp_path / 'a' / wayland_bindings.PROTO_PACKAGE_NAME
+    _write_single_file_tree(first)
+    second = tmp_path / 'b' / wayland_bindings.PROTO_PACKAGE_NAME
+    second.mkdir(parents=True)
+    (second / 'wlr_screencopy_unstable_v1.py').write_text(
+        "class ZwlrScreencopyManagerV1:\n    name = 'm'\n", encoding='utf-8')
+    assert wayland_bindings.load_classes_from(first) is not None
+    found = wayland_bindings.load_classes_from(
+        second, ('ZwlrScreencopyManagerV1',))
+    assert found is not None
+    module = sys.modules[found['ZwlrScreencopyManagerV1'].__module__]
+    assert Path(module.__file__).parent == second
+    again = wayland_bindings.load_classes_from(first)
+    assert again is not None and set(again) == set(NEEDED)
+
+
+def test_generation_makes_the_cache_private(
+    isolated_cache: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Generated bindings are imported code: their cache dirs are 0700,
+    and one an older shell left world-readable is tightened."""
+    def fake_scanner(package_dir, base, targets):
+        (Path(package_dir) / 'wayland.py').write_text('')
+
+    monkeypatch.setattr(wayland_bindings, '_run_scanner', fake_scanner)
+    base = isolated_cache / 'wayland.xml'
+    base.write_text('<protocol name="wayland"/>')
+    other = isolated_cache / 'other.xml'
+    other.write_text('<protocol name="other"/>')
+    root = wayland_bindings.cache_root()
+    root.mkdir(parents=True)
+    os.chmod(root, 0o755)
+    package_dir = wayland_bindings.package_dir_for('0.4.18-test')
+    wayland_bindings.generate_protocol_bindings(package_dir, [base, other])
+    for path in (root, package_dir.parent):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o700, path
+    fresh = isolated_cache / 'fresh'
+    monkeypatch.setenv('XDG_CACHE_HOME', str(fresh))
+    package_dir = wayland_bindings.package_dir_for('0.4.18-test')
+    wayland_bindings.generate_protocol_bindings(package_dir, [base, other])
+    for path in (fresh, fresh / 'xx-wm', wayland_bindings.cache_root(),
+                 package_dir.parent):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o700, path
 
 
 if __name__ == '__main__':
