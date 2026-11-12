@@ -1443,11 +1443,10 @@ def should_preload_gesture_apps(config: 'ShellConfig', real_session: bool) -> bo
     return bool(real_session) and config.preload_gesture_apps
 
 
-def install_custom_font(config: 'ShellConfig', path: str,
-                        run: object = None) -> tuple[bool, str]:
-    """Install a user .ttf/.otf into ~/.local/share/fonts and switch the shell
-    to it (`font: 'custom'`, `custom_font_family`). Custom font files are
-    deliberately excluded from backups. Returns (ok, message)."""
+def install_font_file(path: str, run: object = None) -> tuple[bool, str]:
+    """Copy a user .ttf/.otf into ~/.local/share/fonts and refresh the
+    font cache. Blocking (fc-cache), so it runs on a worker thread; it
+    never touches the config. Returns (ok, family or error message)."""
     import shutil
     import subprocess
     runner = run or subprocess.run
@@ -1480,11 +1479,26 @@ def install_custom_font(config: 'ShellConfig', path: str,
         runner(['fc-cache', '-f'], capture_output=True, timeout=30)
     except Exception:
         pass
+    return True, family
 
+
+def apply_custom_font(config: 'ShellConfig', family: str) -> None:
+    """Switch the shell to an installed custom font. Main thread only:
+    config saves share one tmp file and must not race."""
     config.data['custom_font_family'] = family
     config.data['font'] = 'custom'
     config.save()
-    return True, family
+
+
+def install_custom_font(config: 'ShellConfig', path: str,
+                        run: object = None) -> tuple[bool, str]:
+    """Install a user .ttf/.otf into ~/.local/share/fonts and switch the shell
+    to it (`font: 'custom'`, `custom_font_family`). Custom font files are
+    deliberately excluded from backups. Returns (ok, message)."""
+    ok, message = install_font_file(path, run)
+    if ok:
+        apply_custom_font(config, message)
+    return ok, message
 
 
 def migrate_launcher_prefs(config, gestures) -> bool:

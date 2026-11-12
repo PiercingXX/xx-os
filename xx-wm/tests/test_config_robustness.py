@@ -1,8 +1,10 @@
 """config.json robustness: a corrupt file is moved aside and never
 overwritten, junk home slots never reach the UI, defaults are never
-aliased and gestures.json is written atomically. Pure logic, no display."""
+aliased, the font import saves only on the main thread and gestures.json
+is written atomically. Pure logic, no display."""
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -311,6 +313,59 @@ class TestHomeSlotsSanitised:
         config.set_home_slots([{'type': 'app', 'label': None,
                                 'app_id': 'a.desktop'}])
         assert config.data['home_slots'][0]['label'] == ''
+
+
+class TestFontInstallThreading:
+    @pytest.fixture()
+    def no_fontconfig(self, monkeypatch):
+        def fake_run(cmd, **_kwargs):
+            if cmd[0] == 'fc-scan':
+                return SimpleNamespace(stdout='Fancy Mono')
+            return SimpleNamespace(stdout='')
+
+        monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    def test_worker_half_never_touches_the_config(self, tmp_path,
+                                                  no_fontconfig):
+        import settings_page  # noqa: F401 -- sections import back
+        import settings_launcher
+        src = tmp_path / 'Fancy.ttf'
+        src.write_bytes(b'\x00fake')
+        config = ShellConfig()
+        saves = []
+        config.save = lambda: saves.append(dict(config.data))
+        before = dict(config.data)
+        win = SimpleNamespace(config=config)
+
+        result = settings_launcher._install_font(win, str(src))
+        assert result == (True, 'Fancy Mono')
+        assert saves == [] and config.data == before
+
+        statuses = []
+        win._show_status = statuses.append
+        win._apply_theme = lambda: None
+        section = SimpleNamespace(_render_font=lambda _win: None)
+        settings_launcher.LauncherSection._on_font_installed(
+            section, win, result)
+        assert config.data['font'] == 'custom'
+        assert config.data['custom_font_family'] == 'Fancy Mono'
+        assert len(saves) == 1
+        assert statuses == ['Font installed: Fancy Mono']
+
+    def test_failed_install_changes_nothing(self, tmp_path, no_fontconfig):
+        import settings_page  # noqa: F401
+        import settings_launcher
+        config = ShellConfig()
+        saves = []
+        config.save = lambda: saves.append(1)
+        win = SimpleNamespace(config=config, _show_status=lambda _m: None,
+                              _apply_theme=lambda: None)
+        result = settings_launcher._install_font(win, str(tmp_path / 'x.ttf'))
+        assert result[0] is False
+        section = SimpleNamespace(_render_font=lambda _win: None)
+        settings_launcher.LauncherSection._on_font_installed(
+            section, win, result)
+        assert saves == [] and config.data['font'] != 'custom'
 
 
 class TestGesturesAtomicWrite:

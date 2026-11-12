@@ -348,10 +348,12 @@ def reset_home_layout(config, gesture_config) -> None:
     apply_default_layout(config, gesture_config)
 
 
-def _install_font(win, path: str):
-    from config import install_custom_font
+def _install_font(_win, path: str):
+    """Worker-thread half of the font import: files and font cache only.
+    The config switch happens in _on_font_installed on the main thread."""
+    from config import install_font_file
     try:
-        return install_custom_font(win.config, path)
+        return install_font_file(path)
     except Exception as error:
         return (False, str(error))
 
@@ -1197,6 +1199,12 @@ class LauncherSection(settings_page._Section):
 
     def _on_font_installed(self, win, done) -> None:
         ok, message = done if isinstance(done, tuple) else (False, 'Import failed.')
+        if ok:
+            from config import apply_custom_font
+            try:
+                apply_custom_font(win.config, message)
+            except Exception as error:
+                ok, message = False, str(error)
         try:
             win._show_status(
                 f'Font installed: {message}' if ok
