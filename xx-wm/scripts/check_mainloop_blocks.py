@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Fail when blocking calls are reachable from GTK main-loop code.
 
-Flags ``subprocess.run`` / ``check_output`` / D-Bus ``call_sync`` /
-``Popen(...).wait()`` anywhere in ``launcher/src`` except inside the
-allow-listed worker helpers below. Fire-and-forget ``Popen`` (never waited)
-is allowed everywhere: only ``.wait()`` on a Popen handle blocks.
+Flags, anywhere in ``launcher/src`` except inside the allow-listed worker
+helpers below: ``subprocess.run`` / ``call`` / ``check_call`` /
+``check_output``, a name bound to one of those (``runner = run or
+subprocess.run``, ``def f(run=subprocess.run)``), ``Popen(...).wait()`` and
+``.communicate()``, D-Bus ``call_sync`` and ``Gio.bus_get_sync``,
+``time.sleep``, ``urlopen`` and socket ``recv``. Fire-and-forget ``Popen``
+(never waited) is allowed everywhere.
 
 Each allow-list entry carries a one-line justification. Fix a violation by
 moving the call to a worker thread (``threading.Thread`` + ``GLib.idle_add``
@@ -52,7 +55,8 @@ ALLOW = {
     ('app_standby.py', '_default_pw_dump'):
         'standby exemption-refresh worker thread.',
     ('app_standby.py', '_ensure_dbus_units_sync'):
-        'one bounded sync unit resolve so a frozen app thaws before raise.',
+        'ON the main loop in _freeze: one ListUnits capped at 500 ms, only '
+        'for an app with no pids, scopes or known units yet.',
     ('app_standby.py', 'shutdown_thaw'):
         'shutdown path; blocking while the session exits is safe.',
     ('call_ui.py', '_pactl_card_names'):
@@ -202,21 +206,165 @@ ALLOW = {
         'xx-wm-wayland-bindings worker; cached per pywayland version.',
     ('output_capture.py', '_run'):
         'grim worker thread spawned by capture(); never runs on the GTK loop.',
+    # xxdb runs inside the shell: start() on the controller's _run_bg
+    # worker, every command on its connection thread (_serve ->
+    # _run_session -> _cmd_*), pty output on a _pump_pty thread.
     ('xxdb_daemon.py', '_default_shell_runner'):
-        'xxdb service process, no GTK main loop; runner injectable.',
+        'xxdb connection thread (_cmd_shell); runner injectable.',
     ('xxdb_daemon.py', '_default_screenshot'):
-        'xxdb service process, no GTK main loop; runner injectable.',
+        'xxdb connection thread (_cmd_screenshot); provider injectable.',
     ('xxdb_daemon.py', '_default_sudo_check'):
-        'xxdb service process, no GTK main loop; runner injectable.',
+        'xxdb connection thread (_cmd_install); check injectable.',
     ('xxdb_daemon.py', '_journalctl_snapshot'):
-        'xxdb service process, no GTK main loop.',
+        'xxdb connection thread (_cmd_logcat).',
     ('xxdb_daemon.py', '_cmd_install'):
-        'xxdb service process, no GTK main loop.',
+        'xxdb connection thread.',
+    ('xxdb_daemon.py', 'ensure_cert'):
+        'xxdb start(), on the controller enable worker (_run_bg).',
+    ('xxdb_daemon.py', 'reap'):
+        'xxdb _pump_pty thread: 50 ms polls for at most the 2 s grace.',
+    ('xxdb_daemon.py', '_run_session'):
+        'xxdb connection thread (_serve); the TLS socket read loop.',
+    ('xxdb.py', 'interface_entries'):
+        'xxdb start(), on the controller enable worker (_run_bg).',
+    ('xxdb_input.py', 'nap'):
+        'xxdb connection thread (_cmd_input -> inject): swipe step pacing.',
     ('xx_apps_update.py', '_default_run'):
-        'xx-apps-update bindir CLI, no GTK main loop; runner injectable.',
+        'xx-apps-update bindir CLI, never imported by the shell; '
+        'runner injectable.',
+    ('xx_apps_update.py', '_https_get'):
+        'xx-apps-update bindir CLI, never imported by the shell.',
+    # Gio.bus_get_sync returns the process-wide connection. The session
+    # one is held by Gtk.Application from registration on; the system one
+    # is opened at startup by main._setup_logind and held for the shell's
+    # life by its sleep-delay inhibitor. Later calls return the cached
+    # connection without I/O.
+    ('main.py', '_setup_logind'):
+        'do_startup, before any window: the one system bus connect.',
+    ('app_standby.py', '_default_session_bus'):
+        'session bus singleton (cached; see above).',
+    ('app_standby.py', '_default_system_bus'):
+        'system bus singleton (cached; see above).',
+    ('call_screen.py', 'consult_check_number'):
+        'session bus singleton (cached); the CheckNumber call is async.',
+    ('call_screen.py', 'note_call'):
+        'session bus singleton (cached); the NoteCall call is async.',
+    ('call_ui.py', '_bus'):
+        'session/system bus singletons (cached; see above).',
+    ('call_ui.py', '_default_dtmf'):
+        'system bus singleton (cached); the DTMF call is async.',
+    ('captions.py', 'connect'):
+        'quick-actions worker (_connect_captions_async); session bus.',
+    ('capture.py', 'share_file'):
+        'session bus singleton (cached); the portal call is async.',
+    ('dialer.py', '_system_bus'):
+        'telephony workers (dial / emergency paths); system bus.',
+    ('display_manager.py', '_get_bus'):
+        'system bus singleton (cached), memoized on the manager.',
+    ('first_boot.py', 'set_timezone_async'):
+        'system bus singleton (cached); the timedated call is async.',
+    ('media_controls.py', '_init_bus'):
+        'session bus singleton (cached); MPRIS calls are async.',
+    ('modem_monitor.py', '_sync_system_bus'):
+        'telephony workers (resolve_modem_path, voice_create_and_start).',
+    ('modem_monitor.py', '_init_bus'):
+        'system bus singleton (cached); ModemManager calls are async.',
+    ('notif_daemon.py', '_start'):
+        'session bus singleton (cached), idle after construction.',
+    ('notification_shade.py', '_session_bus'):
+        'session bus singleton (cached; see above).',
+    ('osk.py', '_link'):
+        'session bus singleton (cached); the keyboard calls are async.',
+    ('power_menu.py', 'query_can_suspend_async'):
+        'system bus singleton (cached); CanSuspend is async.',
+    ('quick_actions.py', '_dbus_system'):
+        'tile query/toggle workers (_nm_*/_bluez_* helpers); system bus.',
+    ('settings_device.py', '_modem_props_sync'):
+        'settings _run_bg worker (device summary).',
+    ('settings_device.py', 'battery_health_sync'):
+        'settings _run_bg worker (settings_page refresh _work).',
+    ('settings_display.py', '_profile_bus'):
+        'power-profile probe worker (probe_power_state via _run_bg).',
+    ('settings_display.py', 'read_power_full'):
+        'power-profile probe worker (probe_power_state via _run_bg).',
+    ('settings_display.py', 'set_power_profile'):
+        'apply_profile_async _work on _run_bg.',
+    ('settings_permissions.py', 'query_store_maps'):
+        'settings run_bg worker (query_all).',
+    ('settings_permissions.py', 'apply_store_perm'):
+        'settings run_bg worker (toggle and reset).',
+    ('smart_lock.py', '_query_objects'):
+        'system bus singleton (cached); GetManagedObjects is async.',
+    ('smart_lock.py', 'start'):
+        'system bus singleton (cached); every query after it is async.',
+    ('system_settings.py', 'apply_apn'):
+        'APN apply worker (settings_page._apply_apn _work).',
+    ('system_settings.py', '_bluez_bus'):
+        'settings _run_bg workers (bluetooth list/pair/power).',
+    ('system_settings.py', '_systemd_bus'):
+        'settings _run_bg worker (systemd_unit_state).',
+    # Other blocking shapes.
+    ('capture.py', '_scrolling_work'):
+        'scrolling-screenshot worker (_spawn_worker): settle between swipes.',
+    ('config.py', 'install_font_file'):
+        'font import worker (settings_launcher._install_font via _run_bg).',
+    ('dialer.py', 'place_emergency_call'):
+        'lock-screen emg-call thread: radio-up retry pause.',
+    ('ipc.py', '_read_conn'):
+        'non-blocking socket (setblocking(False)): recv never waits.',
+    ('settings_updates.py', 'run_xx_apps_check'):
+        'settings update-check workers (_run_bg _work).',
+    ('tailscale.py', 'up'):
+        'tile toggle worker (quick_actions._set_tailscale).',
+    ('weather.py', '_http_fetch'):
+        'weather refresh worker thread (_refresh_worker).',
+    ('xxwm_backend.py', 'request'):
+        'request_async and the state watcher threads only.',
 }
 
+
 _POPENISH = {'Popen', '_spawn', '_popen', 'popen_factory'}
+_RUNNERS = {'run', 'call', 'check_call', 'check_output'}
+_RECV = {'recv', 'recv_into', 'recvfrom', 'recvmsg'}
+
+
+def _is_subprocess_runner(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Attribute) and node.attr in _RUNNERS
+            and isinstance(node.value, ast.Name)
+            and node.value.id == 'subprocess')
+
+
+def _runner_aliases(tree: ast.AST) -> set[str]:
+    """Names bound to a subprocess runner: ``runner = run or
+    subprocess.run`` or a parameter defaulting to ``subprocess.run``."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+                _is_subprocess_runner(sub) for sub in ast.walk(node.value)):
+            names.update(t.id for t in node.targets
+                         if isinstance(t, ast.Name))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = node.args
+            positional = args.posonlyargs + args.args
+            pairs = list(zip(positional[len(positional)
+                                        - len(args.defaults):],
+                             args.defaults, strict=True))
+            pairs += [(a, d) for a, d in zip(args.kwonlyargs,
+                                              args.kw_defaults, strict=True)
+                      if d is not None]
+            names.update(a.arg for a, d in pairs
+                         if _is_subprocess_runner(d))
+    return names
+
+
+def _from_imports(tree: ast.AST, module: str, wanted: set[str]) -> set[str]:
+    """Local names of ``from <module> import <wanted>``."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == module:
+            names.update(a.asname or a.name for a in node.names
+                         if a.name in wanted)
+    return names
 
 
 def _popen_names(tree: ast.AST) -> set[str]:
@@ -259,6 +407,10 @@ def _iter_sites(path: Path) -> list[tuple[int, str, str, str]]:
     """(line, kind, enclosing function, source line) for each banned call."""
     tree = ast.parse(path.read_text(encoding='utf-8'))
     popen_names = _popen_names(tree)
+    aliases = _runner_aliases(tree)
+    sleeps = _from_imports(tree, 'time', {'sleep'})
+    urlopens = (_from_imports(tree, 'urllib.request', {'urlopen'})
+                | {'urlopen'})
     sites: list[tuple[int, str, str, str]] = []
     lines = path.read_text(encoding='utf-8').splitlines()
 
@@ -277,11 +429,16 @@ def _iter_sites(path: Path) -> list[tuple[int, str, str, str]]:
             func = node.func
             kind: str | None = None
             if isinstance(func, ast.Attribute):
-                if func.attr in ('call_sync', 'check_output'):
+                if func.attr in ('call_sync', 'check_output',
+                                 'bus_get_sync', 'communicate', 'urlopen'):
                     kind = func.attr
-                elif func.attr == 'run' and isinstance(func.value, ast.Name) \
-                        and func.value.id == 'subprocess':
-                    kind = 'subprocess.run'
+                elif _is_subprocess_runner(func):
+                    kind = 'subprocess.' + func.attr
+                elif func.attr == 'sleep' and isinstance(
+                        func.value, ast.Name) and func.value.id == 'time':
+                    kind = 'time.sleep'
+                elif func.attr in _RECV:
+                    kind = 'socket.' + func.attr
                 elif func.attr == 'wait':
                     recv = func.value
                     if isinstance(recv, ast.Name) and (
@@ -290,6 +447,14 @@ def _iter_sites(path: Path) -> list[tuple[int, str, str, str]]:
                     elif isinstance(recv, ast.Attribute) and (
                             '@' + recv.attr in popen_names):
                         kind = 'Popen.wait'
+            elif isinstance(func, ast.Name):
+                if func.id in aliases:
+                    kind = f'subprocess runner {func.id}'
+                elif func.id in sleeps:
+                    kind = 'time.sleep'
+                elif func.id in urlopens:
+                    kind = 'urlopen'
+
             scope = self.stack[-1] if self.stack else '<module>'
             if kind is not None:
                 text = lines[node.lineno - 1].strip() if node.lineno else ''
