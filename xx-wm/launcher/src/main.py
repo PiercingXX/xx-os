@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import atexit
 import os
+import signal
 import sys
 import time
 
@@ -1466,8 +1468,32 @@ def _setup_logind(on_sleep_callback: object) -> object | None:
         return None
 
 
+def _exit_for_restart() -> bool:
+    """SIGUSR1 (deploy.sh, xxdb deploy): finish what exit would, then die
+    of the signal so the wrapper still reads 138 and respawns at once.
+    The default action skips atexit, losing a config save still waiting
+    out its coalescing delay."""
+    try:
+        atexit._run_exitfuncs()
+    except Exception as exc:
+        _log.warning('exit handlers before restart failed: %s', exc)
+    signal.signal(signal.SIGUSR1, signal.SIG_DFL)
+    os.kill(os.getpid(), signal.SIGUSR1)
+    return GLib.SOURCE_REMOVE
+
+
+def install_restart_signal() -> None:
+    try:
+        from gi.repository import GLibUnix
+        add = GLibUnix.signal_add
+    except (ImportError, AttributeError):
+        add = GLib.unix_signal_add
+    add(GLib.PRIORITY_HIGH, signal.SIGUSR1, _exit_for_restart)
+
+
 def main(argv: list[str] | None = None) -> int:
     setup_logging()
+    install_restart_signal()
     argv = list(argv if argv is not None else sys.argv)
     replay_welcome = '--welcome' in argv
     if replay_welcome:
