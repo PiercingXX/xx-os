@@ -33,6 +33,7 @@ const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 const WORKSPACES: usize = 10;
 const FLOAT_STEP: i32 = 40;
+const WARP_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
 
 macro_rules! log {
     ($($arg:tt)*) => {
@@ -78,6 +79,9 @@ pub struct Output {
     /// (`HDMI-A-1`), which is how the shell finds the output in GTK.
     wl_output: Option<wl_output::WlOutput>,
     name: Option<String>,
+    /// Name of the output's wl_output global: the shell's dock controller
+    /// powers the phone's output off by it.
+    global: Option<u32>,
     rect: Rect,
     area: Option<Rect>,
     workspace: usize,
@@ -139,6 +143,10 @@ pub struct State {
     /// Verbs for the shell (`launcher`, `bar`, `keybinds`), written to
     /// `subscribe state` clients at the end of this manage sequence.
     shell_events: Vec<String>,
+    /// Where the pointer goes (dock), and from when: river adds a new
+    /// output to its layout after the manage sequence that announced
+    /// it, so a warp in that same sequence lands on the old screen.
+    warp: Option<(i32, i32, std::time::Instant)>,
     registry: Option<wl_registry::WlRegistry>,
     socket: Option<std::path::PathBuf>,
     waker: Option<Waker>,
@@ -179,6 +187,7 @@ impl State {
             ipc,
             subscribers,
             shell_events: Vec::new(),
+            warp: None,
             registry: None,
             socket,
             waker: None,
@@ -281,6 +290,7 @@ impl State {
         self.reap();
         self.setup_outputs();
         self.setup_seats(qh);
+        self.warp_pointer();
         self.place_new_windows();
         for p in std::mem::take(&mut self.pending) {
             self.apply(p);
@@ -345,21 +355,23 @@ impl State {
                     .and_then(|t| self.windows.get(&t))
                     .and_then(|w| w.title.clone())
                     .unwrap_or_default();
-                format!(
-                    "{{\"name\":{},\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"handset\":{},\"workspace\":{},\"focused\":{},\"title\":{}}}",
-                    json_str(o.name.as_deref().unwrap_or("")),
-                    o.rect.x,
-                    o.rect.y,
-                    o.rect.w,
-                    o.rect.h,
-                    o.handset,
-                    o.workspace,
-                    self.focused_output.as_ref() == Some(i),
-                    json_str(&title),
-                )
+                output_json(o, self.focused_output.as_ref() == Some(i), &title)
             })
             .collect();
         format!("[{}]", items.join(","))
+    }
+
+    fn warp_pointer(&mut self) {
+        let Some((x, y, at)) = self.warp else { return };
+        if std::time::Instant::now() < at {
+            return;
+        }
+        self.warp = None;
+        for seat in self.seats.values() {
+            if !seat.removed && seat.proxy.version() >= 3 {
+                seat.proxy.pointer_warp(x, y);
+            }
+        }
     }
 
     fn binds_json(&self) -> String {
@@ -524,6 +536,12 @@ impl State {
                         o.workspace = free;
                     }
                     self.focused_output = Some(id.clone());
+                    // The phone screen goes dark (or becomes the trackpad):
+                    // the pointer belongs on the monitor.
+                    if let Some((x, y)) = self.output(&id).map(|o| layout::center(o.rect)) {
+                        self.warp = Some((x, y, std::time::Instant::now() + WARP_DELAY));
+                        self.wake_after(WARP_DELAY);
+                    }
                     log!("dock: workspace {phone_ws} moves to the monitor, phone shows {free}");
                 }
                 _ => {
@@ -1292,6 +1310,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for State {
                         layer,
                         wl_output: None,
                         name: None,
+                        global: None,
                         rect: Rect::default(),
                         area: None,
                         workspace: 0,
@@ -1384,6 +1403,7 @@ impl Dispatch<RiverOutputV1, ()> for State {
             });
             if let Some(o) = state.output_mut(&proxy.id()) {
                 o.wl_output = bound;
+                o.global = Some(name);
             }
             return;
         }
@@ -1530,5 +1550,40 @@ impl Dispatch<RiverLayerShellSeatV1, ObjectId> for State {
                 s.sent_focus = None;
             }
         }
+    }
+}
+
+/// One entry of the `outputs` answer (and of `subscribe state`).
+fn output_json(o: &Output, focused: bool, title: &str) -> String {
+    output_fields(o.name.as_deref().unwrap_or(""), o.rect, o.handset, o.workspace, focused, title, o.global)
+}
+
+fn output_fields(name: &str, rect: Rect, handset: bool, workspace: usize, focused: bool, title: &str, global: Option<u32>) -> String {
+    format!(
+        "{{\"name\":{},\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"handset\":{},\"workspace\":{},\"focused\":{},\"title\":{},\"wl_output\":{}}}",
+        json_str(name),
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        handset,
+        workspace,
+        focused,
+        json_str(title),
+        global.map_or_else(|| "null".to_string(), |g| g.to_string()),
+    )
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[test]
+    fn output_entry_names_its_wl_output() {
+        assert_eq!(
+            output_fields("HDMI-A-1", Rect::new(360, 0, 1280, 720), false, 1, true, "kitty", Some(60)),
+            "{\"name\":\"HDMI-A-1\",\"x\":360,\"y\":0,\"w\":1280,\"h\":720,\"handset\":false,\"workspace\":1,\"focused\":true,\"title\":\"kitty\",\"wl_output\":60}"
+        );
+        assert!(output_fields("", Rect::new(0, 0, 360, 720), true, 2, false, "", None).ends_with("\"wl_output\":null}"));
     }
 }

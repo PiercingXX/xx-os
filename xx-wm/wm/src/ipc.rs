@@ -9,7 +9,7 @@
 //! ```text
 //! list                     -> [{"id":..,"app_id":..,"title":..,"workspace":N,"focused":b,"visible":b}]
 //! outputs                  -> [{"name":..,"x":..,"y":..,"w":..,"h":..,"handset":b,"workspace":N,
-//!                               "focused":b,"title":..}]
+//!                               "focused":b,"title":..,"wl_output":N|null}]
 //! binds                    -> [{"combo":"Super+Q","action":"close"}, ...]  (the live table)
 //! focus <identifier>       -> ok | error ...
 //! close <identifier>       -> ok | error ...

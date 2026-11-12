@@ -44,7 +44,14 @@ impl Rect {
 /// yet, or one that does not lie on the output (stale after the output
 /// moved, or zones that eat the whole screen), falls back to the output.
 pub fn usable_area(output: Rect, non_exclusive: Option<Rect>) -> Rect {
-    non_exclusive.and_then(|a| a.intersect(output)).unwrap_or(output)
+    // Exclusive zones only push the area's start inward, so an area that
+    // starts before the output is stale: river reported it while the
+    // output still sat at its old place (a monitor enabled again on dock
+    // is reported at 0,0 first, then moved).
+    non_exclusive
+        .filter(|a| a.x >= output.x && a.y >= output.y)
+        .and_then(|a| a.intersect(output))
+        .unwrap_or(output)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -231,9 +238,19 @@ pub fn centered(area: Rect, w: i32, h: i32) -> Rect {
     Rect::new(area.x + (area.w - w) / 2, area.y + (area.h - h) / 2, w, h)
 }
 
+/// The middle point of `r`, in the same (global) coordinates.
+pub fn center(r: Rect) -> (i32, i32) {
+    (r.x + r.w / 2, r.y + r.h / 2)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn center_is_in_global_coordinates() {
+        assert_eq!(center(Rect::new(360, 0, 1280, 720)), (1000, 360));
+    }
 
     const AREA: Rect = Rect::new(0, 0, 1000, 600);
 
@@ -390,6 +407,13 @@ mod tests {
         // exclusive zones that eat the whole screen
         assert_eq!(usable_area(PHONE, Some(Rect::new(0, 28, 450, 0))), PHONE);
         assert_eq!(usable_area(PHONE, Some(Rect::new(0, 28, 450, -40))), PHONE);
+    }
+
+    #[test]
+    fn a_monitor_area_from_before_the_move_is_stale() {
+        // the monitor came back at 0,0 and moved right of the phone
+        let monitor = Rect::new(360, 0, 1280, 720);
+        assert_eq!(usable_area(monitor, Some(Rect::new(0, 0, 1280, 720))), monitor);
     }
 
     #[test]

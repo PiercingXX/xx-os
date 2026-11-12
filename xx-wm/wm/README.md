@@ -13,7 +13,11 @@ One session covers both screens:
   `Super+1..0` workspaces, `Super+F` float, `Super+X` toggle split, tap
   `Super` for the launcher.
 - **Dock**: when a monitor appears, the workspace the phone was showing moves
-  to it and the phone gets an empty one. **Undock**: it comes back.
+  to it, the phone gets an empty one and the pointer goes to the middle of
+  the monitor. **Undock**: it comes back. The shell's dock controller
+  (`launcher/src/dock_controller.py`) handles the phone side: black screen
+  and trackpad, second screen, or off (`docked_phone_screen` in
+  `docs/config.md`).
 
 ## Build and run
 
@@ -94,4 +98,6 @@ switcher use it on river (`launcher/src/xxwm_backend.py`): river shows
 windows to other clients but gives them no way to activate or close one.
 The shell's docked surfaces (`launcher/src/desk_session.py`) follow
 `subscribe state`: outputs by connector name, which one is the handset,
-the workspace and front window title of each, and the shell verbs.
+the workspace and front window title of each, and the shell verbs. The
+dock controller follows the same stream; each output also names its
+`wl_output` global, which is how the shell powers the phone's output off.
