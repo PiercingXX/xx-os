@@ -97,6 +97,11 @@ def _check_fetch(tarball: bytes, manifest=AVAILABLE):
     })
 
 
+def _write_bytes(path: Path, payload: bytes) -> Path:
+    path.write_bytes(payload)
+    return path
+
+
 def _write_state(path: Path, data=INSTALLED) -> str:
     path.write_text(json.dumps(data), encoding="utf-8")
     return str(path)
@@ -322,6 +327,55 @@ class TestApply:
                       for argv, cwd in run.calls if "install" in argv)
         assert apps == ["common", "xx-demo"]
         capsys.readouterr()
+
+
+class TestRootInstall:
+    def test_meson_install_uses_an_absolute_build_dir(self, tmp_path):
+        tarball = _make_tarball(tmp_path, "top", {"xx-demo": "0.2.0"})
+        tree = updater.safe_extract(str(_write_bytes(
+            tmp_path / "t.tar.gz", tarball)), str(tmp_path / "x"))
+        run = _Run()
+        updater.install_built(tree, ["xx-demo"], AVAILABLE, run=run,
+                              prefix=["pkexec"])
+        (argv, cwd), = run.calls
+        assert argv[0] == "pkexec" and argv[2:4] == ["install", "-C"]
+        assert os.path.isabs(argv[4])
+        assert argv[4] == os.path.join(cwd, "build")
+
+    def test_root_owned_state_is_written_with_the_prefix(self, tmp_path,
+                                                         monkeypatch):
+        state_dir = tmp_path / "var-lib-xx-apps"
+        state_dir.mkdir()
+        state = state_dir / "installed.json"
+        state.write_text(json.dumps(INSTALLED), encoding="utf-8")
+        monkeypatch.setattr(updater, "_can_write", lambda d: False)
+        stage = tmp_path / "stage"
+        stage.mkdir()
+        seen = {}
+
+        def run(argv, cwd="/", timeout=0):
+            seen["argv"] = list(argv)
+            seen["data"] = json.loads(Path(argv[-2]).read_text())
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        updater.record_state(str(state), ["xx-demo"], AVAILABLE, SHA,
+                             run=run, prefix=["pkexec"],
+                             stage_dir=str(stage))
+        assert seen["argv"][:5] == ["pkexec", "install", "-D", "-m", "0644"]
+        assert seen["argv"][-1] == str(state)
+        assert seen["data"]["xx-demo"]["version"] == "0.2.0"
+        assert list(stage.iterdir()) == []
+
+    def test_failed_privileged_write_is_an_error(self, tmp_path,
+                                                 monkeypatch):
+        monkeypatch.setattr(updater, "_can_write", lambda d: False)
+        with pytest.raises(updater.UpdateError):
+            updater.record_state(
+                str(tmp_path / "s" / "installed.json"), ["xx-demo"],
+                AVAILABLE, SHA, prefix=["sudo", "-n"],
+                stage_dir=str(tmp_path),
+                run=lambda argv, cwd="/", timeout=0: SimpleNamespace(
+                    returncode=1, stdout="", stderr="denied"))
 
 
 class TestPrivilege:

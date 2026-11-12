@@ -343,8 +343,10 @@ def install_built(tree: str, apps: list[str], manifest: dict,
     meson = shutil.which("meson") or "meson"
     for app in apps:
         src = source_dir(tree, app, manifest)
+        # Absolute: pkexec starts the command in / whatever cwd says.
+        build = os.path.join(src, "build")
         try:
-            result = run(prefix + [meson, "install", "-C", "build"],
+            result = run(prefix + [meson, "install", "-C", build],
                          cwd=src, timeout=INSTALL_TIMEOUT)
         except (OSError, subprocess.SubprocessError) as error:
             raise UpdateError("install failed for %s: %s" % (app, error))
@@ -366,14 +368,72 @@ def refresh_running(tree: str, run=None) -> None:
 
 
 def record_state(path: str, apps: list[str], manifest: dict,
-                 commit: str) -> None:
-    """Atomically merge the new versions into installed.json."""
+                 commit: str, run=None, prefix=None,
+                 stage_dir: str | None = None) -> None:
+    """Merge the new versions into installed.json.
+
+    The state dir belongs to root (install.sh creates it), so when it is
+    not writable the merged file is staged in ``stage_dir`` and copied in
+    with the same privilege ``prefix`` that ran ``meson install``;
+    otherwise it is replaced atomically in place."""
     parent = os.path.dirname(path)
+    if prefix and parent and not _can_write(parent):
+        _record_privileged(path, _merged_state(path, apps, manifest, commit),
+                           run or _default_run, prefix,
+                           stage_dir or tempfile.gettempdir())
+        return
     if parent:
         try:
             os.makedirs(parent, mode=0o755, exist_ok=True)
         except OSError as error:
             raise UpdateError("could not write installed state: %s" % error)
+    data = _merged_state(path, apps, manifest, commit)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+    except OSError as error:
+        raise UpdateError("could not write installed state: %s" % error)
+
+
+def _can_write(directory: str) -> bool:
+    """True when ``directory``, or the nearest existing parent it would
+    be created in, is writable by this process."""
+    probe = directory
+    while probe and not os.path.isdir(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
+    return os.access(probe or ".", os.W_OK)
+
+
+def _record_privileged(path: str, data: dict, run, prefix: list[str],
+                       stage_dir: str) -> None:
+    fd, staged = tempfile.mkstemp(prefix="installed-", suffix=".json",
+                                  dir=stage_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        try:
+            result = run(prefix + ["install", "-D", "-m", "0644", staged,
+                                   path], cwd="/", timeout=SETUP_TIMEOUT)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise UpdateError("could not write installed state: %s" % error)
+        if result.returncode != 0:
+            raise UpdateError("could not write installed state.")
+    finally:
+        try:
+            os.unlink(staged)
+        except OSError:
+            pass
+
+
+def _merged_state(path: str, apps: list[str], manifest: dict,
+                  commit: str) -> dict:
     try:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
@@ -389,14 +449,7 @@ def record_state(path: str, apps: list[str], manifest: dict,
         if "common" in _depends_on(manifest, app):
             entry["common"] = common_want
         data[app] = entry
-    tmp = path + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(tmp, path)
-    except OSError as error:
-        raise UpdateError("could not write installed state: %s" % error)
+    return data
 
 
 def format_check_line(app: str, have: str, want: str) -> str:
@@ -477,7 +530,8 @@ def cmd_apply(wanted: list[str] | None, fetch=None, run=None,
             build_apps(tree, ordered, available, run=run)
             install_built(tree, ordered, available, run=run, prefix=prefix)
             refresh_running(tree, run=run)
-            record_state(state or installed_path(), ordered, available, sha)
+            record_state(state or installed_path(), ordered, available, sha,
+                         run=run, prefix=prefix, stage_dir=workdir)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
         for app in ordered:
