@@ -24,6 +24,7 @@ import settings_ui as ui
 DEFAULT_TEMP = 2200
 MIN_TEMP = 2200
 MAX_TEMP = 6500
+TEMP_RESPAWN_DELAY_MS = 400
 
 PROFILE_BUS_NAMES = (
     'org.freedesktop.UPower.PowerProfiles',
@@ -624,12 +625,28 @@ class DisplaySection(settings_page._Section):
             win.config.set('night_light_temp', temp)
         except Exception:
             pass
+        if not night_light_running():
+            return
+        # A drag emits a value per step: restart wlsunset once it settles,
+        # not once per step.
+        from gi.repository import GLib
+        src = getattr(self, '_temp_src', None)
+        if src is not None:
+            GLib.source_remove(src)
+        self._temp_src = GLib.timeout_add(TEMP_RESPAWN_DELAY_MS,
+                                          self._respawn_night, win)
+
+    def _respawn_night(self, win) -> bool:
+        self._temp_src = None
         if night_light_running():
+            temp = clamp_temp(win.config.get('night_light_temp',
+                                             DEFAULT_TEMP))
             lat, lon = self._coords(win)
             scheduled = self._sunset_active(win)
             set_night_light(True, temp,
                             lat if scheduled else None,
                             lon if scheduled else None)
+        return False
 
     def _pick_schedule(self, win, anchor) -> None:
         labels = (('Off', 'off'), ('Custom times', 'custom'),

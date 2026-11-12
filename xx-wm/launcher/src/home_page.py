@@ -157,10 +157,6 @@ class HomePage:
         if app_id and win.focus_state.is_paused_app(str(app_id)):
             win._show_focus_notice(slot.get('label', 'App'))
             return
-        # Record usage
-        if app_id:
-            win.config.record_launch(app_id)
-
         # Launch based on type
         slot_type = slot.get('type')
         if slot_type == 'app':

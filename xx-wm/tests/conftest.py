@@ -75,6 +75,18 @@ def _no_host_tailscale(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _config_saves_write_at_once():
+    """The running shell coalesces config saves (main.do_activate turns
+    that on); a test that activated the app must not leave later tests,
+    which read config.json right after a setter, with deferred saves."""
+    yield
+    config = sys.modules.get('config')
+    if config is not None and hasattr(config, 'enable_deferred_saves'):
+        config.flush_saves()
+        config.enable_deferred_saves(False)
+
+
+@pytest.fixture(autouse=True)
 def _not_in_a_session(monkeypatch):
     """Tests never run as a live XX-WM session: desktop_theme (gsettings,
     ~/.config/gtk-*/gtk.css) stays off the developer's real desktop."""

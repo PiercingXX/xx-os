@@ -58,8 +58,8 @@ class TestAtomicSave:
 
 class TestSkipUnchangedSave:
     """eMMC wear guard: save() must not touch the flash when the serialized
-    payload is byte-identical to what's on disk. launch_counts legitimately
-    changes per launch — those writes still happen."""
+    payload is byte-identical to what's on disk; a changed payload still
+    writes."""
 
     @pytest.fixture
     def _replace_spy(self, monkeypatch):
@@ -92,25 +92,8 @@ class TestSkipUnchangedSave:
         config.save()
         assert len(_replace_spy) == 1
 
-        config.record_launch('notes.desktop')  # launch_counts changed
-        assert len(_replace_spy) == 2
-
         config.data['theme'] = 'forest'
         config.save()
-        assert len(_replace_spy) == 3
-
-    def test_repeated_launches_of_same_app_write_only_once(self, tmp_path, _replace_spy):
-        # Batched launch counts: the first record flushes, rapid follow-ups
-        # stay in memory, and the shutdown flush persists them (Wave 4).
-        config = _config(tmp_path)
-        config.record_launch('notes.desktop')
-        assert len(_replace_spy) == 1
-
-        config.record_launch('notes.desktop')  # count grew, still in memory
-        assert len(_replace_spy) == 1
-        assert config.launch_counts == {'notes.desktop': 2}
-
-        config.flush_launch_counts()  # shutdown/single write
         assert len(_replace_spy) == 2
 
     def test_externally_edited_file_is_rewritten(self, tmp_path, _replace_spy):

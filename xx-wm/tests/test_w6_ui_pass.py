@@ -291,7 +291,7 @@ class TestDrawerLaunchSilent:
         page._launch_entry(entry)
         assert dropped == [True]
         assert status == []
-        assert recorded == ['x.desktop']
+        assert recorded == []  # no usage counts (design.md: no usage sorts)
 
     def test_failure_still_reports(self):
         from app_index import AppEntry
@@ -333,9 +333,9 @@ class TestTouchTargets:
 
 
 class TestShutdownFlush:
-    def test_do_shutdown_flushes_launch_counts(self):
+    def test_do_shutdown_flushes_queued_config_saves(self):
         src = (SRC / 'main.py').read_text(encoding='utf-8')
-        assert 'flush_launch_counts' in src
+        assert 'flush_saves()' in src
 
 
 class TestMainloopLint:

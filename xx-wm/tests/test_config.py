@@ -139,83 +139,18 @@ class TestShellConfig:
         assert 'a.app' not in config.muted_apps
         assert 'b.app' in config.muted_apps
 
-    def test_launch_counts_roundtrip(self, tmp_path):
+    def test_retired_launch_counts_are_dropped_on_save(self, tmp_path):
         config = ShellConfig()
         config.config_dir = tmp_path / 'config'
         config.config_path = config.config_dir / 'config.json'
-
-        config.record_launch('org.example.A')
-        config.record_launch('org.example.A')
-        config.record_launch('org.example.B')
-        config.flush_launch_counts()
+        config.config_dir.mkdir(parents=True)
+        config.config_path.write_text(
+            '{"theme": "ocean", "launch_counts": {"a.desktop": 3}}')
         config.load()
-
-        assert config.launch_counts == {'org.example.A': 2, 'org.example.B': 1}
-
-    def test_launch_counts_batch_to_one_write_per_minute(self, tmp_path):
-        import time
-        config = ShellConfig()
-        config.config_dir = tmp_path / 'config'
-        config.config_path = config.config_dir / 'config.json'
-
-        config.record_launch('org.example.A')
-        mtime = config.config_path.stat().st_mtime_ns
-        # Rapid follow-ups stay in memory: no second flash write.
-        config.record_launch('org.example.A')
-        config.record_launch('org.example.B')
-        assert config.launch_counts == {'org.example.A': 2, 'org.example.B': 1}
-        assert config.config_path.stat().st_mtime_ns == mtime
-        # Shutdown flush persists them.
-        config.flush_launch_counts()
-        fresh = ShellConfig()
-        fresh.config_dir = config.config_dir
-        fresh.config_path = config.config_path
-        fresh.load()
-        assert fresh.launch_counts == {'org.example.A': 2, 'org.example.B': 1}
-        assert time.monotonic() - config._last_launch_flush < 60.0
-
-    def test_launch_counts_corrupt_values_skipped(self, tmp_path):
-        config = ShellConfig()
-        config.config_dir = tmp_path / 'config'
-        config.config_path = config.config_dir / 'config.json'
-
-        config.data = {
-            'launch_counts': {
-                'good.app': 3,
-                'numeric.str': '7',
-                'bad.str': 'bar',
-                'bad.none': None,
-                'bad.dict': {'deep': 1},
-                'bad.list': ['x'],
-            }
-        }
+        assert 'launch_counts' not in config.data
+        assert not hasattr(config, 'record_launch')
         config.save()
-        config.load()
-
-        assert config.launch_counts == {'good.app': 3, 'numeric.str': 7}
-
-    def test_launch_counts_non_dict_yields_empty(self, tmp_path):
-        config = ShellConfig()
-        config.config_dir = tmp_path / 'config'
-        config.config_path = config.config_dir / 'config.json'
-
-        for junk in ([1, 2], 'nope', 42, None):
-            config.data = {'launch_counts': junk}
-            config.save()
-            config.load()
-            assert config.launch_counts == {}
-
-    def test_record_launch_recovers_from_corrupt_counts(self, tmp_path):
-        config = ShellConfig()
-        config.config_dir = tmp_path / 'config'
-        config.config_path = config.config_dir / 'config.json'
-
-        config.data = {'launch_counts': {'a.app': 'garbage'}}
-        config.save()
-        config.load()
-
-        config.record_launch('a.app')
-        assert config.launch_counts == {'a.app': 1}
+        assert 'launch_counts' not in config.config_path.read_text()
 
     def test_migration_from_old_config(self, tmp_path):
         """Old configs without home_slots should work."""

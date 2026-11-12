@@ -1516,7 +1516,6 @@ class ShellWindow(Adw.ApplicationWindow):
                 )
             else:
                 info.launch([], None)
-            self.config.record_launch(app_id)
             self.drop_to_background()
         except GLib.Error as error:
             self._show_status(f'Failed to launch: {error.message}')
@@ -2757,6 +2756,10 @@ class ShellWindow(Adw.ApplicationWindow):
     def _reload_config(self) -> bool:
         self._config_reload_timer = None
         self._reload_gestures()
+        # Our own save (written or still queued): nothing to re-parse.
+        own = getattr(self.config, 'is_own_write', None)
+        if callable(own) and own():
+            return GLib.SOURCE_REMOVE
         fresh = self.config.read_fresh()
         if fresh is None:
             from shell_log import get_logger

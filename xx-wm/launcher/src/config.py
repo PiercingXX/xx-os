@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import copy
 import hashlib
 import hmac
@@ -7,6 +8,7 @@ import json
 import logging
 import os
 import stat
+import threading
 import time
 from pathlib import Path
 
@@ -337,6 +339,146 @@ _FAILED_PATHS: set[str] = set()
 # window's) nor a hot reload can read "no PIN". Only clear_pin() drops it.
 _HELPER_PIN_PATHS: set[str] = set()
 
+# Coalesced saves. The shell turns them on (enable_deferred_saves): a
+# burst of setters (first boot, a dragged slider) becomes one write
+# _SAVE_DELAY_MS after the last of them, on a worker thread, so the fsync
+# never stalls the GTK main loop. Off (tests, tools): save() writes at
+# once. Security state (PIN, lockout) always writes at once.
+_SAVE_DELAY_MS = 300
+
+
+def _file_sig(path: Path) -> tuple | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
+
+
+class _Writer:
+    def __init__(self) -> None:
+        self.deferred = False
+        self._lock = threading.Lock()      # _queue, _unwritten
+        self._io_lock = threading.Lock()   # one writer of the files at once
+        self._queue: dict[str, tuple[Path, Path, str]] = {}
+        # Payloads queued or being written: what the file is about to hold.
+        self._unwritten: dict[str, str] = {}
+        self._own: dict[str, tuple] = {}
+        self._timer = None
+
+    def submit(self, config_dir: Path, config_path: Path,
+               payload: str) -> None:
+        key = str(config_path)
+        with self._lock:
+            self._queue[key] = (config_dir, config_path, payload)
+            self._unwritten[key] = payload
+        if not self.deferred or not self._arm():
+            self.flush(key, raise_errors=True)
+
+    def _arm(self) -> bool:
+        try:
+            from gi.repository import GLib
+            if self._timer is not None:
+                GLib.source_remove(self._timer)
+            self._timer = GLib.timeout_add(_SAVE_DELAY_MS, self._on_timer)
+            return True
+        except Exception as error:
+            _log.warning('config save timer unavailable: %s', error)
+            self._timer = None
+            return False
+
+    def _on_timer(self) -> bool:
+        self._timer = None
+        try:
+            threading.Thread(target=self.flush, daemon=True,
+                             name='xx-wm-config-save').start()
+        except RuntimeError:
+            self.flush()
+        return False
+
+    def flush(self, key: str | None = None,
+              raise_errors: bool = False) -> None:
+        with self._io_lock:
+            with self._lock:
+                if key is None:
+                    items = list(self._queue.items())
+                    self._queue.clear()
+                else:
+                    item = self._queue.pop(key, None)
+                    items = [(key, item)] if item is not None else []
+            for path_key, (config_dir, config_path, payload) in items:
+                try:
+                    _write_config(config_dir, config_path, payload)
+                    sig = _file_sig(config_path)
+                    if sig is not None:
+                        self._own[path_key] = sig
+                except OSError as error:
+                    if raise_errors:
+                        raise
+                    _log.warning('config save failed: %s', error)
+                finally:
+                    with self._lock:
+                        if self._unwritten.get(path_key) is payload:
+                            del self._unwritten[path_key]
+
+    def unwritten(self, config_path: Path) -> str | None:
+        with self._lock:
+            return self._unwritten.get(str(config_path))
+
+    def is_own_write(self, config_path: Path) -> bool:
+        key = str(config_path)
+        if self.unwritten(config_path) is not None:
+            return True
+        own = self._own.get(key)
+        return own is not None and own == _file_sig(config_path)
+
+
+def _write_config(config_dir: Path, config_path: Path, payload: str) -> None:
+    # eMMC wear guard: saves fire on every settings touch, often with
+    # nothing actually changed. Skip the flash write when the serialized
+    # payload is already what's on disk.
+    try:
+        if config_path.read_text(encoding='utf-8') == payload:
+            # Content is identical, but an external chmod (e.g. a backup
+            # tool) may have loosened the mode since the last write;
+            # re-tighten without paying for the flash write.
+            if stat.S_IMODE(config_path.stat().st_mode) != 0o600:
+                os.chmod(config_path, 0o600)
+            return
+    except (OSError, ValueError):
+        pass  # missing, unreadable, or corrupt file — take the write path
+    config_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = config_path.with_name(config_path.name + '.tmp')
+    # 0600 at open(): the file never exists world-readable, even briefly.
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, config_path)
+    finally:
+        # After a successful replace the tmp name is gone, so this only
+        # ever deletes a mid-write orphan.
+        tmp_path.unlink(missing_ok=True)
+    os.chmod(config_path, 0o600)
+
+
+_WRITER = _Writer()
+
+
+def enable_deferred_saves(enabled: bool = True) -> None:
+    """The running shell coalesces saves (see _SAVE_DELAY_MS)."""
+    _WRITER.deferred = bool(enabled)
+
+
+def flush_saves() -> None:
+    """Write every queued save now (shutdown)."""
+    _WRITER.flush()
+
+
+atexit.register(flush_saves)
+
 
 class ShellConfig:
     # True when config.json exists but could not be read or parsed. The
@@ -356,11 +498,14 @@ class ShellConfig:
 
     def _read_disk(self) -> dict | None:
         """config.json as a dict, None when absent; raises OSError when
-        unreadable and ValueError when it is not a JSON object."""
-        try:
-            text = self.config_path.read_text(encoding='utf-8')
-        except FileNotFoundError:
-            return None
+        unreadable and ValueError when it is not a JSON object. A save
+        still queued in this process is what the file is about to hold."""
+        text = _WRITER.unwritten(self.config_path)
+        if text is None:
+            try:
+                text = self.config_path.read_text(encoding='utf-8')
+            except FileNotFoundError:
+                return None
         loaded = json.loads(text)
         if not isinstance(loaded, dict):
             raise ValueError('config root must be an object')
@@ -378,6 +523,9 @@ class ShellConfig:
             if key in _STRING_KEYS and not isinstance(value, str):
                 continue
             data[key] = value
+        # Retired key (design.md has no usage sorts): the next save
+        # drops it from the file.
+        data.pop('launch_counts', None)
         legacy_sort = LEGACY_DRAWER_SORTS.get(data.get('drawer_sort'))
         if legacy_sort is not None:
             # Retired sort names; the next save writes the current one.
@@ -458,38 +606,22 @@ class ShellConfig:
         return fresh
 
     def save(self) -> None:
+        """Persist data; coalesced when the shell enabled deferred saves."""
         if self.load_failed:
             return
         payload = json.dumps(self.data, indent=2) + '\n'
-        # eMMC wear guard: saves fire on every app launch and every settings
-        # touch, often with nothing actually changed. Skip the flash write
-        # when the serialized payload is already what's on disk; a mutated
-        # payload (launch_counts per launch) still writes normally.
-        try:
-            if self.config_path.read_text(encoding='utf-8') == payload:
-                # Content is identical, but an external chmod (e.g. a backup
-                # tool) may have loosened the mode since the last write;
-                # re-tighten without paying for the flash write.
-                if stat.S_IMODE(self.config_path.stat().st_mode) != 0o600:
-                    os.chmod(self.config_path, 0o600)
-                return
-        except (OSError, ValueError):
-            pass  # missing, unreadable, or corrupt file — take the write path
-        self.config_dir.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.config_path.with_name(self.config_path.name + '.tmp')
-        # 0600 at open(): the file never exists world-readable, even briefly.
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as fh:
-                fh.write(payload)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp_path, self.config_path)
-        finally:
-            # After a successful replace the tmp name is gone, so this only
-            # ever deletes a mid-write orphan.
-            tmp_path.unlink(missing_ok=True)
-        os.chmod(self.config_path, 0o600)
+        _WRITER.submit(self.config_dir, self.config_path, payload)
+
+    def save_now(self) -> None:
+        """save(), written before returning (OSError raises): for state
+        that must survive a crash a moment later (PIN, lockout)."""
+        self.save()
+        _WRITER.flush(str(self.config_path), raise_errors=True)
+
+    def is_own_write(self) -> bool:
+        """config.json holds (or is about to hold) this process's own
+        last save: a file-monitor event for it needs no re-parse."""
+        return _WRITER.is_own_write(self.config_path)
 
     def get(self, key: str, default=None):
         """Read any key with a fallback, so settings rows for keys owned
@@ -575,7 +707,7 @@ class ShellConfig:
         """Drop the local hash: the helper now holds the PIN."""
         _HELPER_PIN_PATHS.add(str(self.config_path))
         self.data['pin_hash'] = HELPER_PIN_MARKER
-        self.save()
+        self.save_now()
 
     def assume_pin_in_helper(self) -> None:
         """Fail closed while the helper has not answered: every config
@@ -590,13 +722,13 @@ class ShellConfig:
         _HELPER_PIN_PATHS.discard(str(self.config_path))
         if self.data.get('pin_hash') == HELPER_PIN_MARKER:
             self.data.pop('pin_hash', None)
-            self.save()
+            self.save_now()
 
     def clear_pin(self) -> None:
         """Forget the PIN locally (hash or marker)."""
         _HELPER_PIN_PATHS.discard(str(self.config_path))
         if self.data.pop('pin_hash', None) is not None:
-            self.save()
+            self.save_now()
 
     def set_pin(self, pin: str) -> None:
         salt = os.urandom(16)
@@ -604,7 +736,7 @@ class ShellConfig:
         self.data['pin_hash'] = (
             f'{_PIN_HASH_PREFIX}{_PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}'
         )
-        self.save()
+        self.save_now()
 
     def verify_pin(self, pin: str) -> bool:
         stored = self.pin_hash
@@ -703,12 +835,12 @@ class ShellConfig:
         if start is not None:
             state['start'] = max(0.0, float(start))
         self.data[_LOCKOUT_STATE_KEY] = state
-        self.save()
+        self.save_now()
 
     def clear_lockout_state(self) -> None:
         if _LOCKOUT_STATE_KEY in self.data:
             del self.data[_LOCKOUT_STATE_KEY]
-            self.save()
+            self.save_now()
 
     @property
     def hidden_apps(self) -> list[str]:
@@ -779,46 +911,6 @@ class ShellConfig:
     def set_update_snooze_until(self, timestamp: float) -> None:
         self.data['update_snooze_until'] = max(0.0, timestamp)
         self.save()
-
-    @property
-    def launch_counts(self) -> dict[str, int]:
-        val = self.data.get('launch_counts', {})
-        if not isinstance(val, dict):
-            return {}
-        out: dict[str, int] = {}
-        for k, v in val.items():
-            try:
-                out[str(k)] = int(v)
-            except (TypeError, ValueError):
-                continue
-        return out
-
-    # eMMC wear: launch counts accumulate in memory and reach flash at
-    # most once per minute, plus once on shutdown (see flush_launch_counts).
-    _LAUNCH_FLUSH_SECONDS = 60.0
-
-    def record_launch(self, app_id: str) -> None:
-        import time
-        counts = self.launch_counts
-        counts[app_id] = counts.get(app_id, 0) + 1
-        self.data['launch_counts'] = counts
-        now = time.monotonic()
-        last = getattr(self, '_last_launch_flush', None)
-        if last is None or now - last >= self._LAUNCH_FLUSH_SECONDS:
-            self.save()
-            self._last_launch_flush = now
-        else:
-            self._launch_dirty = True
-
-    def flush_launch_counts(self) -> None:
-        """Write pending launch counts to flash. Called on shutdown; a no-op
-        when nothing was recorded since the last flush."""
-        import time
-        if not getattr(self, '_launch_dirty', False):
-            return
-        self._launch_dirty = False
-        self.save()
-        self._last_launch_flush = time.monotonic()
 
     @property
     def default_layout_applied(self) -> bool:

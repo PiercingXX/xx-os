@@ -10,7 +10,12 @@ saving or seeding the home layout for that session. A PIN held by the
 root helper survives a lost or corrupt `config.json`: the shell re-adds the
 `pin_hash` marker from the helper and comes up locked (first-boot setup
 included), and a hand edit cannot drop or replace it while the shell runs
-(see `docs/helper.md`, PIN store). The in-shell Settings page covers system things (network, sound
+(see `docs/helper.md`, PIN store). The shell writes its own changes about
+0.3 s after the last one (a dragged slider or a burst of first-boot steps
+is one atomic write), except the PIN and the lockout state, which are
+written at once; it flushes on exit. A hand edit made in that window is
+overwritten by the shell's pending write. The retired `launch_counts` key is
+dropped on the next write. The in-shell Settings page covers system things (network, sound
 devices, battery, updates, backup) plus one Launcher section mirroring the
 Android launcher's settings — home, widgets, weather, clock, drawer,
 gestures, appearance — so a tablet without a keyboard can still change them.

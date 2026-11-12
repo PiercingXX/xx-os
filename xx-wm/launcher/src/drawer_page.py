@@ -245,7 +245,7 @@ def search_results(win, raw_query: str) -> list:
 
 def launch_app(win, entry: AppEntry) -> bool:
     """Start an app the way a drawer tap does: Nope and Focus blocks,
-    standby tracking, launch counts. True when it launched."""
+    standby tracking. True when it launched."""
     from nope_mode import blocks_window
     if blocks_window(win, entry.app_id,
                      win.config.label_for(entry.app_id, entry.name)):
@@ -256,7 +256,6 @@ def launch_app(win, entry: AppEntry) -> bool:
     ok, error = win.app_index.launch(
         entry, tracker=getattr(win, 'standby', None))
     if ok:
-        win.config.record_launch(entry.app_id)
         return True
     win._show_status(f'Failed to launch {entry.name}: {error}')
     return False

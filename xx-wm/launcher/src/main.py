@@ -213,8 +213,9 @@ class XXWMApplication(Adw.Application):
             return
 
         # The configured font applies launcher-wide, wizard included
-        from config import ShellConfig
+        from config import ShellConfig, enable_deferred_saves
         from font_theme import apply_global_font
+        enable_deferred_saves()
         config = ShellConfig()
         apply_global_font(config.font_family)
 
@@ -1409,12 +1410,11 @@ class XXWMApplication(Adw.Application):
                 desk.shutdown()
             except Exception:
                 pass
-        config = getattr(shell, 'config', None)
-        if config is not None:
-            try:
-                config.flush_launch_counts()
-            except Exception:
-                pass
+        try:
+            from config import flush_saves
+            flush_saves()
+        except Exception as exc:
+            _log.warning('config flush at shutdown failed: %s', exc)
         super().do_shutdown()
 
 
