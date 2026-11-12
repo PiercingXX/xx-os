@@ -314,6 +314,16 @@ _log = logging.getLogger('piercing.config')
 # a clean first run that seeds and saves defaults.
 _FAILED_PATHS: set[str] = set()
 
+# config.json paths whose PIN the root helper holds, as far as this
+# process knows: the marker was read or written, or the startup gate
+# assumed it while the helper had not answered yet
+# (helper_client.startup_pin_gate). Every ShellConfig for such a path
+# reports the marker whatever its own data says (file deleted, reset,
+# moved aside so save() refuses, or hand-edited to drop or replace the
+# hash), so neither a later instance (the wizard's, a lock's, the shell
+# window's) nor a hot reload can read "no PIN". Only clear_pin() drops it.
+_HELPER_PIN_PATHS: set[str] = set()
+
 
 class ShellConfig:
     # True when config.json exists but could not be read or parsed. The
@@ -406,6 +416,8 @@ class ShellConfig:
             return
         self._mark_loaded()
         self._merge(self.data, loaded)
+        if self.data.get('pin_hash') == HELPER_PIN_MARKER:
+            _HELPER_PIN_PATHS.add(str(self.config_path))
 
     def read_fresh(self) -> dict | None:
         """A complete new data dict from disk (defaults for a missing
@@ -423,12 +435,13 @@ class ShellConfig:
             self.load_failed = True
             return None
         self._mark_loaded()
-        fresh =self._merge(copy.deepcopy(DEFAULT_CONFIG), loaded or {})
-        if (fresh.get('pin_hash') is None
-                and self.data.get('pin_hash') == HELPER_PIN_MARKER):
+        fresh = self._merge(copy.deepcopy(DEFAULT_CONFIG), loaded or {})
+        if (self._helper_holds_pin()
+                or self.data.get('pin_hash') == HELPER_PIN_MARKER):
             # The helper holds the PIN, not this file: an edit or a delete
-            # that drops the marker must not unlock the running session.
-            # pin_verify clears it if the helper really has no record.
+            # that drops the marker, or one that swaps in a local hash of
+            # another PIN, must not change what unlocks the running
+            # session. pin_verify clears it if the helper has no record.
             fresh['pin_hash'] = HELPER_PIN_MARKER
         return fresh
 
@@ -529,8 +542,13 @@ class ShellConfig:
         self.data['pinned'] = app_ids[:8]
         self.save()
 
+    def _helper_holds_pin(self) -> bool:
+        return str(getattr(self, 'config_path', '')) in _HELPER_PIN_PATHS
+
     @property
     def pin_hash(self) -> str | None:
+        if self._helper_holds_pin():
+            return HELPER_PIN_MARKER
         value = self.data.get('pin_hash')
         # Only a truly absent key means "no PIN"; an empty/corrupt value must
         # fail closed (verify_pin rejects) rather than collapse to unlocked.
@@ -539,15 +557,24 @@ class ShellConfig:
     @property
     def pin_in_helper(self) -> bool:
         """True when the PIN hash lives in the root helper, not here."""
-        return self.data.get('pin_hash') == HELPER_PIN_MARKER
+        return self.pin_hash == HELPER_PIN_MARKER
 
     def set_pin_in_helper(self) -> None:
         """Drop the local hash: the helper now holds the PIN."""
+        _HELPER_PIN_PATHS.add(str(self.config_path))
         self.data['pin_hash'] = HELPER_PIN_MARKER
         self.save()
 
+    def assume_pin_in_helper(self) -> None:
+        """Fail closed while the helper has not answered: every config
+        for this path reports the marker for the rest of the process,
+        without writing it to disk. pin_verify, or a late HasPin answer,
+        clears it when the helper turns out to hold no PIN."""
+        _HELPER_PIN_PATHS.add(str(self.config_path))
+
     def clear_pin(self) -> None:
         """Forget the PIN locally (hash or marker)."""
+        _HELPER_PIN_PATHS.discard(str(self.config_path))
         if self.data.pop('pin_hash', None) is not None:
             self.save()
 

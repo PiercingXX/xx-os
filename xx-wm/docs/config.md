@@ -8,7 +8,9 @@ live, and the shell does not save over the file until it parses again). A
 `config.json.corrupt-<timestamp>` and the shell runs on defaults without
 saving or seeding the home layout for that session. A PIN held by the
 root helper survives a lost or corrupt `config.json`: the shell re-adds the
-`pin_hash` marker from the helper. The in-shell Settings page covers system things (network, sound
+`pin_hash` marker from the helper and comes up locked (first-boot setup
+included), and a hand edit cannot drop or replace it while the shell runs
+(see `docs/helper.md`, PIN store). The in-shell Settings page covers system things (network, sound
 devices, battery, updates, backup) plus one Launcher section mirroring the
 Android launcher's settings — home, widgets, weather, clock, drawer,
 gestures, appearance — so a tablet without a keyboard can still change them.

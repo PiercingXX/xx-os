@@ -769,6 +769,114 @@ def pin_change(config, current: str, new: str,
         pass
 
 
+# dbus-daemon's (and dbus-broker's) standard system-bus activation
+# directories; meson installs the helper's file under $datadir.
+HELPER_SERVICE_DIRS = (
+    '/usr/local/share/dbus-1/system-services',
+    '/usr/share/dbus-1/system-services',
+    '/lib/dbus-1/system-services',
+    '/etc/dbus-1/system-services',
+)
+STARTUP_PIN_WAIT_MS = 3000
+
+
+def helper_installed(dirs=None) -> bool:
+    """Whether the system bus can start the helper: its D-Bus activation
+    file is installed. A helper that was never installed cannot hold a
+    PIN, so its silence never locks anyone out."""
+    import os
+    name = BUS_NAME + '.service'
+    return any(os.path.isfile(os.path.join(d, name))
+               for d in (HELPER_SERVICE_DIRS if dirs is None else dirs))
+
+
+def _add_timeout(ms: int, fn) -> None:
+    _Gio, GLib = _gio()
+    GLib.timeout_add(ms, fn)
+
+
+def startup_pin_gate(config, on_decided, on_late=None, *,
+                     wait_ms: int = STARTUP_PIN_WAIT_MS) -> None:
+    """Startup: does a PIN guard this session? ``on_decided(locked)``
+    fires exactly once, before anything is shown.
+
+    Locked: config holds a PIN (hash or marker), or the helper reports
+    one (pin_sync restores the marker). No answer — an error, or nothing
+    within ``wait_ms`` — fails closed while PINs live in the helper and
+    the helper is installed (helper_installed): the marker is assumed
+    for this process (config.assume_pin_in_helper, not written to disk),
+    so the PIN pad verifies through the helper once it answers, and
+    pin_verify clears it if the helper holds no PIN after all. Unlocked:
+    the helper answers that it holds no PIN, PINs do not live in the
+    helper in this run (pin_helper_enabled), or it is not installed.
+
+    A late HasPin answer reconciles: no PIN drops an assumed marker
+    (the lock that is up then unlocks with a swipe); a PIN persists it,
+    and calls ``on_late()`` when the session was let up unlocked.
+    """
+    late = on_late or (lambda: None)
+    state = {'decided': False, 'locked': False, 'assumed': False}
+
+    def _decide(locked: bool) -> None:
+        state['decided'] = True
+        state['locked'] = locked
+        on_decided(locked)
+
+    def _unanswered() -> None:
+        if not pin_helper_enabled() or not helper_installed():
+            _decide(False)
+            return
+        assume = getattr(config, 'assume_pin_in_helper', None)
+        if callable(assume):
+            assume()
+            state['assumed'] = True
+        _log.warning('PIN helper did not answer; locked until it does')
+        _decide(True)
+
+    def _answer(has_pin) -> None:
+        if not state['decided']:
+            if has_pin is None:
+                _unanswered()
+            else:
+                _decide(bool(has_pin) or config.pin_hash is not None)
+            return
+        if has_pin is None:
+            return
+        if state['assumed']:
+            state['assumed'] = False
+            try:
+                if has_pin:
+                    config.set_pin_in_helper()
+                else:
+                    config.clear_pin()
+            except (AttributeError, OSError):
+                pass
+        elif has_pin and not state['locked']:
+            late()
+
+    if config.pin_hash is not None:
+        _decide(True)
+        return
+    try:
+        pin_sync(config, _answer)
+    except Exception:
+        if state['decided']:
+            raise  # from on_decided, not from asking the helper
+        _answer(None)
+    if state['decided']:
+        return
+
+    def _timeout() -> bool:
+        if not state['decided']:
+            _unanswered()
+        return False
+
+    try:
+        _add_timeout(wait_ms, _timeout)
+    except Exception:
+        _timeout()
+
+
 def pin_sync(config, on_done=None) -> None:
     """Startup heal: a helper record with no config marker (config.json
     reset or restored) re-adds the marker so the lock still demands the

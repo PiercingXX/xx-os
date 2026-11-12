@@ -1638,9 +1638,10 @@ class ShellWindow(Adw.ApplicationWindow):
 
         PIN in config (hash or helper marker): require the lock, show it,
         and report ready — phoc's shield lowers only once the lock maps
-        (lock_screen reports that). No PIN in config: ask the helper
-        whether it still holds one (config.json reset), bounded so a
-        slow bus never keeps the shield up; then lock or report ready.
+        (lock_screen reports that). The app asks the helper before this
+        window exists (main._gate_startup), so an assumed or restored
+        marker is already in config here; without that (no app gate)
+        the same helper_client.startup_pin_gate runs here, failing closed.
         """
         try:
             from lock_screen import _shell_state, logind_session
@@ -1651,36 +1652,33 @@ class ShellWindow(Adw.ApplicationWindow):
         gate = getattr(reporter, 'gate', None)
         if gate is not None and gate.reported:
             # Already reported up in this process before the shell window
-            # existed: the first-boot wizard just finished (and set the
-            # PIN) — don't lock the user out of their own fresh setup.
+            # existed: the first-boot wizard just finished. It only runs
+            # behind the lock when a PIN exists (main._gate_startup), so
+            # this is the owner's fresh setup: don't lock them out of it.
             return False
         if self.config.pin_hash is not None:
             self._lock_at_startup(reporter)
             return False
-        state = {'done': False}
+        get_app = getattr(self, 'get_application', None)
+        app = get_app() if callable(get_app) else None
+        if getattr(app, '_pin_gate_done', False):
+            # The app already asked the helper: no PIN anywhere.
+            if reporter is not None:
+                reporter.note_shell_ready()
+            return False
 
-        def _finish(has_pin) -> None:
-            if state['done']:
-                if has_pin:  # helper answered after the bounded wait
-                    self._show_lock_screen()
-                return
-            state['done'] = True
-            if has_pin or self.config.pin_hash is not None:
+        def _decided(locked: bool) -> None:
+            if locked:
                 self._lock_at_startup(reporter)
             elif reporter is not None:
                 reporter.note_shell_ready()
 
-        def _timeout() -> bool:
-            _finish(None)
-            return False
-
         try:
             import helper_client
-            helper_client.pin_sync(self.config, _finish)
+            helper_client.startup_pin_gate(
+                self.config, _decided, on_late=self._show_lock_screen)
         except Exception:
-            _finish(None)
-        if not state['done']:
-            GLib.timeout_add(3000, _timeout)
+            _decided(True)
         return False
 
     def _lock_at_startup(self, reporter) -> None:

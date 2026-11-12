@@ -145,13 +145,17 @@ class TestAppLifecycle:
         import font_theme
         monkeypatch.setattr(font_theme, 'apply_global_font', lambda *_a: None)
         monkeypatch.setattr(config, 'ShellConfig', lambda: types.SimpleNamespace(
-            font_family='', pin_hash=None))
+            font_family='', pin_hash=None, data={}))
         app = types.SimpleNamespace(
             _shell=None, _wizard=None,
             props=types.SimpleNamespace(active_window=None),
             _on_ipc_command=None, _on_sleep=None,
             _on_notification=None, _on_notification_closed=None,
+            hold=lambda: None, release=lambda: None,
+            _on_late_helper_pin=lambda: None,
             _start_wizard_telephony=lambda: calls.append('telephony'),
             _start_first_boot=lambda: calls.append('wizard'))
+        app._gate_startup = types.MethodType(
+            main_mod.XXWMApplication._gate_startup, app)
         main_mod.XXWMApplication.do_activate(app)
         assert calls == ['telephony', 'wizard']

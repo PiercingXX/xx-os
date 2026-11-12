@@ -178,6 +178,8 @@ class XXWMApplication(Adw.Application):
         self._auto_suspend = None
         self._wizard_lock = None
         self._wizard_telephony: WizardTelephony | None = None
+        self._pin_gate_pending = False
+        self._pin_gate_done = False
         self._banner = None
         from focus_mode import HeldNotifications
         self._held_notifications = HeldNotifications()
@@ -197,11 +199,15 @@ class XXWMApplication(Adw.Application):
             _log.info('activate: UI already up, presenting it')
             existing.present()
             return
+        if getattr(self, '_pin_gate_pending', False):
+            _log.info('activate: waiting for the PIN helper')
+            return
 
         # The configured font applies launcher-wide, wizard included
         from config import ShellConfig
         from font_theme import apply_global_font
-        apply_global_font(ShellConfig().font_family)
+        config = ShellConfig()
+        apply_global_font(config.font_family)
 
         self._ipc = IPCServer(self._on_ipc_command)
         # The delay inhibitor rides along: suspend waits until the lock
@@ -212,20 +218,73 @@ class XXWMApplication(Adw.Application):
             on_close=self._on_notification_closed,
         )
 
-        if FirstBootWizard.is_needed():
-            # Calls work during setup too: the shell window's modem
-            # monitor does not exist until the wizard is done.
-            self._start_wizard_telephony()
-            self._start_first_boot()
-        else:
-            self._show_shell()
+        first_boot = FirstBootWizard.is_needed()
+        if first_boot:
+            # A marker the gate restores from the helper is saved: the
+            # file it creates must still read as setup not finished.
+            config.data.setdefault('setup_complete', False)
+        self._gate_startup(config, first_boot)
+
+    def _gate_startup(self, config, first_boot: bool) -> None:
+        """Nothing is shown until it is known whether a PIN guards this
+        session (helper_client.startup_pin_gate): a config.json that was
+        deleted, reset or moved aside as corrupt has no marker, but the
+        helper still holds the PIN, so the wizard and the shell both come
+        up behind the lock. The decision lands in config (marker restored
+        or assumed for this process), where _start_first_boot and the
+        shell window read it. phoc's shield (-S) covers the wait; under
+        ext-session-lock there is nothing on screen to cover."""
+        import helper_client
+        self._pin_gate_pending = True
+        self.hold()
+
+        def _decided(locked: bool) -> None:
+            if not self._pin_gate_pending:
+                return
+            _log.info('startup PIN gate: %s',
+                      'locked' if locked else 'no PIN')
+            self._pin_gate_pending = False
+            self._pin_gate_done = True
+            try:
+                if first_boot:
+                    # Calls work during setup too: the shell window's
+                    # modem monitor does not exist until the wizard is
+                    # done. Started once the lock decision is made, so
+                    # the call surface knows whether it sits above it.
+                    self._start_wizard_telephony()
+                    self._start_first_boot()
+                else:
+                    self._show_shell()
+            finally:
+                self.release()
+
+        try:
+            helper_client.startup_pin_gate(config, _decided,
+                                           on_late=self._on_late_helper_pin)
+        except Exception as exc:
+            if not self._pin_gate_pending:
+                raise  # the wizard or shell itself failed, not the gate
+            _log.error('PIN gate failed: %s', exc)
+            if helper_client.helper_installed():
+                config.assume_pin_in_helper()
+            _decided(True)
+
+    def _on_late_helper_pin(self) -> None:
+        """The helper reported a PIN after the gate let the session up
+        unlocked (it looked uninstalled): lock what is on screen now."""
+        if self._shell is not None:
+            self._shell._show_lock_screen()
+        elif self._wizard is not None and self._wizard_lock is None:
+            self._lock_before_wizard()
 
     def _start_first_boot(self) -> None:
         """First-boot wizard. A wizard cut short after its PIN step (crash,
-        reboot, deploy respawn) comes back behind the lock screen: the PIN
-        is entered before setup continues, phoc's shield (-S) lowers onto
-        the lock rather than the wizard, and the wizard then skips its PIN
-        step, so it can never overwrite the PIN."""
+        reboot, deploy respawn), or one rerun because config.json was
+        lost while the helper still holds the PIN (_gate_startup), comes
+        back behind the lock screen: the PIN is entered before setup
+        continues, phoc's shield (-S) lowers onto the lock rather than the
+        wizard, and the wizard then skips its PIN step, so it can never
+        overwrite the PIN."""
         from config import ShellConfig
         try:
             pin_set = ShellConfig().pin_hash is not None

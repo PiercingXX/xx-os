@@ -36,15 +36,16 @@ def test_reactivation_presents_the_existing_wizard(monkeypatch):
     import font_theme
     monkeypatch.setattr(font_theme, 'apply_global_font', lambda *_a: None)
     monkeypatch.setattr(config, 'ShellConfig', lambda: types.SimpleNamespace(
-        font_family='', pin_hash=None))
+        font_family='', pin_hash=None, data={}))
     app = types.SimpleNamespace(
         _shell=None, _wizard=None,
         props=types.SimpleNamespace(active_window=None),
         _on_ipc_command=None, _on_sleep=None,
         _on_notification=None, _on_notification_closed=None,
         _wizard_done=lambda: None, _show_shell=lambda: None,
-        _start_wizard_telephony=lambda: None)
-    for name in ('_start_first_boot', '_present_wizard'):
+        _start_wizard_telephony=lambda: None,
+        hold=lambda: None, release=lambda: None)
+    for name in ('_start_first_boot', '_present_wizard', '_gate_startup'):
         setattr(app, name, types.MethodType(
             getattr(main.XXWMApplication, name), app))
     main.XXWMApplication.do_activate(app)

@@ -266,6 +266,27 @@ read the hash and brute-force it offline:
 - The shell's config keeps only a marker (`pin_hash` = the helper
   marker) so "is a PIN set?" stays synchronous; without the helper the
   local pbkdf2 hash keeps working and migrates on the next good unlock.
+- Startup (`helper_client.startup_pin_gate`, run by `main.py` before the
+  first-boot wizard or the shell shows anything): a config without the
+  marker asks `HasPin`. A PIN there restores the marker and the session
+  comes up locked; the wizard after a lost `config.json` runs only after
+  that PIN is entered, and skips its PIN step. No answer (an error, or
+  nothing within 3 s) fails closed **when the helper is installed**,
+  meaning its activation file `io.piercingxx.XXWM.Helper1.service`
+  exists in one of the system bus service dirs
+  (`/usr/local/share`, `/usr/share`, `/lib`, `/etc` + `dbus-1/system-services`):
+  the marker is assumed for that process (not written), the lock comes
+  up, and the PIN pad verifies through the helper once it answers (a
+  helper that then reports no PIN unlocks on the first entry, and a late
+  `HasPin` that says no PIN turns the lock back to swipe-only). A helper
+  that is not installed cannot hold a PIN, so its silence never locks; a
+  helper that is installed but broken keeps the session locked until it
+  is fixed (over ssh or a TTY). Dev runs (`XX_WM_PIN_HELPER=0`, or no
+  `XX_WM_SESSION`) never ask.
+- Once this process has seen the helper hold the PIN, every config
+  instance reports the marker until the PIN is removed: a hot reload
+  that drops it, sets it to `null` or swaps in a local hash changes
+  nothing.
 
 ## Shell client
 
