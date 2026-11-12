@@ -414,7 +414,23 @@ def configure_scheduler(**kwargs) -> NightScheduler:
     return _scheduler
 
 
-def _system_tz() -> datetime.tzinfo:
+def _system_tz(localtime: str = '/etc/localtime') -> datetime.tzinfo:
+    """The system zone with its DST rules. A fixed-offset snapshot of
+    "now" would put tomorrow's custom edge an hour off across a DST
+    change; the snapshot is only the last resort."""
+    import os
+    import zoneinfo
+    key = os.environ.get('TZ', '').lstrip(':')
+    if key:
+        try:
+            return zoneinfo.ZoneInfo(key)
+        except Exception:
+            pass
+    try:
+        with open(localtime, 'rb') as fh:
+            return zoneinfo.ZoneInfo.from_file(fh)
+    except Exception:
+        pass
     try:
         return datetime.datetime.now().astimezone().tzinfo
     except Exception:
