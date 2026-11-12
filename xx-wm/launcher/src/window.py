@@ -585,6 +585,28 @@ def _back_env() -> dict[str, str]:
     }
 
 
+def back_key_target(over_apps: bool, manager: object | None) -> str | None:
+    """Where a back gesture goes once nothing shell-owned is open.
+
+    None while the shell's own page is on screen (raised over apps) or no
+    app is focused: the app hidden underneath must not receive it.
+    'waydroid' for a focused Waydroid window (Android KEYCODE_BACK through
+    the waydroid CLI), 'app' for any other focused app (Escape), and 'app'
+    as well when focus can't be read (no foreign-toplevel protocol).
+    """
+    if over_apps:
+        return None
+    try:
+        if manager is None or not manager.available:
+            return 'app'
+        app_id = manager.activated_app_id()
+    except Exception:
+        return 'app'
+    if not app_id:
+        return None
+    return 'waydroid' if app_id.lower().startswith('waydroid') else 'app'
+
+
 def _set_osk_visible(visible: bool) -> None:
     """Toggle squeekboard's visibility over D-Bus (headless seam for 20.1).
 
@@ -1581,22 +1603,19 @@ class ShellWindow(Adw.ApplicationWindow):
             self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_RIGHT)
             self.stack.set_visible_child_name('home')
             return
-        # 5. Nothing shell-owned is open — send back to whatever is focused
+        # 5. Nothing shell-owned is open: back goes to the focused app, and
+        # only to it (bare home sends nothing to the app hidden under it).
+        target = back_key_target(getattr(self, '_over_apps', False),
+                                 getattr(self, '_toplevel_manager', None))
+        if target is None:
+            return
         env = {**os.environ, **_back_env()}
+        argv = (['waydroid', 'shell', 'input', 'keyevent', '4']
+                if target == 'waydroid' else ['wtype', '-k', 'Escape'])
         try:
-            subprocess.Popen(['wtype', '-k', 'Escape'], env=env,
-                             close_fds=True, stdout=subprocess.DEVNULL,
+            subprocess.Popen(argv, env=env, close_fds=True,
+                             stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
-        except FileNotFoundError:
-            pass
-        # Always try Android KEYCODE_BACK — exits silently if Waydroid isn't running.
-        # Deliberately no status check: check_output blocks the main thread for up to 1s.
-        try:
-            subprocess.Popen(
-                ['waydroid', 'shell', 'input', 'keyevent', '4'],
-                env=env, close_fds=True,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
         except FileNotFoundError:
             pass
 
