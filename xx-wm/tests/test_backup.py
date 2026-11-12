@@ -15,7 +15,9 @@ from backup import (
     export_backup,
     parse_backup_timestamp,
     restore_backup,
+    restored_charge_limit,
     validate_backup,
+    write_backup_file,
 )
 from config import ShellConfig
 
@@ -310,3 +312,49 @@ class TestExportDestination:
         home.mkdir()
         monkeypatch.setenv('HOME', str(home))
         assert backup_export_dir() == home
+
+
+class TestChargeLimitRestore:
+    @pytest.fixture
+    def limited(self, tmp_path, monkeypatch):
+        monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+        cfg = ShellConfig()
+        cfg.set_charge_limit(80)
+        return cfg
+
+    def _payload(self, **extra):
+        payload = {'version': 1, 'home_slots': [], 'theme': 'amoled',
+                   'font': 'jetbrains-mono-nerd'}
+        payload.update(extra)
+        return payload
+
+    def test_backup_without_limit_keeps_the_enforced_one(self, limited):
+        assert restore_backup(limited, self._payload())
+        assert limited.charge_limit == 80
+        assert restored_charge_limit(self._payload()) == (False, None)
+
+    def test_restore_leaves_the_limit_to_the_helper(self, limited):
+        assert restore_backup(limited, self._payload(charge_limit=None))
+        assert limited.charge_limit == 80
+        assert restored_charge_limit(self._payload(charge_limit=None)) == (
+            True, None)
+        assert restored_charge_limit(self._payload(charge_limit=90)) == (
+            True, 90)
+
+
+class TestWriteBackupFile:
+    def test_owner_only_and_no_temp_left(self, tmp_path):
+        from datetime import datetime
+        path = write_backup_file({'version': 1, 'medical_id': {'name': 'A'}},
+                                 tmp_path, now=datetime(2026, 1, 2, 3, 4, 5))
+        assert path == tmp_path / 'xx-wm-backup-20260102_030405.json'
+        assert (path.stat().st_mode & 0o777) == 0o600
+        assert json.loads(path.read_text())['medical_id'] == {'name': 'A'}
+        assert [p.name for p in tmp_path.iterdir()] == [path.name]
+
+    def test_failed_write_raises_and_leaves_nothing(self, tmp_path):
+        with pytest.raises(TypeError):
+            write_backup_file({'version': 1, 'bad': object()}, tmp_path)
+        assert list(tmp_path.iterdir()) == []
+        with pytest.raises(OSError):
+            write_backup_file({'version': 1}, tmp_path / 'missing')

@@ -219,6 +219,27 @@ class TestExportDestination:
         assert list(home.glob('xx-wm-backup-*.json')) == []
         assert statuses == [f'Backup exported to {exported[0]}']
 
+    def test_export_is_owner_only(
+            self, window_module, tmp_path, monkeypatch):
+        home = tmp_path / 'home'
+        home.mkdir(parents=True)
+        monkeypatch.setenv('HOME', str(home))
+        self._export_shell(window_module)
+        exported, = home.glob('xx-wm-backup-*.json')
+        assert (exported.stat().st_mode & 0o777) == 0o600
+
+    def test_export_failure_is_reported_not_raised(
+            self, window_module, tmp_path, monkeypatch):
+        home = tmp_path / 'home'
+        home.mkdir(parents=True)
+        monkeypatch.setenv('HOME', str(home))
+        import backup
+        monkeypatch.setattr(backup, 'backup_export_dir',
+                            lambda: home / 'gone')
+        statuses = self._export_shell(window_module)
+        assert len(statuses) == 1
+        assert statuses[0].startswith('Could not export backup:')
+
     def test_export_falls_back_to_home(
             self, window_module, tmp_path, monkeypatch):
         home = tmp_path / 'home'
@@ -300,3 +321,53 @@ class TestRestoreNeedsPin:
         payload['auto_lock_timeout'] = 300
         restore_backup(config, payload)
         assert config.auto_lock_timeout == 300
+
+
+class TestRestoreChargeLimit:
+    def _restore(self, window_module, tmp_path, monkeypatch, payload,
+                 helper_ok=True):
+        from config import ShellConfig
+        import helper_client
+        monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+        (tmp_path / 'home').mkdir(parents=True, exist_ok=True)
+        calls = []
+        monkeypatch.setattr(
+            helper_client, 'set_charge_limit',
+            lambda pct, cb: (calls.append(pct),
+                             cb(helper_ok, None if helper_ok else 'denied')))
+        statuses: list[str] = []
+        shell = types.SimpleNamespace(
+            config=ShellConfig(), _show_status=statuses.append,
+            _apply_config_change=lambda: None)
+        shell.config.set_charge_limit(80)
+        path = tmp_path / 'home' / 'xx-wm-backup-20240102_080000.json'
+        path.write_text(json.dumps(payload), encoding='utf-8')
+        window_module.ShellWindow._restore_from_path(shell, str(path))
+        return shell, calls, statuses
+
+    def _payload(self, **extra):
+        payload = {'version': 1, 'home_slots': [], 'theme': 'amoled',
+                   'font': 'jetbrains-mono-nerd'}
+        payload.update(extra)
+        return payload
+
+    def test_backup_without_limit_keeps_it(
+            self, window_module, tmp_path, monkeypatch):
+        shell, calls, _ = self._restore(
+            window_module, tmp_path, monkeypatch, self._payload())
+        assert calls == [] and shell.config.charge_limit == 80
+
+    def test_limit_goes_through_the_helper(
+            self, window_module, tmp_path, monkeypatch):
+        shell, calls, _ = self._restore(
+            window_module, tmp_path, monkeypatch,
+            self._payload(charge_limit=None))
+        assert calls == [100] and shell.config.charge_limit is None
+
+    def test_helper_refusal_keeps_the_enforced_limit(
+            self, window_module, tmp_path, monkeypatch):
+        shell, calls, statuses = self._restore(
+            window_module, tmp_path, monkeypatch,
+            self._payload(charge_limit=60), helper_ok=False)
+        assert calls == [60] and shell.config.charge_limit == 80
+        assert statuses[-1] == 'Charge limit not restored: denied'

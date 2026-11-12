@@ -1250,7 +1250,8 @@ class TestMainLoopGuards:
 class TestBackupKeys:
     def test_round_trip_new_keys(self, tmp_path, monkeypatch):
         monkeypatch.setenv('HOME', str(tmp_path / 'home'))
-        from backup import export_backup, restore_backup
+        from backup import (export_backup, restore_backup,
+                            restored_charge_limit)
         from config import ShellConfig
         config = ShellConfig()
         config.set_charge_limit(80)
@@ -1264,7 +1265,11 @@ class TestBackupKeys:
         monkeypatch.setenv('HOME', str(tmp_path / 'home2'))
         fresh = ShellConfig()
         assert restore_backup(fresh, backup) is True
-        assert fresh.charge_limit == 80
+        # The helper enforces the limit; Settings applies it through the
+        # helper and records it after, so restore_backup leaves it alone.
+        assert fresh.charge_limit is None
+        assert restored_charge_limit(backup) == (True, 80)
+        fresh.set_charge_limit(80)
         assert fresh.app_time_limits == {'a.desktop': 60}
         assert export_backup(fresh) == backup
 

@@ -2580,17 +2580,14 @@ class SettingsPage:
         win._show_status('Update checks snoozed for 1 week.')
 
     def _on_export_backup(self) -> None:
-        from backup import backup_export_dir, export_backup
-        import json
-        from datetime import datetime
+        from backup import export_backup, write_backup_file
 
         win = self._win
-        backup = export_backup(win.config)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'xx-wm-backup-{timestamp}.json'
-        filepath = backup_export_dir() / filename
-
-        filepath.write_text(json.dumps(backup, indent=2), encoding='utf-8')
+        try:
+            filepath = write_backup_file(export_backup(win.config))
+        except (OSError, TypeError, ValueError) as err:
+            win._show_status(f'Could not export backup: {err}')
+            return
         win._show_status(f'Backup exported to {filepath}')
 
     def _on_restore_backup(self, anchor=None) -> None:
@@ -2655,8 +2652,33 @@ class SettingsPage:
         if success:
             win._show_status('Backup restored successfully')
             win._apply_config_change()
+            self._restore_charge_limit(payload)
         else:
             win._show_status('Failed to restore backup')
+
+    def _restore_charge_limit(self, payload: dict) -> None:
+        from backup import restored_charge_limit
+
+        win = self._win
+        present, limit = restored_charge_limit(payload)
+        if not present or limit == getattr(win.config, 'charge_limit', None):
+            return
+
+        def _done(ok: bool, detail) -> None:
+            if not ok:
+                win._show_status(f'Charge limit not restored: {detail}')
+                return
+            try:
+                win.config.set_charge_limit(limit)
+            except Exception:
+                pass
+
+        try:
+            import helper_client
+            helper_client.set_charge_limit(100 if limit is None else limit,
+                                           _done)
+        except Exception as err:
+            _done(False, err)
 
     def _get_device_name(self) -> str:
         import settings_device

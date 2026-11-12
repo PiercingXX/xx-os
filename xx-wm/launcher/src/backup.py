@@ -17,7 +17,10 @@ _EXCLUDED_KEYS pins that contract for tests.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -87,6 +90,45 @@ def backup_export_dir() -> Path:
     """Exports land in ~/Documents when it exists, else directly in ~."""
     docs = Path.home() / 'Documents'
     return docs if docs.is_dir() else Path.home()
+
+
+def write_backup_file(backup: dict, directory: Path | None = None,
+                      now: datetime | None = None) -> Path:
+    """Write ``backup`` as xx-wm-backup-<stamp>.json, owner-only (it
+    holds Medical ID), through a temp file and a rename so a full disk
+    never leaves a half-written backup. Raises OSError."""
+    directory = Path(directory) if directory is not None \
+        else backup_export_dir()
+    stamp = (now or datetime.now()).strftime('%Y%m%d_%H%M%S')
+    target = directory / f'xx-wm-backup-{stamp}.json'
+    fd, tmp = tempfile.mkstemp(prefix='.xx-wm-backup-', suffix='.tmp',
+                               dir=str(directory))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            json.dump(backup, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return target
+
+
+def restored_charge_limit(payload: dict) -> tuple[bool, int | None]:
+    """(present, limit) for a validated payload. The helper enforces the
+    limit, so restore_backup leaves it alone; the caller applies it
+    through the helper and records it only once the helper accepted."""
+    if 'charge_limit' not in payload:
+        return False, None
+    value = payload['charge_limit']
+    if value is None:
+        return True, None
+    return True, max(50, min(100, int(value)))
 
 def _parse_backup_hhmm(value) -> int | None:
     """Minutes since midnight for ``HH:MM``, else None (local so this
@@ -396,10 +438,6 @@ def restore_backup(config, payload: dict) -> bool:
         data['medical_id'] = sanitize_medical_id(payload['medical_id'])
     if isinstance(payload.get('lock_screen_medical_id'), bool):
         data['lock_screen_medical_id'] = payload['lock_screen_medical_id']
-    if payload.get('charge_limit') is None:
-        data['charge_limit'] = None
-    elif isinstance(payload.get('charge_limit'), int):
-        data['charge_limit'] = max(50, min(100, payload['charge_limit']))
     if 'night_light_temp' in payload:
         try:
             data['night_light_temp'] = max(
