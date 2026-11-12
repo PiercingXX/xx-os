@@ -745,3 +745,27 @@ class TestNoSecondLockAfterSetup:
             {'theme': 'ocean', 'pin_hash': HELPER_PIN_MARKER}))
         river.do_activate()
         assert river.early_locks == [1]
+
+
+def test_helper_without_pin_methods_reads_as_no_pin(monkeypatch):
+    """An installed helper from before the PIN store answers HasPin with
+    UnknownMethod: that is "no PIN", never a fail-closed lock."""
+    import helper_client
+    seen = []
+    monkeypatch.setattr(
+        helper_client, '_call_helper',
+        lambda method, params, cb, **kw: cb(
+            False, 'GDBus.Error:org.freedesktop.DBus.Error.UnknownMethod: '
+                   'No such method \u201cHasPin\u201d'))
+    helper_client.has_pin(lambda ok, result: seen.append((ok, result)))
+    assert seen == [(True, False)]
+
+
+def test_helper_error_other_than_unknown_method_stays_unanswered(monkeypatch):
+    import helper_client
+    seen = []
+    monkeypatch.setattr(
+        helper_client, '_call_helper',
+        lambda method, params, cb, **kw: cb(False, 'Timeout was reached'))
+    helper_client.has_pin(lambda ok, result: seen.append((ok, result)))
+    assert seen == [(False, 'Timeout was reached')]

@@ -560,10 +560,25 @@ def pin_helper_enabled(environ=None) -> bool:
     return env.get('XX_WM_SESSION') == '1'
 
 
+def _is_unknown_method(message) -> bool:
+    lowered = str(message or '').lower()
+    return 'unknownmethod' in lowered or 'unknowninterface' in lowered
+
+
 def has_pin(on_done: ResultCallback) -> None:
-    """``on_done(True, bool)`` or ``(False, error)``."""
-    _call_helper('HasPin', None, lambda ok, result: on_done(
-        ok, bool(result) if ok else result))
+    """``on_done(True, bool)`` or ``(False, error)``. A helper that
+    predates the PIN methods cannot hold a PIN record, so its
+    UnknownMethod reply reads as "no PIN" rather than "no answer"
+    (otherwise the startup gate would fail closed against it and the
+    keypad could never verify)."""
+    def _reply(ok, result) -> None:
+        if ok:
+            on_done(True, bool(result))
+        elif _is_unknown_method(result):
+            on_done(True, False)
+        else:
+            on_done(False, result)
+    _call_helper('HasPin', None, _reply)
 
 
 def verify_pin(pin: str, on_done: ResultCallback) -> None:
