@@ -558,15 +558,28 @@ class Dialer(Gtk.Window):
             self._set_status(f'Code not sent: {err}')
 
     def _initiate_call(self, number: str) -> None:
+        # One dial at a time: a second tap while CreateCall/Start is still
+        # in flight would place a second call.
+        if getattr(self, '_dialing', False):
+            return
+        self._dialing = True
         self._set_status(f'Calling {self._format_number(number)}…')
         threading.Thread(target=self._place_call, args=(number,), daemon=True).start()
 
     def _place_call(self, number: str) -> None:
-        ok, detail = place_call(number)
+        try:
+            ok, detail = place_call(number)
+        except Exception as err:  # noqa: BLE001 - the guard must lift
+            ok, detail = False, str(err)
         self._finish_dial('Dialing…' if ok else f'Call failed: {detail.strip()}')
 
     def _finish_dial(self, message: str) -> None:
-        GLib.idle_add(self._set_status, message)
+        GLib.idle_add(self._dial_done, message)
+
+    def _dial_done(self, message: str) -> bool:
+        self._dialing = False
+        self._set_status(message)
+        return False
 
     def _set_status(self, message: str) -> None:
         self._status.set_text(message)

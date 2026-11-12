@@ -241,3 +241,41 @@ class TestStatusLabelWiring:
         assert seen_at_call[0] == 'Calling (555) 123-4567…'
         flush()
         assert d._status.text == 'Dialing…'
+
+
+class TestCallInFlightGuard:
+    """A second tap on Call while the first dial is still in flight
+    places nothing; the guard lifts once the first attempt reports."""
+
+    def test_second_tap_ignored_until_first_reports(self, monkeypatch):
+        flush = _flush_idle(monkeypatch)
+        d = _make_dialer(monkeypatch)
+        placed = []
+        monkeypatch.setattr(dialer, 'place_call',
+                            lambda number: placed.append(number)
+                            or (False, 'no service'))
+        d._initiate_call('5551234567')
+        d._initiate_call('5551234567')
+        assert placed == ['5551234567']
+        flush()
+        assert d._status.text == 'Call failed: no service'
+        d._initiate_call('5551234567')
+        assert placed == ['5551234567', '5551234567']
+
+    def test_worker_exception_releases_guard(self, monkeypatch):
+        flush = _flush_idle(monkeypatch)
+        d = _make_dialer(monkeypatch)
+
+        def _boom(number):
+            raise RuntimeError('modem gone')
+
+        monkeypatch.setattr(dialer, 'place_call', _boom)
+        d._initiate_call('5551234567')
+        flush()
+        assert d._status.text == 'Call failed: modem gone'
+        placed = []
+        monkeypatch.setattr(dialer, 'place_call',
+                            lambda number: placed.append(number)
+                            or (True, '/Call/1'))
+        d._initiate_call('5551234567')
+        assert placed == ['5551234567']
