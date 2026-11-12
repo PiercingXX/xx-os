@@ -649,7 +649,8 @@ class TestAsyncTileRefresh:
         glib.run_idle()
         assert panel._tile_state == {
             'wifi': False, 'data': False, 'saver': False,
-            'airplane': True, 'location': True, 'night': False}
+            'airplane': True, 'location': True, 'night': False,
+            'caffeine': False}
 
     def test_refresh_states_survives_worker_probe_failure(self, monkeypatch):
         panel = _bare_panel()
@@ -675,7 +676,8 @@ class TestAsyncTileRefresh:
         assert panel._refresh_all_states() is False
         assert panel._tile_state == {
             'wifi': False, 'data': False, 'saver': False,
-            'airplane': True, 'location': True, 'night': False}
+            'airplane': True, 'location': True, 'night': False,
+            'caffeine': False}
 
     def test_hardware_gates_cached_after_first_probe(self, monkeypatch):
         probes: list = []

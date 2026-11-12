@@ -465,6 +465,10 @@ launcher_src, xxcontacts_src, home, mode = sys.argv[1:5]
 os.environ['HOME'] = home
 sys.path.insert(0, launcher_src)
 sys.path.insert(0, xxcontacts_src)
+# The shared matcher lives in common/ (conftest adds it for in-process
+# tests; this driver is a subprocess and must add it too).
+sys.path.insert(0, os.path.normpath(
+    os.path.join(launcher_src, '..', '..', '..', 'common')))
 
 from gi.repository import Gio, GLib
 from xx_contacts.service import (
