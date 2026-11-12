@@ -91,51 +91,52 @@ class TestCleanSystemAllowlist:
         systemd = Path(layout.run) / 'systemd' / 'system'
         run = FakeRun()
         core = make_core(layout, run)
-        cleaned = core.clean_system(
+        plan = core.clean_steps(
             ['apk-cache'], apk_cache_dir=str(apk_cache),
             systemd_dir=str(systemd))
-        assert cleaned == {'cleaned': ['apk-cache'], 'skipped': []}
-        assert run.cmds == [['apk', 'cache', 'clean']]
+        assert plan == {'steps': [('apk-cache', ['apk', 'cache', 'clean'])],
+                        'skipped': []}
+        assert run.cmds == []
 
     def test_apk_cache_skipped_without_cache_dir(self, layout):
         run = FakeRun()
         core = make_core(layout, run)
-        cleaned = core.clean_system(
+        plan = core.clean_steps(
             ['apk-cache'],
             apk_cache_dir=os.path.join(layout.etc, 'apk', 'cache'),
             systemd_dir=os.path.join(layout.run, 'systemd', 'system'))
-        assert cleaned == {'cleaned': [], 'skipped': ['apk-cache']}
+        assert plan == {'steps': [], 'skipped': ['apk-cache']}
         assert run.cmds == []
 
     def test_paccache_pair_and_apt(self, layout, present_binaries):
         run = FakeRun()
         core = make_core(layout, run)
-        cleaned = core.clean_system(
+        plan = core.clean_steps(
             ['paccache-keep', 'paccache-uninstalled', 'apt-clean'],
             apk_cache_dir=os.path.join(layout.etc, 'apk', 'cache'),
             systemd_dir=os.path.join(layout.run, 'systemd', 'system'))
-        assert cleaned['cleaned'] == [
-            'paccache-keep', 'paccache-uninstalled', 'apt-clean']
-        assert run.cmds == [['paccache', '-rk2'], ['paccache', '-ruk0'],
-                            ['apt-get', 'clean']]
+        assert plan['steps'] == [
+            ('paccache-keep', ['paccache', '-rk2']),
+            ('paccache-uninstalled', ['paccache', '-ruk0']),
+            ('apt-clean', ['apt-get', 'clean'])]
 
-    def test_paccache_missing_binary_skips(self, layout):
-        run = FakeRun(missing={'paccache'})
-        core = make_core(layout, run)
-        cleaned = core.clean_system(
+    def test_paccache_missing_binary_skips(self, layout, monkeypatch):
+        monkeypatch.setattr(shutil, 'which', lambda name: None)
+        core = make_core(layout, FakeRun())
+        plan = core.clean_steps(
             ['paccache-keep'],
             apk_cache_dir=os.path.join(layout.etc, 'apk', 'cache'),
             systemd_dir=os.path.join(layout.run, 'systemd', 'system'))
-        assert cleaned == {'cleaned': [], 'skipped': ['paccache-keep']}
+        assert plan == {'steps': [], 'skipped': ['paccache-keep']}
 
     def test_journal_needs_systemd(self, layout):
         run = FakeRun()
         core = make_core(layout, run)
-        out = core.clean_system(
+        out = core.clean_steps(
             ['journal-vacuum'],
             apk_cache_dir=os.path.join(layout.etc, 'apk', 'cache'),
             systemd_dir=os.path.join(layout.run, 'systemd', 'system'))
-        assert out == {'cleaned': [], 'skipped': ['journal-vacuum']}
+        assert out == {'steps': [], 'skipped': ['journal-vacuum']}
         assert run.cmds == []
 
     def test_journal_vacuum_argv(self, layout, present_binaries):
@@ -143,17 +144,17 @@ class TestCleanSystemAllowlist:
         systemd.mkdir(parents=True)
         run = FakeRun()
         core = make_core(layout, run)
-        out = core.clean_system(
+        out = core.clean_steps(
             ['journal-vacuum'],
             apk_cache_dir=os.path.join(layout.etc, 'apk', 'cache'),
             systemd_dir=str(systemd))
-        assert out == {'cleaned': ['journal-vacuum'], 'skipped': []}
-        assert run.cmds == [[
-            'journalctl', '--vacuum-time=2weeks', '--vacuum-size=500M']]
+        assert out == {'steps': [('journal-vacuum', [
+            'journalctl', '--vacuum-time=2weeks', '--vacuum-size=500M'])],
+            'skipped': []}
 
     def test_unknown_category_is_invalid_args(self, layout):
         with pytest.raises(helper.HelperError) as exc:
-            make_core(layout).clean_system(
+            make_core(layout).clean_steps(
                 ['orphans'],
                 apk_cache_dir=os.path.join(layout.etc, 'apk', 'cache'),
                 systemd_dir=os.path.join(layout.run, 'systemd', 'system'))
@@ -195,18 +196,23 @@ class TestCleanSystemService:
         _allow.seen.clear()
         apk_cache = Path(layout.etc) / 'apk' / 'cache'
         apk_cache.mkdir(parents=True)
+        spawned = []
         service = helper.HelperService(
             connection=object(),
-            core=make_core(layout, FakeRun()), authorize=_allow)
-        service.core.clean_system = lambda cats: {
-            'cleaned': list(cats), 'skipped': []}
+            core=make_core(layout, FakeRun(),
+                           spawn=lambda argv, on_exit: spawned.append(argv)),
+            authorize=_allow)
+        service.core.clean_steps = lambda cats: {
+            'steps': [(c, ['apt-get', 'clean']) for c in cats],
+            'skipped': []}
         invocation = FakeInvocation()
         service._on_method_call(
             service.connection, ':1.7', '/p', 'i', 'CleanSystem',
             SimpleNamespace(unpack=lambda: (['apt-clean'],)), invocation)
         assert invocation.error is None
         assert _allow.seen == [helper.ACTION_CLEAN]
-        assert invocation.value is not None
+        assert invocation.value.get_type_string() == '(s)'
+        assert spawned == [['apt-get', 'clean']]
 
     def test_denied_maps_to_not_authorized(self, layout):
         service = helper.HelperService(connection=object(),
@@ -250,20 +256,20 @@ class TestCleanSystemClient:
         import helper_client
         seen = {}
 
-        def fake_call(method, params, on_done):
+        def fake_job(method, params, on_done):
             seen['method'] = method
             seen['type'] = params.get_type_string()
-            # _call_helper unpacks the D-Bus reply tuple first.
-            on_done(True, (['apt-clean'],)[0])
+            # JobFinished's tail: the cleaned categories, one per line.
+            on_done(True, 'apt-clean\n')
 
-        helper_client._call_helper_orig = helper_client._call_helper
-        helper_client._call_helper = fake_call
+        helper_client._run_job_orig = helper_client._run_job
+        helper_client._run_job = fake_job
         try:
             done = []
             helper_client.clean_system(
                 ['apt-clean'], lambda ok, res: done.append((ok, res)))
         finally:
-            helper_client._call_helper = helper_client._call_helper_orig
+            helper_client._run_job = helper_client._run_job_orig
         assert seen == {'method': 'CleanSystem', 'type': '(as)'}
         assert done == [(True, ['apt-clean'])]
         assert GLib.Variant('(as)', (['apt-clean'],)).get_type_string()

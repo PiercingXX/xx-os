@@ -45,26 +45,18 @@ def _which_map(present):
 # ------------------------------------------------------- RefreshPackageIndex
 
 class TestRefreshPackageIndex:
-    def test_runs_apk_update(self):
+    def test_job_runs_apk_update(self):
         run = FakeRun(stdout='OK\n')
         core = helper.HelperCore(run=run)
-        assert core.refresh_package_index(
-            which=_which_map({'apk'})) is None
-        assert run.cmds == [['apk', 'update']]
+        assert core.refresh_argv(which=_which_map({'apk'})) == [
+            'apk', 'update']
+        assert run.cmds == []
 
     def test_without_apk_fails(self):
         core = helper.HelperCore(run=FakeRun())
         with pytest.raises(helper.HelperError) as exc:
-            core.refresh_package_index(which=_which_map(set()))
+            core.refresh_argv(which=_which_map(set()))
         assert exc.value.dbus_name == helper.ERROR_FAILED
-
-    def test_failed_update_surfaces(self):
-        run = FakeRun(returncode=1, stderr='network down\n')
-        core = helper.HelperCore(run=run)
-        with pytest.raises(helper.HelperError) as exc:
-            core.refresh_package_index(which=_which_map({'apk'}))
-        assert exc.value.dbus_name == helper.ERROR_FAILED
-        assert 'network down' in str(exc.value)
 
 
 # ------------------------------------------------------------ UpgradeSystem
@@ -251,8 +243,9 @@ class TestInteractiveFlags:
             assert invocation.value is not None
         assert seen == [helper.ACTION_REFRESH, helper.ACTION_UPGRADE,
                         helper.ACTION_REMOVE]
-        assert run.cmds == [['apk', 'update']]
-        assert spawned == [['apk', 'upgrade'], ['apk', 'del', 'vim']]
+        assert run.cmds == []
+        assert spawned == [['apk', 'update'], ['apk', 'upgrade'],
+                           ['apk', 'del', 'vim']]
 
     def test_introspection_lists_new_methods(self):
         assert 'name="RefreshPackageIndex"' in helper.INTROSPECT_XML
@@ -378,7 +371,8 @@ def fake_gio(monkeypatch):
 class TestNewClientCalls:
     def test_refresh_upgrade_remove(self, fake_gio):
         import helper_client
-        FakeGio.conn = FakeClientConn(FakeClientReply(None))
+        FakeGio.conn = FakeClientConn(FakeClientReply('job-0'),
+                                      finish=(0, 'OK: 20000 distinct\n'))
         done = []
         helper_client.refresh_package_index(
             lambda ok, res: done.append((ok, res)))

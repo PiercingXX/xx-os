@@ -319,8 +319,8 @@ def clean_system(categories: list[str], on_done: ResultCallback) -> None:
     ``categories`` names only the helper's allowlist (``apk-cache``,
     ``paccache-keep``, ``paccache-uninstalled``, ``apt-clean``,
     ``journal-vacuum``); anything else is rejected helper-side.
-    ``on_done(True, [cleaned...])`` on success, ``(False, error)``
-    otherwise.
+    A helper job (no kill timeout): ``on_done(True, [cleaned...])``
+    once JobFinished reports success, ``(False, error)`` otherwise.
     """
     try:
         Gio, GLib = _gio()
@@ -333,9 +333,10 @@ def clean_system(categories: list[str], on_done: ResultCallback) -> None:
         return
 
     def _done(ok: bool, result) -> None:
-        on_done(ok, list(result) if ok else result)
+        on_done(ok, [line for line in str(result or '').splitlines() if line]
+                if ok else result)
 
-    _call_helper('CleanSystem', params, _done)
+    _run_job('CleanSystem', params, _done)
 
 
 def read_log(name: str, on_done: ResultCallback) -> None:
@@ -355,12 +356,14 @@ def read_log(name: str, on_done: ResultCallback) -> None:
 
 
 def refresh_package_index(on_done: ResultCallback) -> None:
-    """Refresh the apk package index (harmless, ``allow_active=yes``).
+    """Refresh the apk package index (harmless, ``allow_active=yes``) as
+    a helper job, so a slow mirror is never killed mid-update.
 
-    ``on_done(True, None)`` on success, ``(False, error)`` otherwise.
+    ``on_done(True, None)`` once JobFinished reports success,
+    ``(False, error)`` otherwise.
     """
-    _call_helper('RefreshPackageIndex', None,
-                 lambda ok, _result: on_done(ok, None if ok else _result))
+    _run_job('RefreshPackageIndex', None,
+             lambda ok, _result: on_done(ok, None if ok else _result))
 
 
 def upgrade_system(on_done: ResultCallback) -> None:

@@ -211,10 +211,13 @@ CHARGE_START_DELTA = 5
 
 IDLE_EXIT_SECONDS = 60
 
-# Package jobs (UpgradeSystem, RemovePackage) run with no kill timeout:
-# SIGKILLing apk/pacman mid-transaction can leave a half-installed system.
-# The method replies with a job id at once and JobFinished(job_id, rc,
-# tail) goes to the caller when the package manager exits.
+# Package jobs (UpgradeSystem, RemovePackage, RefreshPackageIndex,
+# CleanSystem) run with no kill timeout: SIGKILLing apk/pacman
+# mid-transaction can leave a half-installed system, and a slow mirror or
+# a big cache outlasts any fixed limit. The method replies with a job id
+# at once and JobFinished(job_id, rc, tail) goes to the caller when the
+# last command exits. CleanSystem's tail lists the cleaned categories,
+# one per line.
 JOB_TAIL_LINES = 40
 JOB_TAIL_CHARS = 4000
 
@@ -273,13 +276,14 @@ INTROSPECT_XML = """\
     </method>
     <method name="CleanSystem">
       <arg name="categories" type="as" direction="in"/>
-      <arg name="cleaned" type="as" direction="out"/>
+      <arg name="job_id" type="s" direction="out"/>
     </method>
     <method name="ReadLog">
       <arg name="name" type="s" direction="in"/>
       <arg name="text" type="s" direction="out"/>
     </method>
     <method name="RefreshPackageIndex">
+      <arg name="job_id" type="s" direction="out"/>
     </method>
     <method name="UpgradeSystem">
       <arg name="job_id" type="s" direction="out"/>
@@ -735,17 +739,17 @@ class HelperCore:
 
     # -------------------------------------------------------- clean system
 
-    def clean_system(self, categories, *,
-                     apk_cache_dir: str = APK_CACHE_DIR_DEFAULT,
-                     systemd_dir: str = SYSTEMD_DIR_DEFAULT) -> dict:
-        """Run fixed-allowlist cache cleanups, skipping unusable entries.
+    def clean_steps(self, categories, *,
+                    apk_cache_dir: str = APK_CACHE_DIR_DEFAULT,
+                    systemd_dir: str = SYSTEMD_DIR_DEFAULT) -> dict:
+        """The fixed-allowlist cache cleanups to run, as a job's steps.
 
         ``categories`` must all name :data:`CLEAN_SYSTEM_ALLOWLIST`;
         anything else raises InvalidArgs, so callers can never smuggle
         in a free-form command. ``apk-cache`` runs only when the apk
         cache dir exists, ``journal-vacuum`` only on systemd, and any
         entry whose binary is missing is skipped. Returns
-        ``{'cleaned': [...], 'skipped': [...]}``.
+        ``{'steps': [(category, argv), ...], 'skipped': [...]}``.
         """
         if not isinstance(categories, (list, tuple)):
             raise HelperError(ERROR_INVALID_ARGS,
@@ -758,7 +762,7 @@ class HelperCore:
                                   'unknown clean category: %r' % (category,))
             if category not in selected:
                 selected.append(category)
-        cleaned: list[str] = []
+        steps: list[tuple[str, list[str]]] = []
         skipped: list[str] = []
         for category in selected:
             if category == 'apk-cache' \
@@ -773,21 +777,8 @@ class HelperCore:
             if shutil.which(argv[0]) is None:
                 skipped.append(category)
                 continue
-            try:
-                proc = self._run(argv)
-            except OSError as err:
-                raise _failed('clean %s failed to start: %s'
-                              % (category, err)) from None
-            if getattr(proc, 'returncode', 1) == 127:
-                skipped.append(category)
-                continue
-            if getattr(proc, 'returncode', 1) != 0:
-                stderr = (getattr(proc, 'stderr', '') or '').strip()
-                raise _failed('clean %s: %s'
-                              % (category, stderr or 'exit %d'
-                                 % getattr(proc, 'returncode', 1)))
-            cleaned.append(category)
-        return {'cleaned': cleaned, 'skipped': skipped}
+            steps.append((category, list(argv)))
+        return {'steps': steps, 'skipped': skipped}
 
     # -------------------------------------------------------------- read log
 
@@ -864,24 +855,16 @@ class HelperCore:
             return 'pacman'
         return None
 
-    def refresh_package_index(self, which=None) -> None:
-        """Refresh the apk index (``apk update``): harmless and
-        non-destructive, so its policy stays ``allow_active=yes``.
+    def refresh_argv(self, which=None) -> list[str]:
+        """argv for the apk index refresh job (``apk update``): harmless
+        and non-destructive, so its policy stays ``allow_active=yes``.
 
         Never ``pacman -Sy``: a partial pacman sync breaks the system on
         Arch, so Arch counts come from ``checkupdates`` (own temp db) and
         upgrades run in a terminal instead."""
-        which_fn = which or shutil.which
-        if not which_fn('apk'):
+        if not (which or shutil.which)('apk'):
             raise _failed('apk not available on this system')
-        try:
-            proc = self._run(['apk', 'update'])
-        except OSError as err:
-            raise _failed('apk update failed to start: %s' % err) from None
-        if proc.returncode != 0:
-            raise _failed('apk update: %s' % (
-                (getattr(proc, 'stderr', '') or '').strip()
-                or 'exit %d' % proc.returncode))
+        return ['apk', 'update']
 
     def upgrade_argv(self, which=None) -> list[str]:
         """argv for the ``apk upgrade`` job. Interactive
@@ -2307,21 +2290,57 @@ class HelperService:
         Gio, GLib = _require_gio()
         invocation.return_value(GLib.Variant(sig, out))
 
-    def _start_job(self, invocation, argv: list[str], sender) -> None:
-        """Reply with a fresh job id, then start ``argv``. One package
-        job at a time: apk and pacman hold an exclusive lock anyway."""
+    def _begin_job(self, invocation, sender) -> str:
+        """Reply with a fresh job id. One package job at a time: apk and
+        pacman hold an exclusive lock anyway."""
         if self.jobs:
             raise _failed('another package operation is still running')
         job_id = uuid.uuid4().hex
         self.jobs[job_id] = sender
         Gio, GLib = _require_gio()
         invocation.return_value(GLib.Variant('(s)', (job_id,)))
+        return job_id
+
+    def _spawn_step(self, job_id: str, argv: list[str], on_exit) -> None:
         try:
-            self.core.spawn(argv, lambda rc, output: self._finish_job(
-                job_id, rc, output))
+            self.core.spawn(argv, on_exit)
         except Exception as err:
             self._finish_job(job_id, -1, '%s failed to start: %s' % (
                 argv[0], type(err).__name__))
+
+    def _start_job(self, invocation, argv: list[str], sender) -> None:
+        """Reply with a job id, then run ``argv`` with no timeout."""
+        job_id = self._begin_job(invocation, sender)
+        self._spawn_step(job_id, argv, lambda rc, output: self._finish_job(
+            job_id, rc, output))
+
+    def _start_clean_job(self, invocation, steps, sender) -> None:
+        """Reply with a job id, then run the cleanup steps one after
+        another. A step whose tool turns out missing (127) is skipped; any
+        other failure ends the job with that step's last output line.
+        Success lists the cleaned categories, one per line."""
+        job_id = self._begin_job(invocation, sender)
+        cleaned: list[str] = []
+
+        def _run(index: int) -> None:
+            if index == len(steps):
+                self._finish_job(job_id, 0, '\n'.join(cleaned))
+                return
+            category, argv = steps[index]
+
+            def _exit(rc, output) -> None:
+                if rc == 0:
+                    cleaned.append(category)
+                elif rc != 127:
+                    last = (output or '').strip().splitlines()[-1:]
+                    self._finish_job(job_id, rc, 'clean %s: %s' % (
+                        category, last[0] if last else 'exit %d' % rc))
+                    return
+                _run(index + 1)
+
+            self._spawn_step(job_id, argv, _exit)
+
+        _run(0)
 
     def _finish_job(self, job_id: str, rc, output) -> None:
         if job_id not in self.jobs:
@@ -2360,11 +2379,9 @@ class HelperService:
                                         int(uid))
             elif method == 'CleanSystem':
                 (cats,) = args
-                out = self.core.clean_system(
+                plan = self.core.clean_steps(
                     [str(c) for c in cats] if isinstance(cats, list) else cats)
-                Gio, GLib = _require_gio()
-                invocation.return_value(
-                    GLib.Variant('(as)', (list(out.get('cleaned', [])),)))
+                self._start_clean_job(invocation, plan['steps'], sender)
                 return
             elif method == 'ReadLog':
                 (log_name,) = args
@@ -2373,7 +2390,8 @@ class HelperService:
                 invocation.return_value(GLib.Variant('(s)', (text,)))
                 return
             elif method == 'RefreshPackageIndex':
-                self.core.refresh_package_index()
+                self._start_job(invocation, self.core.refresh_argv(), sender)
+                return
             elif method == 'UpgradeSystem':
                 self._start_job(invocation, self.core.upgrade_argv(), sender)
                 return

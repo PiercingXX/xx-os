@@ -1,5 +1,6 @@
-"""Helper package jobs: UpgradeSystem / RemovePackage never get a kill
-timeout, reply with a job id and report through JobFinished.
+"""Helper package jobs: UpgradeSystem / RemovePackage /
+RefreshPackageIndex / CleanSystem never get a kill timeout, reply with a
+job id and report through JobFinished.
 
 The package manager never runs: ``subprocess`` is replaced by fakes that
 simulate a job running past the old 30 s timeout. The client side runs
@@ -148,9 +149,13 @@ class TestNoKillTimeout:
     @pytest.mark.parametrize('method,args,argv', [
         ('UpgradeSystem', (), ['apk', 'upgrade']),
         ('RemovePackage', ('vim',), ['apk', 'del', 'vim']),
+        ('RefreshPackageIndex', (), ['apk', 'update']),
+        ('CleanSystem', (['apt-clean'],), ['apt-get', 'clean']),
     ])
-    def test_job_past_30s_is_not_killed(self, monkeypatch, apk, method,
+    def test_job_past_30s_is_not_killed(self, monkeypatch, method,
                                         args, argv):
+        monkeypatch.setattr(helper.shutil, 'which',
+                            _which({'apk', 'apt-get'}))
         pytest.importorskip('gi')
         slow = SlowPackageManager()
         monkeypatch.setattr(helper.subprocess, 'run', slow.run)
@@ -171,7 +176,10 @@ class TestNoKillTimeout:
         assert params.get_type_string() == '(sis)'
         got_id, rc, tail = params.unpack()
         assert (got_id, rc) == (job_id, 0)
-        assert 'OK: 3 packages' in tail
+        if method == 'CleanSystem':
+            assert tail == 'apt-clean'
+        else:
+            assert 'OK: 3 packages' in tail
 
     def test_default_spawn_never_passes_a_timeout(self, monkeypatch):
         pytest.importorskip('gi')
@@ -264,9 +272,77 @@ class TestJobFinished:
         iface = node.interfaces[0]
         signal = iface.lookup_signal('JobFinished')
         assert [a.signature for a in signal.args] == ['s', 'i', 's']
-        for method in ('UpgradeSystem', 'RemovePackage'):
+        for method in ('UpgradeSystem', 'RemovePackage',
+                       'RefreshPackageIndex', 'CleanSystem'):
             out = iface.lookup_method(method).out_args
             assert [a.signature for a in out] == ['s']
+
+
+# ------------------------------------------------------- CleanSystem steps
+
+class TestCleanJob:
+    @pytest.fixture()
+    def tools(self, monkeypatch):
+        monkeypatch.setattr(helper.shutil, 'which',
+                            _which({'paccache', 'apt-get'}))
+
+    def test_steps_run_one_after_another(self, tools):
+        pytest.importorskip('gi')
+        spawn = HeldSpawn()
+        service = _service(spawn)
+        invocation = _call(service, 'CleanSystem',
+                           (['paccache-keep', 'apt-clean'],))
+        (job_id,) = invocation.value.unpack()
+        assert [argv for argv, _cb in spawn.jobs] == [['paccache', '-rk2']]
+        spawn.jobs[0][1](0, 'removed 3 packages\n')
+        assert [argv for argv, _cb in spawn.jobs][1] == ['apt-get', 'clean']
+        assert service.connection.signals == []
+        spawn.jobs[1][1](0, '')
+        params = service.connection.signals[0][4]
+        assert params.unpack() == (job_id, 0, 'paccache-keep\napt-clean')
+        assert service.jobs == {}
+
+    def test_missing_tool_is_skipped(self, tools):
+        pytest.importorskip('gi')
+        spawn = HeldSpawn()
+        service = _service(spawn)
+        (job_id,) = _call(service, 'CleanSystem',
+                          (['paccache-keep', 'apt-clean'],)).value.unpack()
+        spawn.jobs[0][1](127, 'paccache: not found\n')
+        spawn.jobs[1][1](0, '')
+        params = service.connection.signals[0][4]
+        assert params.unpack() == (job_id, 0, 'apt-clean')
+
+    def test_a_failing_step_ends_the_job(self, tools):
+        pytest.importorskip('gi')
+        spawn = HeldSpawn()
+        service = _service(spawn)
+        (job_id,) = _call(service, 'CleanSystem',
+                          (['paccache-keep', 'apt-clean'],)).value.unpack()
+        spawn.jobs[0][1](1, 'working\nerror: no space left\n')
+        assert len(spawn.jobs) == 1
+        params = service.connection.signals[0][4]
+        assert params.unpack() == (
+            job_id, 1, 'clean paccache-keep: error: no space left')
+        assert service.jobs == {}
+
+    def test_nothing_to_run_finishes_at_once(self, monkeypatch):
+        pytest.importorskip('gi')
+        monkeypatch.setattr(helper.shutil, 'which', _which(set()))
+        spawn = HeldSpawn()
+        service = _service(spawn)
+        (job_id,) = _call(service, 'CleanSystem',
+                          (['apt-clean'],)).value.unpack()
+        assert spawn.jobs == []
+        params = service.connection.signals[0][4]
+        assert params.unpack() == (job_id, 0, '')
+
+    def test_unknown_category_replies_without_a_job(self, tools):
+        spawn = HeldSpawn()
+        service = _service(spawn)
+        invocation = _call(service, 'CleanSystem', (['/bin/rm'],))
+        assert invocation.error[0] == helper.ERROR_INVALID_ARGS
+        assert spawn.jobs == [] and service.jobs == {}
 
 
 # --------------------------------------------------------------- idle exit
@@ -512,6 +588,41 @@ class TestClientJobs:
         assert subs['JobFinished'][0] == helper_client.BUS_NAME
         assert subs['NameOwnerChanged'] == ('org.freedesktop.DBus',
                                             helper_client.BUS_NAME)
+
+
+    def test_refresh_waits_for_job_finished(self, client):
+        done = []
+        helper_client.refresh_package_index(
+            lambda ok, res: done.append((ok, res)))
+        client.reply()
+        assert done == []
+        client.emit('JobFinished', ('job-1', 0, 'OK: 20000 distinct\n'))
+        assert done == [(True, None)]
+
+    def test_refresh_failure_reports_the_tail(self, client):
+        done = []
+        helper_client.refresh_package_index(
+            lambda ok, res: done.append((ok, res)))
+        client.reply()
+        client.emit('JobFinished', ('job-1', 1, 'ERROR: network down\n'))
+        assert done == [(False, 'ERROR: network down')]
+
+    def test_clean_reports_the_cleaned_categories(self, client):
+        done = []
+        helper_client.clean_system(['paccache-keep', 'apt-clean'],
+                                   lambda ok, res: done.append((ok, res)))
+        client.reply()
+        assert done == []
+        client.emit('JobFinished', ('job-1', 0, 'paccache-keep\napt-clean'))
+        assert done == [(True, ['paccache-keep', 'apt-clean'])]
+
+    def test_clean_with_nothing_cleaned(self, client):
+        done = []
+        helper_client.clean_system(['apt-clean'],
+                                   lambda ok, res: done.append((ok, res)))
+        client.reply()
+        client.emit('JobFinished', ('job-1', 0, ''))
+        assert done == [(True, [])]
 
 
 class TestClientTimeouts:

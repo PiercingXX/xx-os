@@ -26,7 +26,7 @@ service, `io.piercingxx.XXWM.Helper1`, and the shell talks to it via
 Interface `io.piercingxx.XXWM.Helper1` at
 `/io/piercingxx/XXWM/Helper1`: `GetCapabilities() → a{sv}`,
 `SetChargeLimit(u)`, `SetAppNetwork(s, b)`, `FreezeCgroup(s, b)`,
-`CleanSystem(as) → as`, `ReadLog(s) → s`, `RefreshPackageIndex()`,
+`CleanSystem(as) → s`, `ReadLog(s) → s`, `RefreshPackageIndex() → s`,
 `UpgradeSystem() → s`, `RemovePackage(s) → s`, `ManageService(s, s)`,
 `SetRfkill(s, b)`, `SetPowerProfile(s)`, `SetInboundPreset(s, b)`,
 `SetInboundAllowed(as)`, `SetFirewallEnabled(b)`,
@@ -40,14 +40,19 @@ running; the bus re-activates it on demand.
 
 ## Package jobs
 
-`UpgradeSystem` and `RemovePackage` start package jobs: after polkit
-and validation they reply at once with a job id and run the package
-manager on a worker thread with no kill timeout (SIGKILLing apk or
-pacman mid-transaction can break the system). When it exits, the
+`UpgradeSystem`, `RemovePackage`, `RefreshPackageIndex` and
+`CleanSystem` start package jobs: after polkit and validation they reply
+at once with a job id and run the package manager (or the cleanups, one
+after another) on a worker thread with no kill timeout (SIGKILLing apk
+or pacman mid-transaction can break the system; a slow mirror or a big
+cache outlasts any fixed limit). When it exits, the
 helper sends `JobFinished(job_id, rc, tail)` to the calling bus name
 only: `rc` is the exit status (negative for a signal, -1 when it could
 not start) and `tail` the last 40 lines of its output (at most 4000
 characters; package progress only, never arguments or environment).
+For `CleanSystem` a successful `tail` lists the cleaned categories, one
+per line; a failed step ends the job with `clean <category>: <its last
+output line>`, and a step whose tool is missing (127) is skipped.
 One package job runs at a time; a second is refused with Failed.
 `CheckAuthorization` for interactive actions has no timeout, so the
 check lasts as long as the password dialog stays open; non-interactive
@@ -203,13 +208,14 @@ inactive, and the same `pkcheck` then exits 1.
   `journal-vacuum`) as argv lists — never a package removal, never a
   free-form command. `apk-cache` runs only when `/etc/apk/cache`
   exists, `journal-vacuum` only on systemd; missing binaries are
-  skipped, and the reply lists what actually ran. Non-destructive, so
+  skipped, and `JobFinished` lists what actually ran. Non-destructive, so
   its action stays `allow_active=yes` with the non-interactive check.
 - `ReadLog` accepts only its fixed allowlist (`messages`, `xx-wm`,
   `dmesg`) — never a free-form path. Read-only and size-capped, so
   its action stays `allow_active=yes`.
 - `RefreshPackageIndex` runs only `apk update` (never a partial
-  `pacman -Sy`); harmless, so its action stays `allow_active=yes`.
+  `pacman -Sy`) as a package job; harmless, so its action stays
+  `allow_active=yes`.
 - `UpgradeSystem` runs only `apk upgrade` as a package job (the reply
   is the job id, the output tail comes with `JobFinished`);
   interactive `auth_admin_keep`.
@@ -357,7 +363,8 @@ read the hash and brute-force it offline:
 each calling `on_done(ok, result)` exactly once on the main loop. An
 uninstalled or unactivatable helper reports `HELPER_NOT_INSTALLED`
 (`'helper not installed'`) instead of raising.
-`upgrade_system` and `remove_package` subscribe to `JobFinished` (sent
+`upgrade_system`, `remove_package`, `refresh_package_index` and
+`clean_system` subscribe to `JobFinished` (sent
 by the helper's name) before the call and fire `on_done` when their
 job's signal arrives, not when the call returns; the helper vanishing
 mid-job fails it. Timeouts are per method: 10 s for quick calls (state
