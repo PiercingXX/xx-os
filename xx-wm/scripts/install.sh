@@ -276,6 +276,29 @@ install_portals() {
     fi
 }
 
+# Halium phones (libhybris; the FLX1s): xdg-desktop-portal-wlr cannot
+# run on the hwcomposer phoc and the broker stalls 50 s waiting for it,
+# so an admin override turns Screenshot/ScreenCast off there. Detected
+# the way xx-wm-session picks the GL renderer. XX_WM_LIB_ROOT and
+# XX_WM_PORTAL_OVERRIDE are test hooks.
+has_libhybris() {
+    for _hy_lib in "${XX_WM_LIB_ROOT:-}"/usr/lib/libhybris-common.so* \
+                   "${XX_WM_LIB_ROOT:-}"/usr/lib/*/libhybris-common.so*; do
+        [ -e "$_hy_lib" ] && return 0
+    done
+    return 1
+}
+
+install_portal_override() {
+    has_libhybris || return 0
+    _po_dest=${XX_WM_PORTAL_OVERRIDE:-/etc/xdg/xdg-desktop-portal/xx-wm-portals.conf}
+    $SUDO mkdir -p "$(dirname "$_po_dest")" &&
+        $SUDO cp "$REPO_DIR/launcher/data/portals/halium-xx-wm-portals.conf" \
+            "$_po_dest" ||
+        echo "warn: could not install the Halium portal override" >&2
+    return 0
+}
+
 install_xx_keyboard_deps() {
     # Build deps for xx-keyboard (Stevia fork, C/GTK3). squeekboard is no
     # longer installed; it stays only a runtime fallback in xx-wm.in.
@@ -576,6 +599,7 @@ build_install() {
     install_fonts
     install_logind_dropin
     select_phoc_scale || return 1
+    install_portal_override
     _build_status=0
     enable_service || _build_status=1
     setup_greeter

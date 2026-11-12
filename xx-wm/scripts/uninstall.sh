@@ -171,10 +171,12 @@ remove_project() {
 }
 
 remove_shell_extras() {
-    # install.sh copies the power-key drop-in for elogind; meson installs
-    # the systemd one. Both go, then logind needs a restart or reboot.
+    # install.sh copies the power-key drop-in for elogind and, on Halium,
+    # the portal override; meson installs the systemd drop-in. All go,
+    # then logind needs a restart or reboot.
     for _f in "$ROOT/etc/elogind/logind.conf.d/10-xx-wm-power.conf" \
               "$ROOT/etc/systemd/logind.conf.d/10-xx-wm-power.conf" \
+              "$ROOT/etc/xdg/xdg-desktop-portal/xx-wm-portals.conf" \
               "$ROOT/etc/conf.d/xx-wm"; do
         if [ -e "$_f" ]; then
             as_root rm -f -- "$_f" || warn "could not remove $_f"

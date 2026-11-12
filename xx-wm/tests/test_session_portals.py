@@ -169,6 +169,44 @@ class TestInstallPortals:
                               capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr
 
+    @staticmethod
+    def _run_override(install_script, tmp_path, halium):
+        if halium:
+            lib = tmp_path / 'usr' / 'lib' / 'aarch64-linux-gnu'
+            lib.mkdir(parents=True)
+            (lib / 'libhybris-common.so.1').write_bytes(b'')
+        dest = tmp_path / 'etc' / 'xdg' / 'xdg-desktop-portal' / 'xx-wm-portals.conf'
+        script = '\n'.join((
+            'has_libhybris() {' + _function_body(install_script, 'has_libhybris') + '}',
+            'install_portal_override() {'
+            + _function_body(install_script, 'install_portal_override') + '}',
+            'install_portal_override',
+        ))
+        subprocess.run(['sh', '-c', script], check=True, env={
+            'PATH': '/usr/bin:/bin', 'SUDO': '', 'REPO_DIR': str(REPO),
+            'XX_WM_LIB_ROOT': str(tmp_path), 'XX_WM_PORTAL_OVERRIDE': str(dest)})
+        return dest
+
+    def test_halium_turns_off_the_wlr_portals(self, install_script, tmp_path):
+        """FLX1s: xdg-desktop-portal-wlr exits on the hwcomposer phoc and
+        the broker stalled 50 s on it before serving Settings."""
+        dest = self._run_override(install_script, tmp_path, halium=True)
+        text = dest.read_text(encoding='utf-8')
+        assert 'default=gtk;' in text
+        assert 'org.freedesktop.impl.portal.Screenshot=none;' in text
+        assert 'org.freedesktop.impl.portal.ScreenCast=none;' in text
+        assert '=wlr' not in text
+
+    def test_mainline_keeps_the_packaged_conf(self, install_script, tmp_path):
+        dest = self._run_override(install_script, tmp_path, halium=False)
+        assert not dest.exists()
+
+    def test_override_wired_into_install_and_uninstall(self, install_script):
+        assert 'install_portal_override' in _function_body(install_script,
+                                                           'build_install')
+        uninstall = (REPO / 'scripts' / 'uninstall.sh').read_text(encoding='utf-8')
+        assert '/etc/xdg/xdg-desktop-portal/xx-wm-portals.conf' in uninstall
+
 
 @pytest.mark.skipif(
     not (shutil.which('meson') and shutil.which('ninja')),
