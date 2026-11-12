@@ -201,7 +201,7 @@ if _HAS_GTK:
     def see_through(window) -> None:
         """A transparent window behind an overlay's own panel. The shell's
         theme paints every window the page color, so this sits one step
-        above it (as back_gesture.py and hud.py do)."""
+        above it (as hud.py does)."""
         css = Gtk.CssProvider()
         css.load_from_data(b'window { background: transparent; }')
         window.get_style_context().add_provider(
