@@ -104,6 +104,8 @@ class _Bus:
         self.registrations = []
         self.unregistered = []
         self.signals = []
+        self.defer = False
+        self.pending = []
 
     def call_sync(self, *args):
         self.calls.append(args)
@@ -113,6 +115,26 @@ class _Bus:
         if isinstance(reply, Exception):
             raise reply
         return reply if isinstance(reply, _Reply) else _Reply(reply)
+
+    def call(self, *args):
+        """Gio's async call: same 9 leading args, then a callback that
+        gets (conn, result) and finishes with call_finish. The reply comes
+        from the same script; deferred replies wait in self.pending."""
+        *call_args, callback = args
+        self.calls.append(tuple(call_args))
+        if not self.replies:
+            reply = _Reply(False)
+        else:
+            reply = self.replies.pop(0)
+        if self.defer:
+            self.pending.append((callback, reply))
+        else:
+            callback(self, reply)
+
+    def call_finish(self, result):
+        if isinstance(result, Exception):
+            raise result
+        return result if isinstance(result, _Reply) else _Reply(result)
 
     def register_object(self, *args):
         self.registrations.append(args)
@@ -697,9 +719,12 @@ class TestLocationPanelHonesty:
         panel._state_labels = {'location': _FakeLabel()}
         panel._tile_state = {}
         panel._updating = False
+        panel._spawn_panel_worker = lambda target: target()
         return panel
 
-    def test_owner_change_hides_button_until_daemon_returns(self):
+    def test_owner_change_hides_button_until_daemon_returns(self, monkeypatch):
+        monkeypatch.setattr(quick_actions, '_post_to_main',
+                            lambda cb, *args: cb(*args))
         class _Loc:
             def __init__(self):
                 self.ok = True
@@ -797,3 +822,147 @@ class TestServiceDisappearsMidSession:
         monkeypatch.setattr(quick_actions, '_dbus_system', lambda: None)
         state.set_enabled(False)
         assert state.enabled is False
+
+
+# --- toggles paint what the system reads back ---------------------------------
+
+class _FakeScale:
+    def __init__(self, value=0):
+        self.value = value
+
+    def set_value(self, value):
+        self.value = value
+
+
+def _toggle_panel(monkeypatch, key, get_state, set_state=lambda v: None):
+    import threading
+    panel = _bare_panel()
+    panel._tile_buttons = {key: _FakeBtn()}
+    panel._state_labels = {key: _FakeLabel()}
+    panel._tile_state = {key: False}
+    panel._tile_details = {}
+    panel._updating = False
+    panel._tile_gen = {}
+    panel._tile_inflight = set()
+    jobs = []
+    panel._spawn_panel_worker = jobs.append
+    monkeypatch.setattr(quick_actions, '_post_to_main',
+                        lambda cb, *args: cb(*args))
+    setter_threads = []
+
+    def _set(value):
+        setter_threads.append(threading.current_thread())
+        set_state(value)
+
+    tile = quick_actions._TileDef(key, key, get_state, _set, 1)
+    return panel, tile, jobs, setter_threads
+
+
+class TestToggleTruth:
+    def test_refused_wifi_toggle_turns_back_off(self, monkeypatch):
+        panel, tile, jobs, setter_threads = _toggle_panel(
+            monkeypatch, 'wifi', get_state=lambda: False)
+        btn = panel._tile_buttons['wifi']
+        btn.set_active(True)
+        panel._on_tile_toggled(btn, tile)
+        assert setter_threads == []
+        assert len(jobs) == 1
+        jobs.pop()()
+        assert btn.active is False
+        assert 'active' not in btn.css
+        assert panel._tile_state['wifi'] is False
+
+    def test_accepted_toggle_shows_read_back(self, monkeypatch):
+        panel, tile, jobs, _threads = _toggle_panel(
+            monkeypatch, 'bt', get_state=lambda: True)
+        btn = panel._tile_buttons['bt']
+        btn.set_active(True)
+        panel._on_tile_toggled(btn, tile)
+        jobs.pop()()
+        assert btn.active is True and 'active' in btn.css
+
+    def test_older_probe_never_flips_a_newer_tap(self, monkeypatch):
+        panel, tile, jobs, _threads = _toggle_panel(
+            monkeypatch, 'wifi', get_state=lambda: True)
+        old_gens = dict(panel._tile_gen)
+        btn = panel._tile_buttons['wifi']
+        btn.set_active(True)
+        panel._on_tile_toggled(btn, tile)
+        jobs.pop()()
+        panel._apply_queried_states({'wifi': False}, {}, old_gens)
+        assert panel._tile_state['wifi'] is True
+
+    def test_probe_waits_for_an_inflight_toggle(self, monkeypatch):
+        panel, tile, jobs, _threads = _toggle_panel(
+            monkeypatch, 'wifi', get_state=lambda: True)
+        btn = panel._tile_buttons['wifi']
+        btn.set_active(True)
+        panel._on_tile_toggled(btn, tile)
+        gens = dict(panel._tile_gen)
+        panel._apply_queried_states({'wifi': False}, {}, gens)
+        assert btn.active is True
+
+    def test_stale_toggle_result_is_dropped(self, monkeypatch):
+        panel, tile, jobs, _threads = _toggle_panel(
+            monkeypatch, 'wifi', get_state=lambda: False)
+        btn = panel._tile_buttons['wifi']
+        btn.set_active(True)
+        panel._on_tile_toggled(btn, tile)
+        first = jobs.pop()
+        btn.set_active(True)
+        panel._on_tile_toggled(btn, tile._replace(get_state=lambda: True))
+        jobs.pop()()
+        first()
+        assert panel._tile_state['wifi'] is True
+
+
+class TestSliderUnderFinger:
+    def test_live_read_skips_the_slider_being_dragged(self, monkeypatch):
+        panel = _bare_panel()
+        panel._bright_slider = _FakeScale(40)
+        panel._vol_slider = _FakeScale(40)
+        panel._readouts = {}
+        panel._syncing_sliders = False
+        panel._slider_pending = {}
+        panel._slider_timers = {}
+        panel._slider_touched = {}
+        monkeypatch.setattr(quick_actions.GLib, 'timeout_add',
+                            lambda *a: 1, raising=False)
+        monkeypatch.setattr(quick_actions.GLib, 'source_remove',
+                            lambda *a: None, raising=False)
+        panel._queue_slider_apply('vol', 80)
+        panel._vol_slider.value = 80
+        panel._apply_slider_values(10, 20)
+        assert panel._vol_slider.value == 80
+        assert panel._bright_slider.value == 10
+
+    def test_build_reads_sliders_off_the_loop(self):
+        import inspect
+        src = inspect.getsource(quick_actions.QuickActionsPanel._build)
+        assert '_sync_sliders_to_live_state_async()' in src
+        assert '_sync_sliders_to_live_state()' not in src
+
+
+class TestLocationAgentAsync:
+    def test_register_never_waits_for_geoclue(self, monkeypatch):
+        _pin_dbus_seams(monkeypatch)
+        bus = _Bus(replies=[Exception('Unauthorized')])
+        bus.defer = True
+        monkeypatch.setattr(quick_actions, '_dbus_system', lambda: bus)
+        changes = []
+        state = quick_actions.LocationState(on_change=lambda: changes.append(1))
+        state.set_enabled(True)
+        assert state.is_active() is True
+        assert len(bus.pending) == 1
+        callback, reply = bus.pending.pop()
+        callback(bus, reply)
+        assert state.enabled is False
+        assert state.is_active() is False
+        assert bus.unregistered == [1]
+        assert changes
+
+    def test_agent_calls_are_never_call_sync(self):
+        import inspect
+        for fn in (quick_actions.LocationState._register,
+                   quick_actions.LocationState._unregister):
+            assert 'call_sync' not in inspect.getsource(fn)

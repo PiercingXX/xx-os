@@ -114,27 +114,23 @@ ALLOW = {
     ('quick_actions.py', '_nm_get'):
         'tile query worker (_query_tile_states).',
     ('quick_actions.py', '_nm_set'):
-        'user-initiated single NM property write (pinned sync snap-back).',
+        'tile toggle worker (_toggle_on_worker).',
     ('quick_actions.py', '_nm_has_wifi_device'):
         'hardware-gate probe worker.',
     ('quick_actions.py', '_bluez_get'):
         'tile query worker (_query_tile_states).',
     ('quick_actions.py', '_bluez_set'):
-        'user-initiated single BlueZ property write (pinned sync snap-back).',
+        'tile toggle worker (_toggle_on_worker).',
     ('quick_actions.py', '_get_bt_device_name'):
         'tile detail worker (_query_tile_details).',
     ('quick_actions.py', '_active_hotspot_path'):
         'hotspot gate probe worker.',
     ('quick_actions.py', '_toggle_hotspot'):
-        'user-initiated hotspot toggle; single bounded NM call.',
+        'tile toggle worker (_toggle_on_worker).',
     ('quick_actions.py', 'active_clients'):
         'location/hotspot availability probe worker.',
     ('quick_actions.py', 'available'):
         'location/hotspot availability probe worker.',
-    ('quick_actions.py', '_register'):
-        'location toggle path; single bounded agent registration.',
-    ('quick_actions.py', '_unregister'):
-        'location toggle path; single bounded agent release.',
     ('quick_actions.py', '_get_volume_pct'):
         'slider expand batch worker (_read_slider_values).',
     ('settings_page.py', '_gsm_connection_name'):

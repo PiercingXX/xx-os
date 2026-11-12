@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import NamedTuple, Callable
 
@@ -454,6 +455,17 @@ def _toggle_torch(enabled: bool) -> None:
             pass
 
 
+def _get_torch_state() -> bool | None:
+    leds = list(Path('/sys/class/leds').glob('*torch*'))
+    if not leds:
+        return None
+    try:
+        return any(int((led / 'brightness').read_text().strip() or 0) > 0
+                   for led in leds)
+    except (OSError, ValueError):
+        return None
+
+
 _NM_ACTIVE_TYPE_AP = 'ap'  # ActiveConnection.Type while a hotspot is up
 
 
@@ -665,13 +677,18 @@ class LocationState:
             self._deactivate(bus)
 
     def _activate(self, bus: Gio.DBusConnection) -> None:
-        if not self._register(bus):
-            self.enabled = False
-            self._rejected = True
-        else:
+        if self._obj_id is not None:
             self._rejected = False
             self._notify_max_accuracy(bus)
+            self._fire_change()
+            return
+        if not self._register(bus):
+            self._reject()
         self._fire_change()
+
+    def _reject(self) -> None:
+        self.enabled = False
+        self._rejected = True
 
     def _deactivate(self, bus: Gio.DBusConnection) -> None:
         # Revoke before releasing the slot so the daemon sees MaxAccuracyLevel=0.
@@ -688,39 +705,62 @@ class LocationState:
             pass
 
     def _register(self, bus: Gio.DBusConnection) -> bool:
+        """Export the agent and ask geoclue for the slot without waiting:
+        the tile shows ON at once and a refusal turns it back off (and
+        hides it) when the reply lands. False when the export failed."""
         if self._obj_id is not None:
             return True
-        obj_id = None
         try:
             info = Gio.DBusNodeInfo.new_for_xml(_AGENT_XML)
             obj_id = bus.register_object(
                 _AGENT_PATH, info.interfaces[0],
                 self._on_method_call, self._on_get_property, None)
-            bus.call_sync(
+        except Exception:
+            return False
+        self._obj_id = obj_id
+
+        def _done(conn, result) -> None:
+            try:
+                conn.call_finish(result)
+            except Exception:
+                if self._obj_id == obj_id:
+                    self._drop_export(conn)
+                    self._reject()
+                    self._fire_change()
+                return
+            if self._obj_id == obj_id:
+                self._rejected = False
+                self._notify_max_accuracy(conn)
+                self._fire_change()
+
+        try:
+            bus.call(
                 _GEOCLUE_NAME, _GEOCLUE_MGR_PATH,
                 _GEOCLUE_NAME + '.Manager', 'RegisterAgent',
                 GLib.Variant('(o)', (_AGENT_PATH,)), None,
-                Gio.DBusCallFlags.NONE, 2000, None,
+                Gio.DBusCallFlags.NONE, 2000, None, _done,
             )
         except Exception:
-            if obj_id is not None:
-                try:
-                    bus.unregister_object(obj_id)
-                except Exception:
-                    pass
+            self._drop_export(bus)
             return False
-        self._obj_id = obj_id
         return True
 
     def _unregister(self, bus: Gio.DBusConnection) -> None:
         if self._obj_id is None:
             return
+
+        def _done(conn, result) -> None:
+            try:
+                conn.call_finish(result)
+            except Exception:
+                pass
+
         try:
-            bus.call_sync(
+            bus.call(
                 _GEOCLUE_NAME, _GEOCLUE_MGR_PATH,
                 _GEOCLUE_NAME + '.Manager', 'UnregisterAgent',
                 GLib.Variant('(o)', (_AGENT_PATH,)), None,
-                Gio.DBusCallFlags.NONE, 2000, None,
+                Gio.DBusCallFlags.NONE, 2000, None, _done,
             )
         except Exception:
             pass
@@ -795,6 +835,15 @@ class LocationState:
 
 _SLIDER_DEFAULT_PCT = 50
 _SLIDER_APPLY_DEBOUNCE_MS = 200
+# A live read never moves a slider the finger moved this recently.
+_SLIDER_TOUCH_HOLD_SECS = 1.5
+
+# Tiles whose setter is a system D-Bus write or a sysfs write: they run on
+# a worker and the tile shows what the system reads back afterwards.
+_WORKER_TOGGLE_KEYS = frozenset({'wifi', 'bt', 'data', 'airplane', 'hotspot',
+                                 'torch'})
+# In-process toggles that can refuse: paint the state read back at once.
+_READBACK_TOGGLE_KEYS = frozenset({'saver', 'caffeine'})
 
 
 def _read_sysfs_brightness_pct(
@@ -1042,7 +1091,7 @@ _TILES: list[_TileDef] = [
     _TileDef('bt',       'BT',       _bluez_get,                          _bluez_set,                              1),
     _TileDef('data',     'Data',     lambda: _nm_get('WwanEnabled'),      lambda v: _nm_set('WwanEnabled', v),     1),
     _TileDef('airplane', 'Airplane', _get_airplane_state,                _toggle_airplane,                        1),
-    _TileDef('torch',    'Torch',    lambda: None,                        _toggle_torch,                           2),
+    _TileDef('torch',    'Torch',    _get_torch_state,                    _toggle_torch,                           2),
     _TileDef('dnd',      'DnD',      lambda: None,                        lambda _v: None,                         2),
     _TileDef('focus',    'Focus',    lambda: None,                        lambda _v: None,                         2),
     _TileDef('nope',     'Nope',     lambda: None,                        lambda _v: None,                         2),
@@ -1106,7 +1155,12 @@ class QuickActionsPanel(Gtk.Box):
         self._worker_threads: list = []
         self._slider_pending: dict[str, int] = {}
         self._slider_timers: dict[str, int] = {}
+        self._slider_touched: dict[str, float] = {}
         self._syncing_sliders = False
+        # Per-tile tap generation: a probe that started before the latest
+        # tap (or while its toggle is still in flight) never paints.
+        self._tile_gen: dict[str, int] = {}
+        self._tile_inflight: set[str] = set()
         self._slider_appliers = {
             'bright': self._apply_brightness,
             'vol': _set_volume_pct,
@@ -1359,7 +1413,7 @@ class QuickActionsPanel(Gtk.Box):
         self.tier2_grid.set_visible(False)
         self.sep.set_visible(False)
         self.sliders_box.set_visible(True)
-        self._sync_sliders_to_live_state()
+        self._sync_sliders_to_live_state_async()
 
     def _make_tile(self, tile: _TileDef) -> Gtk.ToggleButton:
         # Shared design-system glyph tile: symbolic glyph over a caps
@@ -1483,6 +1537,9 @@ class QuickActionsPanel(Gtk.Box):
     def _queue_slider_apply(self, key: str, pct: int) -> None:
         if self._syncing_sliders:
             return
+        touched = getattr(self, '_slider_touched', None)
+        if touched is not None:
+            touched[key] = time.monotonic()
         self._slider_pending[key] = pct
         timer = self._slider_timers.get(key)
         if timer is not None:
@@ -1502,10 +1559,57 @@ class QuickActionsPanel(Gtk.Box):
         # itself shows the level.
         _set_brightness_pct(pct)
 
+    def _bump_tile_gen(self, key: str) -> int:
+        gens = getattr(self, '_tile_gen', None)
+        if gens is None:
+            self._tile_gen = gens = {}
+        gens[key] = gens.get(key, 0) + 1
+        return gens[key]
+
+    def _toggle_on_worker(self, tile: _TileDef, new_state: bool) -> None:
+        """System toggles: write and read back off the GTK loop. The tile
+        shows the request until the read-back lands, then what the system
+        reports; a refused or failed write turns it back."""
+        key = tile.key
+        before = (getattr(self, '_tile_state', None) or {}).get(key, not new_state)
+        gen = self._bump_tile_gen(key)
+        inflight = getattr(self, '_tile_inflight', None)
+        if inflight is None:
+            self._tile_inflight = inflight = set()
+        inflight.add(key)
+        self._apply_tile_ui(key, new_state)
+
+        def _work() -> None:
+            try:
+                tile.set_state(new_state)
+            except Exception:
+                pass
+            try:
+                actual = tile.get_state()
+            except Exception:
+                actual = None
+            _post_to_main(self._finish_toggle, key, gen, actual, before)
+
+        self._spawn_panel_worker(_work)
+
+    def _finish_toggle(self, key: str, gen: int, actual: bool | None,
+                       before: bool) -> bool:
+        if (getattr(self, '_tile_gen', None) or {}).get(key, 0) != gen:
+            return False
+        inflight = getattr(self, '_tile_inflight', None)
+        if inflight is not None:
+            inflight.discard(key)
+        self._apply_tile_state(key, bool(before) if actual is None else bool(actual))
+        return False
+
     def _on_tile_toggled(self, btn: Gtk.ToggleButton, tile: _TileDef) -> None:
         if self._updating:
             return
         new_state = btn.get_active()
+        if tile.key in _WORKER_TOGGLE_KEYS:
+            self._toggle_on_worker(tile, new_state)
+            return
+        self._bump_tile_gen(tile.key)
         if tile.key == 'auto_br':
             self._toggle_auto_brightness(new_state)
         else:
@@ -1544,6 +1648,14 @@ class QuickActionsPanel(Gtk.Box):
             self._set_tile_class('tailscale', 'working', True)
             self._set_tile_class('tailscale', 'attention', False)
             return
+        if tile.key in _READBACK_TOGGLE_KEYS:
+            try:
+                actual = tile.get_state()
+            except Exception:
+                actual = None
+            if actual is not None:
+                self._apply_tile_state(tile.key, bool(actual))
+                return
         self._apply_tile_ui(tile.key, new_state)
 
     def _set_nope(self, enabled: bool) -> None:
@@ -1612,14 +1724,31 @@ class QuickActionsPanel(Gtk.Box):
                 self._bright_slider.set_sensitive(True)
 
     def _on_location_changed(self) -> None:
+        """Agent or daemon changed: re-probe geoclue on a worker (a bus
+        round trip) and repaint on the main loop."""
+        if self._tile_buttons.get('location') is None:
+            return
+
+        def _work() -> None:
+            try:
+                shown = bool(self._location.available())
+            except Exception:
+                shown = False
+            _post_to_main(self._apply_location_gate, shown)
+
+        self._spawn_panel_worker(_work)
+
+    def _apply_location_gate(self, shown: bool) -> bool:
         btn = self._tile_buttons.get('location')
         if btn is None:
-            return
-        self.invalidate_gate_cache('location')
-        shown = self._cached_gate('location', self._location.available)
+            return False
+        cache = getattr(self, '_hw_gate_cache', None)
+        if cache is not None:
+            cache['location'] = bool(shown)
         btn.set_visible(shown)
         self._apply_tile_state('location',
                                shown and self._location.is_active())
+        return False
 
     def _connect_captions_async(self) -> None:
         """Open the captions service off-thread; live state lands through
@@ -1712,7 +1841,15 @@ class QuickActionsPanel(Gtk.Box):
         return states
 
     def _apply_queried_states(self, states: dict[str, bool] | None,
-                              details: dict[str, str] | None = None) -> bool:
+                              details: dict[str, str] | None = None,
+                              gens: dict[str, int] | None = None) -> bool:
+        if gens is not None:
+            # Drop what a tap since the probe started (or a toggle still
+            # being written) owns: an older read must not flip it back.
+            now = getattr(self, '_tile_gen', None) or {}
+            inflight = getattr(self, '_tile_inflight', None) or set()
+            states = {k: v for k, v in (states or {}).items()
+                      if k not in inflight and now.get(k, 0) == gens.get(k, 0)}
         if details is not None:
             try:
                 self._tile_details = dict(details)
@@ -1849,15 +1986,26 @@ class QuickActionsPanel(Gtk.Box):
         bright, vol = _read_slider_values()
         self._apply_slider_values(bright, vol)
 
+    def _slider_held(self, key: str) -> bool:
+        """True while the finger owns this slider: a value is waiting to be
+        applied or it moved within the hold window."""
+        if key in (getattr(self, '_slider_pending', None) or {}):
+            return True
+        touched = (getattr(self, '_slider_touched', None) or {}).get(key)
+        return (touched is not None
+                and time.monotonic() - touched < _SLIDER_TOUCH_HOLD_SECS)
+
     def _apply_slider_values(self, bright: int, vol: int) -> bool:
         self._syncing_sliders = True
         try:
-            self._bright_slider.set_value(bright)
-            self._vol_slider.set_value(vol)
+            if not self._slider_held('bright'):
+                self._bright_slider.set_value(bright)
+                self._set_readout('bright', bright)
+            if not self._slider_held('vol'):
+                self._vol_slider.set_value(vol)
+                self._set_readout('vol', vol)
         finally:
             self._syncing_sliders = False
-        self._set_readout('bright', bright)
-        self._set_readout('vol', vol)
         return False
 
     def _sync_sliders_to_live_state_async(self) -> None:
@@ -1873,6 +2021,8 @@ class QuickActionsPanel(Gtk.Box):
 
     def refresh_states(self) -> None:
         """Re-read every tile state off-thread; results apply on the main loop."""
+        gens = dict(getattr(self, '_tile_gen', None) or {})
+
         def _work() -> None:
             try:
                 states = self._query_tile_states()
@@ -1890,6 +2040,6 @@ class QuickActionsPanel(Gtk.Box):
                         details['nope'] = detail
             except Exception:
                 pass
-            _post_to_main(self._apply_queried_states, states, details)
+            _post_to_main(self._apply_queried_states, states, details, gens)
 
         self._spawn_panel_worker(_work)
