@@ -121,28 +121,120 @@ def _wifi_result(ssid: str, result: subprocess.CompletedProcess) -> tuple[bool, 
     return False, detail[-1] if detail else 'Connection failed'
 
 
-def disconnect_wifi(ssid: str, run: _RunFn = _run) -> tuple[bool, str]:
-    """Take the active `ssid` profile down (NetworkManager polkit)."""
+_WIFI_TYPES = ('802-11-wireless', 'wifi')
+_PROFILE_FIELDS = ('connection.uuid,connection.id,802-11-wireless.ssid,'
+                   '802-11-wireless-security.key-mgmt')
+
+
+def _unescape_terse(value: str) -> str:
+    return value.replace('\\:', ':').replace('\\\\', '\\')
+
+
+def wifi_profiles(run: _RunFn = _run, active: bool = False
+                  ) -> list[dict] | None:
+    """Saved Wi-Fi profiles as [{uuid, id, ssid, key_mgmt}]; ``active``
+    limits them to the ones up now. None when NetworkManager can't be
+    asked.
+
+    A profile's name is free text and can equal another network's SSID,
+    so everything here acts on the UUID of a profile whose
+    802-11-wireless.ssid matches, never on the name."""
+    cmd = ['nmcli', '-t', '-f', 'UUID,TYPE', 'connection', 'show']
+    if active:
+        cmd.append('--active')
     try:
-        result = run(['nmcli', 'connection', 'down', ssid], timeout=20)
+        listing = run(cmd, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
-        return False, 'NetworkManager unavailable'
-    if result.returncode == 0:
-        return True, f'Disconnected from {ssid}'
+        return None
+    if listing.returncode != 0:
+        return None
+    uuids = []
+    for line in listing.stdout.splitlines():
+        uuid, _, kind = line.rpartition(':')
+        if uuid and kind.strip() in _WIFI_TYPES:
+            uuids.append(uuid.strip())
+    if not uuids:
+        return []
+    cmd = ['nmcli', '-t', '-f', _PROFILE_FIELDS, 'connection', 'show']
+    for uuid in uuids:
+        cmd += ['uuid', uuid]
+    try:
+        shown = run(cmd, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if shown.returncode != 0:
+        return None
+    profiles: list[dict] = []
+    current: dict = {}
+    for line in shown.stdout.splitlines() + ['']:
+        key, sep, value = line.partition(':')
+        if not sep:
+            if current.get('uuid'):
+                profiles.append(current)
+            current = {}
+            continue
+        field = {'connection.uuid': 'uuid', 'connection.id': 'id',
+                 '802-11-wireless.ssid': 'ssid',
+                 '802-11-wireless-security.key-mgmt': 'key_mgmt'}.get(
+                     key.strip())
+        if field == 'uuid' and current.get('uuid'):
+            profiles.append(current)
+            current = {}
+        if field:
+            current[field] = _unescape_terse(value.strip())
+    for profile in profiles:
+        for field in ('id', 'ssid', 'key_mgmt'):
+            profile.setdefault(field, '')
+    return profiles
+
+
+def _profiles_for(ssid: str, run: _RunFn, active: bool = False
+                  ) -> list[dict] | None:
+    profiles = wifi_profiles(run, active=active)
+    if profiles is None:
+        return None
+    return [p for p in profiles if p['ssid'] == ssid]
+
+
+def _nmcli_detail(result: subprocess.CompletedProcess, fallback: str) -> str:
     detail = (result.stderr or result.stdout or '').strip().splitlines()
-    return False, detail[-1] if detail else 'Disconnect failed'
+    return detail[-1] if detail else fallback
+
+
+def disconnect_wifi(ssid: str, run: _RunFn = _run) -> tuple[bool, str]:
+    """Take the active profile(s) for `ssid` down (NetworkManager polkit)."""
+    profiles = _profiles_for(ssid, run, active=True)
+    if profiles is None:
+        return False, 'NetworkManager unavailable'
+    if not profiles:
+        return False, f'Not connected to {ssid}'
+    for profile in profiles:
+        try:
+            result = run(['nmcli', 'connection', 'down', 'uuid',
+                          profile['uuid']], timeout=20)
+        except (OSError, subprocess.TimeoutExpired):
+            return False, 'NetworkManager unavailable'
+        if result.returncode != 0:
+            return False, _nmcli_detail(result, 'Disconnect failed')
+    return True, f'Disconnected from {ssid}'
 
 
 def forget_wifi(ssid: str, run: _RunFn = _run) -> tuple[bool, str]:
-    """Delete the saved `ssid` profile (NetworkManager polkit)."""
-    try:
-        result = run(['nmcli', 'connection', 'delete', ssid], timeout=15)
-    except (OSError, subprocess.TimeoutExpired):
+    """Delete every saved profile for `ssid` (NetworkManager polkit)."""
+    profiles = _profiles_for(ssid, run)
+    if profiles is None:
         return False, 'NetworkManager unavailable'
-    if result.returncode == 0:
-        return True, f'Forgot {ssid}'
-    detail = (result.stderr or result.stdout or '').strip().splitlines()
-    return False, detail[-1] if detail else 'Forget failed'
+    if not profiles:
+        return False, f'{ssid} is not saved'
+    for profile in profiles:
+        try:
+            result = run(['nmcli', 'connection', 'delete', 'uuid',
+                          profile['uuid']], timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            return False, 'NetworkManager unavailable'
+        if result.returncode != 0:
+            return False, _nmcli_detail(result, 'Forget failed')
+    return True, f'Forgot {ssid}'
 
 
 def wifi_details(ssid: str, run: _RunFn = _run) -> dict | None:
@@ -223,43 +315,20 @@ def _key_mgmt_for(security: str | None) -> str:
 
 
 def saved_wifi_ssids(run: _RunFn = _run) -> list[str] | None:
-    """SSIDs with a saved NetworkManager profile (the Smart Lock picker).
+    """SSIDs with a saved NetworkManager profile (the saved list and the
+    Smart Lock picker), read from each profile's 802-11-wireless.ssid.
 
     None → NetworkManager unavailable; [] → no saved Wi-Fi networks."""
-    import re
-    try:
-        result = run(['nmcli', '-t', '-f', 'NAME,TYPE', 'connection',
-                      'show'], timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
+    profiles = wifi_profiles(run)
+    if profiles is None:
         return None
-    if result.returncode != 0:
-        return None
-    ssids: set[str] = set()
-    for line in result.stdout.splitlines():
-        # Terse mode escapes ':' inside names as '\:'; TYPE never holds
-        # one, so every part but the last belongs to the name.
-        parts = [p.replace('\\:', ':') for p in re.split(r'(?<!\\):', line)]
-        if len(parts) < 2:
-            continue
-        name = ':'.join(parts[:-1]).strip()
-        if not name:
-            continue
-        if parts[-1].strip().lower() in ('wifi', '802-11-wireless'):
-            ssids.add(name)
-    return sorted(ssids, key=str.casefold)
+    return sorted({p['ssid'] for p in profiles if p['ssid']},
+                  key=str.casefold)
 
 
-def _existing_profiles(run: _RunFn) -> set[str] | None:
-    """Names of known NM profiles, or None when NM can't be asked."""
-    try:
-        result = run(['nmcli', '-t', '-f', 'NAME', 'connection', 'show'],
-                     timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    return {line.replace('\\:', ':').strip()
-            for line in result.stdout.splitlines() if line.strip()}
+def is_enterprise(security: str | None) -> bool:
+    """True for a scan's SECURITY that needs 802.1X sign-in."""
+    return '802.1X' in (security or '').upper()
 
 
 def _is_secrets_error(result: subprocess.CompletedProcess) -> bool:
@@ -267,23 +336,60 @@ def _is_secrets_error(result: subprocess.CompletedProcess) -> bool:
     return 'secret' in text or 'wrong password' in text or 'bad psk' in text
 
 
+def _up_profile(profile: dict, ssid: str, password: str | None,
+                run: _RunFn) -> subprocess.CompletedProcess | None:
+    """`nmcli connection up uuid U`, with the secret through a 0600
+    passwd-file when one is given. None when nmcli can't run."""
+    cmd = ['nmcli', 'connection', 'up', 'uuid', profile['uuid']]
+    if not password:
+        try:
+            return run(cmd, timeout=45)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    key = ('802-1x.password' if profile.get('key_mgmt') == 'wpa-eap'
+           else '802-11-wireless-security.psk')
+    fd, passwd_path = tempfile.mkstemp(prefix='xxwm-psk-')
+    try:
+        with os.fdopen(fd, 'w') as passwd_file:
+            passwd_file.write(f'{key}:{password}\n')
+        try:
+            return run(cmd + ['passwd-file', passwd_path], timeout=45)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(passwd_path)
+
+
 def connect_wifi(ssid: str, password: str | None = None,
                  run: _RunFn = _run,
                  security: str | None = None,
                  hidden: bool = False) -> tuple[bool, str]:
     """Connect to `ssid`. Secrets go through nmcli's passwd-file channel
-    (nmcli(1): `connection up ... [passwd-file file]`, lines of the form
-    `802-11-wireless-security.psk:<password>`) so the PSK never appears in
-    argv, where any local user could read it via /proc/<pid>/cmdline. The
-    temp file is 0600 and removed on every path.
+    (nmcli(1): `connection up ... [passwd-file file]`) so they never
+    appear in argv, where any local user could read them via
+    /proc/<pid>/cmdline. The temp file is 0600 and removed on every path.
 
-    A profile that already exists is brought `up` directly (with the new
-    PSK via passwd-file when one is given) instead of stacking another
-    duplicate. A new profile is created exactly once, with
-    wifi-sec.key-mgmt set — without it NM ignores the passwd-file PSK and
-    secured networks never connect. A profile created here is deleted
-    again when activation fails on secrets; pre-existing profiles are
-    never deleted."""
+    A saved profile whose 802-11-wireless.ssid is `ssid` is brought up by
+    UUID, with no password (its stored secret) or the new one; its key
+    management, enterprise included, is left as saved. A new profile is
+    created exactly once, by UUID, with wifi-sec.key-mgmt set — without
+    it NM ignores the passwd-file PSK. An enterprise (802.1X) network
+    with no saved profile is refused: it needs an identity and EAP method
+    this sheet does not ask for. A profile created here is deleted again
+    when activation fails on secrets; saved profiles are never deleted."""
+    profiles = _profiles_for(ssid, run)
+    if profiles is None:
+        if password:
+            return False, 'NetworkManager unavailable'
+        profiles = []
+    if profiles:
+        result = _up_profile(profiles[0], ssid, password, run)
+        if result is None:
+            return False, 'NetworkManager unavailable'
+        return _wifi_result(ssid, result)
+    if is_enterprise(security):
+        return False, f'{ssid} needs enterprise sign-in, which is not set up'
     if not password:
         cmd = ['nmcli', 'dev', 'wifi', 'connect', ssid]
         if hidden:
@@ -294,42 +400,35 @@ def connect_wifi(ssid: str, password: str | None = None,
             return False, 'NetworkManager unavailable'
         return _wifi_result(ssid, result)
 
-    profiles = _existing_profiles(run)
-    if profiles is None:
-        return False, 'NetworkManager unavailable'
-    created = False
-    if ssid not in profiles:
-        add_cmd = ['nmcli', 'connection', 'add', 'type', 'wifi',
-                   'con-name', ssid, 'ssid', ssid,
-                   'wifi-sec.key-mgmt', _key_mgmt_for(security)]
-        if hidden:
-            add_cmd += ['wifi.hidden', 'yes']
-        try:
-            add = run(add_cmd, timeout=15)
-        except (OSError, subprocess.TimeoutExpired):
-            return False, 'NetworkManager unavailable'
-        if add.returncode == 0:
-            created = True
-        # A nonzero add usually means a racing connect created the profile
-        # first ("profile exists") — only `up` matters, so carry on.
-
-    fd, passwd_path = tempfile.mkstemp(prefix='xxwm-psk-')
+    import uuid as _uuid
+    new_uuid = str(_uuid.uuid4())
+    add_cmd = ['nmcli', 'connection', 'add', 'type', 'wifi',
+               'con-name', ssid, 'ssid', ssid,
+               'connection.uuid', new_uuid,
+               'wifi-sec.key-mgmt', _key_mgmt_for(security)]
+    if hidden:
+        add_cmd += ['wifi.hidden', 'yes']
     try:
-        with os.fdopen(fd, 'w') as passwd_file:
-            passwd_file.write(f'802-11-wireless-security.psk:{password}\n')
-        try:
-            result = run(['nmcli', 'connection', 'up', ssid,
-                          'passwd-file', passwd_path], timeout=45)
-        except (OSError, subprocess.TimeoutExpired):
-            return False, 'NetworkManager unavailable'
-        ok, message = _wifi_result(ssid, result)
-        if not ok and created and _is_secrets_error(result):
-            with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-                run(['nmcli', 'connection', 'delete', ssid], timeout=15)
-        return ok, message
-    finally:
-        with contextlib.suppress(OSError):
-            os.unlink(passwd_path)
+        add = run(add_cmd, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return False, 'NetworkManager unavailable'
+    if add.returncode == 0:
+        profile, created = {'uuid': new_uuid, 'key_mgmt': ''}, True
+    else:
+        # Usually a racing connect created the profile first.
+        profiles = _profiles_for(ssid, run) or []
+        if not profiles:
+            return False, _nmcli_detail(add, 'Connection failed')
+        profile, created = profiles[0], False
+    result = _up_profile(profile, ssid, password, run)
+    if result is None:
+        return False, 'NetworkManager unavailable'
+    ok, message = _wifi_result(ssid, result)
+    if not ok and created and _is_secrets_error(result):
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            run(['nmcli', 'connection', 'delete', 'uuid', new_uuid],
+                timeout=15)
+    return ok, message
 
 
 # --------------------------------------------------------- Mobile data APN

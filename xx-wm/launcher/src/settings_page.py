@@ -1663,6 +1663,7 @@ class SettingsPage:
 
     def _show_wifi_saved(self, saved) -> None:
         win = self._win
+        win._wifi_saved_ssids = set(saved or [])
         box = getattr(win, '_wifi_saved_box', None)
         if box is None:
             return
@@ -1771,8 +1772,14 @@ class SettingsPage:
                  ('Forget', lambda: self._forget_wifi(net.ssid)),
                  ('Details', lambda: self._on_wifi_details(net, widget))])
             return
-        if net.security == 'open':
+        if (net.security == 'open'
+                or net.ssid in getattr(win, '_wifi_saved_ssids', ())):
             win._connect_wifi(net.ssid, None, net.security)
+            return
+        import system_settings
+        if system_settings.is_enterprise(net.security):
+            win._show_status(f'{net.ssid} needs enterprise sign-in, '
+                             'which is not set up')
             return
         win.item_actions._show_entry_dialog(
             widget, f'Password for {net.ssid}', '', 'Connect',

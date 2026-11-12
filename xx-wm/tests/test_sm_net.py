@@ -97,23 +97,32 @@ class TestWifiSwitch:
 
 class TestWifiDisconnectForget:
     def test_disconnect_argv(self):
-        run = _run_fn({})
-        ok, msg = system_settings.disconnect_wifi('HomeNet', run=run)
+        from test_system_settings import _FakeNm
+        nm = _FakeNm(profiles={'HomeNet'}, active={'HomeNet'})
+        ok, msg = system_settings.disconnect_wifi('HomeNet', run=nm.run)
         assert ok and 'HomeNet' in msg
-        assert [c for c, _ in run.calls] == [
-            ['nmcli', 'connection', 'down', 'HomeNet']]
+        assert nm.calls[-1][0] == ['nmcli', 'connection', 'down', 'uuid',
+                                   nm.uuid_of('HomeNet')]
 
     def test_forget_argv(self):
-        run = _run_fn({})
-        ok, msg = system_settings.forget_wifi('HomeNet', run=run)
+        from test_system_settings import _FakeNm
+        nm = _FakeNm(profiles={'HomeNet'})
+        uuid = nm.uuid_of('HomeNet')
+        ok, msg = system_settings.forget_wifi('HomeNet', run=nm.run)
         assert ok and 'HomeNet' in msg
-        assert [c for c, _ in run.calls] == [
-            ['nmcli', 'connection', 'delete', 'HomeNet']]
+        assert nm.calls[-1][0] == ['nmcli', 'connection', 'delete', 'uuid',
+                                   uuid]
 
     def test_disconnect_failure_message(self):
-        run = _run_fn({('nmcli', ('connection', 'down', 'HomeNet')):
-                       _completed([], code=10,
-                                  stderr='Error: no such connection.')})
+        from test_system_settings import _FakeNm
+        nm = _FakeNm(profiles={'HomeNet'}, active={'HomeNet'})
+
+        def run(cmd, timeout=15):
+            if 'down' in cmd:
+                return _completed(cmd, code=10,
+                                  stderr='Error: no such connection.')
+            return nm.run(cmd, timeout)
+
         ok, msg = system_settings.disconnect_wifi('HomeNet', run=run)
         assert not ok
         assert 'no such connection' in msg
@@ -161,16 +170,13 @@ class TestWifiDetails:
 
 class TestHiddenNetwork:
     def test_open_hidden_adds_flag(self):
-        calls = []
-
-        def run(cmd, timeout=15):
-            calls.append(list(cmd))
-            return _completed(cmd)
-        ok, _msg = system_settings.connect_wifi('Hidden', run=run,
+        from test_system_settings import _FakeNm
+        nm = _FakeNm()
+        ok, _msg = system_settings.connect_wifi('Hidden', run=nm.run,
                                                 hidden=True)
         assert ok
-        assert calls == [['nmcli', 'dev', 'wifi', 'connect', 'Hidden',
-                          'hidden', 'yes']]
+        assert nm.calls[-1][0] == ['nmcli', 'dev', 'wifi', 'connect',
+                                   'Hidden', 'hidden', 'yes']
 
     def test_psk_hidden_profile_sets_hidden(self):
         from test_system_settings import _FakeNm
@@ -178,7 +184,7 @@ class TestHiddenNetwork:
         ok, _msg = system_settings.connect_wifi('Hidden', 'pw', run=nm.run,
                                                 hidden=True)
         assert ok
-        add_cmd = nm.calls[1][0]
+        add_cmd = next(cmd for cmd, _t in nm.calls if 'add' in cmd)
         assert 'wifi.hidden' in add_cmd
         assert add_cmd[add_cmd.index('wifi.hidden') + 1] == 'yes'
 

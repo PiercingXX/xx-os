@@ -283,19 +283,29 @@ class TestFlatpakDetection:
 
 
 class TestSavedWifi:
-    def _run(self, stdout, returncode=0):
+    def _run(self, stdout, returncode=0, shown=''):
         def _fake(cmd, timeout=None):
             assert cmd[:3] == ['nmcli', '-t', '-f']
+            if 'uuid' in cmd:
+                return SimpleNamespace(returncode=0, stdout=shown)
             return SimpleNamespace(returncode=returncode, stdout=stdout)
         return _fake
 
     def test_only_wifi_profiles(self):
-        run = self._run('Home:wifi\nWork:802-11-wireless\nmodem:gsm\n'
-                        'wired:ethernet\n')
+        run = self._run(
+            'u1:802-11-wireless\nu2:802-11-wireless\nu3:gsm\n'
+            'u4:802-3-ethernet\n',
+            shown='connection.uuid:u1\nconnection.id:Home profile\n'
+                  '802-11-wireless.ssid:Home\n\n'
+                  'connection.uuid:u2\nconnection.id:x\n'
+                  '802-11-wireless.ssid:Work\n')
         assert system_settings.saved_wifi_ssids(run=run) == ['Home', 'Work']
 
     def test_escaped_colons_and_sort(self):
-        run = self._run('b\\:net:wifi\na-net:wifi\n')
+        run = self._run(
+            'u1:802-11-wireless\nu2:802-11-wireless\n',
+            shown='connection.uuid:u1\n802-11-wireless.ssid:b\\:net\n\n'
+                  'connection.uuid:u2\n802-11-wireless.ssid:a-net\n')
         assert system_settings.saved_wifi_ssids(run=run) == ['a-net', 'b:net']
 
     def test_unavailable_is_none(self):

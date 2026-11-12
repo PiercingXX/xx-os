@@ -704,6 +704,23 @@ class TestWifiPasswordMode:
         assert w.shown == []
         assert w.connected == [('Cafe', None, 'open')]
 
+    def test_saved_network_connects_without_password(self, window):
+        w = self._bare_wifi(window)
+        w._wifi_saved_ssids = {'HomeNet'}
+        net = SimpleNamespace(ssid='HomeNet', security='WPA2', in_use=False)
+        w._on_wifi_selected(net, object())
+        assert w.shown == []
+        assert w.connected == [('HomeNet', None, 'WPA2')]
+
+    def test_unsaved_enterprise_network_asks_for_nothing(self, window):
+        w = self._bare_wifi(window)
+        net = SimpleNamespace(ssid='Corp', security='WPA2 802.1X',
+                              in_use=False)
+        w._on_wifi_selected(net, object())
+        assert w.shown == [] and w.connected == []
+        assert w.statuses == [
+            'Corp needs enterprise sign-in, which is not set up']
+
     def test_current_network_opens_menu(self, window):
         w = self._bare_wifi(window)
         w.menus = []
