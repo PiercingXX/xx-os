@@ -256,7 +256,12 @@ class TestSliderDebounce:
 
 class TestCommandSemanticsPreserved:
     def test_debounced_brightness_apply_uses_exact_argv(self, timer_glib,
-                                                        monkeypatch):
+                                                        monkeypatch,
+                                                        tmp_path):
+        import backlight
+        found = backlight.Backlight('intel_backlight', 'backlight',
+                                    tmp_path / 'brightness')
+        monkeypatch.setattr(backlight, 'find', lambda root=None: found)
         calls = []
         monkeypatch.setattr(subprocess, 'Popen',
                             lambda cmd, **k: calls.append(cmd))
@@ -265,7 +270,8 @@ class TestCommandSemanticsPreserved:
         panel._on_brightness_changed(72)
         timer_glib.fire_all()
 
-        assert calls == [['brightnessctl', 'set', '72%']]
+        assert calls == [
+            ['brightnessctl', '--device', 'intel_backlight', 'set', '72%']]
 
     def test_debounced_volume_apply_uses_exact_argv(self, timer_glib,
                                                     monkeypatch):

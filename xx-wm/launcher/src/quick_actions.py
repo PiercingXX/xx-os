@@ -444,8 +444,12 @@ def _query_tile_details() -> dict[str, str]:
     return details
 
 
+def _torch_leds() -> list[Path]:
+    return sorted((backlight.sysfs_class() / 'leds').glob('*torch*'))
+
+
 def _toggle_torch(enabled: bool) -> None:
-    for led in Path('/sys/class/leds').glob('*torch*'):
+    for led in _torch_leds():
         bright = led / 'brightness'
         max_p = led / 'max_brightness'
         try:
@@ -456,7 +460,7 @@ def _toggle_torch(enabled: bool) -> None:
 
 
 def _get_torch_state() -> bool | None:
-    leds = list(Path('/sys/class/leds').glob('*torch*'))
+    leds = _torch_leds()
     if not leds:
         return None
     try:
@@ -848,11 +852,13 @@ _READBACK_TOGGLE_KEYS = frozenset({'saver', 'caffeine'})
 
 
 def _read_sysfs_brightness_pct(
-    backlight_root: Path = Path('/sys/class/backlight'),
+    backlight_root: Path | None = None,
 ) -> int | None:
     """Brightness percent from kernel backlight sysfs nodes (unprivileged
     instant reads, the same nodes brightnessctl reports); None when no
     node parses."""
+    if backlight_root is None:
+        backlight_root = backlight.sysfs_class() / 'backlight'
     for path in backlight_root.glob('*/brightness'):
         try:
             current = int(path.read_text())
@@ -872,9 +878,13 @@ def _get_brightness_pct() -> int:
 
 
 def _set_brightness_pct(pct: int) -> None:
+    # No panel backlight (a workstation, the snapshot rig): write nothing.
+    # A bare brightnessctl would set the first LED it finds.
+    cmd = backlight.brightnessctl_args()
+    if cmd is None:
+        return
     try:
-        subprocess.Popen(backlight.brightnessctl_args() + ['set', f'{max(1, pct)}%'],
-                         close_fds=True)
+        subprocess.Popen(cmd + ['set', f'{max(1, pct)}%'], close_fds=True)
         return
     except FileNotFoundError:
         pass
@@ -1241,7 +1251,7 @@ class QuickActionsPanel(Gtk.Box):
                 continue
             if tile.key == 'torch' and not self._cached_gate(
                     'torch',
-                    lambda: any(Path('/sys/class/leds').glob('*torch*'))):
+                    lambda: bool(_torch_leds())):
                 continue
             if tile.key == 'record' and not self._cached_gate(
                     'record', _recorder_available):

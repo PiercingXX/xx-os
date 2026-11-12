@@ -478,8 +478,17 @@ class TestBrightnessChain:
         als._apply(0.5)
         assert seen[0][0] == 100
 
-    def test_slider_falls_back_past_brightnessctl(self, monkeypatch):
+    @staticmethod
+    def _panel(monkeypatch, tmp_path):
+        import backlight
+        found = backlight.Backlight('lcd-backlight', 'leds',
+                                    tmp_path / 'brightness')
+        monkeypatch.setattr(backlight, 'find', lambda root=None: found)
+
+    def test_slider_falls_back_past_brightnessctl(self, monkeypatch,
+                                                  tmp_path):
         import quick_actions
+        self._panel(monkeypatch, tmp_path)
         monkeypatch.setattr(
             subprocess, 'Popen',
             lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError('nope')))
@@ -490,13 +499,26 @@ class TestBrightnessChain:
         quick_actions._set_brightness_pct(60)
         assert seen == [60]
 
-    def test_slider_keeps_brightnessctl_argv(self, monkeypatch):
+    def test_slider_keeps_brightnessctl_argv(self, monkeypatch, tmp_path):
         import quick_actions
+        self._panel(monkeypatch, tmp_path)
         calls: list = []
         monkeypatch.setattr(
             subprocess, 'Popen', lambda cmd, **k: calls.append(cmd))
         quick_actions._set_brightness_pct(72)
-        assert calls == [['brightnessctl', 'set', '72%']]
+        assert calls == [
+            ['brightnessctl', '--device', 'lcd-backlight', 'set', '72%']]
+
+    def test_slider_without_panel_writes_nothing(self, monkeypatch):
+        import quick_actions
+        calls: list = []
+        monkeypatch.setattr(
+            subprocess, 'Popen', lambda cmd, **k: calls.append(cmd))
+        monkeypatch.setattr(
+            quick_actions, 'apply_backlight_pct',
+            lambda pct: calls.append(pct) or True)
+        quick_actions._set_brightness_pct(72)
+        assert calls == []
 
 
 # ---------------------------------------------------------------------------

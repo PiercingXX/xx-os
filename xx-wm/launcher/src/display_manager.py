@@ -263,7 +263,7 @@ def _wlopm(mode: str) -> bool:
 
 def _brightnessctl(*args: str) -> str | None:
     """brightnessctl on the panel backlight (backlight class, else the
-    *backlight LED: /sys/class/leds/lcd-backlight on the FLX1). Never bare:
+    allow-listed panel LED: /sys/class/leds/lcd-backlight on the FLX1). Never bare:
     without --device it picks the first device, the FLX1's vibrator LED.
     A refused 'set' falls back to logind's SetBrightness. Blocking: call
     from the backlight worker only."""

@@ -12,6 +12,10 @@ from pathlib import Path
 _TEST_CACHE = tempfile.mkdtemp(prefix='xx-wm-test-cache-')
 os.environ['XDG_CACHE_HOME'] = _TEST_CACHE
 atexit.register(shutil.rmtree, _TEST_CACHE, True)
+# Nor the host's /sys/class backlight and LEDs (a workstation's
+# input*::scrolllock): brightness and torch code see an empty tree; a test
+# that needs a panel builds one under its own root.
+os.environ['XX_WM_SYSFS_CLASS'] = os.path.join(_TEST_CACHE, 'no-sysfs')
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 # The shell themes through the shared design system: common/xx_ui must be

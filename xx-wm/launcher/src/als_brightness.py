@@ -53,7 +53,7 @@ def _note_failure(message: str, *args) -> None:
 # Ambient light sensor via Linux IIO subsystem.
 # Kernel path: /sys/bus/iio/devices/iio:deviceN/in_illuminance_input (lux)
 # Verify the FP5's sensor node with: ls /sys/bus/iio/devices/
-# Backlight: backlight.find() (backlight class, else a *backlight LED)
+# Backlight: backlight.find() (backlight class, else an allow-listed panel LED)
 
 _IIO_GLOB = '/sys/bus/iio/devices/iio:device*/in_illuminance_input'
 _POLL_INTERVAL_MS = 2000

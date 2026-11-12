@@ -165,7 +165,10 @@ def main() -> int:
                GSK_RENDERER='cairo', XDG_RUNTIME_DIR=run_dir,
                SNAP_OUT=os.path.abspath(a.out), SNAP_W=str(w),
                SNAP_H=str(h), SNAP_DELAY=str(a.delay),
-               SNAP_SCRIPT=os.path.abspath(a.script) if a.script else '')
+               SNAP_SCRIPT=os.path.abspath(a.script) if a.script else '',
+               # The shell's brightness and torch code: an empty sysfs,
+               # never the workstation's real LEDs.
+               XX_WM_SYSFS_CLASS=os.path.join(run_dir, 'no-sysfs'))
     if a.path:
         env['PYTHONPATH'] = os.pathsep.join(
             [os.path.abspath(x) for x in a.path] + [env.get('PYTHONPATH', '')])
