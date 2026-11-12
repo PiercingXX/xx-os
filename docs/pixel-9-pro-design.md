@@ -49,9 +49,13 @@ a part that can be swapped in weeks, not a foundation.
 ## 1. The claim
 
 A Linux phone on current flagship hardware that is also the owner's workstation when a
-monitor is plugged in. No Linux port of any Pixel 9 was found, and no mainline kernel
-support for its chip (*reported*). The only other systems on the 9 Pro are
-Android-based. If this boots, calls, and docks, it is the first.
+monitor is plugged in. When this was written no Linux port of any Pixel 9 had been
+found. That is out of date: postmarketOS (now Nura) reports the Pixel 9 (`tokay`)
+booting a mainline 7.1 kernel with a picture and USB networking, on a community tree
+with display, GPU, modem and audio drivers for Tensor G4 (*reported*; sources and
+detail in [`pixel-9-bringup.md`](pixel-9-bringup.md)). Nobody has shown an external
+monitor or a voice call on a Pixel 9 under Linux yet. If this boots, calls, and docks
+as a workstation, it is the first to do all three.
 
 Three things have to be true for that claim, and the design is ordered around proving
 them early:
@@ -235,9 +239,13 @@ work, last touched August 2026; existing distros ship the Android 13 edition
   Nura in September 2026) classes Android-kernel ports as a stepping stone that can be
   archived at any time (*sourced*), so it is a second target for the shell and apps,
   not the base.
-- **Kernel:** Google's 6.1 Pixel kernel built from source (manifest
-  `android-gs-caimito-6.1-android16`, *sourced*), kept compatible with the vendor
-  modules. Note the trend: Google's driver page lists the 9 Pro for Android 14 and 15
+- **Kernel (amended 2026-11-12, owner's decision):** the mainline-based community
+  tree first, because it is the shortest path to normal Linux graphics and DisplayPort;
+  Google's 6.1 Pixel kernel built from source (GrapheneOS's tree, which is current;
+  Google's manifest `android-gs-caimito-6.1-android16` is *sourced* but stopped in June
+  2025) only as the fallback, kept compatible with the vendor modules. The plan and
+  tooling are in [`pixel-9-bringup.md`](pixel-9-bringup.md) and `scripts/pixel/`. No
+  Pixel boots until the serial adapter is here. Note the trend: Google's driver page lists the 9 Pro for Android 14 and 15
   only, and device trees reportedly stopped at 16 (*reported*).
 - **Images:** built in public CI: a root filesystem plus Android-format boot images.
 - **Install:** flash the project's slot and leave working Android on the other slot
