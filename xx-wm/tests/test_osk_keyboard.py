@@ -121,9 +121,14 @@ class TestRunningKeyboard:
         assert osk.running_keyboard(_proc(tmp_path, {1: 'systemd'})) is None
 
 
+def _scan_inline(proc, done):
+    done(osk.running_keyboard(proc))
+
+
 def _link(tmp_path, procs):
     bus = FakeBus()
-    return osk.KeyboardLink(bus, proc=_proc(tmp_path, procs)), bus
+    return osk.KeyboardLink(bus, proc=_proc(tmp_path, procs),
+                            scan=_scan_inline), bus
 
 
 class TestKeyboardLink:
@@ -185,6 +190,29 @@ class TestKeyboardLink:
         bus.answer('GetNameOwner', _Reply(':1.7'))
         bus.answer('GetConnectionUnixProcessID', _Error('no pid'))
         assert len(bus.set_visible_calls()) == 1
+
+    def test_proc_scan_runs_off_the_main_thread(
+            self, real_gi, tmp_path, monkeypatch):
+        """The /proc scan took 37-55 ms on the GTK thread at startup.
+        It runs on a worker; the request waits for its answer."""
+        import threading
+        scanned = []
+        real_scan = osk.running_keyboard
+
+        def _spy(*args, **kwargs):
+            scanned.append(threading.current_thread())
+            return real_scan(*args, **kwargs)
+
+        monkeypatch.setattr(osk, 'running_keyboard', _spy)
+        bus = FakeBus()
+        link = osk.KeyboardLink(
+            bus, proc=_proc(tmp_path, {20: 'xx-keyboard', 30: 'squeekboard'}))
+        link.set_visible(True)
+        bus.answer('GetNameOwner', _Reply(':1.9'))
+        bus.answer('GetConnectionUnixProcessID', _Reply(30))
+        assert _spin(lambda: link._resolved)
+        assert scanned and threading.main_thread() not in scanned
+        assert bus.set_visible_calls() == []   # squeekboard is not asked
 
 
 def test_reply_types_are_variant_types_or_none():

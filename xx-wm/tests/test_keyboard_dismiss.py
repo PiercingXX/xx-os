@@ -123,7 +123,9 @@ def _install_dbus(window):
 
     glib.Variant = variant
     glib.VariantType = types.SimpleNamespace(new=lambda sig: sig)
-    osk._LINK = None
+    # The /proc scan runs inline here; the shell runs it on a worker.
+    osk._LINK = osk.KeyboardLink(
+        FakeBus(), scan=lambda proc, done: done(osk.running_keyboard(proc)))
     return calls
 
 

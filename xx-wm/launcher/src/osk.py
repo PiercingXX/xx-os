@@ -17,6 +17,7 @@ never to another keyboard that happens to hold the name.
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -48,19 +49,22 @@ def running_keyboard(proc: Path = Path('/proc'),
     uid = os.getuid() if uid is None else uid
     found: set[str] = set()
     try:
-        entries = list(proc.iterdir())
+        with os.scandir(proc) as entries:
+            pids = [entry for entry in entries if entry.name.isdigit()]
     except OSError:
         return None
-    for entry in entries:
-        if not entry.name.isdigit():
-            continue
+    for entry in pids:
         try:
-            name = _keyboard_for_comm((entry / 'comm').read_text())
-            if name is None or entry.stat().st_uid != uid:
+            # Owner first: most processes are not ours, and a stat is
+            # cheaper than reading their comm.
+            if entry.stat().st_uid != uid:
                 continue
+            with open(os.path.join(entry.path, 'comm'), 'rb') as fh:
+                name = _keyboard_for_comm(fh.read().decode(errors='replace'))
         except OSError:
             continue
-        found.add(name)
+        if name is not None:
+            found.add(name)
     for name in KEYBOARDS:
         if name in found:
             return name
@@ -72,6 +76,23 @@ def _comm_of(pid: int, proc: Path = Path('/proc')) -> str | None:
         return _keyboard_for_comm((proc / str(pid) / 'comm').read_text())
     except OSError:
         return None
+
+
+def _scan_off_main(proc: Path, done: Callable[[str | None], None]) -> None:
+    """running_keyboard on a worker (a /proc scan took 37-55 ms on the
+    GTK thread at startup); done(name) runs back on the main loop."""
+    from gi.repository import GLib
+
+    def _work() -> None:
+        name = running_keyboard(proc)
+
+        def _deliver() -> bool:
+            done(name)
+            return False
+
+        GLib.idle_add(_deliver)
+
+    threading.Thread(target=_work, daemon=True, name='xx-wm-osk-scan').start()
 
 
 def _log():
@@ -87,9 +108,14 @@ class KeyboardLink:
     and sent once the owner is known to be the running keyboard.
     """
 
-    def __init__(self, bus: object, proc: Path = Path('/proc')) -> None:
+    def __init__(self, bus: object, proc: Path = Path('/proc'),
+                 scan: Callable[[Path, Callable[[str | None], None]], None]
+                 = _scan_off_main) -> None:
         self._bus = bus
         self._proc = proc
+        self._scan = scan
+        self._generation = 0
+        self._waiting = 0
         self._started = False
         self._resolved = False
         self._owner: str | None = None
@@ -137,30 +163,44 @@ class KeyboardLink:
     def _set_owner(self, owner: str) -> None:
         self._owner = owner or None
         self._owner_keyboard = None
-        self._running = running_keyboard(self._proc)
-        if self._owner is None:
-            self._resolved = True
-            self._flush()
-            return
         self._resolved = False
+        self._generation += 1
+        generation = self._generation
+        # Resolved once the /proc scan (and, with an owner, its PID) answer.
+        self._waiting = 1 if self._owner is None else 2
+        self._scan(self._proc, lambda name, generation=generation:
+                   self._on_running(generation, name))
+        if self._owner is None:
+            return
         from gi.repository import Gio, GLib
         self._bus.call(
             _DBUS_NAME, _DBUS_PATH, _DBUS_IFACE, 'GetConnectionUnixProcessID',
             GLib.Variant('(s)', (self._owner,)), GLib.VariantType.new('(u)'),
             Gio.DBusCallFlags.NONE, 1000, None,
-            lambda bus, result, owner=self._owner:
-            self._on_owner_pid(bus, result, owner))
+            lambda bus, result, generation=generation:
+            self._on_owner_pid(bus, result, generation))
 
-    def _on_owner_pid(self, bus, result, owner: str) -> None:
-        if owner != self._owner:
-            return   # the name moved on while we asked
+    def _on_running(self, generation: int, name: str | None) -> None:
+        if generation != self._generation:
+            return   # the name moved on while we looked
+        self._running = name
+        self._part_done()
+
+    def _on_owner_pid(self, bus, result, generation: int) -> None:
+        if generation != self._generation:
+            return
         try:
             pid = bus.call_finish(result).unpack()[0]
             self._owner_keyboard = _comm_of(pid, self._proc)
         except Exception:
             self._owner_keyboard = None
-        self._resolved = True
-        self._flush()
+        self._part_done()
+
+    def _part_done(self) -> None:
+        self._waiting -= 1
+        if self._waiting <= 0:
+            self._resolved = True
+            self._flush()
 
     # -- sending ----------------------------------------------------------
     def target(self) -> str | None:
