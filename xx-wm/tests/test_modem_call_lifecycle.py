@@ -9,7 +9,10 @@ Reuses the FakeBus / idle-queue harness of test_modem_monitor_calls.py
 (same fake gi, same module-bound references).
 """
 import sys
+import types
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -18,6 +21,24 @@ from test_modem_monitor_calls import (  # noqa: E402
     _VOICE_IFACE, _add_call, _delete_call, _make_monitor, _number_changed,
     _ringing_props, _shown, _state_changed, modem_monitor,
 )
+
+
+@pytest.fixture(autouse=True)
+def _complete_fakes(monkeypatch):
+    """modem_monitor is bound to whichever fake gi a sibling module
+    installed first; make sure the pieces these tests reach exist."""
+    glib, gio = modem_monitor.GLib, modem_monitor.Gio
+    for name, value in (('Variant', lambda *a, **k: None),
+                        ('timeout_add', lambda *a, **k: 1),
+                        ('source_remove', lambda *a, **k: None)):
+        if not hasattr(glib, name):
+            monkeypatch.setattr(glib, name, value, raising=False)
+    for name, value in (
+            ('BusType', types.SimpleNamespace(SYSTEM=1, SESSION=2)),
+            ('DBusCallFlags', types.SimpleNamespace(NONE=0)),
+            ('DBusSignalFlags', types.SimpleNamespace(NONE=0))):
+        if not hasattr(gio, name):
+            monkeypatch.setattr(gio, name, value, raising=False)
 
 
 def _timers(monkeypatch):
@@ -297,6 +318,67 @@ class TestMonitorClose:
         for cb, args in pending:
             cb(*args)
         assert bus.subs == [] and bus.calls == []
+
+
+class TestWatchCallEnd:
+    """A placed call reports its end to whoever placed it, so a
+    "Dialing…" status line never outlives a call the network dropped."""
+
+    def test_normal_end_reports_empty_text(self, monkeypatch):
+        bus = FakeBus()
+        monitor, _fired, _, drain = _make_monitor(bus, monkeypatch)
+        _add_call(monitor, bus, drain, CALL1,
+                  _ringing_props(direction=2,
+                                 state=modem_monitor._STATE_DIALING))
+        ended = []
+        assert modem_monitor.watch_call_end(CALL1, ended.append) is True
+        _state_changed(monitor, drain, CALL1, modem_monitor._STATE_TERMINATED)
+        assert ended == ['']
+
+    def test_network_drop_reports_the_reason(self, monkeypatch):
+        bus = FakeBus()
+        monitor, _fired, _, drain = _make_monitor(bus, monkeypatch)
+        _add_call(monitor, bus, drain, CALL1,
+                  _ringing_props(direction=2,
+                                 state=modem_monitor._STATE_DIALING))
+        ended = []
+        modem_monitor.watch_call_end(CALL1, ended.append)
+        monitor._on_call_state_changed(
+            None, None, CALL1, None, None,
+            FakeParams((1, modem_monitor._STATE_TERMINATED, 6)), None)
+        drain()
+        assert ended == ['Network error']
+
+    def test_watch_before_the_call_is_adopted(self, monkeypatch):
+        """voice_create_and_start can return before CallAdded is seen."""
+        bus = FakeBus()
+        monitor, _fired, _, drain = _make_monitor(bus, monkeypatch)
+        ended = []
+        modem_monitor.watch_call_end(CALL1, ended.append)
+        _add_call(monitor, bus, drain, CALL1,
+                  _ringing_props(direction=2,
+                                 state=modem_monitor._STATE_DIALING))
+        _delete_call(monitor, bus, drain, CALL1)
+        assert ended == ['']
+
+    def test_watch_after_the_end_reports_at_once(self, monkeypatch):
+        bus = FakeBus()
+        monitor, _fired, _, drain = _make_monitor(bus, monkeypatch)
+        _add_call(monitor, bus, drain, CALL1,
+                  _ringing_props(direction=2,
+                                 state=modem_monitor._STATE_DIALING))
+        monitor._on_call_state_changed(
+            None, None, CALL1, None, None,
+            FakeParams((1, modem_monitor._STATE_TERMINATED, 5)), None)
+        drain()
+        ended = []
+        modem_monitor.watch_call_end(CALL1, ended.append)
+        drain()
+        assert ended == ['Busy']
+
+    def test_no_monitor_reports_false(self, monkeypatch):
+        monkeypatch.setattr(modem_monitor, '_last_monitor', None)
+        assert modem_monitor.watch_call_end(CALL1, lambda _t: None) is False
 
 
 class TestFailedStartDeletesCall:

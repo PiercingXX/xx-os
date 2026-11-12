@@ -1464,11 +1464,27 @@ class LockScreen(Gtk.Window):
         from dialer import EMERGENCY_REFUSAL
         if ok:
             text = 'Dialing…'
+            path = str(detail)
+            self._emg_dialing_path = path
+            try:
+                from modem_monitor import watch_call_end
+                watch_call_end(path, lambda end, p=path:
+                               self._emg_call_ended(p, end))
+            except Exception:
+                pass
         elif detail == EMERGENCY_REFUSAL:
             text = EMERGENCY_REFUSAL
         else:
             text = f'Call failed: {str(detail).strip()}'
         self._emg_status.set_text(text)
+        return GLib.SOURCE_REMOVE
+
+    def _emg_call_ended(self, path: str, text: str) -> bool:
+        """The placed call ended (the network may drop it before it is
+        ever answered): 'Dialing…' gives way to the reason, or clears."""
+        if getattr(self, '_emg_dialing_path', None) == path:
+            self._emg_dialing_path = None
+            self._emg_status.set_text(text)
         return GLib.SOURCE_REMOVE
 
     def _modem_emg_thread(self) -> None:

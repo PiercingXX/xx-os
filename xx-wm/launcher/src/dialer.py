@@ -713,14 +713,35 @@ class Dialer(Gtk.Window):
                 ok, detail = place_call(number)
         except Exception as err:  # noqa: BLE001 - the guard must lift
             ok, detail = False, str(err)
-        self._finish_dial('Dialing…' if ok else f'Call failed: {detail.strip()}')
+        if ok:
+            match = _CALL_PATH_RE.search(str(detail))
+            self._finish_dial('Dialing…', match.group(0) if match else None)
+        else:
+            self._finish_dial(f'Call failed: {detail.strip()}')
 
-    def _finish_dial(self, message: str) -> None:
-        GLib.idle_add(self._dial_done, message)
+    def _finish_dial(self, message: str, call_path: str | None = None) -> None:
+        GLib.idle_add(self._dial_done, message, call_path)
 
-    def _dial_done(self, message: str) -> bool:
+    def _dial_done(self, message: str, call_path: str | None = None) -> bool:
         self._dialing = False
         self._set_status(message)
+        self._dial_path = call_path
+        if call_path is not None:
+            try:
+                from modem_monitor import watch_call_end
+                watch_call_end(call_path, lambda end, p=call_path:
+                               self._dial_ended(p, end))
+            except Exception:
+                pass
+        return False
+
+    def _dial_ended(self, call_path: str, text: str) -> bool:
+        """The placed call ended: 'Dialing…' gives way to the reason, or
+        clears, unless something newer took the status line since."""
+        if (getattr(self, '_dial_path', None) == call_path
+                and self._status.get_text() == 'Dialing…'):
+            self._status.set_text(text)
+        self._dial_path = None
         return False
 
     def _set_status(self, message: str) -> None:

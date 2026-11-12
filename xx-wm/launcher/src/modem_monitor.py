@@ -248,6 +248,25 @@ def last_ended_call() -> CallInfo | None:
     return replace(ended) if ended is not None else None
 
 
+def watch_call_end(call_path: str, on_end: Callable[[str], None]) -> bool:
+    """Call ``on_end(text)`` once on the main loop when the call at
+    ``call_path`` ends: ``text`` is the short reason for an abnormal end
+    ('Busy', 'Network error') and '' for an ordinary one. For the
+    "Dialing…" line of whoever placed the call. False when no monitor
+    runs, so nothing would ever report."""
+    monitor = _last_monitor
+    if monitor is None:
+        return False
+    monitor._watch_end(str(call_path), on_end)
+    return True
+
+
+def _end_text(call: CallInfo | None) -> str:
+    if call is None or call.state_reason in (0, 1, 2, 3, 4):
+        return ''
+    return call.end_reason or end_reason_text(call.state_reason)
+
+
 def active_call_path() -> str | None:
     """Object path of the preferred live call, if any (incoming ringing
     first, then active, then any other non-terminated call)."""
@@ -680,6 +699,7 @@ class ModemMonitor:
         self._number_waited: set[str] = set()
         self._last_ended: CallInfo | None = None
         self._sms_seen: list[tuple] = []
+        self._end_watchers: dict[str, list] = {}
         self._mm_watch: int | None = None
         self._mm_owner: str | None = None
         self._mm_vanished = False
@@ -717,8 +737,17 @@ class ModemMonitor:
             except Exception:  # noqa: BLE001 - already gone
                 pass
             self._mm_watch = None
+        self._end_watchers.clear()
         if _last_monitor is self:
             _last_monitor = None
+
+    def _watch_end(self, call_path: str, on_end) -> None:
+        ended = self._last_ended
+        if (call_path not in self._calls and call_path not in self._fetching
+                and ended is not None and ended.path == call_path):
+            GLib.idle_add(on_end, _end_text(ended))
+            return
+        self._end_watchers.setdefault(call_path, []).append(on_end)
 
     # ------------------------------------------------------------ bus setup
 
@@ -982,12 +1011,15 @@ class ModemMonitor:
         self._cancel_number_wait(call_path)
         self._number_waited.discard(call_path)
         self._drop_subscription(call_path)
-        if tracked is None:
-            return
-        if terminated:
+        if terminated and tracked is not None:
             tracked.state = _STATE_TERMINATED
             tracked.end_reason = end_reason_text(tracked.state_reason)
             tracked.ended_at = time.monotonic()
+        for on_end in self._end_watchers.pop(call_path, []):
+            GLib.idle_add(on_end, _end_text(tracked) if terminated else '')
+        if tracked is None:
+            return
+        if terminated:
             self._last_ended = tracked
             if tracked.state_reason not in (0, 1, 2, 3, 4):
                 from shell_log import get_logger

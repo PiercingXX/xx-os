@@ -261,6 +261,36 @@ class TestEmergencyFromDialer:
         assert used == [('emg', '112'), ('call', '5551234567')]
 
 
+class TestDialingEnds:
+    def test_dialing_status_follows_the_call_end(self, monkeypatch):
+        flush = _flush_idle(monkeypatch)
+        d = _make_dialer(monkeypatch)
+        path = '/org/freedesktop/ModemManager1/Call/4'
+        watched = {}
+        monkeypatch.setattr(dialer, 'place_call', lambda number: (True, path))
+        monkeypatch.setattr(modem_monitor, 'watch_call_end',
+                            lambda p, cb: watched.setdefault(p, cb) or True)
+        d._initiate_call('5551234567')
+        flush()
+        assert d._status.text == 'Dialing…'
+        watched[path]('')
+        assert d._status.text == ''
+
+    def test_newer_status_is_left_alone(self, monkeypatch):
+        flush = _flush_idle(monkeypatch)
+        d = _make_dialer(monkeypatch)
+        path = '/org/freedesktop/ModemManager1/Call/5'
+        watched = {}
+        monkeypatch.setattr(dialer, 'place_call', lambda number: (True, path))
+        monkeypatch.setattr(modem_monitor, 'watch_call_end',
+                            lambda p, cb: watched.setdefault(p, cb) or True)
+        d._initiate_call('5551234567')
+        flush()
+        d._set_status('Code not sent: x')
+        watched[path]('Busy')
+        assert d._status.text == 'Code not sent: x'
+
+
 class TestCallInFlightGuard:
     """A second tap on Call while the first dial is still in flight
     places nothing; the guard lifts once the first attempt reports."""

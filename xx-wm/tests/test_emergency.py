@@ -785,6 +785,9 @@ class _EmgHarness:
     def _emg_call_done(self, number, ok, detail):
         return _lock_screen().LockScreen._emg_call_done(self, number, ok, detail)
 
+    def _emg_call_ended(self, path, text):
+        return _lock_screen().LockScreen._emg_call_ended(self, path, text)
+
     def _modem_emg_thread(self):
         _lock_screen().LockScreen._modem_emg_thread(self)
 
@@ -963,6 +966,28 @@ class TestEmergencySurface:
         lock_screen.LockScreen._on_emg_call(lock, None)
         assert placed == ['911']
         assert lock._emg_status.text == 'Dialing…'
+
+    def test_dialing_ends_when_the_call_does(self, emg_lock, monkeypatch):
+        """'Dialing…' never outlives a call the network dropped: the
+        line clears on an ordinary end and shows the reason otherwise."""
+        monitor = _modem_monitor()
+        lock_screen = emg_lock.module
+        lock = emg_lock.lock
+        watched = {}
+        monkeypatch.setattr(monitor, 'voice_create_and_start',
+                            lambda number, *a, **k: (True, '/c/1'))
+        monkeypatch.setattr(monitor, 'watch_call_end',
+                            lambda path, cb: watched.setdefault(path, cb)
+                            or True)
+        lock._emg_digits = '112'
+        lock_screen.LockScreen._on_emg_call(lock, None)
+        assert lock._emg_status.text == 'Dialing…'
+        watched['/c/1']('Network error')
+        assert lock._emg_status.text == 'Network error'
+        watched.clear()
+        lock_screen.LockScreen._on_emg_call(lock, None)
+        watched['/c/1']('')
+        assert lock._emg_status.text == ''
 
     def test_failed_call_reports_detail(self, emg_lock, monkeypatch):
         monitor = _modem_monitor()
