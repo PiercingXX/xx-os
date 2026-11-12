@@ -27,6 +27,7 @@ _log = logging.getLogger('piercing.xxdb')
 VERSION = '1'
 INSTALL_DEST = '/usr/share/xx-wm'
 SHELL_MAIN_SUFFIX = 'xx-wm/main.py'
+RESTART_DELAY_S = 0.5
 
 _IPC_VERBS = frozenset({
     'lock', 'shade.show', 'shade.hide', 'switcher.show', 'switcher.hide',
@@ -144,22 +145,36 @@ def _default_sudo_check() -> bool:
         return False
 
 
-def _default_shell_restarter() -> int:
-    matches = []
-    for pid in os.listdir('/proc'):
-        if not pid.isdigit() or int(pid) == os.getpid():
-            continue
+def _is_shell_process(proc_root: str, pid: int) -> bool:
+    try:
+        cmdline = Path(proc_root, str(pid), 'cmdline').read_bytes()
+    except OSError:
+        return False
+    text = ' '.join(p.decode(errors='replace') for p in cmdline.split(b'\0'))
+    return 'python' in text and SHELL_MAIN_SUFFIX in text
+
+
+def _default_shell_restarter(proc_root: str = '/proc', self_pid=None,
+                             kill=os.kill):
+    """(pid, fire): the shell's python process and the SIGUSR1 that makes
+    the /usr/bin/xx-wm supervisor respawn it. When the daemon runs inside
+    the shell, that is this process; `fire` runs after the reply is sent."""
+    me = os.getpid() if self_pid is None else self_pid
+    if _is_shell_process(proc_root, me):
+        target = me
+    else:
         try:
-            cmdline = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
+            names = os.listdir(proc_root)
         except OSError:
-            continue
-        text = ' '.join(p.decode(errors='replace') for p in cmdline)
-        if 'python' in text and SHELL_MAIN_SUFFIX in text:
-            matches.append(int(pid))
-    if len(matches) != 1:
-        raise DaemonError(f'no unique shell child to restart (found {len(matches)})')
-    os.kill(matches[0], signal.SIGUSR1)
-    return matches[0]
+            names = []
+        matches = [int(name) for name in names
+                   if name.isdigit() and int(name) != me
+                   and _is_shell_process(proc_root, int(name))]
+        if len(matches) != 1:
+            raise DaemonError(
+                f'no unique shell process to restart (found {len(matches)})')
+        target = matches[0]
+    return target, lambda: kill(target, signal.SIGUSR1)
 
 
 def _default_input(action: str, params: dict) -> tuple[bool, str]:
@@ -826,12 +841,17 @@ class XxdbDaemon:
                 dest = stage / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(data)
+            # The datadir stays root-owned and world-readable: rsync -a
+            # alone would copy the staging owner and its 0700 mode onto it.
             rsync = shutil.which('rsync')
             if rsync:
-                cmd = ['sudo', '-n', 'rsync', '-a', f'{stage}/',
+                cmd = ['sudo', '-n', 'rsync', '-a', '--chown=root:root',
+                       '--chmod=D755,F644', f'{stage}/',
                        f'{self.install_dest}/']
             else:
-                cmd = ['sudo', '-n', 'cp', '-a'] + [
+                for path in stage.rglob('*'):
+                    os.chmod(path, 0o755 if path.is_dir() else 0o644)
+                cmd = ['sudo', '-n', 'cp', '-R'] + [
                     str(p) for p in stage.iterdir()] + [self.install_dest + '/']
             result = subprocess.run(cmd, capture_output=True, text=True,
                                     timeout=300)
@@ -847,11 +867,16 @@ class XxdbDaemon:
     def _cmd_restart_shell(self, session: _Session, request_id, _message):
         del session
         try:
-            pid = self.shell_restarter()
+            result = self.shell_restarter()
         except DaemonError as error:
             yield {'id': request_id, 'ok': False, 'error': str(error)}
             return
+        pid, fire = result if isinstance(result, tuple) else (result, None)
         yield {'id': request_id, 'ok': True, 'pid': pid}
+        if fire is not None:
+            timer = threading.Timer(RESTART_DELAY_S, fire)
+            timer.daemon = True
+            timer.start()
 
     def _cmd_ipc(self, session: _Session, request_id, message):
         del session
