@@ -572,6 +572,14 @@ class ShellConfig:
         clears it when the helper turns out to hold no PIN."""
         _HELPER_PIN_PATHS.add(str(self.config_path))
 
+    def drop_helper_pin(self) -> None:
+        """The helper holds no PIN: drop the marker, written or assumed,
+        but keep a local hash, which then stands on its own."""
+        _HELPER_PIN_PATHS.discard(str(self.config_path))
+        if self.data.get('pin_hash') == HELPER_PIN_MARKER:
+            self.data.pop('pin_hash', None)
+            self.save()
+
     def clear_pin(self) -> None:
         """Forget the PIN locally (hash or marker)."""
         _HELPER_PIN_PATHS.discard(str(self.config_path))

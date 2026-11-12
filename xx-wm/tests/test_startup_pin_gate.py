@@ -410,6 +410,115 @@ class TestSilentHelperFailsClosed:
         assert helper_client.helper_installed(dirs=()) is False
 
 
+def _local_hash(pin: str) -> str:
+    other = ShellConfig.__new__(ShellConfig)
+    other.data = {}
+    other.config_path = Path('/nonexistent/config.json')
+    other.save = lambda: None
+    other.set_pin(pin)
+    return other.data['pin_hash']
+
+
+class TestLocalHashAtStartup:
+    """A local pbkdf2 hash in config at process start (written while the
+    marker was lost) must not replace a PIN the helper holds."""
+
+    LOCAL = '111111'
+
+    @pytest.fixture(autouse=True)
+    def _config_with_local_hash(self):
+        _config_path().write_text(json.dumps(
+            {'theme': 'ocean', 'pin_hash': _local_hash(self.LOCAL)}))
+
+    def test_helper_pin_wins(self, app, store, monkeypatch, service_dir):
+        _install_helper(service_dir)
+        fake = FakeHelper(store).install(monkeypatch)
+        app.do_activate()
+        assert fake.calls[:1] == ['HasPin']
+        assert app.shells == [HELPER_PIN_MARKER]
+        config = ShellConfig()
+        assert _verify(config, self.LOCAL)[0] is False
+        assert _verify(config, PIN)[0] is True
+        data = json.loads(_config_path().read_text(encoding='utf-8'))
+        assert data['pin_hash'] == HELPER_PIN_MARKER
+
+    def test_no_helper_record_keeps_the_local_pin(self, app, store,
+                                                  monkeypatch, service_dir):
+        _install_helper(service_dir)
+        store.clear_pin(UID, PIN)
+        FakeHelper(store).install(monkeypatch)
+        app.do_activate()
+        config = ShellConfig()
+        assert config.pin_hash.startswith('pbkdf2$')
+        assert _verify(config, '000000')[0] is False
+        assert _verify(config, self.LOCAL)[0] is True
+
+    def test_silent_installed_helper_verifies_through_the_helper(
+            self, app, store, monkeypatch, service_dir, timers):
+        _install_helper(service_dir)
+        SilentHelper(store).install(monkeypatch)
+        app.do_activate()
+        assert app.shells == []
+        _fire(timers)
+        assert app.shells == [HELPER_PIN_MARKER]
+        config = ShellConfig()
+        assert _verify(config, self.LOCAL)[0] is False
+        assert _verify(config, PIN)[0] is True
+
+    def test_silent_helper_without_a_record_falls_back_to_local(
+            self, app, store, monkeypatch, service_dir, timers):
+        _install_helper(service_dir)
+        store.clear_pin(UID, PIN)
+        SilentHelper(store).install(monkeypatch)
+        app.do_activate()
+        _fire(timers)
+        config = ShellConfig()
+        # Never "any PIN": the local hash stands once the helper says
+        # it holds none.
+        assert _verify(config, '000000')[0] is False
+        assert _verify(config, self.LOCAL)[0] is True
+
+    def test_late_answer_replaces_the_local_hash(self, app, store,
+                                                 monkeypatch, service_dir,
+                                                 timers):
+        _install_helper(service_dir)
+        helper_ = SilentHelper(store).install(monkeypatch)
+        app.do_activate()
+        _fire(timers)
+        helper_.answer()
+        data = json.loads(_config_path().read_text(encoding='utf-8'))
+        assert data['pin_hash'] == HELPER_PIN_MARKER
+
+    def test_late_no_pin_answer_keeps_the_local_hash(self, app, store,
+                                                     monkeypatch, service_dir,
+                                                     timers):
+        _install_helper(service_dir)
+        store.clear_pin(UID, PIN)
+        helper_ = SilentHelper(store).install(monkeypatch)
+        app.do_activate()
+        _fire(timers)
+        helper_.answer()
+        config = ShellConfig()
+        assert config.pin_hash.startswith('pbkdf2$')
+        assert _verify(config, self.LOCAL)[0] is True
+
+    def test_silent_uninstalled_helper_keeps_the_local_pin(
+            self, app, store, monkeypatch, service_dir, timers):
+        SilentHelper(store).install(monkeypatch)
+        app.do_activate()
+        _fire(timers)
+        assert app.shells and app.shells[0].startswith('pbkdf2$')
+
+    def test_pin_helper_off_never_asks(self, app, store, monkeypatch,
+                                       service_dir, timers):
+        _install_helper(service_dir)
+        fake = FakeHelper(store).install(monkeypatch)
+        monkeypatch.setenv('XX_WM_PIN_HELPER', '0')
+        app.do_activate()
+        assert fake.calls == [] and timers == []
+        assert app.shells[0].startswith('pbkdf2$')
+
+
 @pytest.mark.usefixtures('_no_window_leak')
 class TestWindowGateFailsClosed:
     """The shell window's own gate (no app gate ran) behaves the same."""

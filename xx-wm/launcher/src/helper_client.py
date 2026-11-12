@@ -693,7 +693,8 @@ def pin_verify(config, pin: str, on_result: PinCallback) -> None:
     if config.pin_hash is None:
         on_result(True, 0, None)
         return
-    if not _in_helper(config):
+
+    def _verify_local() -> None:
         try:
             matched = bool(config.verify_pin(pin))
         except Exception:
@@ -704,6 +705,9 @@ def pin_verify(config, pin: str, on_result: PinCallback) -> None:
                 migrate_pin(config, pin)
             except Exception:
                 pass
+
+    if not _in_helper(config):
+        _verify_local()
         return
 
     def _reply(ok: bool, result) -> None:
@@ -718,14 +722,19 @@ def pin_verify(config, pin: str, on_result: PinCallback) -> None:
             return
         if not has:
             # The helper lost the record (state wiped by root): treat the
-            # marker as stale, exactly like an absent config key.
+            # marker as stale, exactly like an absent config key. A local
+            # hash under an assumed marker (startup_pin_gate) stands.
             _log_pin_once('pin-lost', _logging.WARNING,
                           'helper has no PIN record; clearing the marker')
+            drop = getattr(config, 'drop_helper_pin', None) or config.clear_pin
             try:
-                config.clear_pin()
+                drop()
             except OSError:
                 pass
-            on_result(True, 0, None)
+            if config.pin_hash is None:
+                on_result(True, 0, None)
+            else:
+                _verify_local()
             return
         on_result(bool(matched), int(retry or 0), None)
 
@@ -797,34 +806,51 @@ def _add_timeout(ms: int, fn) -> None:
 
 def startup_pin_gate(config, on_decided, on_late=None, *,
                      wait_ms: int = STARTUP_PIN_WAIT_MS) -> None:
-    """Startup: does a PIN guard this session? ``on_decided(locked)``
-    fires exactly once, before anything is shown.
+    """Startup: does a PIN guard this session, and whose? ``on_decided
+    (locked)`` fires exactly once, before anything is shown.
 
-    Locked: config holds a PIN (hash or marker), or the helper reports
-    one (pin_sync restores the marker). No answer — an error, or nothing
-    within ``wait_ms`` — fails closed while PINs live in the helper and
-    the helper is installed (helper_installed): the marker is assumed
-    for this process (config.assume_pin_in_helper, not written to disk),
-    so the PIN pad verifies through the helper once it answers, and
-    pin_verify clears it if the helper holds no PIN after all. Unlocked:
-    the helper answers that it holds no PIN, PINs do not live in the
-    helper in this run (pin_helper_enabled), or it is not installed.
+    Locked: config holds the marker, or the helper reports a PIN
+    (pin_sync restores the marker). A local hash in config is asked
+    about too: when the helper holds a PIN, the helper's PIN wins and
+    the local hash is replaced by the marker (a hash written into
+    config.json while the marker was lost must not become the PIN). No
+    answer — an error, or nothing within ``wait_ms`` — fails closed
+    while PINs live in the helper and the helper is installed
+    (helper_installed): the marker is assumed for this process
+    (config.assume_pin_in_helper, not written to disk), so the PIN pad
+    verifies through the helper once it answers; pin_verify drops it if
+    the helper holds no PIN after all, and a local hash then stands.
+    Unlocked: no PIN in config, and the helper answers that it holds
+    none, PINs do not live in the helper in this run
+    (pin_helper_enabled), or it is not installed.
 
-    A late HasPin answer reconciles: no PIN drops an assumed marker
-    (the lock that is up then unlocks with a swipe); a PIN persists it,
-    and calls ``on_late()`` when the session was let up unlocked.
+    A late HasPin answer reconciles: no PIN drops an assumed marker (a
+    lock that is up then opens with a swipe, or with the local PIN); a
+    PIN persists the marker, and calls ``on_late()`` when the session
+    was let up unlocked.
     """
     late = on_late or (lambda: None)
     state = {'decided': False, 'locked': False, 'assumed': False}
+    local = config.pin_hash is not None and not _in_helper(config)
 
     def _decide(locked: bool) -> None:
         state['decided'] = True
         state['locked'] = locked
         on_decided(locked)
 
+    def _adopt() -> None:
+        if local:
+            _log_pin_once('pin-helper-wins', _logging.WARNING,
+                          'helper holds the PIN; local hash in config '
+                          'replaced by the marker')
+        try:
+            config.set_pin_in_helper()
+        except (AttributeError, OSError):
+            pass
+
     def _unanswered() -> None:
         if not pin_helper_enabled() or not helper_installed():
-            _decide(False)
+            _decide(local)
             return
         assume = getattr(config, 'assume_pin_in_helper', None)
         if callable(assume):
@@ -833,32 +859,38 @@ def startup_pin_gate(config, on_decided, on_late=None, *,
         _log.warning('PIN helper did not answer; locked until it does')
         _decide(True)
 
-    def _answer(has_pin) -> None:
+    def _answer(held) -> None:
         if not state['decided']:
-            if has_pin is None:
+            if held is None:
                 _unanswered()
-            else:
-                _decide(bool(has_pin) or config.pin_hash is not None)
+                return
+            if held and local:
+                _adopt()
+            _decide(bool(held) or config.pin_hash is not None)
             return
-        if has_pin is None:
+        if held is None:
             return
-        if state['assumed']:
-            state['assumed'] = False
+        assumed, state['assumed'] = state['assumed'], False
+        if held:
+            if assumed or local:
+                _adopt()
+            if not state['locked']:
+                late()
+        elif assumed:
             try:
-                if has_pin:
-                    config.set_pin_in_helper()
-                else:
-                    config.clear_pin()
+                config.drop_helper_pin()
             except (AttributeError, OSError):
                 pass
-        elif has_pin and not state['locked']:
-            late()
 
-    if config.pin_hash is not None:
+    if config.pin_hash is not None and (_in_helper(config)
+                                        or not pin_helper_enabled()):
         _decide(True)
         return
     try:
-        pin_sync(config, _answer)
+        if local:
+            has_pin(lambda ok, result: _answer(bool(result) if ok else None))
+        else:
+            pin_sync(config, _answer)
     except Exception:
         if state['decided']:
             raise  # from on_decided, not from asking the helper

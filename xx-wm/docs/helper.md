@@ -283,6 +283,13 @@ read the hash and brute-force it offline:
   helper that is installed but broken keeps the session locked until it
   is fixed (over ssh or a TTY). Dev runs (`XX_WM_PIN_HELPER=0`, or no
   `XX_WM_SESSION`) never ask.
+- A local pbkdf2 hash in config at startup is asked about too: when the
+  helper holds a PIN, the helper's PIN wins and the local hash is
+  replaced by the marker, so a hash written into `config.json` while the
+  marker was gone never becomes the PIN. A helper with no record leaves
+  the local hash in charge; a silent installed helper assumes the marker
+  as above, and if it then turns out to hold no PIN the local hash, not
+  "no PIN", is what unlocks.
 - Once this process has seen the helper hold the PIN, every config
   instance reports the marker until the PIN is removed: a hot reload
   that drops it, sets it to `null` or swaps in a local hash changes
