@@ -5,6 +5,9 @@
 # notification daemon or settings. App standby and wireless debugging are
 # off. Start it through the window manager so it lands on river:
 #   xxwm msg action spawn sh /path/to/run-shell.sh
+# The on-screen keyboard runs in the same sealed session, so the shell's
+# SetVisible reaches it: an installed xx-keyboard, or a build tree's binary
+# named by XX_KEYBOARD (its schemas are read from the build's data/).
 set -eu
 here=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 home=${XX_WM_DEV_HOME:-${XDG_RUNTIME_DIR:-/tmp}/xx-wm-dev-home}
@@ -23,11 +26,27 @@ if [ ! -f "$home/.config/xx-wm/config.json" ]; then
 EOF
 fi
 
+kb=${XX_KEYBOARD:-$(command -v xx-keyboard || true)}
+kb_schemas=
+if [ -n "$kb" ] && [ -f "$(dirname -- "$kb")/../data/gschemas.compiled" ]; then
+    kb_schemas=$(CDPATH='' cd -- "$(dirname -- "$kb")/../data" && pwd)
+fi
+
 cd "$here/launcher"
+# shellcheck disable=SC2016 # expanded by the inner shell
 exec env HOME="$home" \
     XDG_CONFIG_HOME="$home/.config" \
     XDG_DATA_HOME="$home/.local/share" \
     XDG_CACHE_HOME="$home/.cache" \
-    LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so.0 \
     PYTHONPATH="$here/launcher/src:$here/../common" \
-    dbus-run-session -- python3 src/main.py >"$log" 2>&1
+    XX_KB="$kb" XX_KB_SCHEMAS="$kb_schemas" \
+    dbus-run-session -- sh -c '
+        if [ -n "$XX_KB" ]; then
+            (
+                [ -n "$XX_KB_SCHEMAS" ] && export GSETTINGS_SCHEMA_DIR="$XX_KB_SCHEMAS"
+                gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled true
+                exec "$XX_KB"
+            ) &
+        fi
+        exec env LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so.0 python3 src/main.py
+    ' >"$log" 2>&1
