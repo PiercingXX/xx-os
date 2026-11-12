@@ -363,7 +363,7 @@ def test_controller_enable_notifies_and_disable_unnotifies(tmp_path):
     from types import SimpleNamespace
     started, stopped = [], []
     daemon = SimpleNamespace(
-        port=37234, addrs=['192.168.1.5'],
+        port=37234, addrs=['192.168.1.5'], phone_fp='0123456789abcdef' * 4,
         pairing=xxdb.PairingSession(),
         system_access=xxdb.SystemAccess(),
         start=lambda: started.append(True),
@@ -382,8 +382,9 @@ def test_controller_enable_notifies_and_disable_unnotifies(tmp_path):
     assert started == [True]
     assert notices and notices[0][0] == 'Wireless debugging'
     assert 'On' in ctrl.status_text()
-    code, shown, _expires = ctrl.issue_pairing_code()
+    code, shown, fingerprint, _expires = ctrl.issue_pairing_code()
     assert len(code) == 6 and shown == '192.168.1.5:37234'
+    assert fingerprint == '0123 4567 89ab cdef'
     ctrl.request_disable()
     assert ctrl.enabled is False
     assert stopped == [True]
@@ -410,9 +411,13 @@ def test_cli_split_hostport():
 def test_cli_subcommands():
     cli = _load_host_cli()
     parser = cli.build_parser()
-    args = parser.parse_args(['pair', 'phone:37234', '123456'])
+    args = parser.parse_args(['pair', 'phone:37234', '123456',
+                              '0123', '4567', '89ab', 'cdef'])
     assert (args.command, args.hostport, args.code) == ('pair', 'phone:37234',
                                                         '123456')
+    assert args.fingerprint == ['0123', '4567', '89ab', 'cdef']
+    with pytest.raises(SystemExit):
+        parser.parse_args(['pair', 'phone:37234', '123456'])
     args = parser.parse_args(['shell', '--to', 'phone', '--', 'echo', 'hi'])
     assert args.command == 'shell' and args.cmd == ['--', 'echo', 'hi']
     args = parser.parse_args(['input', 'phone', 'tap', '10', '20'])
@@ -439,5 +444,5 @@ def test_cli_collect_deploy_tree(tmp_path):
 
 def test_cli_pairing_mac_matches_phone():
     cli = _load_host_cli()
-    assert cli.pairing_mac('482916', 'ab' * 32, b'host') == \
-        xxdb.pairing_mac('482916', 'ab' * 32, b'host')
+    assert cli.pairing_mac('482916', 'ab' * 32, 'cd' * 32) == \
+        xxdb.pairing_mac('482916', 'ab' * 32, 'cd' * 32)

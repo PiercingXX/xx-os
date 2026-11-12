@@ -498,10 +498,9 @@ class XxdbDaemon:
             yield _refused(f'failed: {error}')
 
     def _cmd_pair(self, session: _Session, request_id, message):
-        host_pem = message.get('host_cert_pem', '')
+        host_pem = str(message.get('host_cert_pem', ''))
         host_name = str(message.get('host_name', session.addr))[:64]
         mac_hex = str(message.get('mac', ''))
-        code_guess = str(message.get('code', ''))
         try:
             host_der = (bytes(session.tls_der) if session.tls_der
                         else ssl.PEM_cert_to_DER_cert(host_pem))
@@ -513,12 +512,12 @@ class XxdbDaemon:
             yield {'id': request_id, 'ok': False,
                    'error': 'no active pairing code: ask the phone for one'}
             return
-        ok, detail = self.pairing.attempt(code_guess, mac_hex,
-                                          self.phone_fp, host_der, self._now())
+        fingerprint = xxdb.cert_fingerprint(host_der)
+        ok, detail = self.pairing.attempt(mac_hex, self.phone_fp,
+                                          fingerprint, self._now())
         if not ok:
             yield {'id': request_id, 'ok': False, 'error': detail}
             return
-        fingerprint = xxdb.cert_fingerprint(host_der)
         stored_pem = host_pem
         if session.tls_der:
             try:

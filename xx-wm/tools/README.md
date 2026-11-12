@@ -11,8 +11,9 @@ On the phone: Settings page, Developer section, "Wireless debugging"
 switch. Then:
 
 ```bash
-# Pair (HOST:PORT + 6-digit code are shown by "Pair device with pairing code")
-./tools/xxdb pair 192.168.1.20:37234 482916
+# Pair: "Pair with code" shows HOST:PORT, a 6-digit code and the phone's
+# fingerprint. xxdb refuses to pair if the fingerprint it sees differs.
+./tools/xxdb pair 192.168.1.20:37234 482916 1a2b 3c4d 5e6f 7a8b
 
 # Verify / list
 ./tools/xxdb devices

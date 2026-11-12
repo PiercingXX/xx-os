@@ -176,17 +176,20 @@ class XxdbController:
             text += f' — connected: {names}'
         return text
 
-    def issue_pairing_code(self) -> tuple[str, str, float] | None:
-        """New 6-digit code plus the shown address and expiry epoch."""
+    def issue_pairing_code(self) -> tuple[str, str, str, float] | None:
+        """New 6-digit code, the shown address, the phone certificate's
+        fingerprint prefix the host must see, and the expiry epoch."""
         if not self.enabled or self.daemon is None:
             return None
         code, expires = self.daemon.pairing.issue(self._now())
         addrs = getattr(self.daemon, 'addrs', [])
         port = getattr(self.daemon, 'port', 0)
         shown = f'{addrs[0]}:{port}' if addrs else f'?:{port}'
+        fingerprint = xxdb.fingerprint_prefix(
+            getattr(self.daemon, 'phone_fp', ''))
         self.pairing_info = (code, expires)
         self._on_activity()
-        return code, shown, expires
+        return code, shown, fingerprint, expires
 
     def trusted_hosts(self) -> list[dict]:
         return self.trust.list()

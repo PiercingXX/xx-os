@@ -359,6 +359,15 @@ default; enabling it is always an explicit user action (the switch). Keys
 and paired-host fingerprints live under `~/.local/share/xx-wm/xxdb/`
 (files are 0600).
 
+Pairing: "Pair with code" shows the address, a 6-digit code and the first
+16 hex digits of the phone certificate's fingerprint. Run
+`xxdb pair ADDRESS:PORT CODE FINGERPRINT` on the computer. The client
+refuses to pair when the fingerprint it sees differs from the one on the
+phone. The code itself never crosses the network: the computer proves it
+knows the code with an HMAC keyed by the code and both certificate
+fingerprints. A code is valid for 2 minutes, single use, and burned after
+3 wrong tries.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `xxdb_enabled` | bool | `false` | Whether wireless debugging is on. Written by the switch; reset to `false` on every shell restart/reboot unless `xxdb_persistent` is true. |

@@ -1469,12 +1469,11 @@ class SettingsPage:
         if result is None:
             win._xxdb_status.set_text('Turn on wireless debugging first.')
             return
-        code, shown, _expires = result
-        win._xxdb_status.set_text(
-            f'{shown} — code {code} (valid 2 minutes, single use)')
+        code, shown, fingerprint, _expires = result
+        text = (f'{shown} — code {code} — fingerprint {fingerprint} '
+                '(valid 2 minutes, single use)')
         win._refresh_xxdb_section()
-        win._xxdb_status.set_text(
-            f'{shown} — code {code} (valid 2 minutes, single use)')
+        win._xxdb_status.set_text(text)
 
     def _on_xxdb_forget(self, fingerprint: str) -> None:
         win = self._win

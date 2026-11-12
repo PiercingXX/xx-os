@@ -10,83 +10,91 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 
 import xxdb
 
+PHONE_FP = 'ab' * 32
+HOST_FP = 'cd' * 32
+
 
 @pytest.fixture
 def session():
     return xxdb.PairingSession(clock=lambda: 1000.0)
 
 
-def _mac(code, fp='ab' * 32, der=b'host-der'):
-    return xxdb.pairing_mac(code, fp, der)
+def _mac(code, fp=PHONE_FP, host=HOST_FP):
+    return xxdb.pairing_mac(code, fp, host)
 
 
 def test_pairing_accept(session):
     code, _expires = session.issue(now=1000.0)
-    ok, _ = session.attempt(code, _mac(code), 'ab' * 32, b'host-der',
-                            now=1001.0)
+    ok, _ = session.attempt(_mac(code), PHONE_FP, HOST_FP, now=1001.0)
     assert ok is True
 
 
 def test_pairing_reject_wrong_code(session):
     code, _ = session.issue(now=1000.0)
-    ok, reason = session.attempt('000000', _mac('000000'), 'ab' * 32,
-                                 b'host-der', now=1001.0)
+    wrong = '000000' if code != '000000' else '111111'
+    ok, reason = session.attempt(_mac(wrong), PHONE_FP, HOST_FP, now=1001.0)
     assert ok is False
     assert reason == 'wrong pairing code'
     assert session.tries == 1
-    ok, _ = session.attempt(code, _mac(code), 'ab' * 32, b'host-der',
-                            now=1001.0)
+    ok, _ = session.attempt(_mac(code), PHONE_FP, HOST_FP, now=1001.0)
     assert ok is True
 
 
 def test_pairing_reject_wrong_mac(session):
-    code, _ = session.issue(now=1000.0)
-    ok, _ = session.attempt(code, '00' * 32, 'ab' * 32, b'host-der',
-                            now=1001.0)
+    session.issue(now=1000.0)
+    ok, _ = session.attempt('00' * 32, PHONE_FP, HOST_FP, now=1001.0)
     assert ok is False
 
 
 def test_pairing_binds_phone_fingerprint(session):
+    """A man-in-the-middle's certificate: the host's HMAC was computed over
+    the fingerprint it saw, which is not the phone's."""
     code, _ = session.issue(now=1000.0)
-    ok, _ = session.attempt(code, _mac(code, fp='cd' * 32), 'ab' * 32,
-                            b'host-der', now=1001.0)
+    ok, _ = session.attempt(_mac(code, fp='ee' * 32), PHONE_FP, HOST_FP,
+                            now=1001.0)
     assert ok is False
 
 
 def test_pairing_binds_host_cert(session):
     code, _ = session.issue(now=1000.0)
-    ok, _ = session.attempt(code, _mac(code, der=b'other-der'), 'ab' * 32,
-                            b'host-der', now=1001.0)
+    ok, _ = session.attempt(_mac(code, host='ee' * 32), PHONE_FP, HOST_FP,
+                            now=1001.0)
     assert ok is False
+
+
+def test_pairing_key_derives_from_code_and_both_fingerprints():
+    base = xxdb.pairing_key('123456', PHONE_FP, HOST_FP)
+    assert base != xxdb.pairing_key('123457', PHONE_FP, HOST_FP)
+    assert base != xxdb.pairing_key('123456', 'ee' * 32, HOST_FP)
+    assert base != xxdb.pairing_key('123456', PHONE_FP, 'ee' * 32)
 
 
 def test_pairing_burned_after_three_misses(session):
     session.issue(now=1000.0)
-    assert session.attempt('1', _mac('1'), 'ab' * 32, b'h', now=1001.0)[1] \
+    assert session.attempt(_mac('1'), PHONE_FP, HOST_FP, now=1001.0)[1] \
         == 'wrong pairing code'
-    assert session.attempt('2', _mac('2'), 'ab' * 32, b'h', now=1001.0)[1] \
+    assert session.attempt(_mac('2'), PHONE_FP, HOST_FP, now=1001.0)[1] \
         == 'wrong pairing code'
-    ok, reason = session.attempt('3', _mac('3'), 'ab' * 32, b'h', now=1001.0)
+    ok, reason = session.attempt(_mac('3'), PHONE_FP, HOST_FP, now=1001.0)
     assert ok is False
     assert reason == 'pairing code burned'
-    ok, reason = session.attempt('3', _mac('3'), 'ab' * 32, b'h', now=1001.0)
+    ok, reason = session.attempt(_mac('3'), PHONE_FP, HOST_FP, now=1001.0)
     assert ok is False
     assert 'no active' in reason
 
 
 def test_pairing_single_use(session):
     code, _ = session.issue(now=1000.0)
-    assert session.attempt(code, _mac(code), 'ab' * 32, b'host-der',
+    assert session.attempt(_mac(code), PHONE_FP, HOST_FP,
                            now=1001.0)[0] is True
-    ok, reason = session.attempt(code, _mac(code), 'ab' * 32, b'host-der',
-                                 now=1001.0)
+    ok, reason = session.attempt(_mac(code), PHONE_FP, HOST_FP, now=1001.0)
     assert ok is False
     assert 'no active' in reason
 
 
 def test_pairing_expires(session):
     code, _ = session.issue(now=1000.0)
-    ok, reason = session.attempt(code, _mac(code), 'ab' * 32, b'host-der',
+    ok, reason = session.attempt(_mac(code), PHONE_FP, HOST_FP,
                                  now=1000.0 + xxdb.PAIR_CODE_TTL_S + 1)
     assert ok is False
     assert reason == 'pairing code expired'
@@ -96,6 +104,13 @@ def test_pairing_code_format():
     for _ in range(25):
         code = xxdb.new_pairing_code()
         assert len(code) == 6 and code.isdigit()
+
+
+def test_fingerprint_prefix_shown_with_the_code():
+    fp = '0123456789abcdef' + 'f' * 48
+    assert xxdb.fingerprint_prefix(fp) == '0123 4567 89ab cdef'
+    assert xxdb.normalize_fingerprint('0123 4567:89AB-cdef') == \
+        '0123456789abcdef'
 
 
 def test_trust_store_roundtrip_and_perms(tmp_path):

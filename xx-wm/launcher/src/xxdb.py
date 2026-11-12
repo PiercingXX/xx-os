@@ -1,10 +1,13 @@
 """xxdb core: pairing, trust store, RPC framing, path rules, interface
 selection, and idle auto-off. Pure stdlib, no GTK — headless-testable.
 
-The pairing binds the short code to both certificates: the host proves
-knowledge of the 6-digit code with an HMAC over (phone cert fingerprint,
-host public cert), so a man-in-the-middle cannot substitute either cert
-without the code.
+Pairing never transmits the 6-digit code. The phone shows the code next
+to a fingerprint prefix of its own certificate; the host checks that
+prefix against the certificate it observed before it sends anything, then
+proves knowledge of the code with an HMAC whose key derives from the code
+and both certificate fingerprints. A man-in-the-middle with its own
+certificate fails the prefix check, and cannot forge the HMAC for either
+side without the code.
 """
 from __future__ import annotations
 
@@ -25,6 +28,7 @@ IDLE_TIMEOUT_S = 3600
 MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_LINE_BYTES = 768 * 1024 * 1024
 SYSTEM_CONFIRM_TTL_S = 300
+FP_PREFIX_HEX = 16
 
 XXDB_DIRNAME = 'xxdb'
 KEY_FILE = 'key.pem'
@@ -53,18 +57,34 @@ def cert_fingerprint(der: bytes) -> str:
     return hashlib.sha256(der).hexdigest()
 
 
-def pairing_mac(code: str, phone_fp_hex: str, host_cert_der: bytes) -> str:
-    msg = phone_fp_hex.encode('ascii') + b'|' + bytes(host_cert_der)
-    return hmac.new(code.encode('ascii'), msg, hashlib.sha256).hexdigest()
+def fingerprint_prefix(fp_hex: str) -> str:
+    """The short form the phone shows beside a pairing code."""
+    head = str(fp_hex)[:FP_PREFIX_HEX]
+    return ' '.join(head[i:i + 4] for i in range(0, len(head), 4))
 
 
-def verify_pairing_mac(guess: str, phone_fp_hex: str,
-                       host_cert_der: bytes, mac_hex: str) -> bool:
+def normalize_fingerprint(text: str) -> str:
+    return re.sub(r'[^0-9a-f]', '', str(text).lower())
+
+
+def pairing_key(code: str, phone_fp_hex: str, host_fp_hex: str) -> bytes:
+    msg = (b'xxdb-pair-v2|' + phone_fp_hex.encode('ascii') + b'|'
+           + host_fp_hex.encode('ascii'))
+    return hmac.new(code.encode('ascii'), msg, hashlib.sha256).digest()
+
+
+def pairing_mac(code: str, phone_fp_hex: str, host_fp_hex: str) -> str:
+    key = pairing_key(code, phone_fp_hex, host_fp_hex)
+    return hmac.new(key, b'host-proof', hashlib.sha256).hexdigest()
+
+
+def verify_pairing_mac(code: str, phone_fp_hex: str,
+                       host_fp_hex: str, mac_hex: str) -> bool:
     try:
-        expected = pairing_mac(guess, phone_fp_hex, host_cert_der)
+        expected = pairing_mac(code, phone_fp_hex, host_fp_hex)
     except (ValueError, UnicodeEncodeError):
         return False
-    return hmac.compare_digest(expected, mac_hex)
+    return hmac.compare_digest(expected, str(mac_hex))
 
 
 class PairingSession:
@@ -85,8 +105,7 @@ class PairingSession:
         self.used = False
         return self.code, self.expires_at
 
-    def attempt(self, code_guess: str, mac_hex: str, phone_fp_hex: str,
-                host_cert_der: bytes,
+    def attempt(self, mac_hex: str, phone_fp_hex: str, host_fp_hex: str,
                 now: float | None = None) -> tuple[bool, str]:
         now = self._clock() if now is None else now
         if self.code is None or self.used:
@@ -97,10 +116,7 @@ class PairingSession:
         if self.tries >= PAIR_MAX_TRIES:
             self.code = None
             return False, 'pairing code burned'
-        code_ok = hmac.compare_digest(str(code_guess), self.code)
-        mac_ok = verify_pairing_mac(self.code, phone_fp_hex,
-                                    host_cert_der, mac_hex)
-        if code_ok and mac_ok:
+        if verify_pairing_mac(self.code, phone_fp_hex, host_fp_hex, mac_hex):
             self.used = True
             shown = self.code
             self.code = None
