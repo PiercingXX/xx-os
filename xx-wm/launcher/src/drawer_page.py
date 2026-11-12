@@ -221,6 +221,64 @@ def drawer_xalign(win) -> float:
     return {'left': 0.0, 'right': 1.0}.get(alignment, 0.5)
 
 
+def search_results(win, raw_query: str) -> list:
+    """App matches for a typed query, as the drawer search lists them:
+    a `!` query matches no apps (web only); otherwise the index search
+    plus fold-insensitive matches on renamed labels. Hidden apps, home
+    slots and folder members all surface here. The docked launcher
+    shares it, so both searches always agree."""
+    raw = raw_query or ''
+    trimmed = raw.strip().casefold()
+    if trimmed.startswith('!'):
+        return []
+    results = win.app_index.search(raw)
+    if not trimmed:
+        return results
+    folded = fold_for_search(trimmed)
+    labels = win.config.app_labels
+    matched = {e.app_id for e in results}
+    renamed_hits = [
+        e for e in win.app_index.entries
+        if e.app_id not in matched and (
+            trimmed in labels.get(e.app_id, '').casefold()
+            or bool(folded) and folded in fold_for_search(
+                labels.get(e.app_id, '')))
+    ]
+    return results + renamed_hits
+
+
+def launch_app(win, entry: AppEntry) -> bool:
+    """Start an app the way a drawer tap does: Nope and Focus blocks,
+    standby tracking, launch counts. True when it launched."""
+    from nope_mode import blocks_window
+    if blocks_window(win, entry.app_id,
+                     win.config.label_for(entry.app_id, entry.name)):
+        return False
+    if win.focus_state.is_paused_app(entry.app_id):
+        win._show_focus_notice(win.config.label_for(entry.app_id, entry.name))
+        return False
+    ok, error = win.app_index.launch(
+        entry, tracker=getattr(win, 'standby', None))
+    if ok:
+        win.config.record_launch(entry.app_id)
+        return True
+    win._show_status(f'Failed to launch {entry.name}: {error}')
+    return False
+
+
+def open_web_search(win, query: str) -> None:
+    from gi.repository import Gio, GLib
+    from urllib.parse import quote_plus
+
+    if not query:
+        return
+    try:
+        Gio.AppInfo.launch_default_for_uri(_WEB_SEARCH_URL + quote_plus(query), None)
+        win._show_status(f'Searching the web for {query}...')
+    except GLib.Error as error:
+        win._show_status(f'No browser available: {error.message}')
+
+
 def _open_settings(win) -> None:
     """Show settings with the TOP hop when the window offers it.
 
@@ -460,30 +518,14 @@ class DrawerPage:
         win = self._win
         raw = query or ''
         trimmed = raw.strip().casefold()
-        folded = fold_for_search(trimmed)
         labels = win.config.app_labels
         bang = trimmed.startswith('!')
         sort_mode = drawer_sort_of(win)
 
-        if bang:
-            # `!query` skips app matching entirely and offers only the web row
-            results = []
-        else:
-            results = win.app_index.search(raw)
-
-        if trimmed and not bang:
-            # Search surfaces everything: hidden apps, home-slot apps, folder
-            # members — plus fold-insensitive matches against renamed labels.
-            matched = {e.app_id for e in results}
-            renamed_hits = [
-                e for e in win.app_index.entries
-                if e.app_id not in matched and (
-                    trimmed in labels.get(e.app_id, '').casefold()
-                    or bool(folded) and folded in fold_for_search(
-                        labels.get(e.app_id, '')))
-            ]
-            results = results + renamed_hits
-        elif not trimmed:
+        # `!query` skips app matching entirely and offers only the web row;
+        # a query surfaces everything (hidden, home-slot and folder apps).
+        results = search_results(win, raw)
+        if not trimmed:
             # The browse list hides hidden apps and everything already on
             # home — except pinned apps, which stay listed (Android rule).
             pinned_ids = set(win.config.pinned or ())
@@ -894,22 +936,10 @@ class DrawerPage:
                 f'{win.config.label_for(entry.app_id, entry.name)} '
                 'will never freeze.')
             return
-        from nope_mode import blocks_window
-        if blocks_window(win, entry.app_id,
-                         win.config.label_for(entry.app_id, entry.name)):
-            return
-        if win.focus_state.is_paused_app(entry.app_id):
-            win._show_focus_notice(win.config.label_for(entry.app_id, entry.name))
-            return
-        ok, error = win.app_index.launch(
-            entry, tracker=getattr(win, 'standby', None))
-        if ok:
-            win.config.record_launch(entry.app_id)
+        if launch_app(win, entry):
             # The app surfacing above the shell is the feedback; a toast
             # per launch was noise over every drawer tap.
             win.drop_to_background()
-        else:
-            win._show_status(f'Failed to launch {entry.name}: {error}')
 
     def _on_apps_search_changed(self, entry) -> None:
         win = self._win
@@ -943,14 +973,4 @@ class DrawerPage:
             entry.set_text('')
 
     def _open_web_search(self, query: str) -> None:
-        from gi.repository import Gio, GLib
-        from urllib.parse import quote_plus
-
-        win = self._win
-        if not query:
-            return
-        try:
-            Gio.AppInfo.launch_default_for_uri(_WEB_SEARCH_URL + quote_plus(query), None)
-            win._show_status(f'Searching the web for {query}...')
-        except GLib.Error as error:
-            win._show_status(f'No browser available: {error.message}')
+        open_web_search(self._win, query)
