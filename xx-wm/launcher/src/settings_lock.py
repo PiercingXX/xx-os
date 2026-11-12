@@ -1,4 +1,5 @@
-"""Lock settings: change PIN and change the device password.
+"""Lock settings: change or remove the PIN, change the device password,
+and the PIN check other settings put in front of security changes.
 
 Change PIN verifies the current PIN — through the root helper when it
 holds the PIN (async: helper_client.pin_change, lockout enforced
@@ -15,8 +16,7 @@ import time
 
 import settings_page
 import settings_ui as ui
-
-_MAX_PIN = 64
+from pin_rules import MIN_PIN, valid_pin
 
 
 def _lockout_remaining(config) -> int:
@@ -54,10 +54,10 @@ def validate_new_pin(current: str, new: str, confirm: str) -> str | None:
     """Error string for a PIN change, None when the new PIN is usable."""
     if not new:
         return 'Enter a new PIN.'
+    if not valid_pin(new):
+        return 'Use %d or more digits, numbers only.' % MIN_PIN
     if new != confirm:
         return 'New PINs do not match.'
-    if len(new) > _MAX_PIN:
-        return 'New PIN is too long.'
     if new == current:
         return 'The new PIN must differ from the current one.'
     return None
@@ -139,6 +139,159 @@ def change_pin(config, current: str, new: str, confirm: str,
     return True, 'PIN changed.'
 
 
+def _helper_verdict(retry_after: int, error) -> str:
+    if error is not None:
+        return 'Could not reach the PIN service.'
+    if retry_after > 0:
+        return 'Locked out — try again in %ds.' % retry_after
+    return 'Current PIN is wrong.'
+
+
+def verify_current_pin(config, pin: str, on_result) -> None:
+    """``on_result(ok, message)`` once ``pin`` is checked against the
+    current PIN, by the same rules as Change PIN: the helper verifies a
+    helper-held PIN (async, lockout root-side); a local hash respects and
+    escalates the persisted lockout. No PIN set: ok at once."""
+    if getattr(config, 'pin_hash', None) is None:
+        on_result(True, '')
+        return
+    if getattr(config, 'pin_in_helper', False):
+        def _done(matched: bool, retry_after: int, error) -> None:
+            if matched:
+                on_result(True, '')
+            else:
+                on_result(False, _helper_verdict(retry_after, error))
+
+        try:
+            import helper_client
+            helper_client.pin_verify(config, pin, _done)
+        except Exception:
+            on_result(False, 'Could not verify the current PIN.')
+        return
+    if _lockout_remaining(config) > 0:
+        on_result(False, 'Locked out — try again when the timer ends.')
+        return
+    try:
+        correct = config.verify_pin(pin)
+    except Exception:
+        on_result(False, 'Could not verify the current PIN.')
+        return
+    if not correct:
+        try:
+            fails, _until = config.get_lockout_state()
+        except Exception:
+            fails = 0
+        _note_wrong_pin(config, fails + 1)
+        on_result(False, 'Current PIN is wrong.')
+        return
+    try:
+        config.clear_lockout_state()
+    except Exception:
+        pass
+    on_result(True, '')
+
+
+def ask_pin(win, anchor, title: str, commit_label: str, on_ok):
+    """Run ``on_ok()`` only after the current PIN is entered on a one-field
+    sheet (Smart Lock trust, Restore). No PIN set: runs at once. A wrong
+    PIN keeps the sheet open with the reason; a helper verdict arrives
+    after the sheet closed, so a refusal then lands in the status line."""
+    config = getattr(win, 'config', None)
+    if getattr(config, 'pin_hash', None) is None:
+        on_ok()
+        return None
+    held: dict = {}
+
+    def _commit(values: dict) -> str | None:
+        early: list = []
+        state = {'sheet': True}
+
+        def _verdict(ok: bool, message: str) -> None:
+            if state['sheet']:
+                early.append((ok, message))
+            elif ok:
+                on_ok()
+            else:
+                _status(win, message)
+
+        verify_current_pin(config, values.get('pin', ''), _verdict)
+        state['sheet'] = False
+        for entry in (held.get('entries') or {}).values():
+            try:
+                entry.set_text('')
+            except Exception:
+                pass
+        if not early:
+            return None
+        ok, message = early[0]
+        if not ok:
+            return message
+        on_ok()
+        return None
+
+    box, entries = ui.form_sheet(win, anchor, title,
+                                 [('pin', 'PIN', '', 'pin')],
+                                 commit_label, _commit)
+    held['entries'] = entries
+    return box, entries
+
+
+def _status(win, message: str) -> None:
+    try:
+        win._show_status(message)
+    except Exception:
+        pass
+
+
+def remove_pin(config, current: str,
+               on_async=None) -> tuple[bool | None, str]:
+    """Verify ``current``, then forget the PIN (swipe up unlocks).
+
+    Same contract as change_pin: a helper-held PIN is cleared root-side
+    by ClearPin, which checks ``current`` against its own lockout, and
+    answers through ``on_async(ok, message)``; a local hash is checked
+    here under the persisted lockout."""
+    if getattr(config, 'pin_in_helper', False):
+        if on_async is None:
+            return False, 'Could not verify the current PIN.'
+
+        def _reply(ok: bool, result) -> None:
+            try:
+                done, retry = result if ok else (False, 0)
+            except (TypeError, ValueError):
+                ok, done, retry = False, False, 0
+            if done:
+                try:
+                    config.clear_pin()
+                    config.clear_lockout_state()
+                except Exception:
+                    pass
+                on_async(True, 'PIN removed.')
+                return
+            on_async(False, _helper_verdict(
+                int(retry or 0), None if ok else 'unavailable'))
+
+        try:
+            import helper_client
+            helper_client.clear_pin(current, _reply)
+        except Exception:
+            return False, 'Could not verify the current PIN.'
+        return None, 'Checking current PIN…'
+    if getattr(config, 'pin_hash', None) is None:
+        return False, 'No PIN is set.'
+    verdict: list = []
+    verify_current_pin(config, current,
+                       lambda ok, message: verdict.append((ok, message)))
+    if not verdict or not verdict[0][0]:
+        return False, (verdict[0][1] if verdict
+                       else 'Could not verify the current PIN.')
+    try:
+        config.clear_pin()
+    except Exception:
+        return False, 'Could not remove the PIN.'
+    return True, 'PIN removed.'
+
+
 def change_device_password() -> tuple[bool, str]:
     """Open `passwd` in a terminal (same terminal table as updates)."""
     from update_checker import run_terminal_command
@@ -146,7 +299,7 @@ def change_device_password() -> tuple[bool, str]:
 
 
 class LockSection(settings_page._Section):
-    """Change PIN plus change device password."""
+    """Change PIN, Remove PIN and change device password."""
 
     key = 'lock'
     title = 'Screen lock'
@@ -154,13 +307,17 @@ class LockSection(settings_page._Section):
     def __init__(self) -> None:
         self._status = None
         self._pin_row = None
+        self._remove_row = None
         self._pin_entries: dict = {}
 
     def build(self, win) -> list:
         self._pin_row = ui.nav_row('Change PIN', '',
                                    lambda r: self._open_pin(win, r))
+        self._remove_row = ui.nav_row('Remove PIN', '',
+                                      lambda r: self._open_remove(win, r))
         built = ui.group(self.title, [
             self._pin_row,
+            self._remove_row,
             ui.nav_row('Change device password…', 'Opens passwd in a terminal',
                        lambda _r: self._on_change_password(win))], note='')
         self._status = built[2]
@@ -174,6 +331,10 @@ class LockSection(settings_page._Section):
             has_pin = False
         ui.set_subtitle(self._pin_row, 'PIN is set' if has_pin
                         else 'No PIN · swipe up unlocks')
+        try:
+            self._remove_row.set_visible(has_pin)
+        except AttributeError:
+            pass
 
     def _open_pin(self, win, anchor):
         box, self._pin_entries = ui.form_sheet(
@@ -217,6 +378,35 @@ class LockSection(settings_page._Section):
             win._show_status('PIN changed.')
         except Exception:
             pass
+        return None
+
+    def _open_remove(self, win, anchor):
+        box, self._pin_entries = ui.form_sheet(
+            win, anchor, 'Remove PIN',
+            [('current', 'Current PIN', '', 'pin')],
+            'Remove PIN', lambda values: self._on_remove_pin(win, values))
+        return box, self._pin_entries
+
+    def _on_remove_pin(self, win, values: dict) -> str | None:
+        def _later(ok: bool, message: str) -> None:
+            self._say(message)
+            if ok:
+                self.refresh(win)
+            _status(win, message)
+
+        ok, message = remove_pin(win.config, values.get('current', ''),
+                                 on_async=_later)
+        for entry in (getattr(self, '_pin_entries', None) or {}).values():
+            try:
+                entry.set_text('')
+            except Exception:
+                pass
+        if ok is False:
+            return message
+        self._say(message)
+        if ok:
+            self.refresh(win)
+            _status(win, message)
         return None
 
     def _on_change_password(self, win) -> None:

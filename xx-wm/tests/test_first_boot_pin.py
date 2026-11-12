@@ -108,7 +108,7 @@ class TestPinLengthCap:
     def test_wizard_uses_lock_screen_cap_constant(self):
         first_boot = _first_boot()
         from lock_screen import _MAX_PIN
-        assert first_boot._MAX_PIN is _MAX_PIN
+        assert first_boot.MAX_PIN == _MAX_PIN
 
     def test_pin_buf_refuses_to_grow_past_cap(self):
         wizard = _wizard()

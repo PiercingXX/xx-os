@@ -94,6 +94,7 @@ install_data(
     'src/osk.py',
     'src/output_capture.py',
     'src/output_power.py',
+    'src/pin_rules.py',
     'src/polkit_agent.py',
     'src/power_menu.py',
     'src/power_profiles.py',

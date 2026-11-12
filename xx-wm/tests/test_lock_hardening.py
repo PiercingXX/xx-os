@@ -466,8 +466,8 @@ class TestSettingsChangePin:
         import settings_lock
         monkeypatch.setenv('XX_WM_PIN_HELPER', '0')
         cfg.set_pin('1234')
-        ok, _msg = settings_lock.change_pin(cfg, '1234', '5678', '5678')
-        assert ok is True and cfg.verify_pin('5678')
+        ok, _msg = settings_lock.change_pin(cfg, '1234', '567890', '567890')
+        assert ok is True and cfg.verify_pin('567890')
 
 
 # -------------------------------------------------- lock screen verify path

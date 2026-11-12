@@ -1355,13 +1355,13 @@ class TestSettingsSheets:
         for entry in entries.values():
             entry.set_text('0000')
         assert section._on_change_pin(win, {
-            'current': '0000', 'new': '5678', 'confirm': '5678'}) == (
+            'current': '0000', 'new': '567890', 'confirm': '567890'}) == (
             'Current PIN is wrong.')
         assert all(entry.get_text() == '' for entry in entries.values())
         assert stored == []
         assert section._on_change_pin(win, {
-            'current': '1234', 'new': '5678', 'confirm': '5678'}) is None
-        assert stored == ['5678']
+            'current': '1234', 'new': '567890', 'confirm': '567890'}) is None
+        assert stored == ['567890']
 
     def test_apn_sheet_saves_and_summarizes(self, fake_gtk):
         applied = []

@@ -452,21 +452,21 @@ class TestChangePin:
     def test_change_with_correct_current(self, tmp_path):
         import settings_lock as lock
         cfg = self._configured(tmp_path)
-        ok, _msg = lock.change_pin(cfg, '1234', '5678', '5678')
+        ok, _msg = lock.change_pin(cfg, '1234', '567890', '567890')
         assert ok
-        assert cfg.verify_pin('5678')
+        assert cfg.verify_pin('567890')
 
     def test_wrong_current_refused(self, tmp_path):
         import settings_lock as lock
         cfg = self._configured(tmp_path)
-        ok, _msg = lock.change_pin(cfg, '0000', '5678', '5678')
+        ok, _msg = lock.change_pin(cfg, '0000', '567890', '567890')
         assert not ok
         assert cfg.verify_pin('1234')
 
     def test_mismatched_new_refused(self, tmp_path):
         import settings_lock as lock
         cfg = self._configured(tmp_path)
-        ok, _msg = lock.change_pin(cfg, '1234', '5678', '8765')
+        ok, _msg = lock.change_pin(cfg, '1234', '567890', '876509')
         assert not ok
         assert cfg.verify_pin('1234')
 
@@ -475,7 +475,7 @@ class TestChangePin:
         import time as _time
         cfg = self._configured(tmp_path)
         cfg.set_lockout_state(5, _time.time() + 300)
-        ok, msg = lock.change_pin(cfg, '1234', '5678', '5678')
+        ok, msg = lock.change_pin(cfg, '1234', '567890', '567890')
         assert not ok
         assert 'ock' in msg.lower()
 
@@ -487,7 +487,7 @@ class TestChangePin:
         cfg = self._configured(tmp_path)
         now = _time.time()
         cfg.set_lockout_state(5, now + 300, start=now + 10 * 365 * 86400)
-        ok, _msg = lock.change_pin(cfg, '1234', '5678', '5678')
+        ok, _msg = lock.change_pin(cfg, '1234', '567890', '567890')
         assert ok
 
     def test_far_future_deadline_capped_to_what_fails_earn(self, tmp_path):
@@ -505,7 +505,7 @@ class TestChangePin:
         import settings_lock as lock
         cfg = self._configured(tmp_path)
         for _ in range(5):
-            lock.change_pin(cfg, '0000', '5678', '5678')
+            lock.change_pin(cfg, '0000', '567890', '567890')
         fails, until = cfg.get_lockout_state()
         if until > 0:
             assert cfg.get_lockout_start() > 0
@@ -514,13 +514,13 @@ class TestChangePin:
         import settings_lock as lock
         cfg = self._configured(tmp_path)
         with caplog.at_level(logging.DEBUG):
-            lock.change_pin(cfg, '1234', '5678', '5678')
-            lock.change_pin(cfg, '0000', '9999', '9999')
+            lock.change_pin(cfg, '1234', '567890', '567890')
+            lock.change_pin(cfg, '0000', '999999', '999999')
         for record in caplog.records:
             if record.name.startswith('settings_lock'):
                 assert '1234' not in record.getMessage()
-                assert '5678' not in record.getMessage()
-                assert '9999' not in record.getMessage()
+                assert '567890' not in record.getMessage()
+                assert '999999' not in record.getMessage()
 
     def test_passwd_uses_terminal_table(self, monkeypatch):
         import update_checker as updater

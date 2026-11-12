@@ -20,9 +20,9 @@ if _LAYER_SHELL:
 from config import DANGER_RED, THEME_PRESETS, ShellConfig, ThemePreset
 from keyboard_layouts import CHOICES as KEYBOARD_CHOICES
 from keyboard_layouts import xkb_for
-# Single source of truth with the lock screen: a PIN longer than the lock
-# screen's entry cap could be set here but never typed back = permanent lockout
-from lock_screen import _MAX_PIN
+# Single source of truth with Settings › Change PIN; MAX_PIN is the lock
+# screen's entry cap (a longer PIN could never be typed back).
+from pin_rules import MAX_PIN, MIN_PIN, valid_pin
 
 
 def theme_css(preset: ThemePreset) -> str:
@@ -397,7 +397,11 @@ def _report_shell_ready() -> None:
 def _store_pin(config, pin: str) -> None:
     """Wizard PIN: config first, then into the root helper when it is
     installed (helper_client.pin_change). A helper refusal (a stale
-    record) falls back to the local hash so the PIN is never lost."""
+    record) falls back to the local hash so the PIN is never lost.
+
+    A helper that already holds a PIN means config.json was deleted or
+    reset, not a new phone: the old PIN stays and this one is dropped,
+    otherwise a reset config would let anyone set a PIN of their own."""
     def _done(done: bool, _retry: int, _error) -> None:
         if not done:
             try:
@@ -405,11 +409,35 @@ def _store_pin(config, pin: str) -> None:
             except OSError:
                 pass
 
+    def _store() -> None:
+        try:
+            import helper_client
+            helper_client.pin_change(config, '', pin, _done)
+        except Exception:
+            config.set_pin(pin)
+
     try:
         import helper_client
-        helper_client.pin_change(config, '', pin, _done)
+        enabled = helper_client.pin_helper_enabled()
     except Exception:
-        config.set_pin(pin)
+        enabled = False
+    if not enabled or config.pin_hash is not None:
+        _store()
+        return
+
+    def _held(ok: bool, result) -> None:
+        if ok and result:
+            try:
+                config.set_pin_in_helper()
+            except OSError:
+                pass
+            return
+        _store()
+
+    try:
+        helper_client.has_pin(_held)
+    except Exception:
+        _store()
 
 
 class FirstBootWizard(Gtk.Window):
@@ -441,6 +469,14 @@ class FirstBootWizard(Gtk.Window):
 
         self._on_complete = on_complete
         self._config = ShellConfig()
+        if not tour_only:
+            # A helper still holding a PIN (config.json reset) puts the
+            # marker back before the PIN step, which is then skipped.
+            try:
+                import helper_client
+                helper_client.pin_sync(self._config)
+            except Exception:
+                pass
         self._pin_entered = ''
         self._pin_buf = ''
         self._confirm_buf = ''
@@ -786,11 +822,11 @@ class FirstBootWizard(Gtk.Window):
         return grid
 
     def _pin_add(self, digit: str) -> None:
-        if len(self._pin_buf) >= _MAX_PIN:
+        if len(self._pin_buf) >= MAX_PIN:
             return
         self._pin_buf += digit
         self._pin_dots.set_text('●' * len(self._pin_buf))
-        if len(self._pin_buf) >= 6:
+        if len(self._pin_buf) >= MIN_PIN:
             _say(self._pin_hint, '')
 
     def _pin_del(self) -> None:
@@ -799,7 +835,7 @@ class FirstBootWizard(Gtk.Window):
             self._pin_dots.set_text('●' * len(self._pin_buf))
 
     def _confirm_add(self, digit: str) -> None:
-        if len(self._confirm_buf) >= _MAX_PIN:
+        if len(self._confirm_buf) >= MAX_PIN:
             return
         self._confirm_buf += digit
         self._confirm_dots.set_text('●' * len(self._confirm_buf))
@@ -1102,7 +1138,7 @@ class FirstBootWizard(Gtk.Window):
         self._theme_provider.load_from_data(theme_css(preset).encode('utf-8'))
 
     def _on_pin_next(self, _btn: Gtk.Widget) -> None:
-        if len(self._pin_buf) < 6:
+        if not valid_pin(self._pin_buf):
             self._pin_dots.add_css_class('error')
             _say(self._pin_hint, 'PIN must be at least 6 digits')
             return
