@@ -151,6 +151,39 @@ def _is_reserved(notif_id: int) -> bool:
     return notif_id in _RESERVED_IDS or notif_id >= _RESERVED_FLOOR
 
 
+# Pixel payloads are never shown (text-first shade). Unpacking them turns
+# every byte into a Python int on the main loop: 0.4 s for a 256x256 avatar.
+_SKIPPED_HINTS = frozenset({'image-data', 'image_data', 'icon_data'})
+
+
+def _notify_hints(hints_v) -> dict:
+    """a{sv} hints decoded entry by entry, pixel payloads left packed."""
+    hints: dict = {}
+    for i in range(hints_v.n_children()):
+        entry = hints_v.get_child_value(i)
+        key = entry.get_child_value(0).get_string()
+        if key in _SKIPPED_HINTS:
+            continue
+        try:
+            hints[key] = entry.get_child_value(1).unpack()
+        except Exception:
+            continue
+    return hints
+
+
+def _notify_args(params) -> tuple:
+    """Notify's eight in-args, reading each child on its own."""
+    if not hasattr(params, 'get_child_value'):
+        return tuple(params.unpack())
+    n = params.n_children()
+    parts = [params.get_child_value(i) for i in range(n)]
+    out = [part.unpack() for part in parts[:6]]
+    if n > 6:
+        out.append(_notify_hints(parts[6]))
+    out.extend(part.unpack() for part in parts[7:])
+    return tuple(out)
+
+
 class NotificationDaemon:
     """
     Owns org.freedesktop.Notifications on the session bus.
@@ -325,7 +358,7 @@ class NotificationDaemon:
         return candidate
 
     def _handle_notify(self, params: GLib.Variant) -> int:
-        parts = params.unpack()
+        parts = _notify_args(params)
         app_name = str(parts[0])
         replaces_id = int(parts[1]) if parts[1] else 0
         summary = str(parts[3])
