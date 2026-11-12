@@ -420,14 +420,18 @@ settings-UI action names `home`, `app_switcher`, `notification_shade`,
 `search`→`gesture.keyboard`). `launch:<app>` stays in-shell
 and does not replace the lisgd verb. Two fallbacks: missing or corrupt
 JSON loads schema defaults then `ACTION_TO_VERB` (short → `gesture.home`,
-long → `gesture.switcher`); a **valid unmapped** value (`camera`, `none`,
-`launch:…`) keeps that slot's legacy `DEFAULT_VERBS` entry (legacy: short →
-`gesture.keyboard`, long → `gesture.home`); a truly invalid value is
+long → `gesture.switcher`); `none` binds nothing (lisgd gets no binding
+for the slot and the bottom strip ignores it); a **valid unmapped** value
+(`camera`, `launch:…`) keeps that slot's legacy `DEFAULT_VERBS` entry
+(legacy: short → `gesture.keyboard`, long → `gesture.home`); a truly invalid value is
 ignored at load so the default action mapping applies instead. A file
 that still has both bottom-up slots as `app_switcher` (the previous
 default pair) is rewritten once so short becomes `home`. Garbage keys
 are dropped at load, so they take the schema-default path, not
 `DEFAULT_VERBS`.
+Settings (System › Navigation gestures) offers only the choices that do
+what they say for these slots: Home, App switcher, Notification shade,
+Back, Keyboard (`gesture.keyboard`), Nothing (`none`), and Default.
 Rebinding restarts lisgd immediately from Settings. If that restart
 fails, it applies at the next session start.
 

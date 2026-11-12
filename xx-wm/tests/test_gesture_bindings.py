@@ -166,7 +166,20 @@ class TestRebinding:
         assert got[2].endswith('gesture.home')   # swipe_up_long, L
         # camera is a valid unmapped action → DEFAULT_VERBS shade
         assert got[3].endswith('gesture.shade')
-        assert got[4].endswith('gesture.back')
+        # none means nothing: the edge swipe gets no binding at all
+        assert len(got) == 4
+
+    def test_none_binds_nothing_instead_of_the_default_verb(self, tmp_path):
+        # "Do Nothing" on the short swipe used to raise the keyboard.
+        (tmp_path / 'gestures.json').write_text(json.dumps({
+            'swipe_up_short': 'none',
+        }), encoding='utf-8')
+        got = generate_bindings('/usr/bin')
+        assert not any(line.startswith('1,DU,B,S,') for line in got)
+        assert not any('gesture.keyboard' in line for line in got)
+        import bottom_gesture
+        assert bottom_gesture.verb_for(bottom_gesture.HOME,
+                                       GestureConfig()) is None
 
     def test_unmapped_action_uses_default_verb(self, tmp_path):
         (tmp_path / 'gestures.json').write_text(json.dumps({

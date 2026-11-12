@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from gesture_config import IPC_VERBS, VALID_ACTIONS
-
 import settings_ui as ui
 
 
@@ -185,6 +183,22 @@ _VERB_LABELS = {
     'gesture.back': 'Back (system)', 'gesture.home': 'Home (system)',
     'gesture.shade': 'Shade (system)', 'gesture.keyboard': 'Keyboard (system)',
     'gesture.switcher': 'Switcher (system)',
+}
+
+# The system swipe picker offers only what lisgd and the bottom strip can
+# actually do (each value resolves to that verb, `none` to no binding).
+_SYSTEM_GESTURE_CHOICES = (
+    ('home', 'Home'),
+    ('app_switcher', 'App switcher'),
+    ('notification_shade', 'Notification shade'),
+    ('back', 'Back'),
+    ('gesture.keyboard', 'Keyboard'),
+    ('none', 'Nothing'),
+)
+_SYSTEM_VERB_TEXT = {
+    'gesture.home': 'Home', 'gesture.switcher': 'App switcher',
+    'gesture.shade': 'Notification shade', 'gesture.back': 'Back',
+    'gesture.keyboard': 'Keyboard',
 }
 
 _UPDATE_NOTIF_ID = 999901
@@ -1312,7 +1326,17 @@ class SettingsPage:
             label.set_text(self._long_press_text() if key == 'long_press_home'
                            else win._gesture_binding_text(key))
         for key, label in win._system_gesture_labels.items():
-            label.set_text(win._gesture_binding_text(key))
+            label.set_text(self._system_gesture_text(key))
+
+    def _system_gesture_text(self, key: str) -> str:
+        """What a system swipe does, as resolved for lisgd and the bottom
+        strip (an old unmapped value shows the verb it really fires)."""
+        from gesture_bindings import resolve_verb
+        try:
+            verb = resolve_verb(self._win.gesture_config, key)
+        except Exception:
+            return ''
+        return _SYSTEM_VERB_TEXT.get(verb, 'Nothing')
 
     def _build_gestures_card(self):
         """Long-press on home, then the four system (lisgd) swipes: one
@@ -1327,7 +1351,7 @@ class SettingsPage:
         rows.append(row)
         for key, title in _SYSTEM_GESTURE_TITLES.items():
             row = ui.nav_row(
-                title, win._gesture_binding_text(key),
+                title, self._system_gesture_text(key),
                 lambda r, k=key, t=title: win._pick_system_gesture(r, k, t))
             win._system_gesture_labels[key] = row.subtitle_label
             rows.append(row)
@@ -1370,12 +1394,17 @@ class SettingsPage:
 
     def _pick_system_gesture(self, anchor, key: str, title: str) -> None:
         win = self._win
-        choices = [(_ACTION_LABELS[a], lambda a=a: win._set_system_gesture(key, a))
-                   for a in sorted(VALID_ACTIONS)]
-        choices += [(_VERB_LABELS[v], lambda v=v: win._set_system_gesture(key, v))
-                    for v in sorted(IPC_VERBS)]
+        choices = [(label, lambda v=value: win._set_system_gesture(key, v))
+                   for value, label in _SYSTEM_GESTURE_CHOICES]
         choices.append(('Default', lambda: win._reset_system_gesture(key)))
-        win.item_actions._show_action_menu(anchor, title, choices)
+        try:
+            current = win.gesture_config.get(key)
+        except Exception:
+            current = None
+        values = [value for value, _label in _SYSTEM_GESTURE_CHOICES]
+        win.item_actions._show_action_menu(
+            anchor, title, choices,
+            checked=values.index(current) if current in values else None)
 
     def _set_system_gesture(self, key: str, value: str) -> None:
         win = self._win

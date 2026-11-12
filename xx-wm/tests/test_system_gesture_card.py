@@ -91,8 +91,8 @@ def _bare(window):
     w._gesture_binding_labels = {}
     w._system_gesture_labels = {}
     w.item_actions = types.SimpleNamespace(
-        _show_action_menu=lambda anchor, title, actions: captured.append(
-            (anchor, title, actions)))
+        _show_action_menu=lambda anchor, title, actions, checked=None:
+        captured.append((anchor, title, actions, checked)))
     return w
 
 
@@ -105,28 +105,57 @@ def test_verb_binding_renders_friendly(window):
     assert w._gesture_binding_text('swipe_up_short') == 'Keyboard (system)'
 
 
-def test_pick_offers_actions_and_verbs(window):
+def test_pick_offers_only_actions_that_work(window):
+    # The old picker offered every action; lock screen, camera, dialer,
+    # assistant and settings silently fired the slot's default verb, and
+    # "Do Nothing" on the short swipe raised the keyboard.
     w = _bare(window)
     anchor = object()
     w._pick_system_gesture(anchor, 'swipe_up_long', 'Swipe up (long)')
-    _anchor, title, actions = captured[-1]
+    _anchor, title, actions, _checked = captured[-1]
     assert title == 'Swipe up (long)'
     labels = [label for label, _cb in actions]
-    assert 'Home' in labels and 'None' in labels
-    assert 'Keyboard (system)' in labels and 'Switcher (system)' in labels
+    assert labels == ['Home', 'App switcher', 'Notification shade', 'Back',
+                      'Keyboard', 'Nothing', 'Default']
+
+
+def test_every_choice_resolves_to_what_it_says(window):
+    import settings_page
+    from gesture_bindings import resolve_verb
+    expected = {'Home': 'gesture.home', 'App switcher': 'gesture.switcher',
+                'Notification shade': 'gesture.shade', 'Back': 'gesture.back',
+                'Keyboard': 'gesture.keyboard', 'Nothing': None}
+    for value, label in settings_page._SYSTEM_GESTURE_CHOICES:
+        for slot in settings_page._SYSTEM_GESTURE_TITLES:
+            gc = types.SimpleNamespace(get=lambda _k, v=value: v)
+            assert resolve_verb(gc, slot) == expected[label], (slot, value)
+
+
+def test_current_choice_is_checked_and_row_shows_the_real_action(window):
+    w = _bare(window)
+    w.gesture_config._map['swipe_up_short'] = 'none'
+    w._pick_system_gesture(object(), 'swipe_up_short', 'Swipe up (short)')
+    assert captured[-1][3] == 5
+    texts = []
+    w._system_gesture_labels['swipe_up_short'] = types.SimpleNamespace(
+        set_text=texts.append)
+    w._refresh_gesture_labels()
+    assert texts == ['Nothing']
+    # An old hand-edited unmapped value shows the verb it really fires.
+    w.gesture_config._map['swipe_up_short'] = 'camera'
+    w._refresh_gesture_labels()
+    assert texts[-1] == 'Keyboard'
 
 
 def test_choice_persists_and_refreshes(window):
     w = _bare(window)
     label = types.SimpleNamespace(set_text=lambda t: None)
     w._system_gesture_labels['swipe_up_short'] = label
-    _anchor, _title, actions = (
-        captured[-1] if captured else (None, None, []))
     w._pick_system_gesture(object(), 'swipe_up_short', 'Swipe up (short)')
-    _anchor, _title, actions = captured[-1]
+    _anchor, _title, actions, _checked = captured[-1]
     by_label = dict(actions)
-    by_label['Shade (system)']()
-    assert ('swipe_up_short', 'gesture.shade') in w.gesture_config.set_calls
+    by_label['Notification shade']()
+    assert ('swipe_up_short', 'notification_shade') in w.gesture_config.set_calls
 
 
 def test_reset_restores_default(window):

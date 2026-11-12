@@ -16,8 +16,9 @@ gestures.json action names map through ACTION_TO_VERB (home→gesture.home,
 app_switcher→gesture.switcher, notification_shade→gesture.shade,
 back→gesture.back, search→gesture.keyboard).
 
-A valid action with no verb mapping (`camera`, `launch:<app_id>`,
-`none`) silently keeps that slot's legacy default verb; a truly invalid
+`none` means nothing: the slot gets no binding (the bottom strip does
+nothing for it either). A valid action with no verb mapping (`camera`,
+`launch:<app_id>`) silently keeps that slot's legacy default verb; a truly invalid
 value is ignored at load (see gesture_config), so the default action
 mapping applies instead (config-compat invariant: a bad gestures.json
 never changes device behavior).
@@ -80,9 +81,12 @@ ACTION_TO_VERB: dict[str, str] = {
 }
 
 
-def resolve_verb(gc: GestureConfig, slot: str) -> str:
-    """Configured IPC verb for a system-level slot, or its default."""
+def resolve_verb(gc: GestureConfig, slot: str) -> str | None:
+    """Configured IPC verb for a system-level slot, None for `none` (the
+    gesture does nothing), else the slot's default verb."""
     value = gc.get(slot)
+    if value == 'none':
+        return None
     if value in IPC_VERBS:
         return value
     mapped = ACTION_TO_VERB.get(value)
@@ -197,6 +201,8 @@ def generate_bindings(bindir: str, gc: GestureConfig | None = None,
     lines: list[str] = []
     for slot, geometries in _LISGD_GEOMETRY.items():
         verb = resolve_verb(gc, slot)
+        if verb is None:
+            continue
         for geometry in geometries:
             if bottom_strip and is_bottom_edge(geometry):
                 continue
