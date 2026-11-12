@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import queue
 import subprocess
+import threading
 from pathlib import Path
+from typing import Callable
 
 import backlight
 
@@ -80,11 +83,53 @@ def _backlight_name(sysfs_path: Path | None = None) -> str | None:
     return path.parent.name if path is not None else None
 
 
+class SerialWorker:
+    """One lazily started daemon thread running jobs in submission order.
+
+    Backlight, wlopm and pactl calls block (a process exec, a logind round
+    trip), so they never run on the GTK loop; one thread keeps them in
+    order, so a blank's 'set 0' can't overtake an earlier ALS step or be
+    overtaken by a later wake."""
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self._jobs: queue.SimpleQueue = queue.SimpleQueue()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def submit(self, job: Callable[[], object]) -> None:
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(
+                    target=self._run, name=self._name, daemon=True)
+                self._thread.start()
+        self._jobs.put(job)
+
+    def _run(self) -> None:
+        while True:
+            job = self._jobs.get()
+            try:
+                job()
+            except Exception:
+                _log.exception('%s job failed', self._name)
+
+
+_BACKLIGHT_IO = SerialWorker('backlight-io')
+
+
+def run_backlight_io(job: Callable[[], object]) -> None:
+    """Run a blocking backlight job off the main loop, in order with every
+    other backlight write (the display manager's blank/wake included)."""
+    _BACKLIGHT_IO.submit(job)
+
+
 def _brightnessctl_set(value: int, device: str | None = None) -> bool:
+    if device is None:
+        # Bare brightnessctl picks the first device it finds, which on the
+        # FLX1 is the vibrator LED, not the panel.
+        return False
     try:
-        cmd = ['brightnessctl']
-        if device is not None:
-            cmd += ['--device', device]
+        cmd = ['brightnessctl', '--device', device]
         result = subprocess.run(
             cmd + ['set', str(max(0, int(value)))],
             capture_output=True, text=True, timeout=5,
@@ -147,8 +192,16 @@ def apply_backlight(value: int, device: str | None = None,
 
 
 def apply_backlight_pct(pct: int) -> bool:
-    """Percent-based wrapper for the shade slider: resolves the absolute
-    scale from sysfs max_brightness (reads are unprivileged)."""
+    """Percent-based wrapper for the shade slider, queued on the backlight
+    worker (it falls through brightnessctl and a logind round trip)."""
+    pct = max(0, min(100, int(pct)))
+    run_backlight_io(lambda: apply_backlight_pct_sync(pct))
+    return True
+
+
+def apply_backlight_pct_sync(pct: int) -> bool:
+    """Blocking body of apply_backlight_pct (worker thread only): resolves
+    the absolute scale from sysfs max_brightness (reads are unprivileged)."""
     pct = max(0, min(100, int(pct)))
     path = _backlight_path()
     maximum: int | None = None

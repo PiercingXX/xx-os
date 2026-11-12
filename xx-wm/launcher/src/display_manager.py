@@ -46,6 +46,7 @@ from typing import Callable
 from gi.repository import GLib
 
 import backlight
+from als_brightness import SerialWorker, login1_set_brightness, run_backlight_io
 
 try:
     from output_power import OutputPower
@@ -259,12 +260,24 @@ def _wlopm(mode: str) -> bool:
 
 
 def _brightnessctl(*args: str) -> str | None:
+    """brightnessctl on the panel backlight (backlight class, else the
+    *backlight LED: /sys/class/leds/lcd-backlight on the FLX1). Never bare:
+    without --device it picks the first device, the FLX1's vibrator LED.
+    A refused 'set' falls back to logind's SetBrightness. Blocking: call
+    from the backlight worker only."""
+    found = backlight.find()
+    if found is None:
+        return None
     try:
         return subprocess.check_output(
-            backlight.brightnessctl_args() + list(args),
+            backlight.brightnessctl_args(found) + list(args),
             text=True, timeout=2, stderr=subprocess.DEVNULL,
         ).strip()
     except Exception:
+        if args[:1] == ('set',) and len(args) == 2 and args[1].isdigit():
+            if login1_set_brightness(found.name, int(args[1]),
+                                     subsystem=found.subsystem):
+                return ''
         return None
 
 
@@ -286,19 +299,35 @@ def _take_screenshot() -> None:
 
 
 def _set_volume(delta: str) -> None:
+    """Step the default sink (volume worker only: it waits for pactl so
+    the HUD read that follows sees the new level)."""
     try:
-        subprocess.Popen(
+        subprocess.run(
             ['pactl', 'set-sink-volume', '@DEFAULT_SINK@', delta],
-            close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            close_fds=True, timeout=2,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-    except FileNotFoundError:
+    except (OSError, subprocess.TimeoutExpired):
         pass
 
 
+_VOLUME_IO = SerialWorker('volume-keys')
+
+
+def _run_io(job: Callable[[], object]) -> None:
+    """Blank/wake backlight and wlopm work: off the main loop, in order
+    with every other backlight write."""
+    run_backlight_io(job)
+
+
+def _run_volume_io(job: Callable[[], object]) -> None:
+    _VOLUME_IO.submit(job)
+
+
 def _get_volume_pct() -> int:
-    """Current default-sink volume as a 0-100 int. Falls back to 50 on any
-    failure so the HUD still shows a level rather than crashing on a device
-    without pactl."""
+    """Current default-sink volume as a 0-100 int (volume worker only).
+    Falls back to 50 on any failure so the HUD still shows a level rather
+    than crashing on a device without pactl."""
     try:
         out = subprocess.check_output(
             ['pactl', 'get-sink-volume', '@DEFAULT_SINK@'],
@@ -696,7 +725,7 @@ class DisplayManager:
         if backend is None or not self._backend_available(backend):
             return
         self._set_output_power(True)
-        self._restore_backlight()
+        _run_io(self._restore_backlight)
         self._blanked = False
         self.reset_idle()
         self._notify_blank_changed()
@@ -708,6 +737,7 @@ class DisplayManager:
         restart (the saved level is only trustworthy within one run);
         a dark backlight after forcing outputs on means nobody restored
         it, so the saved level (or the constructor default) beats dark.
+        Backlight worker only.
         """
         current = _brightnessctl('get')
         if current is not None and current.isdigit() and int(current) == 0:
@@ -724,7 +754,7 @@ class DisplayManager:
         changed = blanked != self._blanked
         self._blanked = blanked
         if on:
-            self._restore_backlight()
+            _run_io(self._restore_backlight)
         self.reset_idle()
         if changed:
             self._notify_blank_changed()
@@ -759,34 +789,49 @@ class DisplayManager:
         return ok
 
     def _blank(self) -> None:
-        bright = _brightnessctl('get')
-        if bright and bright.isdigit() and int(bright) > 0:
-            self._saved_brightness = int(bright)
         self._blanked = True
         # The backlight goes off even when the protocol handled the
         # output: on Halium's hwcomposer phoc, output power off only
         # stops rendering and the panel stays lit (black, not off).
         protocol_ok = self._set_output_power(False)
+        _run_io(lambda: self._blank_io(protocol_ok))
+        self._notify_blank_changed()
+
+    def _blank_io(self, protocol_ok: bool) -> None:
+        """Backlight worker: save the level, switch it off, and power the
+        output off with wlopm when the protocol could not."""
+        bright = _brightnessctl('get')
+        if bright and bright.isdigit() and int(bright) > 0:
+            self._saved_brightness = int(bright)
         _brightnessctl('set', '0')
         if not protocol_ok:
             _wlopm('off')
-        self._notify_blank_changed()
 
     def _wake(self) -> None:
+        self._blanked = False
         try:
-            self._blanked = False
-            if not self._set_output_power(True):
-                _wlopm('on')
-            _brightnessctl('set', str(max(1, self._saved_brightness)))
+            protocol_ok = self._set_output_power(True)
         except Exception as exc:
-            # The screen must never stay dark: force the backlight up even
-            # when the protocol or wlopm path blew up mid-wake.
-            log.warning('wake failed: %s; forcing backlight restore', exc)
-            _brightnessctl('set', str(max(1, self._saved_brightness)))
+            log.warning('output power on failed: %s', exc)
+            protocol_ok = False
+        _run_io(lambda: self._wake_io(protocol_ok))
         self.reset_idle()
         self._notify_blank_changed()
         if self._on_wake:
             GLib.idle_add(self._on_wake)
+
+    def _wake_io(self, protocol_ok: bool) -> None:
+        """Backlight worker: wlopm on when the protocol could not, then the
+        saved backlight level."""
+        try:
+            if not protocol_ok:
+                _wlopm('on')
+            _brightnessctl('set', str(max(1, self._saved_brightness)))
+        except Exception as exc:
+            # The screen must never stay dark: force the backlight up even
+            # when the wlopm path blew up mid-wake.
+            log.warning('wake failed: %s; forcing backlight restore', exc)
+            _brightnessctl('set', str(max(1, self._saved_brightness)))
 
     def _notify_blank_changed(self) -> None:
         cb = getattr(self, '_on_blank_changed', None)
@@ -857,8 +902,7 @@ class DisplayManager:
                     self._cancel_long_press()
                     self._trigger_screenshot()
                 else:
-                    _set_volume('-5%')
-                    self._show_volume_hud()
+                    self._change_volume('-5%')
                     self.reset_idle()
             elif value == 0:
                 self._voldown_held = False
@@ -867,8 +911,7 @@ class DisplayManager:
         # --- Volume Up ---
         if ev_type == EV_KEY and code == KEY_VOLUMEUP:
             if value == 1:
-                _set_volume('+5%')
-                self._show_volume_hud()
+                self._change_volume('+5%')
                 self.reset_idle()
             return GLib.SOURCE_REMOVE
 
@@ -953,10 +996,18 @@ class DisplayManager:
         else:
             _take_screenshot()
 
-    def _show_volume_hud(self) -> None:
-        """Flash the current volume level on the HUD overlay (if one is wired)."""
-        if self._hud is not None:
-            self._hud.show_volume(_get_volume_pct())
+    def _change_volume(self, delta: str) -> None:
+        """Step the sink volume on the volume worker (pactl blocks), then
+        flash the new level on the HUD back on the main loop."""
+        hud = self._hud
+
+        def _job() -> None:
+            _set_volume(delta)
+            if hud is not None:
+                pct = _get_volume_pct()
+                GLib.idle_add(lambda: (hud.show_volume(pct), False)[1])
+
+        _run_volume_io(_job)
 
 
 # ---------------------------------------------------------------------------

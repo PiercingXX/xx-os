@@ -527,6 +527,7 @@ def _display_mgr(monkeypatch, **kwargs):
     monkeypatch.setattr(display_manager, '_brightnessctl',
                         lambda *a: '200')
     monkeypatch.setattr(display_manager, '_wlopm', lambda mode: True)
+    monkeypatch.setattr(display_manager, '_run_io', lambda job: job())
     return display_manager.DisplayManager(**kwargs)
 
 

@@ -69,6 +69,11 @@ def dm(monkeypatch):
         display_manager, '_set_volume', lambda delta: volume_deltas.append(delta)
     )
     monkeypatch.setattr(display_manager, '_get_volume_pct', lambda: 37)
+    # pactl runs on the volume worker and the HUD flash hops back with
+    # idle_add: run both inline here.
+    monkeypatch.setattr(display_manager, '_run_volume_io', lambda job: job())
+    monkeypatch.setattr(display_manager.GLib, 'idle_add',
+                        lambda fn, *a: fn(*a))
 
     def _build(**kwargs):
         return display_manager.DisplayManager(**kwargs), volume_deltas

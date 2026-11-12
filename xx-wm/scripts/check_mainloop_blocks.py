@@ -28,9 +28,9 @@ SRC = Path(__file__).parent.parent / 'launcher' / 'src'
 # (file, enclosing function) -> why blocking here is safe.
 ALLOW = {
     ('als_brightness.py', '_brightnessctl_set'):
-        'brightness-slider fallback when brightnessctl is missing; single bounded local exec.',
+        'backlight worker (run_backlight_io: ALS steps, slider fallback).',
     ('als_brightness.py', 'login1_set_brightness'):
-        'same fallback chain; single SetBrightness property write.',
+        'backlight worker (same chain, and display_manager._brightnessctl).',
     ('app_permissions.py', 'lookup_permissions'):
         'permission-store read; callers are settings-page workers, never GTK.',
     ('app_permissions.py', 'set_permission'):
@@ -78,13 +78,15 @@ ALLOW = {
     ('dialer.py', 'modem_sim_missing'):
         'place_emergency_call worker, after a failed emergency dial.',
     ('display_manager.py', '_detect_output'):
-        'first-blank output probe; result cached for later wlopm calls.',
+        'backlight worker (via _wlopm); result cached for later wlopm calls.',
     ('display_manager.py', '_wlopm'):
-        'blank/wake power path; single bounded compositor call.',
+        'backlight worker (_blank_io/_wake_io via _run_io).',
     ('display_manager.py', '_brightnessctl'):
-        'blank/wake power path; single bounded sysfs read.',
+        'backlight worker (_blank_io/_wake_io/_restore_backlight via _run_io).',
+    ('display_manager.py', '_set_volume'):
+        'volume worker (_change_volume job via _run_volume_io).',
     ('display_manager.py', '_get_volume_pct'):
-        'volume-key HUD read on the evdev reader thread; single bounded pactl call.',
+        'volume worker (_change_volume job via _run_volume_io).',
     ('home_launcher.py', '_waydroid_session_running'):
         'waydroid-launch worker thread (moved off the home tap path).',
     ('lock_screen.py', '_fp_dbus_enrolled'):

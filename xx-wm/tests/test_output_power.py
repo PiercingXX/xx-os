@@ -614,6 +614,8 @@ def blank_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(display_manager, '_brightnessctl',
                         _fake_brightnessctl)
     monkeypatch.setattr(display_manager, '_wlopm', _fake_wlopm)
+    # Backlight/wlopm work runs on a worker thread; run it inline here.
+    monkeypatch.setattr(display_manager, '_run_io', lambda job: job())
 
     def _build(output_power=None, **kwargs):
         states: list[bool] = []

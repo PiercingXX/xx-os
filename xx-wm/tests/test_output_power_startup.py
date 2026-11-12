@@ -150,6 +150,7 @@ def dm_env(monkeypatch):
 
     monkeypatch.setattr(display_manager, '_brightnessctl',
                         _fake_brightnessctl)
+    monkeypatch.setattr(display_manager, '_run_io', lambda job: job())
     return brightness
 
 
