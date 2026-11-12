@@ -641,8 +641,9 @@ class TestAsyncTileRefresh:
         monkeypatch.setattr(quick_actions, '_dbus_system', lambda: None)
         monkeypatch.setattr(quick_actions, '_night_light_available',
                             lambda: True)
-        monkeypatch.setattr(quick_actions, '_get_night_state',
-                            lambda: False)
+        # The tile table holds _get_night_state itself; fake what it reads.
+        monkeypatch.setattr(quick_actions, '_display_module',
+                            lambda: SimpleNamespace(tile_get_night=lambda: False))
         spawned: list = []
         monkeypatch.setattr(quick_actions, '_spawn_worker_thread',
                             lambda target: spawned.append(target))
@@ -677,8 +678,9 @@ class TestAsyncTileRefresh:
         monkeypatch.setattr(quick_actions, '_dbus_system', lambda: None)
         monkeypatch.setattr(quick_actions, '_night_light_available',
                             lambda: True)
-        monkeypatch.setattr(quick_actions, '_get_night_state',
-                            lambda: False)
+        # The tile table holds _get_night_state itself; fake what it reads.
+        monkeypatch.setattr(quick_actions, '_display_module',
+                            lambda: SimpleNamespace(tile_get_night=lambda: False))
         assert panel._refresh_all_states() is False
         assert panel._tile_state == {
             'wifi': False, 'data': False, 'saver': False,

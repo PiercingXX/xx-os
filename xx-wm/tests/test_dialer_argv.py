@@ -228,6 +228,10 @@ class TestRunMmcli:
 
 class TestStatusLabelWiring:
     def test_calling_status_visible_during_worker(self, monkeypatch):
+        # No modem here: the country (so the grouping) comes from the locale.
+        monkeypatch.delenv('LC_ALL', raising=False)
+        monkeypatch.delenv('LC_MESSAGES', raising=False)
+        monkeypatch.setenv('LANG', 'en_US.UTF-8')
         flush = _flush_idle(monkeypatch)
         d = _make_dialer(monkeypatch)
         seen_at_call = []

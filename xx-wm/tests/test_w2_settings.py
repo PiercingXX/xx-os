@@ -546,7 +546,12 @@ class TestSettingsMenu:
         for _cat, title, _keys in settings_page.SETTINGS_CATEGORIES:
             assert title in menu_titles
 
-    def test_every_deep_link_key_opens_its_subpage(self, window):
+    def test_every_deep_link_key_opens_its_subpage(self, window, monkeypatch):
+        # Security builds rows only where clamscan is installed: pretend it
+        # is, so the walk does not depend on the host's packages.
+        import settings_page as _sp
+        monkeypatch.setattr(_sp.settings_security, 'clamscan_available',
+                            lambda which=None: True)
         w, _root, settings_page = _built_page(window)
         page = settings_page.SettingsPage
         helper = w._settings_page
