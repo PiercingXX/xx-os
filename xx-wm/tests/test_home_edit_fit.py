@@ -182,7 +182,8 @@ def test_edit_names_ellipsize_only_when_they_do_not_fit(tmp_path, size):
            '1.5', long_name]
     if shutil.which('dbus-run-session'):
         cmd = ['dbus-run-session', '--'] + cmd
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180,
+                          check=False)
     assert 'EDIT FIT OK' in proc.stdout, (
         proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:])
     width = int(size.split('x')[0])
@@ -194,7 +195,7 @@ def test_edit_names_ellipsize_only_when_they_do_not_fit(tmp_path, size):
             rows[name.strip("'")] = (ellipsized == 'True', float(text_w),
                                      int(alloc), float(left), float(right))
     assert len(rows) == 8, proc.stdout
-    for name, (ellipsized, text_w, alloc, left, right) in rows.items():
+    for name, (ellipsized, _text_w, _alloc, left, right) in rows.items():
         assert left >= 0 and right <= width + 0.5, (name, left, right)
         if name == long_name:
             assert ellipsized, rows[name]

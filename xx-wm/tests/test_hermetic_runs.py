@@ -163,7 +163,7 @@ def test_a_gtk_window_in_a_test_never_asks_a_portal(marker_bus, tmp_path):
     env = dict(os.environ, DBUS_SESSION_BUS_ADDRESS=address)
     proc = subprocess.run(
         [sys.executable, '-c', _WINDOW, str(REPO / 'common'), str(run_dir)],
-        env=env, capture_output=True, text=True, timeout=120)
+        env=env, capture_output=True, text=True, timeout=120, check=False)
     assert 'WINDOW OK' in proc.stdout, proc.stderr[-2000:]
     assert _activated(marker) == []
 
@@ -205,7 +205,7 @@ def test_snap_py_runs_its_app_with_the_switches(marker_bus, tmp_path):
         [sys.executable, str(REPO / 'scripts' / 'snap.py'),
          '--out', str(tmp_path / 'shot.png'), '--delay', '0.5',
          '--', str(app), str(seen)],
-        env=env, capture_output=True, text=True, timeout=120)
+        env=env, capture_output=True, text=True, timeout=120, check=False)
     assert (tmp_path / 'shot.png').exists(), proc.stderr[-2000:]
     got = dict(line.split('=', 1) for line in seen.read_text().splitlines())
     assert got['XX_WM_NO_POLKIT_AGENT'] == '1'

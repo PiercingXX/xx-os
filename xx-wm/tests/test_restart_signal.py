@@ -35,7 +35,7 @@ def test_sigusr1_flushes_a_queued_save_and_still_dies_of_the_signal(
     env.pop('DBUS_SESSION_BUS_ADDRESS', None)
     proc = subprocess.run(
         [sys.executable, '-c', _CHILD, str(SRC), str(COMMON)],
-        env=env, capture_output=True, text=True, timeout=60)
+        env=env, capture_output=True, text=True, timeout=60, check=False)
     # Killed by SIGUSR1: the wrapper's `wait` reads 128+10 = 138.
     assert proc.returncode == -signal.SIGUSR1, proc.stderr
     saved = json.loads(
