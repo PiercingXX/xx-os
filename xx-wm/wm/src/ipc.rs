@@ -8,14 +8,21 @@
 //!
 //! ```text
 //! list                     -> [{"id":..,"app_id":..,"title":..,"workspace":N,"focused":b,"visible":b}]
-//! outputs                  -> [{"x":..,"y":..,"w":..,"h":..,"handset":b,"workspace":N}]
+//! outputs                  -> [{"name":..,"x":..,"y":..,"w":..,"h":..,"handset":b,"workspace":N,
+//!                               "focused":b,"title":..}]
+//! binds                    -> [{"combo":"Super+Q","action":"close"}, ...]  (the live table)
 //! focus <identifier>       -> ok | error ...
 //! close <identifier>       -> ok | error ...
 //! action <action>          -> ok | error ...    (same words as wm.conf binds)
+//! workspace <N> [output]   -> ok | error ...    (show N on that output, by name)
 //! reload                   -> ok                (re-read wm.conf)
 //! subscribe                -> the `list` answer now and again on every
 //!                             change, one JSON array per line, until the
 //!                             client hangs up
+//! subscribe state          -> {"outputs":[..],"windows":[..]} now and on
+//!                             every change, plus {"shell":"<verb>"} for
+//!                             each `shell` action and the launcher (the
+//!                             XX-WM shell's top bar and launcher)
 //! ```
 
 use std::io::{BufRead, BufReader, Write};
@@ -35,7 +42,26 @@ pub type Queue = Arc<Mutex<Vec<Request>>>;
 /// Clients that asked to be told about every change (the shell's window
 /// list). Written from the main loop, non-blocking: a client that stops
 /// reading is dropped rather than stalling the window manager.
-pub type Subscribers = Arc<Mutex<Vec<UnixStream>>>;
+pub type Subscribers = Arc<Mutex<Vec<Subscriber>>>;
+
+pub struct Subscriber {
+    pub stream: UnixStream,
+    /// `subscribe state`: outputs + windows objects and shell verbs,
+    /// instead of the bare window list.
+    pub state: bool,
+    /// The last snapshot written, so each client hears every change once.
+    pub sent: String,
+}
+
+impl Subscriber {
+    /// Write one line; false when the client is gone or stopped reading.
+    pub fn send(&mut self, line: &str) -> bool {
+        let mut buf = String::with_capacity(line.len() + 1);
+        buf.push_str(line);
+        buf.push('\n');
+        self.stream.write_all(buf.as_bytes()).is_ok()
+    }
+}
 
 pub fn socket_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("XXWM_SOCKET") {
@@ -86,9 +112,9 @@ fn serve(stream: UnixStream, queue: &Queue, subscribers: &Subscribers, wake: &im
     if line.is_empty() {
         return Ok(());
     }
-    if line == "subscribe" {
+    if line == "subscribe" || line == "subscribe state" {
         stream.set_nonblocking(true)?;
-        subscribers.lock().unwrap().push(stream);
+        subscribers.lock().unwrap().push(Subscriber { stream, state: line != "subscribe", sent: String::new() });
         // A manage sequence sends the new subscriber the current list.
         wake();
         return Ok(());
@@ -125,6 +151,35 @@ pub fn json_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn subscribe(line: &str) -> (Subscribers, UnixStream) {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        client.write_all(line.as_bytes()).unwrap();
+        let queue: Queue = Arc::new(Mutex::new(Vec::new()));
+        let subs: Subscribers = Arc::new(Mutex::new(Vec::new()));
+        serve(server, &queue, &subs, &|| {}).unwrap();
+        (subs, client)
+    }
+
+    #[test]
+    fn subscribe_kinds() {
+        let (subs, _c) = subscribe("subscribe\n");
+        assert!(!subs.lock().unwrap()[0].state);
+        let (subs, _c) = subscribe("subscribe state\n");
+        assert!(subs.lock().unwrap()[0].state);
+    }
+
+    #[test]
+    fn subscriber_gets_lines_and_notices_hang_up() {
+        let (subs, client) = subscribe("subscribe state\n");
+        let mut s = subs.lock().unwrap().pop().unwrap();
+        assert!(s.send("{\"shell\":\"launcher\"}"));
+        let mut line = String::new();
+        BufReader::new(&client).read_line(&mut line).unwrap();
+        assert_eq!(line, "{\"shell\":\"launcher\"}\n");
+        drop(client);
+        assert!(!s.send("x"));
+    }
 
     #[test]
     fn json_escapes() {

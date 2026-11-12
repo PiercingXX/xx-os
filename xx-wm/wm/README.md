@@ -39,6 +39,12 @@ bind Super+W spawn foot
 unbind Super+D
 ```
 
+`shell <verb>` hands a verb to the XX-WM shell instead of running
+anything: `Super+R` is `shell bar` (the top bar on or off) and `Super+/`
+is `shell keybinds` (the keybind sheet). Tapping Super and `Alt+Tab` run
+`launcher`, which the shell shows as its own search; with no shell
+listening, `set launcher` runs instead.
+
 ## Keyboard, layer surfaces and the usable area (river 0.5)
 
 What river 0.5.0 offers, read from its protocol files, its source and the
@@ -81,7 +87,11 @@ belongs to the same client (sway does this).
 ## Control socket
 
 `$XDG_RUNTIME_DIR/xxwm-$WAYLAND_DISPLAY.sock`. `xxwm msg <request>` sends one:
-`list`, `outputs`, `focus <id>`, `close <id>`, `action <action>`, `reload`,
-`subscribe`. The shell's window list and switcher use it on river
-(`launcher/src/xxwm_backend.py`): river shows windows to other clients but
-gives them no way to activate or close one.
+`list`, `outputs`, `binds`, `focus <id>`, `close <id>`, `action <action>`,
+`workspace <n> [output]`, `reload`, `subscribe`, `subscribe state` (the
+full list with answers is in `src/ipc.rs`). The shell's window list and
+switcher use it on river (`launcher/src/xxwm_backend.py`): river shows
+windows to other clients but gives them no way to activate or close one.
+The shell's docked surfaces (`launcher/src/desk_session.py`) follow
+`subscribe state`: outputs by connector name, which one is the handset,
+the workspace and front window title of each, and the shell verbs.

@@ -59,6 +59,15 @@ impl Dir {
     pub fn horizontal(self) -> bool {
         matches!(self, Dir::Left | Dir::Right)
     }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Dir::Left => "left",
+            Dir::Down => "down",
+            Dir::Up => "up",
+            Dir::Right => "right",
+        }
+    }
 }
 
 /// How a level of the dwindle tree divides its area.

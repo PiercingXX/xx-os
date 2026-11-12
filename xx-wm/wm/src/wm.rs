@@ -7,7 +7,8 @@ use std::process::{Command, Stdio};
 
 use wayland_client::backend::ObjectId;
 use wayland_client::globals::GlobalListContents;
-use wayland_client::protocol::wl_registry;
+use wayland_client::globals::GlobalListContents as Globals;
+use wayland_client::protocol::{wl_output, wl_registry};
 use wayland_client::{event_created_child, Connection, Dispatch, Proxy, QueueHandle, WEnum};
 
 use crate::config::{Action, Config};
@@ -73,6 +74,10 @@ pub struct Window {
 pub struct Output {
     proxy: RiverOutputV1,
     layer: Option<RiverLayerShellOutputV1>,
+    /// The wl_output, bound only to learn its connector name
+    /// (`HDMI-A-1`), which is how the shell finds the output in GTK.
+    wl_output: Option<wl_output::WlOutput>,
+    name: Option<String>,
     rect: Rect,
     area: Option<Rect>,
     workspace: usize,
@@ -131,8 +136,10 @@ pub struct State {
     rebind: bool,
     ipc: ipc::Queue,
     subscribers: ipc::Subscribers,
-    last_snapshot: String,
-    last_subscriber_count: usize,
+    /// Verbs for the shell (`launcher`, `bar`, `keybinds`), written to
+    /// `subscribe state` clients at the end of this manage sequence.
+    shell_events: Vec<String>,
+    registry: Option<wl_registry::WlRegistry>,
     socket: Option<std::path::PathBuf>,
     waker: Option<Waker>,
     pub exit: Option<i32>,
@@ -171,8 +178,8 @@ impl State {
             rebind: false,
             ipc,
             subscribers,
-            last_snapshot: String::new(),
-            last_subscriber_count: 0,
+            shell_events: Vec::new(),
+            registry: None,
             socket,
             waker: None,
             exit: None,
@@ -181,6 +188,11 @@ impl State {
 
     pub fn set_waker(&mut self, waker: Waker) {
         self.waker = Some(waker);
+    }
+
+    /// The registry, to bind each output's wl_output for its name.
+    pub fn set_registry(&mut self, registry: wl_registry::WlRegistry) {
+        self.registry = Some(registry);
     }
 
     /// A manage sequence `after` from now.
@@ -281,24 +293,84 @@ impl State {
         self.publish();
     }
 
-    /// Push the window list to subscribers when it (or the set of
-    /// subscribers) changed.
+    /// Push the window list (or, to `subscribe state` clients, the outputs
+    /// and windows) to each subscriber whose last copy is stale, then the
+    /// shell verbs queued during this sequence.
     fn publish(&mut self) {
-        use std::io::Write;
-        let count = self.subscribers.lock().unwrap().len();
-        if count == 0 {
-            self.last_subscriber_count = 0;
-            return;
+        let events = std::mem::take(&mut self.shell_events);
+        let subscribers = self.subscribers.clone();
+        let mut subs = subscribers.lock().unwrap();
+        let mut delivered = vec![false; events.len()];
+        if !subs.is_empty() {
+            let windows = self.window_list_json();
+            let state = subs.iter().any(|s| s.state).then(|| self.state_json(&windows));
+            subs.retain_mut(|s| {
+                let snap = if s.state { state.as_deref().unwrap_or_default() } else { windows.as_str() };
+                if s.sent != snap {
+                    if !s.send(snap) {
+                        return false;
+                    }
+                    s.sent = snap.to_string();
+                }
+                if s.state {
+                    for (i, e) in events.iter().enumerate() {
+                        if !s.send(&format!("{{\"shell\":{}}}", json_str(e))) {
+                            return false;
+                        }
+                        delivered[i] = true;
+                    }
+                }
+                true
+            });
         }
-        let snap = self.window_list_json();
-        if snap == self.last_snapshot && count == self.last_subscriber_count {
-            return;
+        drop(subs);
+        // No shell listening: the launcher falls back to the configured
+        // command, so Super still does something without XX-WM.
+        if events.iter().zip(&delivered).any(|(e, d)| !d && e == "launcher") {
+            let cmd = self.config.launcher.clone();
+            self.spawn(&cmd);
         }
-        let line = format!("{snap}\n");
-        let mut subs = self.subscribers.lock().unwrap();
-        subs.retain_mut(|s| s.write_all(line.as_bytes()).is_ok());
-        self.last_subscriber_count = subs.len();
-        self.last_snapshot = snap;
+    }
+
+    fn state_json(&self, windows: &str) -> String {
+        format!("{{\"outputs\":{},\"windows\":{}}}", self.outputs_json(), windows)
+    }
+
+    fn outputs_json(&self) -> String {
+        let items: Vec<String> = self
+            .live_outputs()
+            .map(|(i, o)| {
+                let title = self
+                    .top_of(o.workspace)
+                    .and_then(|t| self.windows.get(&t))
+                    .and_then(|w| w.title.clone())
+                    .unwrap_or_default();
+                format!(
+                    "{{\"name\":{},\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"handset\":{},\"workspace\":{},\"focused\":{},\"title\":{}}}",
+                    json_str(o.name.as_deref().unwrap_or("")),
+                    o.rect.x,
+                    o.rect.y,
+                    o.rect.w,
+                    o.rect.h,
+                    o.handset,
+                    o.workspace,
+                    self.focused_output.as_ref() == Some(i),
+                    json_str(&title),
+                )
+            })
+            .collect();
+        format!("[{}]", items.join(","))
+    }
+
+    fn binds_json(&self) -> String {
+        let mut items: Vec<String> = Vec::new();
+        if self.config.super_tap {
+            items.push(format!("{{\"combo\":\"Super\",\"action\":{}}}", json_str(&Action::Launcher.describe())));
+        }
+        items.extend(self.config.binds.iter().map(|b| {
+            format!("{{\"combo\":{},\"action\":{}}}", json_str(&b.combo), json_str(&b.action.describe()))
+        }));
+        format!("[{}]", items.join(","))
     }
 
     fn window_list_json(&self) -> String {
@@ -357,6 +429,11 @@ impl State {
                 let (_, o) = self.outputs.remove(pos);
                 if let Some(l) = o.layer {
                     l.destroy();
+                }
+                if let Some(w) = o.wl_output {
+                    if w.version() >= 3 {
+                        w.release();
+                    }
                 }
                 o.proxy.destroy();
             }
@@ -603,10 +680,10 @@ impl State {
         log!("action {a:?}");
         match a {
             Action::Spawn(cmd) => self.spawn(&cmd),
-            Action::Launcher => {
-                let cmd = self.config.launcher.clone();
-                self.spawn(&cmd);
-            }
+            // The shell shows its own launcher; publish() falls back to the
+            // configured command when no shell is listening.
+            Action::Launcher => self.shell_events.push("launcher".into()),
+            Action::Shell(verb) => self.shell_events.push(verb),
             Action::Close => {
                 if let Some(w) = self.focused().and_then(|f| self.windows.get(&f)) {
                     w.proxy.close();
@@ -1086,23 +1163,32 @@ impl State {
         };
         match verb {
             "list" => self.window_list_json(),
-            "outputs" => {
-                let items: Vec<String> = self
-                    .live_outputs()
-                    .map(|(i, o)| {
-                        format!(
-                            "{{\"x\":{},\"y\":{},\"w\":{},\"h\":{},\"handset\":{},\"workspace\":{},\"focused\":{}}}",
-                            o.rect.x,
-                            o.rect.y,
-                            o.rect.w,
-                            o.rect.h,
-                            o.handset,
-                            o.workspace,
-                            self.focused_output.as_ref() == Some(i),
-                        )
-                    })
-                    .collect();
-                format!("[{}]", items.join(","))
+            "outputs" => self.outputs_json(),
+            "binds" => self.binds_json(),
+            "workspace" => {
+                let (n, name) = match arg.split_once(char::is_whitespace) {
+                    Some((n, name)) => (n, Some(name.trim())),
+                    None => (arg, None),
+                };
+                let n = match n.parse::<usize>() {
+                    Ok(n) if (1..=WORKSPACES).contains(&n) => n,
+                    _ => return format!("error: workspace must be 1-{WORKSPACES}, not {n:?}"),
+                };
+                if self.locked {
+                    return "error: locked".into();
+                }
+                if let Some(name) = name {
+                    let Some(out) = self
+                        .live_outputs()
+                        .find(|(_, o)| o.name.as_deref() == Some(name))
+                        .map(|(i, _)| i.clone())
+                    else {
+                        return format!("error: no output {name:?}");
+                    };
+                    self.focused_output = Some(out);
+                }
+                self.show_workspace(n);
+                "ok".into()
             }
             "focus" | "close" => {
                 let Some(id) = self.find_by_identifier(arg) else {
@@ -1204,6 +1290,8 @@ impl Dispatch<RiverWindowManagerV1, ()> for State {
                     Output {
                         proxy: id,
                         layer,
+                        wl_output: None,
+                        name: None,
                         rect: Rect::default(),
                         area: None,
                         workspace: 0,
@@ -1283,8 +1371,22 @@ impl Dispatch<RiverNodeV1, ()> for State {
 }
 
 impl Dispatch<RiverOutputV1, ()> for State {
-    fn event(state: &mut Self, proxy: &RiverOutputV1, event: river_output_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(state: &mut Self, proxy: &RiverOutputV1, event: river_output_v1::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
         use river_output_v1::Event as E;
+        if let E::WlOutput { name } = event {
+            // wl_output.name arrived in version 4; bind no higher than the
+            // compositor advertises.
+            let bound = state.registry.as_ref().and_then(|r| {
+                let version = r
+                    .data::<Globals>()
+                    .and_then(|g| g.with_list(|l| l.iter().find(|g| g.name == name).map(|g| g.version)))?;
+                (version >= 4).then(|| r.bind::<wl_output::WlOutput, _, _>(name, 4, qh, proxy.id()))
+            });
+            if let Some(o) = state.output_mut(&proxy.id()) {
+                o.wl_output = bound;
+            }
+            return;
+        }
         let Some(o) = state.output_mut(&proxy.id()) else { return };
         match event {
             E::Removed => o.removed = true,
@@ -1297,6 +1399,19 @@ impl Dispatch<RiverOutputV1, ()> for State {
                 o.rect.h = height;
             }
             _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ObjectId> for State {
+    fn event(state: &mut Self, _: &wl_output::WlOutput, event: wl_output::Event, output: &ObjectId, _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_output::Event::Name { name } = event {
+            if let Some(o) = state.output_mut(output) {
+                o.name = Some(name);
+            }
+            // The name is not part of a manage sequence; ask for one so
+            // state subscribers hear it.
+            state.wm.manage_dirty();
         }
     }
 }

@@ -110,6 +110,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut state = wm::State::new(manager, xkb, layer, config, path, queue_ipc, subscribers, socket.clone());
     state.set_waker(waker);
+    state.set_registry(globals.registry().clone());
     let code = loop {
         queue.blocking_dispatch(&mut state)?;
         if let Some(code) = state.exit {

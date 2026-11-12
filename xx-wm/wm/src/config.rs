@@ -29,6 +29,30 @@ pub enum Action {
     ToggleFullscreen,
     ToggleSplit,
     Launcher,
+    /// Hand a verb to the XX-WM shell (`bar`, `keybinds`): it reaches the
+    /// shell over the control socket's `subscribe state` stream.
+    Shell(String),
+}
+
+impl Action {
+    /// The wm.conf words for this action; `parse_action` reads them back.
+    pub fn describe(&self) -> String {
+        match self {
+            Action::Spawn(cmd) => format!("spawn {cmd}"),
+            Action::Close => "close".into(),
+            Action::Focus(d) => format!("focus {}", d.name()),
+            Action::Move(d) => format!("move {}", d.name()),
+            Action::Resize(d) => format!("resize {}", d.name()),
+            Action::Workspace(n) => format!("workspace {n}"),
+            Action::Send(n) => format!("send {n}"),
+            Action::SendSilent(n) => format!("send-silent {n}"),
+            Action::ToggleFloat => "float".into(),
+            Action::ToggleFullscreen => "fullscreen".into(),
+            Action::ToggleSplit => "toggle-split".into(),
+            Action::Launcher => "launcher".into(),
+            Action::Shell(verb) => format!("shell {verb}"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -79,6 +103,8 @@ set launcher [ -x ~/.scripts/Control-Scripts/wm-app-launcher.sh ] && exec bash ~
 bind Super+Q close
 bind Super+Shift+Q close
 bind Alt+Tab launcher
+bind Super+R shell bar
+bind Super+slash shell keybinds
 bind Super+Shift+F fullscreen
 bind Super+F float
 bind Super+X toggle-split
@@ -100,7 +126,6 @@ bind Super+Shift+N spawn kitty ~/.scripts/Note-Scripts/open_daily_note.sh --view
 bind Super+Alt+N spawn kitty ~/.scripts/Note-Scripts/open_daily_note.sh --todo
 bind Super+I spawn kitty ~/.scripts/Note-Scripts/inventory.sh
 bind Super+Shift+Y spawn bash ~/.scripts/Control-Scripts/wm-clipboard-menu.sh
-bind Super+slash spawn xdg-open ~/.scripts/Control-Scripts/keybinds.html
 bind Super+grave spawn xx-wm-ipc lock || loginctl lock-session
 bind Super+P spawn bash ~/.scripts/Control-Scripts/notify-time.sh
 bind Super+Shift+P spawn bash ~/.scripts/Control-Scripts/notify-calendar.sh
@@ -297,6 +322,12 @@ fn parse_workspace(s: &str) -> Result<usize, String> {
     }
 }
 
+/// Shell verbs travel as one JSON string on the state stream; keep them
+/// to plain words so nothing needs escaping or can smuggle a second line.
+fn is_shell_verb(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'-' || b == b'.')
+}
+
 pub fn parse_action(text: &str) -> Result<Action, String> {
     let (verb, arg) = split_word(text);
     Ok(match verb {
@@ -312,6 +343,8 @@ pub fn parse_action(text: &str) -> Result<Action, String> {
         "fullscreen" => Action::ToggleFullscreen,
         "toggle-split" => Action::ToggleSplit,
         "launcher" => Action::Launcher,
+        "shell" if is_shell_verb(arg) => Action::Shell(arg.to_string()),
+        "shell" => return Err(format!("shell verb must be one lowercase word, not {arg:?}")),
         other => return Err(format!("unknown action {other:?}")),
     })
 }
@@ -384,6 +417,26 @@ mod tests {
         );
         assert!(parse_action("spawn").is_err());
         assert!(parse_action("workspace 11").is_err());
+    }
+
+    #[test]
+    fn describe_reads_back_for_every_default() {
+        let c = Config::defaults();
+        for b in &c.binds {
+            assert_eq!(parse_action(&b.action.describe()), Ok(b.action.clone()), "{}", b.combo);
+        }
+    }
+
+    #[test]
+    fn shell_verbs() {
+        let c = Config::defaults();
+        assert_eq!(find(&c, "Super+R"), Some(Action::Shell("bar".into())));
+        assert_eq!(find(&c, "Super+slash"), Some(Action::Shell("keybinds".into())));
+        assert_eq!(parse_action("shell launcher"), Ok(Action::Shell("launcher".into())));
+        assert!(parse_action("shell").is_err());
+        assert!(parse_action("shell two words").is_err());
+        assert!(parse_action("shell Bar").is_err());
+        assert!(parse_action("shell a\"b").is_err());
     }
 
     #[test]
