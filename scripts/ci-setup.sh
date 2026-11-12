@@ -4,7 +4,7 @@
 #   podman run --rm -v "$PWD":/src:ro archlinux:latest sh /src/scripts/ci-setup.sh --run
 set -eu
 pacman -Syu --noconfirm --needed \
-    git rsync sudo which base-devel \
+    git rsync sudo which base-devel meson ninja unzip appstream \
     python python-pip python-gobject python-cairo python-pytest shellcheck \
     gtk4 libadwaita gtk4-layer-shell gobject-introspection libnotify polkit \
     gstreamer gst-plugins-base gst-plugins-good \
