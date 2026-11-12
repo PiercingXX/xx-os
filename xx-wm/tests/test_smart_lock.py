@@ -1005,22 +1005,26 @@ class TestSmartLockConfig:
         config.record_smart_lock_pin_time(NOW)
         assert self._config().smart_lock_last_pin_time == NOW
 
-    def test_backup_carries_lists_not_clock(self):
+    def test_backup_carries_no_trust_and_no_clock(self):
+        """A backup file can come from anywhere: it never grants trust."""
         import backup
         config = self._config()
         config.set_smart_lock_bt_devices([BT])
         config.set_smart_lock_wifi_ssids([HOME])
         config.record_smart_lock_pin_time(NOW)
         exported = backup.export_backup(config)
-        assert exported['smart_lock_bt_devices'] == [BT]
-        assert exported['smart_lock_wifi_ssids'] == [HOME]
-        assert 'smart_lock_last_pin_time' not in exported
+        assert not any(key.startswith('smart_lock') for key in exported)
         ok, error = backup.validate_backup(exported)
         assert ok, error
         fresh = self._config()
+        fresh.set_smart_lock_bt_devices([])
+        fresh.set_smart_lock_wifi_ssids([])
         fresh.record_smart_lock_pin_time(123.0)
+        exported['smart_lock_bt_devices'] = ['11:11:11:11:11:11']
+        exported['smart_lock_wifi_ssids'] = [
+            {'ssid': 'Evil', 'bssid': '11:11:11:11:11:11'}]
         exported['smart_lock_last_pin_time'] = 999.0
         assert backup.restore_backup(fresh, exported) is True
-        assert fresh.smart_lock_bt_devices == [BT]
-        assert fresh.smart_lock_wifi_ssids == [HOME]
+        assert fresh.smart_lock_bt_devices == []
+        assert fresh.smart_lock_wifi_ssids == []
         assert fresh.smart_lock_last_pin_time == 123.0

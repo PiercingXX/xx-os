@@ -2617,11 +2617,18 @@ class SettingsPage:
         win.item_actions._show_action_menu(anchor, 'Restore from backup', actions)
 
     def _confirm_restore_backup(self, anchor, path, label: str) -> None:
+        # A backup file can arrive in ~/Documents from anywhere (Nearby
+        # Share, Syncthing); restoring one rewrites lock settings, so it
+        # takes the PIN.
+        import settings_lock
+
         win = self._win
         win.item_actions._show_action_menu(
             anchor,
             f'Restore backup from {label}? This replaces your home layout and settings.',
-            [('Restore', lambda: win._restore_from_path(str(path))),
+            [('Restore', lambda: settings_lock.ask_pin(
+                win, anchor, 'Restore backup', 'Restore',
+                lambda: win._restore_from_path(str(path)))),
              ('Cancel', lambda: None)])
 
     def _restore_from_path(self, filepath: str | None) -> None:

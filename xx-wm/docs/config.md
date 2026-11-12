@@ -197,8 +197,8 @@ reason otherwise — but only while Smart Lock is configured.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `smart_lock_bt_devices` | list | `[]` | Trusted Bluetooth addresses (`AA:BB:CC:DD:EE:FF`; matched case-insensitively). Included in backups. |
-| `smart_lock_wifi_ssids` | list | `[]` | Trusted Wi-Fi access points as `{"ssid": "Home", "bssid": "AA:BB:CC:DD:EE:FF"}` objects (SSID matched verbatim — SSIDs are case-sensitive; BSSID case-insensitively). A mesh or multi-AP network needs one entry per access point. Plain network-name strings from older versions are ignored (trust by name alone is gone); add the network again in Settings. Included in backups. |
+| `smart_lock_bt_devices` | list | `[]` | Trusted Bluetooth addresses (`AA:BB:CC:DD:EE:FF`; matched case-insensitively). Never exported in backups and never written by a restore. |
+| `smart_lock_wifi_ssids` | list | `[]` | Trusted Wi-Fi access points as `{"ssid": "Home", "bssid": "AA:BB:CC:DD:EE:FF"}` objects (SSID matched verbatim — SSIDs are case-sensitive; BSSID case-insensitively). A mesh or multi-AP network needs one entry per access point. Plain network-name strings from older versions are ignored (trust by name alone is gone); add the network again in Settings. Never exported in backups and never written by a restore. |
 | `smart_lock_last_pin_time` | float | `0.0` | Wall-clock epoch of the last successful PIN unlock (the 4-hour clock). Written automatically; device-local transient — never exported in backups and never overwritten by a restore. |
 
 ### App standby & battery saver
@@ -335,7 +335,7 @@ surface, not the store.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `auto_lock_timeout` | int | `0` | Seconds the display must stay blanked (idle blank or power-key blank) before the lock screen shows; `0` locks immediately on blank. Old values keep working — they now count darkness, not shell-window idleness. Never locks while a call is non-terminated. |
+| `auto_lock_timeout` | int | `0` | Seconds the display must stay blanked (idle blank or power-key blank) before the lock screen shows; `0` locks immediately on blank. Old values keep working — they now count darkness, not shell-window idleness. Never locks while a call is non-terminated. A restored backup caps it at `1800`. |
 | `display_blank_timeout` | int | `60` | Idle seconds before the display blanks (backlight off); `0` never blanks. |
 | `pin_hash` | string | — | SHA-256 of the PIN (minimum 6 digits). Never exported in backups. |
 | `lock_screen_lockout` | dict | — | Private escalating-lockout resume point (`{fails, until}` wall-clock epoch), written automatically on wrong PINs and cleared on unlock. Survives shell restarts; never exported in backups and never overwritten by a restore. |

@@ -1050,7 +1050,9 @@ class TestLockoutBackupExclusion:
     def test_export_excludes_lockout_state(self, isolated_home):
         import json
         from backup import _EXCLUDED_KEYS, export_backup
-        assert set(_EXCLUDED_KEYS) == {'pin_hash', 'lock_screen_lockout'}
+        assert set(_EXCLUDED_KEYS) == {
+            'pin_hash', 'lock_screen_lockout', 'smart_lock_bt_devices',
+            'smart_lock_wifi_ssids', 'smart_lock_last_pin_time'}
         config = ShellConfig()
         config.set_pin('123456')
         config.set_lockout_state(5, 9e12)

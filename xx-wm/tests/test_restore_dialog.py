@@ -228,3 +228,75 @@ class TestExportDestination:
         exported = list(home.glob('xx-wm-backup-*.json'))
         assert len(exported) == 1
         assert statuses == [f'Backup exported to {exported[0]}']
+
+
+class TestRestoreNeedsPin:
+    """A backup dropped into ~/Documents (Nearby Share, Syncthing) must not
+    restore lock settings without the owner's PIN."""
+
+    def _shell(self, window_module, tmp_path, monkeypatch, pin=None):
+        from config import ShellConfig
+        monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+        monkeypatch.setenv('XX_WM_PIN_HELPER', '0')
+        (tmp_path / 'home').mkdir(parents=True, exist_ok=True)
+        _write_backup(tmp_path / 'home', '20240102_080000')
+        statuses: list[str] = []
+        applied: list[str] = []
+        shell = types.SimpleNamespace(
+            config=ShellConfig(), item_actions=_Menus(),
+            _restore_btn=object(), _show_status=statuses.append,
+            _apply_config_change=lambda: applied.append('applied'))
+        if pin is not None:
+            shell.config.set_pin(pin)
+        shell._restore_from_path = (
+            window_module.ShellWindow._restore_from_path.__get__(shell))
+        shell._confirm_restore_backup = (
+            window_module.ShellWindow._confirm_restore_backup.__get__(shell))
+        window_module.ShellWindow._on_restore_backup(shell, object())
+        _by_label(shell.item_actions.calls[0][2])['2024-01-02 08:00']()
+        return shell, statuses, applied
+
+    def test_restore_waits_for_the_right_pin(
+            self, window_module, tmp_path, monkeypatch):
+        import settings_ui
+        sheets = []
+        monkeypatch.setattr(
+            settings_ui, 'form_sheet',
+            lambda win, anchor, title, fields, label, on_commit, **_k:
+            sheets.append((title, [f[0] for f in fields], on_commit))
+            or (object(), {}))
+        shell, statuses, applied = self._shell(
+            window_module, tmp_path, monkeypatch, pin='246810')
+        _by_label(shell.item_actions.calls[1][2])['Restore']()
+        assert applied == []
+        (title, fields, on_commit), = sheets
+        assert (title, fields) == ('Restore backup', ['pin'])
+        assert on_commit({'pin': '000000'}) == 'Current PIN is wrong.'
+        assert applied == [] and statuses == []
+        assert on_commit({'pin': '246810'}) is None
+        assert applied == ['applied']
+        assert statuses == ['Backup restored successfully']
+
+    def test_no_pin_restores_straight_away(
+            self, window_module, tmp_path, monkeypatch):
+        import settings_ui
+        monkeypatch.setattr(settings_ui, 'form_sheet',
+                            lambda *a, **k: pytest.fail('no PIN to ask'))
+        shell, _statuses, applied = self._shell(
+            window_module, tmp_path, monkeypatch)
+        _by_label(shell.item_actions.calls[1][2])['Restore']()
+        assert applied == ['applied']
+
+    def test_restored_auto_lock_timeout_is_capped(self, tmp_path,
+                                                  monkeypatch):
+        from backup import AUTO_LOCK_TIMEOUT_MAX, restore_backup
+        from config import ShellConfig
+        monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+        config = ShellConfig()
+        payload = {'version': 1, 'home_slots': [],
+                   'auto_lock_timeout': 10 ** 9}
+        assert restore_backup(config, payload) is True
+        assert config.auto_lock_timeout == AUTO_LOCK_TIMEOUT_MAX == 1800
+        payload['auto_lock_timeout'] = 300
+        restore_backup(config, payload)
+        assert config.auto_lock_timeout == 300

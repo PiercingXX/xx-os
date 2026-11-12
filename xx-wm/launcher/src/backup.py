@@ -4,12 +4,14 @@ Backup and restore — versioned JSON export of the shell configuration.
 Scope (design.md "Backup / restore"): home slots, folders + membership,
 pins, app rename labels, widget config + tap actions, theme, hidden apps,
 gestures, prefs (sounds, DnD, Focus, lock screen, weather coords, search).
-Excluded: PIN hash (security), escalating-lockout resume point and the
-Smart Lock 4-hour PIN clock (device-local transients — a restore must
-not clear a live lockout), launch counts (noise), active mutes and
-focus breaks (transient), custom font files (only the family name
-travels).
-Restore validates the entire payload first and never writes on invalid input.
+Excluded: PIN hash (security), Smart Lock trusted devices and networks
+(a backup file can come from anywhere; trust is added on the phone,
+behind the PIN), escalating-lockout resume point and the Smart Lock
+4-hour PIN clock (device-local transients — a restore must not clear a
+live lockout), launch counts (noise), active mutes and focus breaks
+(transient), custom font files (only the family name travels).
+Restore validates the entire payload first and never writes on invalid input;
+Settings asks for the PIN before it restores.
 The export below is allowlist-built, so excluded keys can never leak in —
 _EXCLUDED_KEYS pins that contract for tests.
 """
@@ -19,7 +21,13 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-_EXCLUDED_KEYS = ('pin_hash', 'lock_screen_lockout')
+_EXCLUDED_KEYS = ('pin_hash', 'lock_screen_lockout',
+                  'smart_lock_bt_devices', 'smart_lock_wifi_ssids',
+                  'smart_lock_last_pin_time')
+
+# No Settings row sets auto_lock_timeout; a restored value is capped at
+# Android's longest "lock after screen timeout" choice, 30 minutes.
+AUTO_LOCK_TIMEOUT_MAX = 30 * 60
 
 _BACKUP_GLOB = 'xx-wm-backup-*.json'
 _BACKUP_FILENAME_RE = re.compile(r'^xx-wm-backup-(\d{8})_(\d{6})\.json$')
@@ -120,8 +128,6 @@ _LIST_KEYS = (
     'focus_schedules',
     'nope_apps',
     'nope_schedules',
-    'smart_lock_bt_devices',
-    'smart_lock_wifi_ssids',
 )
 
 
@@ -456,7 +462,8 @@ def restore_backup(config, payload: dict) -> bool:
     if 'text_size_scale' in payload:
         data['text_size_scale'] = max(0.5, min(2.0, float(payload['text_size_scale'])))
     if 'auto_lock_timeout' in payload:
-        data['auto_lock_timeout'] = max(0, int(payload['auto_lock_timeout']))
+        data['auto_lock_timeout'] = min(
+            AUTO_LOCK_TIMEOUT_MAX, max(0, int(payload['auto_lock_timeout'])))
 
     # set_home_slots validates slot shape and performs the single save
     config.set_home_slots(payload.get('home_slots', []))
