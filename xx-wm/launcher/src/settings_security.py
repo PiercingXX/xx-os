@@ -1,7 +1,8 @@
 """Opt-in malware scan and report-only security check (ref virus-scan.sh).
 
 Clamscan only (never clamd), lowered priority, hard size limits. The
-section hides itself when clamscan is not installed. Package
+malware-scan group hides when clamscan is not installed; the security
+check needs no ClamAV and always shows. Package
 verification (`apk audit --system`, `pacman -Qkk`) runs unprivileged on
 a worker and only reports; socket/SUID/authorized_keys findings diff
 against a saved baseline.
@@ -22,6 +23,10 @@ MAX_RECURSION = 32
 MAX_FILES = 20000
 
 LIMIT_RE = 'Heuristics.Limits.Exceeded'
+
+# A recursive scan on a phone loads the signature database (tens of
+# seconds) before the first file; two minutes cut real scans short.
+SCAN_TIMEOUT_S = 30 * 60
 
 
 def _run(argv: list, timeout: int = 120):
@@ -239,7 +244,7 @@ def collect_security_report(run=_run, state_dir=None,
 class SecuritySection(settings_page._Section):
     """Opt-in malware scan plus a report-only security check.
 
-    Hidden entirely (no widgets) when clamscan is not installed.
+    Without clamscan only the security check shows.
     """
 
     key = 'security'
@@ -258,8 +263,18 @@ class SecuritySection(settings_page._Section):
         self._scanning = False
 
     def build(self, win) -> list:
+        self._check_row = ui.nav_row(
+            'Run security check', 'Listening ports, SUID files, SSH keys, '
+            'packages', lambda _r: self._on_check(win))
+        self._accept_row = ui.nav_row(
+            'Accept as new baseline', 'Stop flagging these changes',
+            lambda _r: self._on_accept(win))
+        check = ui.group('Security check', [self._check_row], note='')
+        self._check_box = check[1]
+        self._report = check[2]
         if not clamscan_available():
-            return []
+            self._scan_rows = []
+            return check
         self._scan_btn = ui.nav_row(
             'Scan a file…', 'Pick a file or folder by path',
             lambda r: self._open_scan_file(win, r))
@@ -270,15 +285,6 @@ class SecuritySection(settings_page._Section):
         scan = ui.group('Malware scan', list(self._scan_rows), note='')
         self._results_box = scan[1]
         self._status = scan[2]
-        self._check_row = ui.nav_row(
-            'Run security check', 'Listening ports, SUID files, SSH keys, '
-            'packages', lambda _r: self._on_check(win))
-        self._accept_row = ui.nav_row(
-            'Accept as new baseline', 'Stop flagging these changes',
-            lambda _r: self._on_accept(win))
-        check = ui.group('Security check', [self._check_row], note='')
-        self._check_box = check[1]
-        self._report = check[2]
         return scan + check
 
     def refresh(self, win) -> None:
@@ -321,7 +327,8 @@ class SecuritySection(settings_page._Section):
 
         def _work():
             try:
-                result = _run(build_clamscan_argv(target, recursive))
+                result = _run(build_clamscan_argv(target, recursive),
+                              timeout=SCAN_TIMEOUT_S)
             except Exception as err:
                 return {'error': str(err)}
             if getattr(result, 'returncode', 1) not in (0, 1):

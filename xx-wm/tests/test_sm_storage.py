@@ -687,8 +687,47 @@ class TestSectionRegistry:
             capture_output=True, text=True, timeout=120)
         assert proc.returncode == 0, proc.stdout + proc.stderr
 
-    def test_security_hidden_without_clamscan(self, monkeypatch):
+    def _fake_ui(self, monkeypatch, sec):
+        monkeypatch.setattr(sec.ui, 'nav_row',
+                            lambda title, *_a, **_k: ('row', title))
+        monkeypatch.setattr(
+            sec.ui, 'group',
+            lambda title, rows=(), note=None: [('caption', title),
+                                               list(rows), ('note', title)])
+
+    def test_security_check_stays_without_clamscan(self, monkeypatch):
         import settings_security as sec
         monkeypatch.setattr(sec.shutil, 'which', lambda _b: None)
+        self._fake_ui(monkeypatch, sec)
         assert sec.clamscan_available() is False
-        assert sec.SecuritySection().build(object()) == []
+        built = sec.SecuritySection().build(object())
+        captions = [w[1] for w in built if isinstance(w, tuple)
+                    and w[0] == 'caption']
+        assert captions == ['Security check']
+
+    def test_scan_group_with_clamscan(self, monkeypatch):
+        import settings_security as sec
+        monkeypatch.setattr(sec.shutil, 'which', lambda b: '/usr/bin/' + b)
+        self._fake_ui(monkeypatch, sec)
+        built = sec.SecuritySection().build(object())
+        captions = [w[1] for w in built if isinstance(w, tuple)
+                    and w[0] == 'caption']
+        assert captions == ['Malware scan', 'Security check']
+
+    def test_scan_gets_more_than_two_minutes(self, monkeypatch):
+        import settings_security as sec
+        import settings_page
+        seen = {}
+
+        def _fake_run(argv, timeout=120):
+            seen['timeout'] = timeout
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+        monkeypatch.setattr(sec, '_run', _fake_run)
+        monkeypatch.setattr(settings_page, '_run_bg',
+                            lambda work, done: done(work()))
+        section = sec.SecuritySection()
+        section._say = lambda text: None
+        section._render_results = lambda win: None
+        section._start_scan(object(), '/tmp', recursive=True)
+        assert seen['timeout'] >= 30 * 60
