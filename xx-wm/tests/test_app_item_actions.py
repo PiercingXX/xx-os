@@ -112,6 +112,18 @@ class TestPinned:
         assert config.pinned == ['b.desktop']
 
 
+class TestPinnedCap:
+    def test_ninth_pin_is_refused_out_loud(self, actions, config):
+        for i in range(8):
+            actions._set_pinned(_entry(f'p{i}.desktop', f'P{i}'), True)
+        actions.events.clear()
+        actions._set_pinned(_entry('ninth.desktop', 'Ninth'), True)
+        assert 'ninth.desktop' not in config.pinned
+        assert len(config.pinned) == 8
+        assert any('full' in str(e) for e in actions.events)
+        assert 'changed' not in actions.events
+
+
 class TestHidden:
     def test_hide_and_show(self, actions, config):
         e = _entry('x.desktop', 'X')

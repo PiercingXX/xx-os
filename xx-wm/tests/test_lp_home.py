@@ -488,6 +488,51 @@ class TestSlotMenu:
 
 # -- item 2: Add to Home ----------------------------------------------------------
 
+class TestNewFolderShows:
+    def _actions(self, config):
+        events = []
+        act = AppItemActions(
+            config, on_changed=lambda: events.append('changed'),
+            on_status=lambda msg: events.append(msg))
+        act.events = events
+        commits = []
+        act._show_entry_dialog = (
+            lambda _anchor, _title, _initial, _label, commit, **_k:
+            commits.append(commit))
+        act.commits = commits
+        return act
+
+    def test_new_folder_shows_under_a_slot_count(self, home_dir):
+        config = ShellConfig()
+        config.set_home_slots([
+            {'type': 'app', 'label': f'A{i}', 'app_id': f'a{i}.desktop'}
+            for i in range(5)
+        ])
+        config.set_home_slot_count(3)
+        act = self._actions(config)
+        act._show_new_folder(object(), _entry('photos.desktop', 'Photos'),
+                             'Photos')
+        act.commits[0]('Media')
+        visible = [s.get('label') for s in config.visible_home_slots()]
+        assert 'Media' in visible
+        assert config.home_slot_count == 4
+        assert len(config.home_slots) == 6
+
+    def test_new_folder_fills_an_empty_visible_slot(self, home_dir):
+        config = ShellConfig()
+        config.set_home_slots([
+            {'type': 'app', 'label': 'Notes', 'app_id': 'notes.desktop'},
+        ])
+        config.set_home_slot_count(4)
+        act = self._actions(config)
+        act._show_new_folder(object(), _entry('photos.desktop', 'Photos'),
+                             'Photos')
+        act.commits[0]('Media')
+        assert config.home_slot_count == 4
+        assert [s.get('label') for s in config.visible_home_slots()] == [
+            'Notes', 'Media']
+
+
 # -- item 7: rename triad ----------------------------------------------------------
 
 class TestRenameTriad:

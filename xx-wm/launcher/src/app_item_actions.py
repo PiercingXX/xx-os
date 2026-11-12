@@ -50,6 +50,8 @@ _MENU_TEXT_WIDTH = 28
 # Menus longer than this scroll inside a capped height (px).
 _MENU_SCROLL_AFTER = 8
 _MENU_MAX_HEIGHT = 440
+# config.set_pinned keeps eight; a ninth pin is refused, not dropped.
+_PINNED_MAX = 8
 
 
 def current_choice_index(anchor, actions) -> int | None:
@@ -492,6 +494,19 @@ class AppItemActions:
         self._show_entry_dialog(anchor, 'Rename', current, 'Rename', _commit,
                                 allow_empty=True)
 
+    def _insert_visible_slot(self, slots: list, slot: dict) -> None:
+        """Store a new slot where home shows it: with a Home Slot Count
+        set and every visible slot filled, it goes right after the visible
+        ones and the count grows (the drawer picker does the same)."""
+        count = getattr(self._config, 'home_slot_count', None)
+        if isinstance(count, int) and len(slots) >= count:
+            slots.insert(count, slot)
+            self._config.set_home_slots(slots)
+            self._config.set_home_slot_count(count + 1)
+            return
+        slots.append(slot)
+        self._config.set_home_slots(slots)
+
     def _rename_in_slots(self, app_id: str, label: str) -> None:
         slots = self._config.home_slots
         changed = False
@@ -540,9 +555,9 @@ class AppItemActions:
             if len(slots) >= 8:
                 self._on_status('Home is full — remove a slot first.')
                 return
-            slots.append({'type': 'folder', 'label': name, 'app_id': None, 'cmd': None,
-                          'folder': [{'label': display, 'app_id': entry.app_id}]})
-            self._config.set_home_slots(slots)
+            self._insert_visible_slot(slots, {
+                'type': 'folder', 'label': name, 'app_id': None, 'cmd': None,
+                'folder': [{'label': display, 'app_id': entry.app_id}]})
             self._on_changed()
 
         self._show_entry_dialog(anchor, 'New folder', '', 'Create', _commit)
@@ -563,6 +578,9 @@ class AppItemActions:
     def _set_pinned(self, entry: AppEntry, pin: bool) -> None:
         pinned = [p for p in self._config.pinned if p != entry.app_id]
         if pin:
+            if len(pinned) >= _PINNED_MAX:
+                self._on_status('Pinned apps are full — unpin one first.')
+                return
             pinned.append(entry.app_id)
         self._config.set_pinned(pinned)
         self._on_changed()
