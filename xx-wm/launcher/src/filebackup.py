@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import os
 import re
+import socket
 import subprocess
+
+BACKUP_DIRNAME = 'xx-backup'
 
 DANGEROUS_DESTS = frozenset((
     '/', '/bin', '/boot', '/dev', '/etc', '/home', '/lib', '/lib64',
@@ -74,6 +77,28 @@ def list_volumes(user=None, run_media=None, media_root='/media') -> list:
     return found
 
 
+def backup_host() -> str:
+    """This phone's folder name under xx-backup/: the hostname, made safe
+    as one path component."""
+    try:
+        name = socket.gethostname()
+    except OSError:
+        name = ''
+    name = re.sub(r'[^A-Za-z0-9._-]', '-', name or '').strip('.-')
+    return name or 'phone'
+
+
+def backup_target(volume: str, src: str, host=None) -> str:
+    """<volume>/xx-backup/<host>/<folder>/ for one source folder. Never
+    the volume itself: Mirror deletes whatever else sits at the
+    destination, and Restore copies the destination back whole."""
+    folder = os.path.basename(os.path.normpath(src)) if src else ''
+    if not volume or folder in ('', '.', '..', os.sep):
+        return ''
+    return os.path.join(volume, BACKUP_DIRNAME,
+                        host if host is not None else backup_host(), folder)
+
+
 def dangerous_dest(dest: str, home=None) -> bool:
     """True for /, system trees — never usable as a destination."""
     return os.path.normpath(dest) in DANGEROUS_DESTS
@@ -95,6 +120,8 @@ def validate_transfer(src: str, dest: str, mirror: bool,
         return False, 'Refusing to write to %s.' % dest_norm
     if mirror and dest_norm == os.path.normpath(base):
         return False, 'Refusing to mirror into your whole home folder.'
+    if mirror and os.path.ismount(dest_norm):
+        return False, 'Refusing to mirror onto a whole drive.'
     return True, None
 
 
@@ -167,6 +194,8 @@ def run_transfer(src: str, dest: str, mirror: bool, total: int,
     import subprocess as _sp
     argv = build_rsync_argv(src, dest, mirror)
     try:
+        # rsync creates only the last path component.
+        os.makedirs(dest, exist_ok=True)
         proc = _sp.Popen(argv, stdout=_sp.PIPE, stderr=_sp.STDOUT,
                          text=True, bufsize=1)
     except OSError as err:

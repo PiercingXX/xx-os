@@ -550,11 +550,20 @@ class BackupSection(_Section):
 
 
     def _endpoints(self, label: str):
+        import os
         import filebackup
+        if not self._dest:
+            self._say('Pick a destination folder.')
+            return None
+        target = filebackup.backup_target(self._dest, self._source)
         if label == 'Restore':
-            src, dest = self._dest, self._source
+            src, dest = target, self._source
+            if target and not os.path.isdir(target):
+                self._say('No backup of %s on that storage.'
+                          % os.path.basename(self._source))
+                return None
         else:
-            src, dest = self._source, self._dest
+            src, dest = self._source, target
         ok, error = filebackup.validate_transfer(src, dest, self._mirror)
         if not ok:
             self._say(error or 'Check source and destination.')

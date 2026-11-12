@@ -445,6 +445,91 @@ class TestFileBackupLogic:
             str(src), str(dest), mirror=False, home=str(home))
         assert ok, err
 
+    def test_target_is_a_per_folder_dir_never_the_volume(self, tmp_path):
+        import filebackup
+        vol = str(tmp_path / 'media' / 'SD')
+        target = filebackup.backup_target(
+            vol, str(tmp_path / 'home' / 'Pictures'), host='phone')
+        assert target == os.path.join(vol, 'xx-backup', 'phone', 'Pictures')
+        assert filebackup.backup_target(
+            vol, str(tmp_path / 'home' / '.local' / 'share' / 'xx-dialer'),
+            host='phone').endswith(os.path.join('phone', 'xx-dialer'))
+        assert filebackup.backup_target(vol, '', host='phone') == ''
+        assert filebackup.backup_target('', '/x/Pictures', host='p') == ''
+
+    def test_host_is_one_safe_component(self, monkeypatch):
+        import filebackup
+        monkeypatch.setattr(filebackup.socket, 'gethostname',
+                            lambda: '../evil/host')
+        assert filebackup.backup_host() == 'evil-host'
+        monkeypatch.setattr(filebackup.socket, 'gethostname', lambda: '..')
+        assert filebackup.backup_host() == 'phone'
+
+    def test_mirror_onto_mount_point_refused(self, tmp_path, monkeypatch):
+        import filebackup
+        src = tmp_path / 'Pictures'
+        src.mkdir()
+        dest = tmp_path / 'SD'
+        dest.mkdir()
+        monkeypatch.setattr(filebackup.os.path, 'ismount',
+                            lambda p: os.path.normpath(p) == str(dest))
+        ok, err = filebackup.validate_transfer(
+            str(src), str(dest), mirror=True, home=str(tmp_path / 'h'))
+        assert not ok and 'drive' in err
+        ok, _err = filebackup.validate_transfer(
+            str(src), str(dest / 'xx-backup' / 'p' / 'Pictures'),
+            mirror=True, home=str(tmp_path / 'h'))
+        assert ok
+
+    def test_transfer_creates_the_target_dirs(self, tmp_path, monkeypatch):
+        import subprocess
+        import filebackup
+        src = tmp_path / 'Pictures'
+        src.mkdir()
+        (src / 'a.jpg').write_text('x')
+        dest = tmp_path / 'SD' / 'xx-backup' / 'p' / 'Pictures'
+        argvs = []
+
+        class _Proc:
+            stdout = iter(())
+
+            def wait(self, timeout=None):
+                return 0
+
+        monkeypatch.setattr(subprocess, 'Popen',
+                            lambda argv, **_k: argvs.append(argv) or _Proc())
+        ok, err = filebackup.run_transfer(str(src), str(dest), False, 0,
+                                          lambda f: None)
+        assert ok, err
+        assert dest.is_dir()
+        assert argvs[0][-1] == str(dest) + '/'
+
+    def test_settings_backup_targets_the_folder_dir(self, tmp_path,
+                                                    monkeypatch):
+        import settings_page
+        import filebackup
+        monkeypatch.setattr(filebackup, 'backup_host', lambda: 'phone')
+        section = settings_page.BackupSection()
+        said = []
+        section._say = said.append
+        home = tmp_path / 'home'
+        (home / 'Pictures').mkdir(parents=True)
+        vol = tmp_path / 'SD'
+        vol.mkdir()
+        (vol / 'unrelated.txt').write_text('keep')
+        section._source = str(home / 'Pictures')
+        section._dest = str(vol)
+        monkeypatch.setenv('HOME', str(home))
+        src, dest = section._endpoints('Backup')
+        assert src == str(home / 'Pictures')
+        assert dest == str(vol / 'xx-backup' / 'phone' / 'Pictures')
+        assert section._endpoints('Restore') is None
+        assert said == ['No backup of Pictures on that storage.']
+        (vol / 'xx-backup' / 'phone' / 'Pictures').mkdir(parents=True)
+        assert section._endpoints('Restore') == (
+            str(vol / 'xx-backup' / 'phone' / 'Pictures'),
+            str(home / 'Pictures'))
+
     def test_self_nesting_excluded(self, tmp_path):
         import filebackup
         src = tmp_path / 'Pictures'
