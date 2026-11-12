@@ -169,6 +169,9 @@ install_deps() {
             libgtk4-layer-shell0 gir1.2-gtk4layershell-1.0 meson ninja-build rsync git \
             phoc lisgd wl-clipboard
         pkg_install python3-pywayland
+        # The lock on river (ext-session-lock): Arch ships this typelib
+        # inside gtk4-layer-shell 1.3, Debian as its own package.
+        pkg_install gir1.2-gtk4sessionlock-1.0
         pkg_install python3-phonenumbers openssl python3-gi-cairo
         pkg_install openssh-client
         # PolkitAgent typelib for the shell's password prompt. FuriOS ships
