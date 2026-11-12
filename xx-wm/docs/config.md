@@ -2,8 +2,13 @@
 
 Every shell preference lives in `~/.config/xx-wm/`. The config file
 **is the public API**: edit it in a terminal and the running shell hot-reloads
-it (debounced; an invalid file is ignored and the last good config stays
-live). The in-shell Settings page covers system things (network, sound
+it (debounced; an invalid file is ignored, the last good config stays
+live, and the shell does not save over the file until it parses again). A
+`config.json` that cannot be parsed at startup is moved aside to
+`config.json.corrupt-<timestamp>` and the shell runs on defaults without
+saving or seeding the home layout for that session. A PIN held by the
+root helper survives a lost or corrupt `config.json`: the shell re-adds the
+`pin_hash` marker from the helper. The in-shell Settings page covers system things (network, sound
 devices, battery, updates, backup) plus one Launcher section mirroring the
 Android launcher's settings — home, widgets, weather, clock, drawer,
 gestures, appearance — so a tablet without a keyboard can still change them.
@@ -388,6 +393,9 @@ operation and resolved path.
 | `xxdb_allow_while_locked` | bool | `false` | When true, paired computers keep full access while the phone is locked. Off: only `hello` answers until the phone is unlocked. |
 
 ## gestures.json
+
+Written atomically; a hand edit is hot-reloaded, and a change to one of the
+system-level slots below restarts lisgd with the new bindings.
 
 Flat `{gesture: action}`. Valid actions: `home`, `app_switcher`,
 `notification_shade`, `back`, `search` (drawer + keyboard focus),

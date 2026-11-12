@@ -2742,26 +2742,32 @@ class ShellWindow(Adw.ApplicationWindow):
 
     def _reload_config(self) -> bool:
         self._config_reload_timer = None
-        import json
-        loaded: dict | None = None
-        try:
-            if self.config.config_path.exists():
-                loaded = json.loads(self.config.config_path.read_text(encoding='utf-8'))
-                if not isinstance(loaded, dict):
-                    raise ValueError('config root must be an object')
-        except (OSError, json.JSONDecodeError, ValueError) as error:
+        self._reload_gestures()
+        fresh = self.config.read_fresh()
+        if fresh is None:
             from shell_log import get_logger
-            get_logger('window').warning('config reload skipped: %s', error)
+            get_logger('window').warning(
+                'config reload skipped: config.json did not load')
             return GLib.SOURCE_REMOVE
-        # Gestures re-read is cheap and side-effect free
-        self.gesture_config = GestureConfig()
         # Skip the UI rebuild when the change was our own save
-        if loaded is not None and loaded == self.config.data:
+        if fresh == self.config.data:
             return GLib.SOURCE_REMOVE
-        self.config.data = dict(DEFAULT_CONFIG)
-        self.config.load()
+        self.config.data = fresh
         self._apply_config_change()
         return GLib.SOURCE_REMOVE
+
+    def _reload_gestures(self) -> None:
+        """Re-read gestures.json; a changed system-level slot restarts
+        lisgd so a hand edit takes effect over every app, as a rebind in
+        Settings does."""
+        old = self.gesture_config
+        self.gesture_config = GestureConfig()
+        try:
+            changed = old.lisgd_bindings() != self.gesture_config.lisgd_bindings()
+        except Exception:
+            changed = False
+        if changed:
+            self._sync_system_gestures()
 
     def _apply_config_change(self) -> None:
         """Re-apply everything a config edit can influence."""

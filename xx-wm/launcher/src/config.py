@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import hmac
 import json
+import logging
 import os
 import stat
+import time
 from pathlib import Path
 
 
@@ -238,7 +241,84 @@ def sanitize_medical_id(raw: object) -> dict:
     return out
 
 
+def _slot_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return ''
+
+
+def _slot_app_id(value: object) -> str | None:
+    text = _slot_text(value)
+    return text or None
+
+
+def _slot_cmd(value: object) -> list[str] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    return [_slot_text(part) for part in value]
+
+
+def _sanitize_member(member: object) -> dict | None:
+    if not isinstance(member, dict):
+        return None
+    out = dict(member)
+    out['label'] = _slot_text(member.get('label'))
+    if 'app_id' in member:
+        out['app_id'] = _slot_app_id(member['app_id'])
+    if 'cmd' in member:
+        out['cmd'] = _slot_cmd(member['cmd'])
+    return out
+
+
+def sanitize_home_slots(raw: object) -> list[dict]:
+    """A fresh, type-safe copy of stored home slots: anything that is not
+    an app or folder dict is dropped, labels are strings, ids are strings
+    or None, commands and folders are lists. A hand-edited config.json
+    with junk in it must render, not crash the shell at startup."""
+    if not isinstance(raw, list):
+        return []
+    slots: list[dict] = []
+    for slot in raw:
+        if not isinstance(slot, dict):
+            continue
+        slot_type = slot.get('type')
+        if slot_type not in ('app', 'folder'):
+            continue
+        out = copy.deepcopy(slot)
+        out['label'] = _slot_text(slot.get('label'))
+        if 'app_id' in slot:
+            out['app_id'] = _slot_app_id(slot['app_id'])
+        if 'cmd' in slot:
+            out['cmd'] = _slot_cmd(slot['cmd'])
+        folder = slot.get('folder')
+        if slot_type == 'folder':
+            members = folder if isinstance(folder, list) else []
+            out['folder'] = [m for m in map(_sanitize_member, members)
+                             if m is not None]
+        elif 'folder' in slot and not isinstance(folder, list):
+            out['folder'] = None
+        slots.append(out)
+    return slots
+
+
+_log = logging.getLogger('piercing.config')
+
+# config.json paths that failed to load in this process. Every ShellConfig
+# for such a path stays in the failed state until the file reads cleanly
+# again: main.py builds throwaway instances before the window's, and the
+# corrupt file has been moved aside by then, so "no file" must not read as
+# a clean first run that seeds and saves defaults.
+_FAILED_PATHS: set[str] = set()
+
+
 class ShellConfig:
+    # True when config.json exists but could not be read or parsed. The
+    # in-memory data is then defaults (or the last good read), and save()
+    # refuses to write it over the user's file.
+    load_failed = False
+
     def __init__(self) -> None:
         self.config_dir = Path.home() / '.config' / 'xx-wm'
         self.config_path = self.config_dir / 'config.json'
@@ -246,21 +326,23 @@ class ShellConfig:
         legacy_dir = Path.home() / '.config' / 'piercing-shell'
         if legacy_dir.is_dir() and not self.config_dir.exists():
             legacy_dir.rename(self.config_dir)
-        self.data = dict(DEFAULT_CONFIG)
+        self.data = copy.deepcopy(DEFAULT_CONFIG)
         self.load()
 
-    def load(self) -> None:
-        if not self.config_path.exists():
-            return
-
+    def _read_disk(self) -> dict | None:
+        """config.json as a dict, None when absent; raises OSError when
+        unreadable and ValueError when it is not a JSON object."""
         try:
-            loaded = json.loads(self.config_path.read_text(encoding='utf-8'))
-        except (OSError, json.JSONDecodeError):
-            return
-
+            text = self.config_path.read_text(encoding='utf-8')
+        except FileNotFoundError:
+            return None
+        loaded = json.loads(text)
         if not isinstance(loaded, dict):
-            return
+            raise ValueError('config root must be an object')
+        return loaded
 
+    @staticmethod
+    def _merge(data: dict, loaded: dict) -> dict:
         for key, value in loaded.items():
             default = DEFAULT_CONFIG.get(key)
             # A scalar under a list/dict default ("pinned": "foo") would be
@@ -270,14 +352,87 @@ class ShellConfig:
                 continue
             if key in _STRING_KEYS and not isinstance(value, str):
                 continue
-            self.data[key] = value
-        legacy_sort = LEGACY_DRAWER_SORTS.get(self.data.get('drawer_sort'))
+            data[key] = value
+        legacy_sort = LEGACY_DRAWER_SORTS.get(data.get('drawer_sort'))
         if legacy_sort is not None:
             # 'az'/'install' predate the Android sort names; the next
             # save writes the new name.
-            self.data['drawer_sort'] = legacy_sort
+            data['drawer_sort'] = legacy_sort
+        return data
+
+    def _mark_failed(self, error: Exception) -> None:
+        self.load_failed = True
+        _FAILED_PATHS.add(str(self.config_path))
+        _log.warning('config.json unreadable, not saving over it: %s', error)
+
+    def _mark_loaded(self) -> None:
+        self.load_failed = False
+        _FAILED_PATHS.discard(str(self.config_path))
+
+    def _quarantine(self) -> None:
+        """Move an unparsable config.json aside, so neither this process
+        nor a later one ever overwrites what the user had."""
+        stamp = time.strftime('%Y%m%d-%H%M%S')
+        target = self.config_path.with_name(
+            f'{self.config_path.name}.corrupt-{stamp}')
+        n = 1
+        while target.exists():
+            target = self.config_path.with_name(
+                f'{self.config_path.name}.corrupt-{stamp}-{n}')
+            n += 1
+        try:
+            self.config_path.rename(target)
+        except OSError as error:
+            _log.warning('could not move corrupt config.json aside: %s', error)
+            return
+        _log.warning('corrupt config.json moved to %s', target)
+
+    def load(self) -> None:
+        try:
+            loaded = self._read_disk()
+        except OSError as error:
+            self._mark_failed(error)
+            return
+        except ValueError as error:
+            # JSONDecodeError and UnicodeDecodeError are both ValueErrors.
+            self._mark_failed(error)
+            self._quarantine()
+            return
+        if loaded is None:
+            if str(self.config_path) in _FAILED_PATHS:
+                self.load_failed = True
+            return
+        self._mark_loaded()
+        self._merge(self.data, loaded)
+
+    def read_fresh(self) -> dict | None:
+        """A complete new data dict from disk (defaults for a missing
+        file), for a hot reload to swap in at once. None when the file
+        is unreadable: the live data stays and save() refuses until the
+        file reads cleanly. Never moves the file: on a hot reload it is
+        usually mid-edit in a text editor."""
+        try:
+            loaded = self._read_disk()
+        except (OSError, ValueError) as error:
+            self._mark_failed(error)
+            return None
+        if loaded is None and str(self.config_path) in _FAILED_PATHS:
+            # Still nothing in place of the file moved aside at startup.
+            self.load_failed = True
+            return None
+        self._mark_loaded()
+        fresh =self._merge(copy.deepcopy(DEFAULT_CONFIG), loaded or {})
+        if (fresh.get('pin_hash') is None
+                and self.data.get('pin_hash') == HELPER_PIN_MARKER):
+            # The helper holds the PIN, not this file: an edit or a delete
+            # that drops the marker must not unlock the running session.
+            # pin_verify clears it if the helper really has no record.
+            fresh['pin_hash'] = HELPER_PIN_MARKER
+        return fresh
 
     def save(self) -> None:
+        if self.load_failed:
+            return
         payload = json.dumps(self.data, indent=2) + '\n'
         # eMMC wear guard: saves fire on every app launch and every settings
         # touch, often with nothing actually changed. Skip the flash write
@@ -618,6 +773,9 @@ class ShellConfig:
 
     @property
     def default_layout_applied(self) -> bool:
+        # Never seed the first-boot layout over a config that failed to load.
+        if self.load_failed:
+            return True
         return bool(self.data.get('default_layout_applied', False))
 
     def set_default_layout_applied(self, value: bool) -> None:
@@ -626,25 +784,26 @@ class ShellConfig:
 
     @property
     def home_slots(self) -> list[dict]:
-        slots = self.data.get('home_slots', DEFAULT_CONFIG['home_slots'])
-        if isinstance(slots, list):
-            return slots
-        return []
+        # Returns the live list: callers edit a slot in place, then pass
+        # a later read to set_home_slots. Junk is replaced in memory once.
+        stored = self.data.get('home_slots')
+        if not isinstance(stored, list):
+            return []
+        clean = sanitize_home_slots(stored)
+        if clean != stored:
+            self.data['home_slots'] = clean
+            return clean
+        return stored
 
     def set_home_slots(self, slots: list[dict]) -> None:
         validated = []
-        for slot in slots[:8]:
-            if not isinstance(slot, dict):
-                continue
-            slot_type = slot.get('type')
-            if slot_type not in ('app', 'folder'):
-                continue
+        for slot in sanitize_home_slots(slots[:8]):
             validated.append({
-                'type': slot_type,
-                'label': str(slot.get('label', '')),
-                'app_id': str(slot.get('app_id')) if slot.get('app_id') else None,
-                'cmd': slot.get('cmd') if isinstance(slot.get('cmd'), list) else None,
-                'folder': slot.get('folder') if isinstance(slot.get('folder'), list) else None,
+                'type': slot['type'],
+                'label': slot['label'],
+                'app_id': slot.get('app_id'),
+                'cmd': slot.get('cmd'),
+                'folder': slot.get('folder'),
             })
         self.data['home_slots'] = validated
         self.save()

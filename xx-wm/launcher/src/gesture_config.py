@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 def _config_path() -> Path:
@@ -162,8 +163,23 @@ class GestureConfig:
             self.save()
 
     def save(self) -> None:
+        # Atomic: the shell hot-reloads this file and lisgd's bindings are
+        # generated from it, so nobody may ever read a half-written copy.
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self._map, indent=2) + '\n', encoding='utf-8')
+        tmp_path = self._path.with_name(self._path.name + '.tmp')
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+                fh.write(json.dumps(self._map, indent=2) + '\n')
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, self._path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    def lisgd_bindings(self) -> tuple[str, ...]:
+        """The slot values lisgd's bindings are generated from."""
+        return tuple(self.get(key) for key in sorted(LISGD_SLOTS))
 
     def get(self, gesture: str) -> str:
         return self._map.get(gesture, 'none')

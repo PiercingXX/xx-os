@@ -375,3 +375,107 @@ class TestFontsPropagateViaGlobalProvider:
         for module in (notification_shade, call_ui, dialer, sms, power_menu):
             sheet = module.theme_css(THEME_PRESETS['paper']).lower()
             assert 'font-family' not in sheet, module.__name__
+
+
+class _WatchedConfig(ShellConfig):
+    """Records a snapshot of every dict assigned to ``data``."""
+
+    def __init__(self) -> None:
+        self.assigned: list[dict] = []
+        super().__init__()
+        self.assigned.clear()
+
+    @property
+    def data(self):
+        return self._data
+
+    @data.setter
+    def data(self, value):
+        self._data = value
+        if hasattr(self, 'assigned'):
+            self.assigned.append(dict(value))
+
+
+class TestReloadConfigSwapsOnce:
+    """window._reload_config builds the new data, then swaps it in once;
+    gestures.json edits re-sync lisgd."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_home(self, tmp_path, monkeypatch):
+        monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+
+    def _shell(self, config=None):
+        from gesture_config import GestureConfig
+        config = config if config is not None else _WatchedConfig()
+        shell = types.SimpleNamespace(
+            config=config, gesture_config=GestureConfig(),
+            _config_reload_timer=1, applied=0, synced=0)
+        shell._apply_config_change = lambda: setattr(
+            shell, 'applied', shell.applied + 1)
+        shell._sync_system_gestures = lambda notify=False: setattr(
+            shell, 'synced', shell.synced + 1)
+        shell._reload_gestures = (
+            lambda: window.ShellWindow._reload_gestures(shell))
+        return shell
+
+    def _write(self, config, payload) -> None:
+        import json
+        config.config_dir.mkdir(parents=True, exist_ok=True)
+        config.config_path.write_text(json.dumps(payload), encoding='utf-8')
+
+    def test_edit_is_swapped_in_complete_and_once(self):
+        shell = self._shell()
+        self._write(shell.config, {'theme': 'ocean', 'home_alignment': 'left'})
+        window.ShellWindow._reload_config(shell)
+        assert len(shell.config.assigned) == 1
+        assert shell.config.assigned[0]['theme'] == 'ocean'
+        assert shell.config.assigned[0]['home_alignment'] == 'left'
+        assert shell.applied == 1
+
+    def test_unreadable_file_keeps_live_data(self):
+        shell = self._shell()
+        shell.config.set_theme('ocean')
+        live = shell.config.data
+        shell.config.config_path.write_text('{"theme": "gra', encoding='utf-8')
+        window.ShellWindow._reload_config(shell)
+        assert shell.config.data is live and live['theme'] == 'ocean'
+        assert shell.config.assigned == [] and shell.applied == 0
+
+    def test_own_save_skips_the_rebuild(self):
+        shell = self._shell()
+        shell.config.set_theme('ocean')
+        window.ShellWindow._reload_config(shell)
+        assert shell.applied == 0
+
+    def test_deleted_config_keeps_the_helper_pin_marker(self):
+        from config import HELPER_PIN_MARKER
+        shell = self._shell()
+        shell.config.set_pin_in_helper()
+        shell.config.config_path.unlink()
+        window.ShellWindow._reload_config(shell)
+        assert shell.config.pin_hash == HELPER_PIN_MARKER
+
+    def test_lisgd_slot_edit_resyncs_lisgd(self):
+        from gesture_config import GestureConfig
+        shell = self._shell()
+        GestureConfig().set('swipe_down_top', 'none')
+        window.ShellWindow._reload_config(shell)
+        assert shell.synced == 1
+        assert shell.gesture_config.get('swipe_down_top') == 'none'
+
+    def test_other_gesture_edit_leaves_lisgd_alone(self):
+        from gesture_config import GestureConfig
+        shell = self._shell()
+        GestureConfig().set('double_tap_home', 'lock_screen')
+        window.ShellWindow._reload_config(shell)
+        assert shell.synced == 0
+        assert shell.gesture_config.get('double_tap_home') == 'lock_screen'
+
+    def test_gestures_reload_even_when_config_is_unreadable(self):
+        from gesture_config import GestureConfig
+        shell = self._shell()
+        shell.config.set_theme('ocean')
+        shell.config.config_path.write_text('{', encoding='utf-8')
+        GestureConfig().set('swipe_left_edge', 'none')
+        window.ShellWindow._reload_config(shell)
+        assert shell.synced == 1
