@@ -63,6 +63,96 @@ def drop_portal_opt_out(environ=os.environ) -> None:
         environ.pop('GDK_DEBUG', None)
 
 
+class WizardTelephony:
+    """Calls while the first-boot wizard is up.
+
+    The modem monitor normally lives on the shell window, which only
+    exists once setup is done, so a call during the wizard rang nowhere.
+    This stand-in host runs the same CallWiring paths (incoming surface,
+    screening, ringer, answer, hang-up, end) and counts as locked while
+    the resumed-wizard lock is up, so the call surface maps above it.
+    SMS go to TxxT or Chatty when either owns messages (started if
+    installed but not running) and otherwise stay on the modem for the
+    shell: there is no notification shade yet to post them in.
+    close() hands over to the shell window's own monitor."""
+
+    def __init__(self, app) -> None:
+        from call_wiring import CallWiring
+        from config import ShellConfig
+        from dnd import DndState
+        from modem_monitor import ModemMonitor
+
+        self._app = app
+        self.config = ShellConfig()
+        self.dnd_state = DndState(self.config)
+        self._call_ui = None
+        self._call_bar = None
+        self._display_mgr = None
+        self._dialer = None
+        self._calls_owner_warned = False
+        self._chatty_owner_warned = False
+        self._txtt_owner_warned = False
+        self._sms_notif_seq = 0
+        self._wiring = CallWiring(self)
+        self._modem_monitor = ModemMonitor(
+            on_incoming=self._wiring._on_call_incoming,
+            on_answered=self._wiring._on_call_answered,
+            on_ended=self._wiring._on_call_ended,
+            on_calls_changed=self._wiring._on_calls_changed,
+            on_sms=self._on_sms,
+        )
+
+    def get_application(self):
+        return self._app
+
+    def is_locked(self) -> bool:
+        lock = getattr(self._app, '_wizard_lock', None)
+        if lock is None:
+            return False
+        try:
+            return bool(lock.get_visible())
+        except Exception:
+            return True
+
+    def _ensure_call_surfaces(self) -> tuple:
+        return self._wiring._ensure_call_surfaces()
+
+    def _sync_call_inhibit(self, calls: list) -> None:
+        self._wiring._sync_call_inhibit(calls)
+
+    def _expand_call_ui(self) -> None:
+        self._wiring._expand_call_ui()
+
+    def _call_live(self) -> bool:
+        return self._wiring._call_live()
+
+    def _on_sms(self, _number: str, _text: str) -> bool:
+        import modem_monitor
+        for name in (modem_monitor.TXXT_BUS_NAME,
+                     modem_monitor.CHATTY_BUS_NAME):
+            if modem_monitor.bus_name_has_owner(name):
+                break
+            if modem_monitor.bus_name_activatable(name):
+                modem_monitor.start_bus_name(name)
+                break
+        return False
+
+    def close(self) -> None:
+        monitor, self._modem_monitor = self._modem_monitor, None
+        if monitor is not None:
+            monitor.close()
+        ui, self._call_ui = self._call_ui, None
+        bar, self._call_bar = self._call_bar, None
+        for surface, stop in ((ui, 'end_call'), (bar, 'hide_bar')):
+            if surface is None:
+                continue
+            for method in (stop, 'destroy'):
+                try:
+                    getattr(surface, method)()
+                except Exception:
+                    pass
+
+
 class XXWMApplication(Adw.Application):
     def __init__(self, replay_welcome: bool = False) -> None:
         super().__init__(
@@ -87,6 +177,7 @@ class XXWMApplication(Adw.Application):
         self._screensaver = None
         self._auto_suspend = None
         self._wizard_lock = None
+        self._wizard_telephony: WizardTelephony | None = None
         self._banner = None
         from focus_mode import HeldNotifications
         self._held_notifications = HeldNotifications()
@@ -122,6 +213,9 @@ class XXWMApplication(Adw.Application):
         )
 
         if FirstBootWizard.is_needed():
+            # Calls work during setup too: the shell window's modem
+            # monitor does not exist until the wizard is done.
+            self._start_wizard_telephony()
             self._start_first_boot()
         else:
             self._show_shell()
@@ -184,8 +278,25 @@ class XXWMApplication(Adw.Application):
         if lock is not None:
             GLib.idle_add(lambda: (lock.destroy(), False)[1])
 
+    def _start_wizard_telephony(self) -> None:
+        if getattr(self, '_wizard_telephony', None) is not None:
+            return
+        try:
+            self._wizard_telephony = WizardTelephony(self)
+        except Exception as exc:
+            _log.error('telephony during setup unavailable: %s', exc)
+
+    def _stop_wizard_telephony(self) -> None:
+        telephony = getattr(self, '_wizard_telephony', None)
+        self._wizard_telephony = None
+        if telephony is not None:
+            telephony.close()
+
     def _wizard_done(self) -> None:
         self._wizard = None
+        # The shell window builds its own modem monitor, which adopts any
+        # call still up (Voice.ListCalls); two monitors would ring twice.
+        self._stop_wizard_telephony()
         self._show_shell()
 
     def _show_shell(self) -> None:

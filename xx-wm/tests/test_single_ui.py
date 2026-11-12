@@ -42,7 +42,8 @@ def test_reactivation_presents_the_existing_wizard(monkeypatch):
         props=types.SimpleNamespace(active_window=None),
         _on_ipc_command=None, _on_sleep=None,
         _on_notification=None, _on_notification_closed=None,
-        _wizard_done=lambda: None, _show_shell=lambda: None)
+        _wizard_done=lambda: None, _show_shell=lambda: None,
+        _start_wizard_telephony=lambda: None)
     for name in ('_start_first_boot', '_present_wizard'):
         setattr(app, name, types.MethodType(
             getattr(main.XXWMApplication, name), app))

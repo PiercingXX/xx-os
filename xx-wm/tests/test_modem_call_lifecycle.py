@@ -265,6 +265,40 @@ class TestSmsFallbackStore:
         assert len(posted) == 2
 
 
+class TestMonitorClose:
+    """close() lets a stand-in host (telephony during the first-boot
+    wizard) hand over to the shell window's monitor: nothing it held
+    keeps firing callbacks afterwards."""
+
+    def test_close_unsubscribes_and_goes_quiet(self, monkeypatch):
+        bus = FakeBus()
+        monitor, fired, _, drain = _make_monitor(bus, monkeypatch)
+        _add_call(monitor, bus, drain, CALL1, _ringing_props())
+        n_changed = len(fired['changed'])
+        subscribed = set(range(1, bus._next))
+        monitor.close()
+        assert set(bus.unsubs) == subscribed
+        assert modem_monitor._last_monitor is None
+        _add_pending(monitor, CALL2)
+        _state_changed(monitor, drain, CALL1, modem_monitor._STATE_ACTIVE)
+        drain()
+        assert len(fired['changed']) == n_changed
+        assert fired['answered'] == [] and fired['ended'] == 0
+
+    def test_close_before_bus_setup_never_subscribes(self, monkeypatch):
+        bus = FakeBus()
+        pending = []
+        monkeypatch.setattr(modem_monitor.GLib, 'idle_add',
+                            lambda cb, *a: pending.append((cb, a)) or 1)
+        monkeypatch.setattr(modem_monitor.Gio, 'bus_get_sync',
+                            lambda *a, **k: bus)
+        monitor = modem_monitor.ModemMonitor()
+        monitor.close()
+        for cb, args in pending:
+            cb(*args)
+        assert bus.subs == [] and bus.calls == []
+
+
 class TestFailedStartDeletesCall:
     def test_start_failure_deletes_created_call(self, monkeypatch):
         bus = FakeBus()

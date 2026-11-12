@@ -683,52 +683,71 @@ class ModemMonitor:
         self._mm_watch: int | None = None
         self._mm_owner: str | None = None
         self._mm_vanished = False
+        self._subs: list[int] = []
+        self._closed = False
         global _last_monitor
         _last_monitor = self
         GLib.idle_add(self._init_bus)
+
+    def close(self) -> None:
+        """Stop following ModemManager: every signal subscription and the
+        bus-name watch are dropped and no callback fires after this. Calls
+        stay as they are on the modem for the next monitor to adopt."""
+        global _last_monitor
+        self._closed = True
+        def quiet(*_a) -> None:
+            return None
+
+        self._on_incoming = self._on_answered = quiet
+        self._on_ended = self._on_sim_lock = quiet
+        self._on_calls_changed = None
+        self._on_sms = None
+        for call_path in list(self._number_wait):
+            self._cancel_number_wait(call_path)
+        for call_path in list(self._call_subs):
+            self._drop_subscription(call_path)
+        if self._bus is not None:
+            for sub_id in self._subs:
+                self._bus.signal_unsubscribe(sub_id)
+        self._subs = []
+        self._bus = None
+        if self._mm_watch is not None:
+            try:
+                Gio.bus_unwatch_name(self._mm_watch)
+            except Exception:  # noqa: BLE001 - already gone
+                pass
+            self._mm_watch = None
+        if _last_monitor is self:
+            _last_monitor = None
 
     # ------------------------------------------------------------ bus setup
 
     def _init_bus(self) -> bool:
         from shell_log import get_logger
+        if self._closed:
+            return False
         watch_telephony_apps()
         try:
             self._bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
-            self._bus.signal_subscribe(
-                _MM1, _VOICE_IFACE, 'CallAdded', None,
-                None, Gio.DBusSignalFlags.NONE,
-                self._on_call_added, None,
-            )
-            self._bus.signal_subscribe(
-                _MM1, _VOICE_IFACE, 'CallDeleted', None,
-                None, Gio.DBusSignalFlags.NONE,
-                self._on_call_deleted, None,
-            )
-            self._bus.signal_subscribe(
-                _MM1, _MSG_IFACE, 'Added', None,
-                None, Gio.DBusSignalFlags.NONE,
-                self._on_messaging_added, None,
-            )
-            self._bus.signal_subscribe(
-                _MM1, _MODEM_IFACE, 'StateChanged', None,
-                None, Gio.DBusSignalFlags.NONE,
-                self._on_modem_state_changed, None,
-            )
-            self._bus.signal_subscribe(
-                _MM1, _PROPS_IFACE, 'PropertiesChanged', None,
-                _MODEM_IFACE, Gio.DBusSignalFlags.NONE,
-                self._on_modem_properties_changed, None,
-            )
-            self._bus.signal_subscribe(
-                _MM1, _OBJMGR_IFACE, 'InterfacesAdded', _MM1_PATH,
-                None, Gio.DBusSignalFlags.NONE,
-                self._on_interfaces_added, None,
-            )
-            self._bus.signal_subscribe(
-                _MM1, _OBJMGR_IFACE, 'InterfacesRemoved', _MM1_PATH,
-                None, Gio.DBusSignalFlags.NONE,
-                self._on_interfaces_removed, None,
-            )
+            for iface, signal, path, arg0, handler in (
+                    (_VOICE_IFACE, 'CallAdded', None, None,
+                     self._on_call_added),
+                    (_VOICE_IFACE, 'CallDeleted', None, None,
+                     self._on_call_deleted),
+                    (_MSG_IFACE, 'Added', None, None,
+                     self._on_messaging_added),
+                    (_MODEM_IFACE, 'StateChanged', None, None,
+                     self._on_modem_state_changed),
+                    (_PROPS_IFACE, 'PropertiesChanged', None, _MODEM_IFACE,
+                     self._on_modem_properties_changed),
+                    (_OBJMGR_IFACE, 'InterfacesAdded', _MM1_PATH, None,
+                     self._on_interfaces_added),
+                    (_OBJMGR_IFACE, 'InterfacesRemoved', _MM1_PATH, None,
+                     self._on_interfaces_removed)):
+                self._subs.append(self._bus.signal_subscribe(
+                    _MM1, iface, signal, path, arg0,
+                    Gio.DBusSignalFlags.NONE, handler, None,
+                ))
             self._enumerate()
         except GLib.Error as err:
             get_logger('modem_monitor').warning('system bus unavailable: %s', err)
