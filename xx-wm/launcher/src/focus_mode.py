@@ -12,7 +12,8 @@ from __future__ import annotations
 import time as _time
 from datetime import datetime
 
-from config import ShellConfig
+from app_names import fallback_app_name
+from config import ShellConfig, same_app_id
 from dnd import schedule_matches
 
 BREAK_MINUTES = (5, 10, 15)
@@ -109,16 +110,61 @@ class FocusState:
             return False
         return self.is_active(now, now_ts) and self.is_focus_app(app_id)
 
+    def sender_is_focus_app(self, desktop_entry: str | None,
+                            app_name: str | None,
+                            name_of=None) -> bool:
+        """Whether a notification sender is one of the focus apps.
+
+        The desktop-entry hint and the app name are both tried as ids.
+        A sender without a desktop entry also matches by name: the app's
+        display name (``name_of(app_id)``) or its id's last component.
+        """
+        wanted = str(app_name or '').strip().casefold()
+        for app in self.focus_apps:
+            if same_app_id(app, desktop_entry) or same_app_id(app, app_name):
+                return True
+            if desktop_entry or not wanted:
+                continue
+            if fallback_app_name(app).casefold() == wanted:
+                return True
+            if name_of is not None:
+                try:
+                    if str(name_of(app)).strip().casefold() == wanted:
+                        return True
+                except Exception:
+                    continue
+        return False
+
+    def is_paused_sender(self, desktop_entry: str | None,
+                         app_name: str | None, name_of=None,
+                         now: datetime | None = None,
+                         now_ts: float | None = None) -> bool:
+        """Notification gate: focus in force and the sender is paused."""
+        if not (desktop_entry or app_name):
+            return False
+        return (self.is_active(now, now_ts)
+                and self.sender_is_focus_app(desktop_entry, app_name, name_of))
+
 
 class HeldNotifications:
     """Queue for notifications held while their app is paused; released in
-    arrival order when focus ends or a break starts."""
+    arrival order when focus ends or a break starts. Entries start with
+    the notification id: a replacement takes the old entry's place and a
+    withdrawn notification leaves the queue."""
 
     def __init__(self) -> None:
         self._held: list[tuple] = []
 
     def hold(self, *notification: object) -> None:
+        if notification:
+            self.withdraw(notification[0])
         self._held.append(tuple(notification))
+
+    def withdraw(self, notif_id: object) -> bool:
+        """Drop a held notification the app closed; True if one went."""
+        before = len(self._held)
+        self._held = [h for h in self._held if not h or h[0] != notif_id]
+        return len(self._held) != before
 
     def release_all(self) -> list[tuple]:
         held, self._held = self._held, []

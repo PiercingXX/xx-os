@@ -282,20 +282,13 @@ class _Dnd:
         return self.active
 
 
-class _Focus:
-    def __init__(self, apps=(), active=True):
-        self.apps = set(apps)
-        self.active = active
-
-    def is_active(self):
-        return self.active
-
-    def is_paused_app(self, app_id):
-        return bool(app_id) and self.active and app_id in self.apps
-
-    def is_paused_sender(self, desktop_entry, app_name, name_of=None):
-        return self.active and bool(
-            {desktop_entry, app_name} & self.apps)
+def _focus(apps=(), enabled=True):
+    import types
+    from focus_mode import FocusState
+    config = types.SimpleNamespace(
+        data={'focus_enabled': enabled, 'focus_apps': list(apps)},
+        save=lambda: None)
+    return FocusState(config)
 
 
 class TestOnlyAlarmsPassDndAndFocus:
@@ -323,10 +316,68 @@ class TestOnlyAlarmsPassDndAndFocus:
             assert banners[0]['is_alarm'] is False
 
     def test_critical_from_a_paused_app_is_held(self):
-        focus = _Focus(apps={'org.example.Chat'})
+        focus = _focus(apps=['org.example.Chat'])
         app, banners = self._route({'urgency': 2}, focus=focus)
         assert banners == []
         assert len(app._held_notifications) == 1
+
+
+class TestFocusHolds:
+    def _app(self, focus, entries=()):
+        import types
+        app = _app()
+        app._shell = _shell(focus_state=focus)
+        app._shell.config.label_for = lambda _app_id, name: name
+        app._shell.app_index = types.SimpleNamespace(entries=list(entries))
+        return app
+
+    def test_withdrawn_while_held_is_never_delivered(self):
+        focus = _focus(apps=['org.example.Chat'])
+        app = self._app(focus)
+        app._on_notification(5, 'Chat', 'S', 'B', 'org.example.Chat', {})
+        assert len(app._held_notifications) == 1
+        app._on_notification_closed(5)
+        focus.set_enabled(False)
+        app._tick_focus_release()
+        assert app._shell.shown == []
+
+    def test_held_replacement_keeps_one_entry(self):
+        focus = _focus(apps=['org.example.Chat'])
+        app = self._app(focus)
+        app._on_notification(5, 'Chat', 'old', 'B', 'org.example.Chat', {})
+        app._on_notification(5, 'Chat', 'new', 'B', 'org.example.Chat', {})
+        focus.set_enabled(False)
+        app._tick_focus_release()
+        assert [args[2] for args in app._shell.shown] == ['new']
+
+    def test_delivered_replacement_drops_the_held_copy(self):
+        focus = _focus(apps=['org.example.Chat'])
+        app = self._app(focus)
+        app._on_notification(5, 'Chat', 'old', 'B', 'org.example.Chat', {})
+        focus.set_enabled(False)
+        app._on_notification(5, 'Chat', 'new', 'B', 'org.example.Chat', {})
+        app._tick_focus_release()
+        assert [args[2] for args in app._shell.shown] == ['new']
+
+    def test_sender_without_desktop_entry_is_held_by_id_tail(self):
+        app = self._app(_focus(apps=['org.signal.Signal']))
+        app._on_notification(6, 'Signal', 'S', 'B', '', {})
+        assert len(app._held_notifications) == 1
+        assert app._shell.shown == []
+
+    def test_sender_without_desktop_entry_is_held_by_display_name(self):
+        import types
+        entry = types.SimpleNamespace(app_id='signal-desktop.desktop',
+                                      name='Signal Messenger')
+        app = self._app(_focus(apps=['signal-desktop']), entries=[entry])
+        app._on_notification(7, 'Signal Messenger', 'S', 'B', '', {})
+        assert len(app._held_notifications) == 1
+
+    def test_unrelated_sender_without_entry_is_delivered(self):
+        app = self._app(_focus(apps=['org.signal.Signal']))
+        app._on_notification(8, 'Weather', 'S', 'B', '', {})
+        assert len(app._held_notifications) == 0
+        assert len(app._shell.shown) == 1
 
 
 if __name__ == '__main__':

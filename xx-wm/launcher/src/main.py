@@ -673,13 +673,17 @@ class XXWMApplication(Adw.Application):
         # Focus: notifications from paused apps are held outright — no sound,
         # not in the shade — and released in one batch when focus ends
         focus = getattr(self._shell, 'focus_state', None)
-        if focus is not None and focus.is_paused_app(desktop_entry) and not is_alarm:
+        if (focus is not None and not is_alarm
+                and self._focus_holds(focus, desktop_entry, app_name)):
             self._held_notifications.hold(
                 notif_id, app_name, summary, body, desktop_entry,
                 actions if actions is not None else [],
                 hints if isinstance(hints, dict) else {})
-            _log.debug('notification %d held by Focus: %s', notif_id, desktop_entry)
+            _log.debug('notification %d held by Focus: %s', notif_id,
+                       desktop_entry or app_name)
             return
+        # A replacement that is not held supersedes any held copy.
+        self._held_notifications.withdraw(notif_id)
 
         # DnD: notifications still collect in the shade, but silently —
         # no sound. Alarms are always exempt.
@@ -715,6 +719,16 @@ class XXWMApplication(Adw.Application):
             hints if isinstance(hints, dict) else {}, actions,
             dnd_active=dnd is not None and dnd.is_active(),
             is_alarm=is_alarm)
+
+    def _focus_holds(self, focus, desktop_entry: str, app_name: str) -> bool:
+        def name_of(app_id: str) -> str:
+            from app_names import friendly_app_name
+            return friendly_app_name(self._shell, app_id)
+        try:
+            return bool(focus.is_paused_sender(
+                desktop_entry, app_name, name_of))
+        except Exception:
+            return False
 
     def _banner_locked(self) -> bool:
         shell = self._shell
@@ -796,6 +810,8 @@ class XXWMApplication(Adw.Application):
         return True
 
     def _on_notification_closed(self, notif_id: int) -> None:
+        # Withdrawn while Focus held it: never deliver it later as a ghost.
+        self._held_notifications.withdraw(notif_id)
         standby = getattr(self, '_standby', None)
         if standby is not None:
             try:
