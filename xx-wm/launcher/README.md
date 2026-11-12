@@ -1,6 +1,6 @@
 # XX-WM — launcher
 
-GTK4/libadwaita launcher + shell surfaces for Linux phones. Despite the "WM" name, this is a *shell*, not a window manager — it runs on top of phoc (which does the window management) as a full Wayland session replacement (no GNOME, no Phosh). Text-first, gesture-driven, monochrome — the PiercingXX design language; `../design.md` is the UI spec.
+GTK4/libadwaita launcher + shell surfaces for Linux phones. Despite the "WM" name, this is a *shell*, not a window manager: the compositor does the window management (phoc on the FLX1s and Librem 5, river with xxwm from `../wm/` on the Pixel 9 Pro) and the shell is a full Wayland session replacement (no GNOME, no Phosh). Text-first, gesture-driven, monochrome — the PiercingXX design language; `../design.md` is the UI spec.
 
 ## What's built
 
@@ -37,12 +37,10 @@ side is `src/helper_client.py` (async, cached capability probe,
 graceful when the helper isn't installed). Full contract:
 `../docs/helper.md`.
 
-## What's not done yet (device-gated)
+## What's not done yet
 
-- Device bring-up: flashing, evdev paths, IIO sensor path, wlopm output name (`../devices/*/notes.md`)
-- lisgd/squeekboard runtime verification, gesture threshold calibration, telephony testing
-- Waydroid init + microG + Android app installs (`../todo.md` Workstream 17.6/17.7)
-- Performance baseline — needs device testing (Librem 5 is the canary)
+The live order is `../todo.md`; the device checks still open are listed
+there.
 
 ## Local build (dev machine)
 
@@ -78,7 +76,7 @@ gate, and ruff resolves via the venv python first so it needn't be on PATH.
 
 ```bash
 export PIERCING_DEVICE=<device-ip>
-export XX_WM_USER=dr3k   # tablet default; pmos default is user — check per device
+export XX_WM_USER=<user>  # the device's login user
 ./scripts/deploy.sh
 ```
 
@@ -139,9 +137,9 @@ ps -p 1                            # systemd or OpenRC?
 ## Session config
 
 - Wayland session: `wayland-sessions/xx-wm.desktop` (display managers only scan `*.desktop`)
-- Session launcher: `libexec/xx-wm-session` (phoc wrapper, sets GTK_THEME from config); the in-session `bin/xx-wm` starts squeekboard before the shell
+- Session launcher: `libexec/xx-wm-session` (phoc wrapper, sets GTK_THEME from config); the in-session `bin/xx-wm` starts the on-screen keyboard before the shell: xx-keyboard (built on Stevia, with the PiercingXX layouts), else phosh-osk-stevia, else squeekboard
 - systemd user service: `share/systemd/user/xx-wm.service` (`Restart=on-failure`); OpenRC (older pmOS images; pmOS v26.06 Phosh runs systemd, install.sh detects via `/run/systemd/system`): the session starts through tinydm or greetd so elogind registers it and polkit lets the helper's actions through (`docs/helper.md`, "Sessions and polkit"); `data/openrc/xx-wm` → `/etc/init.d/` is the last resort without one
-- Keyboard layouts: `data/squeekboard/` (PiercingXX Colemak, incl. terminal/email/url variants) → `datadir/xx-wm/squeekboard`, symlinked by install.sh to `~/.local/share/squeekboard/keyboards/`
+- Keyboard layouts: xx-keyboard ships its own. `data/squeekboard/` (PiercingXX Colemak, incl. terminal/email/url variants) is for the squeekboard fallback → `datadir/xx-wm/squeekboard`, symlinked by install.sh to `~/.local/share/squeekboard/keyboards/`
 - phoc.ini: default `data/phoc.ini` plus per-device fragments under `data/phoc/` (`fairphone-5`, `furiphone-flx1`, `librem-5`, `tablet`, `qemu` for the Virtual-1 VM display) selected by install.sh; scale notes per device in `devices/*/notes.md`
 
 ## Fonts

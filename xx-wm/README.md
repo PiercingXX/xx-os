@@ -4,7 +4,7 @@
 > AMOLED black. No icon grids, anywhere.
 
 **"WM" is the name, not the architecture.** phoc composites. XX-WM draws
-every surface over it — home, lock, shade, switcher, calls, SMS. Same
+every surface over it — home, lock, shade, switcher, calls. Same
 relationship Phosh has to phoc. The volume/brightness keys drive an
 in-shell HUD, not an external daemon.
 
@@ -18,7 +18,7 @@ construction.
 
 ![Theme presets](docs/images/theme-presets.jpg)
 
-Python + GTK4/libadwaita. phoc today; Hyprland when the gestures catch up.
+Python + GTK4/libadwaita. phoc on the FLX1s and Librem 5; river with the xxwm window manager (`wm/`) on the Pixel 9 Pro.
 Config is plain text under `~/.config/xx-wm/`. Nothing phones home.
 
 It is not a distro. It installs onto postmarketOS, PureOS, FuriOS. It is not

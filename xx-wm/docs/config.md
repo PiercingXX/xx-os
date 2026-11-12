@@ -35,7 +35,7 @@ migration steps are ever required.
 | `prefer_dark` | bool | `true` | Light/dark surface mode (used when `appearance_mode` is `theme` or as the `system` fallback). |
 | `appearance_mode` | string | `"theme"` | `theme` (follow the preset), `light` (Paper), `dark` (your dark preset), or `system` (Paper vs your dark preset from `org.gnome.desktop.interface color-scheme`). |
 | `font` | string | `"jetbrains-mono-nerd"` | `system-light`, `monospace` (generic), `space-mono`, `jetbrains-mono`, `jetbrains-mono-nerd`, or `custom`. |
-| `custom_font_family` | string | — | Family used when `font` is `custom`. Settings → Launcher → Import font… installs a `.ttf`/`.otf`, or drop a font in `~/.local/share/fonts` and set both keys. Font files are not part of backups. |
+| `custom_font_family` | string | — | Family used when `font` is `custom`. Settings → Display & appearance → Import font… copies a `.ttf`/`.otf` into `~/.local/share/fonts`, runs `fc-cache` and sets both keys; or drop a font there yourself and set both keys. Font files are not part of backups. |
 | `text_size_scale` | float | `1.0` | Launcher-wide type scale, clamped 0.5–2.0. Scales home slots, the clock and date, drawer and folder rows. |
 | `home_scale` | float | `0.8` | Home screen only (app labels, folders, item spacing, clock, date), multiplied with `text_size_scale`. Clamped 0.5–1.5. |
 | `home_alignment` | string | `"center"` | `left` / `center` / `right` for home rows, widget lines, drawer rows, folder and member rows. |
@@ -141,7 +141,7 @@ repeat-caller exceptions.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `usage_stats_enabled` | bool | `true` | Record foreground seconds per app, unlocks, and notification counts (Settings → Screen time reads them back). While `false`, nothing is recorded and existing files are left alone. |
-| `app_time_limits` | dict | `{}` | Per-app daily screen-time limits in minutes (`{app_id: minutes}`); reaching one shows a banner and greys the app in the drawer until midnight. |
+| `app_time_limits` | dict | `{}` | Per-app daily screen-time limits in minutes (`{app_id: minutes}`; Settings offers 15, 30, 60, 120, 240). Checked once a minute against today's foreground time: reaching one shows a banner (not while locked) and greys the app in the drawer until midnight. The app still opens; nothing is blocked. Ignore for today (Settings → Screen time) clears both until the next day. |
 | `app_limit_ignored` | dict | `{}` | `{app_id: "YYYY-MM-DD"}` the limit was ignored for ("Ignore for today"); only today's rows matter. |
 
 Counts accumulate only while the screen is on and unlocked. Storage is
@@ -169,7 +169,7 @@ itself cannot be disabled.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `medical_id` | dict | `{}` | Medical ID shown read-only from Emergency → Medical info: `{name, date_of_birth, blood_type, allergies, medications, conditions, organ_donor (bool), notes, emergency_contacts: [{name, number, relation}]}`. Every field is optional; bad types are ignored, never crash. User data, not a secret: included in backup export/restore. |
+| `medical_id` | dict | `{}` | Medical ID: `{name, date_of_birth, blood_type, allergies, medications, conditions, organ_donor (bool), notes, emergency_contacts: [{name, number, relation}]}`. Settings → Medical ID edits name, blood type, allergies, medications, conditions and the emergency contacts; `date_of_birth`, `organ_donor` and `notes` are set in this file only. The lock screen's Emergency → Medical info shows every field that is set. Every field is optional; unknown keys and bad types are dropped, never crash. User data, not a secret: included in backup export/restore. |
 | `lock_screen_medical_id` | bool | `true` | Show Medical info on the lock screen. `false` hides it and the emergency-contact rows (their names and numbers are neither shown nor dialable without the PIN); emergency numbers (112, 911, the modem's list) stay dialable. |
 
 ### Smart Lock
@@ -354,7 +354,7 @@ surface, not the store.
 | `apn` / `apn_user` / `apn_pass` | string | — | Mobile-data APN pushed to NetworkManager (Settings page owns these). |
 | `update_script` | string | PiercingXX menu path | Script run by "Update system". |
 | `update_last_check` / `update_snooze_until` | float | `0.0` | Daily update-check bookkeeping. |
-| `keyboard_layout` | string | `"us"` | Primary layout (`us` QWERTY default, `us+colemak` Colemak, `piercing-num` Piercing Num OSK-only). Session start maps `piercing-num` to `us` for the hardware xkb keymap; Settings → Keyboard applies live. xx-keyboard offers primary first, then QWERTY and Piercing Num. Included in backups. |
+| `keyboard_layout` | string | `"us"` | Primary layout: `us` (QWERTY, default), `us+colemak` (Colemak), `piercing-num` (Piercing Num, on-screen only); Settings → Keyboard also offers `us+colemak_dh`, `us+dvorak`, `gb` and `de`, and any xkb `layout` or `layout+variant` is accepted. Garbage loads as `us`. Session start maps `piercing-num` to `us` for the hardware xkb keymap; Settings → Keyboard applies live. xx-keyboard offers primary first, then QWERTY and Piercing Num. Included in backups. |
 | `setup_complete` | bool | absent | Written by first boot: `false` from the Keyboard step (or the Status bar step, if it writes first), `true` at Finish. `false` reruns the wizard at next start (a reboot mid-setup must not skip the PIN). Absent counts as done, for configs made before the key existed. |
 | `night_light` | bool | `false` | Night-light master switch state (Settings → Display, "Night" tile). |
 | `night_light_temp` | int | `2200` | Night-light temperature in Kelvin, clamped 2200–6500. Included in backups. |
