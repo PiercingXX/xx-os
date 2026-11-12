@@ -42,6 +42,9 @@ None of it has run on hardware yet.
      `UpgradeSystem` run apk only and fail with "apk not available" on Debian
      (Mobian, FuriOS). An apt path (`apt-get update`, then an upgrade with the
      same password prompt) is still to be written.
+   - Before leaving alpha: drop ALPHA_ALLOW_CONTAINER_BRIDGES (helper; the
+     firewall then stops letting DHCP and DNS in from Android container
+     bridges, see `docs/helper.md`).
    - Firewall: every toggle logs `nft delete table inet xxwm-inbound: No such file or
      directory` (the helper deletes an old table name that is not there). Harmless,
      but it fills the journal.

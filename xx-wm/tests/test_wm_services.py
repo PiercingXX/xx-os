@@ -330,8 +330,8 @@ class TestNftOwnedTable:
 
     def test_helper_render_matches_shell(self):
         core = make_core(Path('/tmp'), FakeRun())
-        assert core.render_inbound_nft(
-            {'ssh'}) == firewall.render_nft_rules({'ssh'})
+        assert core.render_inbound_nft({'ssh'}) == firewall.render_nft_rules(
+            {'ssh'}, helper.active_container_bridges())
 
     def test_reconcile_touches_only_owned_tables(self, tmp_path,
                                                  monkeypatch):

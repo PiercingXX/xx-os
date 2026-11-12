@@ -129,6 +129,23 @@ NFT_IN_TABLE_LEGACY = 'xxwm-inbound'
 # enabled, so it is never read back as the SSH feature's own preset.
 NFT_KEEP_SSH_COMMENT = 'xxwm keep-ssh'
 
+# Alpha only: goes away when xx-os leaves alpha (set False, or delete it
+# and CONTAINER_BRIDGES). Android containers on a host bridge (Andromeda,
+# Waydroid, plain LXC) get their address and DNS from a dnsmasq on that
+# bridge, so with the drop policy on their network dies. While True the
+# chain accepts DHCP (udp 67) and DNS (udp/tcp 53) arriving on these
+# bridges, and nothing else from them.
+ALPHA_ALLOW_CONTAINER_BRIDGES = True
+CONTAINER_BRIDGES = ('andromeda0', 'lxcbr0', 'waydroid0')
+CONTAINER_BRIDGE_PORTS = (('udp', 67), ('udp', 53), ('tcp', 53))
+NFT_CONTAINER_COMMENT = 'xxwm container-bridge'
+
+
+def active_container_bridges() -> tuple:
+    """The bridges the input chain lets DHCP and DNS in from: none once
+    ALPHA_ALLOW_CONTAINER_BRIDGES is off."""
+    return CONTAINER_BRIDGES if ALPHA_ALLOW_CONTAINER_BRIDGES else ()
+
 # Every cgroup path component below the user slice must match this
 # before it may appear inside an nft string literal: no quotes, spaces,
 # separators, braces, backslashes or newlines can reach nft's lexer.
@@ -1128,8 +1145,9 @@ class HelperCore:
 
         A real policy: drop by default; accept established/related
         traffic, loopback, ICMP and ICMPv6 (neighbour discovery), DHCP
-        and DHCPv6 client replies, then the allowed presets. Add-then-
-        delete replaces our table whole in the same transaction."""
+        and DHCPv6 client replies, container-bridge DHCP and DNS (alpha
+        only), then the allowed presets. Add-then-delete replaces our
+        table whole in the same transaction."""
         table = {'family': NFT_FAMILY, 'name': NFT_IN_TABLE}
         where = {'family': NFT_FAMILY, 'table': NFT_IN_TABLE,
                  'chain': NFT_IN_CHAIN}
@@ -1154,6 +1172,12 @@ class HelperCore:
             [port('udp', 'sport', 547), port('udp', 'dport', 546), accept],
         ]
         rules = [dict(where, expr=expr) for expr in exprs]
+        bridges = active_container_bridges()
+        for proto, value in CONTAINER_BRIDGE_PORTS if bridges else ():
+            rules.append(dict(where, expr=[
+                match({'meta': {'key': 'iifname'}}, {'set': list(bridges)}),
+                port(proto, 'dport', value), accept],
+                comment=NFT_CONTAINER_COMMENT))
         for proto, value, comment in self.inbound_port_rules(allowed,
                                                              keep_ssh):
             rules.append(dict(where, expr=[port(proto, 'dport', value),
@@ -1184,6 +1208,12 @@ class HelperCore:
                  '        meta l4proto ipv6-icmp accept',
                  '        udp sport 67 udp dport 68 accept',
                  '        udp sport 547 udp dport 546 accept']
+        bridges = active_container_bridges()
+        for proto, port in CONTAINER_BRIDGE_PORTS if bridges else ():
+            lines.append('        iifname { %s } %s dport %d accept '
+                         'comment "%s";'
+                         % (', '.join('"%s"' % name for name in bridges),
+                            proto, port, NFT_CONTAINER_COMMENT))
         for proto, port, comment in self.inbound_port_rules(allowed,
                                                             keep_ssh):
             lines.append('        %s dport %s accept comment "%s";'

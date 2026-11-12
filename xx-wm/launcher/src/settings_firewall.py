@@ -80,14 +80,15 @@ def _nft_port(port) -> str:
     return str(port)
 
 
-def render_nft_rules(allowed: set[str]) -> str:
+def render_nft_rules(allowed: set[str], bridges=()) -> str:
     """The managed `inet xx_wm` table for the allowed presets, as the
     helper writes its boot drop-in (a test pins the two together).
 
     Drop policy: established/related, loopback, ICMP/ICMPv6 and DHCP
-    replies are accepted, then the allowed presets; everything else
-    inbound is dropped. Raises KeyError for names outside the preset
-    allowlist."""
+    replies are accepted, then DHCP and DNS from the container
+    ``bridges`` (the helper's alpha-only set), then the allowed presets;
+    everything else inbound is dropped. Raises KeyError for names
+    outside the preset allowlist."""
     unknown = set(allowed) - set(PRESETS)
     if unknown:
         raise KeyError('unknown inbound preset: %s' % sorted(unknown)[0])
@@ -102,6 +103,12 @@ def render_nft_rules(allowed: set[str]) -> str:
              '        meta l4proto ipv6-icmp accept',
              '        udp sport 67 udp dport 68 accept',
              '        udp sport 547 udp dport 546 accept']
+    for proto, port in (('udp', 67), ('udp', 53), ('tcp', 53)) \
+            if bridges else ():
+        lines.append('        iifname { %s } %s dport %d accept '
+                     'comment "xxwm container-bridge";'
+                     % (', '.join('"%s"' % name for name in bridges),
+                        proto, port))
     for name in sorted(allowed):
         preset = PRESETS[name]
         for port in preset['tcp']:

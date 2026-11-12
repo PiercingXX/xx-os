@@ -257,7 +257,8 @@ class TestFirewallRender:
         assert chain['policy'] == 'drop'
         json.dumps(doc)
 
-    def test_base_rules_come_first_then_presets(self, layout):
+    def test_base_rules_come_first_then_presets(self, layout, monkeypatch):
+        monkeypatch.setattr(helper, 'ALPHA_ALLOW_CONTAINER_BRIDGES', False)
         rules = _adds(make_core(layout).render_inbound_json(
             {'syncthing'}), 'rule')
         lefts = [rule['expr'][0]['match']['left'] for rule in rules]
@@ -283,6 +284,7 @@ class TestFirewallRender:
 
     def test_dropin_text_matches_shell_mirror(self, layout):
         text = make_core(layout).render_inbound_nft({'ssh', 'kdeconnect'})
+        bridges = helper.active_container_bridges()
         assert 'policy drop;' in text
         assert 'ct state established,related accept' in text
         assert 'iif "lo" accept' in text
@@ -290,7 +292,95 @@ class TestFirewallRender:
         assert 'udp sport 67 udp dport 68 accept' in text
         assert 'tcp dport 1714-1764 accept comment "xxwm kdeconnect";' \
             in text
-        assert text == firewall.render_nft_rules({'ssh', 'kdeconnect'})
+        assert text == firewall.render_nft_rules({'ssh', 'kdeconnect'},
+                                                 bridges)
+
+
+def _bridge_rules(rules):
+    return [rule for rule in rules
+            if rule.get('comment') == helper.NFT_CONTAINER_COMMENT]
+
+
+class TestContainerBridges:
+    """Alpha only: Android containers on a host bridge get DHCP and DNS
+    from the host's dnsmasq; nothing else from the bridge is accepted."""
+
+    BRIDGES = ['andromeda0', 'lxcbr0', 'waydroid0']
+
+    def test_rules_present_when_flag_on(self, layout, monkeypatch):
+        monkeypatch.setattr(helper, 'ALPHA_ALLOW_CONTAINER_BRIDGES', True)
+        assert list(helper.active_container_bridges()) == self.BRIDGES
+        rules = _bridge_rules(_adds(make_core(layout).render_inbound_json(
+            set()), 'rule'))
+        assert len(rules) == 3
+
+    def test_rules_absent_when_flag_off(self, layout, monkeypatch):
+        monkeypatch.setattr(helper, 'ALPHA_ALLOW_CONTAINER_BRIDGES', False)
+        assert helper.active_container_bridges() == ()
+        core = make_core(layout)
+        doc = core.render_inbound_json({'ssh'}, keep_ssh=True)
+        assert _bridge_rules(_adds(doc, 'rule')) == []
+        assert 'iifname' not in json.dumps(doc)
+        text = core.render_inbound_nft({'ssh'})
+        assert 'iifname' not in text
+        assert helper.NFT_CONTAINER_COMMENT not in text
+
+    def test_rules_match_only_bridges_and_dhcp_dns(self, layout,
+                                                   monkeypatch):
+        monkeypatch.setattr(helper, 'ALPHA_ALLOW_CONTAINER_BRIDGES', True)
+        rules = _bridge_rules(_adds(make_core(layout).render_inbound_json(
+            {'syncthing'}), 'rule'))
+        specs = []
+        for rule in rules:
+            iface, port, verdict = rule['expr']
+            assert iface == {'match': {
+                'op': '==', 'left': {'meta': {'key': 'iifname'}},
+                'right': {'set': self.BRIDGES}}}
+            assert verdict == {'accept': None}
+            match = port['match']
+            assert match['op'] == '=='
+            assert match['left']['payload']['field'] == 'dport'
+            specs.append((match['left']['payload']['protocol'],
+                          match['right']))
+        assert specs == [('udp', 67), ('udp', 53), ('tcp', 53)]
+
+    def test_no_blanket_accept_on_a_bridge(self, layout, monkeypatch):
+        monkeypatch.setattr(helper, 'ALPHA_ALLOW_CONTAINER_BRIDGES', True)
+        for rule in _adds(make_core(layout).render_inbound_json(
+                {'ssh'}, keep_ssh=True), 'rule'):
+            if 'iifname' in json.dumps(rule):
+                assert len(rule['expr']) == 3, rule
+
+    def test_rules_follow_base_rules_before_presets(self, layout,
+                                                    monkeypatch):
+        monkeypatch.setattr(helper, 'ALPHA_ALLOW_CONTAINER_BRIDGES', True)
+        rules = _adds(make_core(layout).render_inbound_json(
+            {'syncthing'}, keep_ssh=True), 'rule')
+        comments = [rule.get('comment') for rule in rules]
+        assert comments[6:9] == [helper.NFT_CONTAINER_COMMENT] * 3
+        assert comments[-1] == helper.NFT_KEEP_SSH_COMMENT
+
+    def test_dropin_text(self, layout, monkeypatch):
+        monkeypatch.setattr(helper, 'ALPHA_ALLOW_CONTAINER_BRIDGES', True)
+        text = make_core(layout).render_inbound_nft(set())
+        sets = 'iifname { "andromeda0", "lxcbr0", "waydroid0" }'
+        for spec in ('udp dport 67', 'udp dport 53', 'tcp dport 53'):
+            assert ('        %s %s accept comment "%s";'
+                    % (sets, spec, helper.NFT_CONTAINER_COMMENT)) in text
+        assert text.count('iifname') == 3
+
+    def test_bridge_rules_are_not_read_back_as_presets(self, layout,
+                                                       monkeypatch):
+        monkeypatch.setattr(helper, 'ALPHA_ALLOW_CONTAINER_BRIDGES', True)
+        core = make_core(layout)
+        doc = core.render_inbound_json(set())
+        listing = json.dumps({'nftables': [
+            item['add'] for item in doc['nftables']
+            if 'add' in item and ('chain' in item['add']
+                                  or 'rule' in item['add'])]})
+        parsed = core.parse_nft_ruleset(listing)
+        assert parsed['blocking'] is True
+        assert parsed['open_ports'] == set()
 
 
 # ------------------------------------------- firewall: state from nft -j
@@ -533,6 +623,7 @@ _NETNS_DRIVER = textwrap.dedent('''
         core.set_inbound_allowed(args['allowed'])
         core.set_firewall_enabled(True)
         out['state'] = core.get_firewall_state()
+        out['live'] = json.loads(nft('-j', 'list', 'ruleset').stdout)
         core.set_firewall_enabled(False)
         out['after'] = core.get_firewall_state()
     elif args['mode'] == 'block':
@@ -606,6 +697,12 @@ class TestRealNft:
         assert state['allowed']['ssh'] is False
         assert state['foreign_drop'] is False
         assert out['after']['enabled'] is False
+        bridge = [item['rule'] for item in out['live']['nftables']
+                  if 'rule' in item and item['rule'].get('comment')
+                  == helper.NFT_CONTAINER_COMMENT]
+        assert len(bridge) == 3
+        assert all(rule['expr'][0]['match']['left']
+                   == {'meta': {'key': 'iifname'}} for rule in bridge)
 
     def test_cgroup_block_applies(self, tmp_path):
         prefix = '/sys/fs/cgroup/user.slice/user-%d.slice' % os.getuid()

@@ -253,6 +253,18 @@ inactive, and the same `pkcheck` then exits 1.
   546`) replies, then the allowed presets. It is built as an `nft -j`
   document of constants and fed on stdin as one transaction that
   replaces our table whole.
+- Alpha only: while `ALPHA_ALLOW_CONTAINER_BRIDGES` is `True` in the
+  helper, the chain also accepts DHCP (`udp dport 67`) and DNS (`udp`
+  and `tcp dport 53`) arriving on the Android container bridges
+  `andromeda0` (Andromeda on FuriOS), `lxcbr0` (lxc-net) and
+  `waydroid0`, commented `xxwm container-bridge`, right after the base
+  rules. Those containers get their address and resolver from a
+  dnsmasq on the bridge; everything else they do is forwarded, which
+  this input chain never sees. Nothing else from a bridge is accepted,
+  and the rules are not read back as presets. When xx-os leaves alpha
+  the flag goes `False` (or is deleted) and the containers lose DHCP
+  and DNS while the firewall is on. nftables only: the ufw fallback
+  adds no such rules.
 - `GetFirewallState` parses `nft -j list ruleset`: `enabled` is true
   only while our input chain is live with `policy drop` (ufw: active
   with a deny or reject incoming default), and a preset counts as
