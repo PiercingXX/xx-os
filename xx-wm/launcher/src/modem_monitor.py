@@ -103,6 +103,8 @@ _CALL_TIMEOUT_MS = 5_000
 _ENUM_TIMEOUT_MS = 8_000
 _OWNER_PROBE_TIMEOUT_MS = 500
 _IO_TIMEOUT_MS = 15_000
+#: Backoff between GetAll attempts on a new call; one entry per retry.
+_FETCH_RETRY_MS = (250, 500, 1_000, 2_000)
 
 _last_monitor: ModemMonitor | None = None
 
@@ -550,6 +552,7 @@ class ModemMonitor:
         self._bus: Gio.DBusConnection | None = None
         self._calls: dict[str, CallInfo] = {}
         self._fetching: set[str] = set()
+        self._fetch_attempts: dict[str, int] = {}
         self._modems: dict[str, set[str]] = {}
         self._call_modem: dict[str, str] = {}
         self._call_subs: dict[str, list[int]] = {}
@@ -720,29 +723,52 @@ class ModemMonitor:
         if self._bus is None:
             return
         self._fetching.add(call_path)
+        self._fetch_attempts[call_path] = 0
         if modem_path is not None:
             self._call_modem[call_path] = modem_path
+        # Watch the call before asking for its state: a change that lands
+        # between the GetAll reply and a later subscription would be lost.
+        self._subscribe_call(call_path)
+        self._fetch_call(call_path)
+
+    def _fetch_call(self, call_path: str) -> bool:
+        if call_path not in self._fetching or self._bus is None:
+            return False
         self._bus.call(
             _MM1, call_path, _PROPS_IFACE, 'GetAll',
             GLib.Variant('(s)', (_CALL_IFACE,)), None,
             Gio.DBusCallFlags.NONE, _CALL_TIMEOUT_MS, None,
             lambda conn, result: self._on_call_props(call_path, conn, result),
         )
+        return False
 
     def _on_call_props(self, call_path: str, conn, result) -> None:
         from shell_log import get_logger
         try:
             props = dict(conn.call_finish(result).unpack()[0])
         except Exception as err:
+            if call_path not in self._fetching:
+                return
+            attempt = self._fetch_attempts.get(call_path, 0)
+            if attempt < len(_FETCH_RETRY_MS):
+                delay = _FETCH_RETRY_MS[attempt]
+                self._fetch_attempts[call_path] = attempt + 1
+                get_logger('modem_monitor').warning(
+                    'GetAll on %s failed (%s); retrying in %d ms',
+                    call_path, _err_message(err), delay)
+                GLib.timeout_add(delay, self._fetch_call, call_path)
+                return
             get_logger('modem_monitor').warning(
-                'GetAll on %s failed: %s', call_path, _err_message(err))
-            self._fetching.discard(call_path)
+                'GetAll on %s failed: %s; giving up',
+                call_path, _err_message(err))
+            self._drop_call(call_path)
             return
         if call_path not in self._fetching and call_path not in self._calls:
             # Dropped while the fetch was in flight (CallDeleted, or
             # ModemManager went away): never resurrect a dead path.
             return
         self._fetching.discard(call_path)
+        self._fetch_attempts.pop(call_path, None)
         try:
             direction = int(props.get('Direction', 0))
             state = int(props.get('State', 0))
@@ -805,6 +831,7 @@ class ModemMonitor:
     def _drop_call(self, call_path: str, terminated: bool = False) -> None:
         tracked = self._calls.pop(call_path, None)
         self._fetching.discard(call_path)
+        self._fetch_attempts.pop(call_path, None)
         self._call_modem.pop(call_path, None)
         self._announced_incoming.discard(call_path)
         self._announced_active.discard(call_path)
@@ -943,12 +970,18 @@ class ModemMonitor:
         self, _conn, _sender, call_path, _iface, _sig, params, _ud,
     ) -> None:
         _old, new_state, reason = params.unpack()
-        call = self._calls.get(call_path)
-        if call is None:
-            return
         try:
             new_state = int(new_state)
         except (TypeError, ValueError):
+            return
+        call = self._calls.get(call_path)
+        if call is None:
+            if (call_path in self._fetching
+                    and new_state == _STATE_TERMINATED):
+                # Ended before its first GetAll came back: the reply in
+                # flight is older than this and must not ring.
+                self._delete_call(call_path)
+                self._drop_call(call_path, terminated=True)
             return
         try:
             call.state_reason = int(reason)
