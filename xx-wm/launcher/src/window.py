@@ -1697,12 +1697,22 @@ class ShellWindow(Adw.ApplicationWindow):
         """ext-session-lock (river): with a PIN set, lock before this
         window or any other shell surface maps. There is no compositor
         shield there; the compositor keeps the lock if the shell dies, and
-        a restarted shell takes it over here."""
+        a restarted shell takes it over here. The one exception is the
+        shell built at the end of a wizard the PIN was just entered for
+        in this process (app.take_setup_unlock): no second PIN prompt."""
         if self.config.pin_hash is None:
             return
         try:
             import session_lock
             if session_lock.backend() != session_lock.SESSION_LOCK:
+                return
+            get_app = getattr(self, 'get_application', None)
+            take = getattr(get_app() if callable(get_app) else None,
+                           'take_setup_unlock', None)
+            if callable(take) and take() is True:
+                from shell_log import get_logger
+                get_logger('window').info(
+                    'PIN entered for setup moments ago: no second lock')
                 return
             self._show_lock_screen()
         except Exception as exc:

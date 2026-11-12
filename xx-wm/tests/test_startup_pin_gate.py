@@ -666,13 +666,82 @@ class TestHotReloadKeepsThePin:
         self._assert_pin_still_guards(shell)
 
     def test_local_hash_swapped_in_does_not_replace_the_pin(self, shell):
-        other = ShellConfig.__new__(ShellConfig)
-        other.data = {}
-        other.config_path = Path('/nonexistent/config.json')
-        other.config_dir = other.config_path.parent
-        other.save = lambda: None
-        other.set_pin('111111')
         self._reload(shell, {'theme': 'graphite',
-                             'pin_hash': other.data['pin_hash']})
+                             'pin_hash': _local_hash('111111')})
         assert _verify(shell.config, '111111')[0] is False
         self._assert_pin_still_guards(shell)
+
+
+# --------------------------- river: no second PIN right after setup
+
+@pytest.mark.usefixtures('_no_window_leak')
+class TestNoSecondLockAfterSetup:
+    """A wizard resumed behind the lock: the PIN was just entered, so the
+    shell built when it finishes does not lock again on river; anything
+    else still locks."""
+
+    @pytest.fixture()
+    def river(self, app, store, monkeypatch):
+        import main
+        import session_lock
+        FakeHelper(store).install(monkeypatch)
+        monkeypatch.setattr(session_lock, 'backend',
+                            lambda: session_lock.SESSION_LOCK)
+        window = _window()
+        for name in ('take_setup_unlock', '_wizard_done'):
+            setattr(app, name, types.MethodType(
+                getattr(main.XXWMApplication, name), app))
+        app._pin_proven_at = None
+        app._setup_finishing = False
+        app.early_locks = []
+
+        def show_shell():
+            shell = SimpleNamespace(
+                config=ShellConfig(), get_application=lambda: app,
+                _show_lock_screen=lambda: app.early_locks.append(1))
+            window.ShellWindow._lock_before_first_frame(shell)
+            app._shell = shell
+
+        app._show_shell = show_shell
+        app.clock = [1000.0]
+        monkeypatch.setattr(main.time, 'monotonic', lambda: app.clock[0])
+        return app
+
+    def _setup_behind_the_lock(self, app):
+        app.do_activate()
+        (lock,) = _FakeLock.instances
+        lock.on_unlock()          # the PIN, entered on the resumed lock
+        assert len(_FakeWizard.instances) == 1
+
+    def test_shell_after_the_unlocked_wizard_does_not_lock_again(self, river):
+        self._setup_behind_the_lock(river)
+        river.clock[0] += 90
+        river._wizard_done()
+        assert river.early_locks == []
+
+    def test_slow_setup_locks_again(self, river):
+        import main
+        self._setup_behind_the_lock(river)
+        river.clock[0] += main.SETUP_UNLOCK_GRACE_S + 1
+        river._wizard_done()
+        assert river.early_locks == [1]
+
+    def test_wizard_without_a_lock_first_still_locks(self, river, store):
+        store.clear_pin(UID, PIN)
+        river.do_activate()
+        assert _FakeLock.instances == []
+        ShellConfig().set_pin_in_helper()  # PIN set during setup
+        river._wizard_done()
+        assert river.early_locks == [1]
+
+    def test_the_skip_is_one_shot_and_only_at_setup_end(self, river):
+        self._setup_behind_the_lock(river)
+        assert river.take_setup_unlock() is False  # not finishing setup
+        river._setup_finishing = True
+        assert river.take_setup_unlock() is False  # consumed above
+
+    def test_restart_with_a_pin_locks(self, river):
+        _config_path().write_text(json.dumps(
+            {'theme': 'ocean', 'pin_hash': HELPER_PIN_MARKER}))
+        river.do_activate()
+        assert river.early_locks == [1]

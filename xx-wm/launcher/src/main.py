@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import gi
 
@@ -21,6 +22,10 @@ _log = get_logger('main')
 # Ceiling on holding a suspend for the lock screen's first paint: a blanked
 # output may never paint, and logind gives up after InhibitDelayMaxSec (5 s).
 _SLEEP_DELAY_SAFETY_MS = 1000
+
+# How old a PIN entry that resumed setup may be for the shell built at
+# the end of that wizard to skip its own first lock (take_setup_unlock).
+SETUP_UNLOCK_GRACE_S = 300
 
 
 def gesture_silenced_while_blanked(command: str, blanked: bool) -> bool:
@@ -180,6 +185,8 @@ class XXWMApplication(Adw.Application):
         self._wizard_telephony: WizardTelephony | None = None
         self._pin_gate_pending = False
         self._pin_gate_done = False
+        self._pin_proven_at: float | None = None
+        self._setup_finishing = False
         self._banner = None
         from focus_mode import HeldNotifications
         self._held_notifications = HeldNotifications()
@@ -333,6 +340,7 @@ class XXWMApplication(Adw.Application):
         lock = getattr(self, '_wizard_lock', None)
         self._wizard_lock = None
         if self._wizard is None and self._shell is None:
+            self._pin_proven_at = time.monotonic()
             self._present_wizard()
         if lock is not None:
             GLib.idle_add(lambda: (lock.destroy(), False)[1])
@@ -351,12 +359,31 @@ class XXWMApplication(Adw.Application):
         if telephony is not None:
             telephony.close()
 
+    def take_setup_unlock(self) -> bool:
+        """One-shot, for the shell window's first lock: True when the PIN
+        was entered in this process to resume setup, the wizard ran
+        straight after it, and that unlock is under
+        SETUP_UNLOCK_GRACE_S old. The shell built at the end of that
+        wizard then skips its own early lock (river) instead of asking the
+        PIN twice; anything else (a restart, a slow or abandoned setup)
+        locks as usual."""
+        proven = getattr(self, '_pin_proven_at', None)
+        self._pin_proven_at = None
+        if proven is None or not getattr(self, '_setup_finishing', False):
+            return False
+        return time.monotonic() - proven < SETUP_UNLOCK_GRACE_S
+
     def _wizard_done(self) -> None:
         self._wizard = None
         # The shell window builds its own modem monitor, which adopts any
         # call still up (Voice.ListCalls); two monitors would ring twice.
         self._stop_wizard_telephony()
-        self._show_shell()
+        self._setup_finishing = True
+        try:
+            self._show_shell()
+        finally:
+            self._setup_finishing = False
+            self._pin_proven_at = None
 
     def _show_shell(self) -> None:
         if self._shell is not None:
