@@ -18,6 +18,7 @@ _HAS_GTK = True
 try:
     import gi
     gi.require_version('Gtk', '4.0')
+    gi.require_version('Gdk', '4.0')
     gi.require_version('Gtk4LayerShell', '1.0')
     from gi.repository import Gdk, Gtk, Pango
     from gi.repository import Gtk4LayerShell as LayerShell
@@ -284,11 +285,14 @@ def split_columns(sections: list, columns: int) -> list[list[tuple]]:
                 and height >= target * 0.6):
             target = next_column()
             height = 0
+        # A section that ends within the slack stays in one piece.
+        whole = height + size <= target * 1.15
         out[-1].append(('caption', title))
         height += CAPTION_ROWS
         remaining -= CAPTION_ROWS
         for keys, label in rows:
-            if room() and height >= target and out[-1][-1][0] != 'caption':
+            if (room() and height >= target and not whole
+                    and out[-1][-1][0] != 'caption'):
                 target = next_column()
                 height = 0
             out[-1].append(('row', keys, label))

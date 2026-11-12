@@ -198,6 +198,10 @@ class TestKeybindSheet:
         cols = keybind_sheet.split_columns(sections, 3)
         heights = [sum(2 if i[0] == 'caption' else 1 for i in c) for c in cols]
         assert max(heights) - min(heights) <= 6, heights
+        # Short sections stay whole rather than spilling a row or two.
+        first = [i[1] for i in cols[0] if i[0] == 'caption']
+        assert first == ['Windows', 'Workspaces', 'Shell']
+        assert cols[1][0] == ('caption', 'Apps')
 
     def test_column_count_follows_width(self):
         assert keybind_sheet.column_count(1280) == 3

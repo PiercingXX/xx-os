@@ -22,6 +22,7 @@ _HAS_GTK = True
 try:
     import gi
     gi.require_version('Gtk', '4.0')
+    gi.require_version('Gdk', '4.0')
     gi.require_version('Gtk4LayerShell', '1.0')
     from gi.repository import Gdk, GLib, Gtk, Pango
     from gi.repository import Gtk4LayerShell as LayerShell
