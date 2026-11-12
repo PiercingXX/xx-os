@@ -65,6 +65,13 @@ def isolated_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def isolated_imports():
     saved_modules = dict(sys.modules)
     saved_path = list(sys.path)
+    # Start as a fresh process would: bindings an earlier test generated and
+    # loaded for real (a regular package, which outranks a fake namespace
+    # tree on sys.path) are neither imported nor importable here.
+    name = wayland_bindings.PROTO_PACKAGE_NAME
+    for mod in [n for n in sys.modules if n == name or n.startswith(name + '.')]:
+        sys.modules.pop(mod)
+    sys.path[:] = [p for p in sys.path if not (Path(p) / name).is_dir()]
     try:
         yield
     finally:

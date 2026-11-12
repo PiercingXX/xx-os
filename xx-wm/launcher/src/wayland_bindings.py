@@ -274,10 +274,18 @@ def load_classes_from(
     package_dir = Path(package_dir)
     if not package_dir.is_dir():
         return None
+    # Every protocol set generates into its own cache dir under the same
+    # package name, so another set's package may already be imported (and
+    # earlier on sys.path): put this dir first and drop the other one.
     parent = str(package_dir.parent)
-    if parent not in sys.path:
-        sys.path.insert(0, parent)
+    if parent in sys.path:
+        sys.path.remove(parent)
+    sys.path.insert(0, parent)
     package_name = package_dir.name
+    loaded = sys.modules.get(package_name)
+    if loaded is not None and [str(Path(p)) for p in
+                               getattr(loaded, '__path__', [])] != [str(package_dir)]:
+        _drop_cached_modules(package_name)
     try:
         py_files = sorted(package_dir.rglob('*.py'))
     except OSError:
