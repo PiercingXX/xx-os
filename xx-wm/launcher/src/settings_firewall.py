@@ -3,14 +3,18 @@
 One entry point per feature: SSH, wireless debugging, KDE Connect,
 Syncthing and Nearby share each own their port(s) in our `inet xx_wm`
 table, and the Firewall row is only an on/off switch whose subtitle
-names what is currently allowed in. The ruleset is derived from
-feature state (`features_to_allowed`) and re-applied through the root
-helper (`SetInboundAllowed`, `SetFirewallEnabled`, `GetFirewallState`
-in launcher/helper/xx_wm_helper.py): nftables directly (present
+names what is currently allowed in. On means a real policy: the
+helper's input chain drops everything except established traffic,
+loopback, ICMP, DHCP and the features' ports, and the row shows on
+only while the helper reads that drop policy back from the live
+ruleset. Turning it on asks for the device password (it can cut new
+inbound connections). The ruleset is derived from feature state
+(`features_to_allowed`) and re-applied through the root helper
+(`SetInboundAllowed`, `SetFirewallEnabled`, `GetFirewallState` in
+launcher/helper/xx_wm_helper.py): nftables directly (present
 everywhere) with a ufw fallback only where nft is missing. An accept
 in our own table cannot override a drop in another base chain, so
-when one is detected the section says so instead of pretending the
-switch filters anything.
+when one is detected the section says so.
 
 postmarketOS ships no enabled inbound firewall, so there the status
 honestly reads off and feature changes program nothing.
@@ -76,19 +80,27 @@ def _nft_port(port) -> str:
 
 
 def render_nft_rules(allowed: set[str]) -> str:
-    """The managed `inet xx_wm` table for the allowed presets.
+    """The managed `inet xx_wm` table for the allowed presets, as the
+    helper writes its boot drop-in (a test pins the two together).
 
-    Accept policy: on a system with no other firewall this changes
-    nothing observable (everything is already allowed) while documenting
-    intent. Raises KeyError for names outside the preset allowlist."""
+    Drop policy: established/related, loopback, ICMP/ICMPv6 and DHCP
+    replies are accepted, then the allowed presets; everything else
+    inbound is dropped. Raises KeyError for names outside the preset
+    allowlist."""
     unknown = set(allowed) - set(PRESETS)
     if unknown:
         raise KeyError('unknown inbound preset: %s' % sorted(unknown)[0])
-    lines = ['# xx-wm inbound presets (managed; do not edit).',
+    lines = ['# xx-wm inbound firewall (managed; do not edit).',
              '# An accept here cannot override a drop in another base chain.',
              'table inet xx_wm {',
              '    chain input {',
-             '        type filter hook input priority filter; policy accept;']
+             '        type filter hook input priority filter; policy drop;',
+             '        ct state established,related accept',
+             '        iif "lo" accept',
+             '        meta l4proto icmp accept',
+             '        meta l4proto ipv6-icmp accept',
+             '        udp sport 67 udp dport 68 accept',
+             '        udp sport 547 udp dport 546 accept']
     for name in sorted(allowed):
         preset = PRESETS[name]
         for port in preset['tcp']:
@@ -123,7 +135,10 @@ def allowed_titles(allowed) -> list[str]:
 
 def subtitle_for_allowed(allowed, *, enabled: bool = True,
                          backend: str = 'nftables') -> str:
-    """The Firewall row's one-line subtitle: what is allowed in."""
+    """The Firewall row's one-line subtitle: what is allowed in.
+
+    ``enabled`` must be the helper's verified state (a live drop
+    policy), never the switch position or a persisted wish."""
     if backend == 'none':
         return 'Off · no inbound firewall'
     if not enabled:

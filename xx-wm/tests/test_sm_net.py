@@ -649,18 +649,20 @@ class FakeHelperRun:
     def __init__(self, available=('nft', 'ufw'), status_out='',
                  ruleset=''):
         self.cmds = []
+        self.inputs = []
         self.available = set(available)
         self.status_out = status_out
         self.ruleset = ruleset
 
-    def __call__(self, argv):
+    def __call__(self, argv, input=None):
         assert isinstance(argv, list), argv
         assert argv and all(isinstance(a, str) for a in argv), argv
         self.cmds.append(list(argv))
+        self.inputs.append(input)
         if argv[:2] == ['ufw', 'status']:
             return SimpleNamespace(returncode=0, stdout=self.status_out,
                                    stderr='')
-        if argv[:3] == ['nft', 'list', 'ruleset']:
+        if argv[:4] == ['nft', '-j', 'list', 'ruleset']:
             return SimpleNamespace(returncode=0, stdout=self.ruleset,
                                    stderr='')
         return SimpleNamespace(returncode=0, stdout='', stderr='')
@@ -675,7 +677,9 @@ def make_helper_core(tmp_path, run=None, **over):
               nft_dropin_dir=str(tmp_path / 'nftables.d'),
               run=run or FakeHelperRun())
     kw.update(over)
-    return helper.HelperCore(**kw)
+    core = helper.HelperCore(**kw)
+    core.ssh_keep_open = lambda: False
+    return core
 
 
 class TestManageServiceAllowlist:
@@ -742,7 +746,9 @@ class TestSetRfkill:
         assert run.cmds[-1] == ['rfkill', 'block', 'wifi']
 
 
-UFW_ACTIVE = ('Status: active\n53317/tcp ALLOW Anywhere\n'
+UFW_ACTIVE = ('Status: active\n'
+              'Default: deny (incoming), allow (outgoing), disabled (routed)\n'
+              '53317/tcp ALLOW Anywhere\n'
               '53317/udp ALLOW Anywhere\n22/tcp ALLOW Anywhere\n')
 
 
@@ -764,14 +770,19 @@ class TestHelperInboundPresets:
         assert ['ufw', '--force', 'delete', 'allow', '53317/tcp'] in run.cmds
 
     def test_nft_writes_state_and_rules(self, tmp_path, monkeypatch):
+        import json
         run = FakeHelperRun(available=('nft',))
         core = make_helper_core(tmp_path, run)
         monkeypatch.setattr(core, 'firewall_backend', lambda: 'nftables')
+        Path(core.inbound_file()).write_text(json.dumps({'enabled': True}))
         assert core.set_inbound_preset('ssh', True) is True
         inbound = core.load_inbound()
         assert inbound['allowed'] == ['ssh']
-        assert any(cmd[:3] == ['nft', 'add', 'table'] for cmd in run.cmds)
-        assert any('tcp dport 22' in ' '.join(cmd) for cmd in run.cmds)
+        doc, = [json.loads(data) for data in run.inputs if data]
+        rules = [item['add']['rule'] for item in doc['nftables']
+                 if 'rule' in item.get('add', {})]
+        assert rules[-1]['comment'] == 'xxwm ssh'
+        assert rules[-1]['expr'][0]['match']['right'] == 22
 
     def test_nft_reload_never_touches_other_tables(self, tmp_path,
                                                    monkeypatch):
@@ -811,7 +822,11 @@ class TestFirewallState:
                          'allowed': {}, 'foreign_drop': False}
 
     def test_foreign_drop_detected(self, tmp_path, monkeypatch):
-        ruleset = 'table inet filter {\n chain input {\n policy drop;\n }\n}\n'
+        import json
+        ruleset = json.dumps({'nftables': [{'chain': {
+            'family': 'inet', 'table': 'filter', 'name': 'input',
+            'type': 'filter', 'hook': 'input', 'prio': 0,
+            'policy': 'drop'}}]})
         run = FakeHelperRun(available=('nft',), ruleset=ruleset)
         core = make_helper_core(tmp_path, run)
         monkeypatch.setattr(core, 'firewall_backend', lambda: 'nftables')
@@ -830,7 +845,7 @@ class TestFirewallState:
         run = FakeHelperRun()
         core = make_helper_core(tmp_path, run)
         monkeypatch.setattr(core, 'firewall_backend', lambda: 'ufw')
-        monkeypatch.setenv('SSH_CONNECTION', '1.2.3.4 22 5.6.7.8 555')
+        core.ssh_keep_open = lambda: True
         core.set_firewall_enabled(True)
         assert ['ufw', 'allow', '22/tcp'] in run.cmds
 
@@ -1789,8 +1804,8 @@ class TestUnifiedPolicy:
             helper.ACTION_UPGRADE, helper.ACTION_REMOVE,
             helper.ACTION_SERVICE, helper.ACTION_SERVICE_REMOTE,
             helper.ACTION_RFKILL, helper.ACTION_FW_OPEN,
-            helper.ACTION_FW_RESTRICT, helper.ACTION_POWER,
-            helper.ACTION_WAKE,
+            helper.ACTION_FW_RESTRICT, helper.ACTION_FW_ENABLE,
+            helper.ACTION_POWER, helper.ACTION_WAKE,
         ])
 
     def test_docs_list_every_method_and_action(self):

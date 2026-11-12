@@ -24,8 +24,8 @@ kdeconnect, syncthing and adbd NOT installed.
   persisted set (or ufw fallback). Status -> `GetFirewallState` (no
   auth) rendered async.
 - Firewall on/off -> `helper_client.set_firewall_enabled(enabled)` ->
-  helper `SetFirewallEnabled` (enable = `firewall-restrict`, disable =
-  `firewall-open`/`auth_admin_keep` interactive).
+  helper `SetFirewallEnabled` (enable = `firewall-enable`, disable =
+  `firewall-open`, both `auth_admin_keep` interactive).
 - SSH Start/Stop/Restart/Enable/Disable -> `helper_client.manage_service(
   'ssh', action)` -> helper `ManageService` (allowlisted; start/enable =
   `service-remote`/`auth_admin_keep` interactive, rest =

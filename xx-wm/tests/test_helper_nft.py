@@ -1,7 +1,7 @@
 """Root helper and nftables: caller strings never become nft grammar,
-and per-app blocks fail closed.
+per-app blocks fail closed, and the Firewall switch is a real drop policy.
 
-The validation and transaction tests need no nft. The namespace tests
+The render, parse and validation tests need no nft. The namespace tests
 run HelperCore against the real ``nft`` inside ``unshare -rn`` (a private
 user + network namespace, so the host ruleset is never touched) and skip
 where unshare, nft or unprivileged user namespaces are unavailable, or
@@ -22,10 +22,13 @@ HELPER_DIR = Path(__file__).parent.parent / 'launcher' / 'helper'
 sys.path.insert(0, str(HELPER_DIR))
 sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 
+import settings_page  # noqa: E402,F401  (first: section modules bind _Section)
+import settings_firewall as firewall  # noqa: E402
 import xx_wm_helper as helper  # noqa: E402
 
 UID = 1000
 APP = 'app-xxwm-org.example.App.desktop-1234.scope'
+DATA = Path(__file__).parent.parent / 'launcher' / 'data'
 
 HOSTILE = (
     'x" ; flush ruleset ; "',
@@ -73,15 +76,19 @@ def layout(tmp_path):
     leaf.mkdir(parents=True)
     mounts = tmp_path / 'mounts'
     mounts.write_text('cgroup2 %s cgroup2 rw 0 0\n' % cg)
+    proc = tmp_path / 'proc'
+    (proc / 'net').mkdir(parents=True)
     return SimpleNamespace(cg=str(cg), slice=str(slice_dir), leaf=str(leaf),
-                           mounts=str(mounts),
-                           state=str(tmp_path / 'state.json'))
+                           mounts=str(mounts), proc=str(proc),
+                           state=str(tmp_path / 'state.json'),
+                           dropin=str(tmp_path / 'nftables.d'))
 
 
 def make_core(layout, run=None, **over):
     kw = dict(sysfs=str(Path(layout.cg).parent / 'sys'),
               cgroup_root=layout.cg, mounts_file=layout.mounts,
               state_file=layout.state, nft_bin='nft',
+              nft_dropin_dir=layout.dropin, proc_root=layout.proc,
               run=run or FakeRun())
     kw.update(over)
     core = helper.HelperCore(**kw)
@@ -228,6 +235,251 @@ class TestAppBlockTransaction:
         assert applied['blocked'] == []
 
 
+# --------------------------------------------- firewall: render (no nft)
+
+
+def _chain(doc):
+    return next(item['chain'] for item in doc['nftables']
+                if 'chain' in item and 'add' not in item)
+
+
+def _adds(doc, kind):
+    return [item['add'][kind] for item in doc['nftables']
+            if 'add' in item and kind in item['add']]
+
+
+class TestFirewallRender:
+    def test_json_chain_is_a_drop_policy(self, layout):
+        doc = make_core(layout).render_inbound_json({'ssh'})
+        chain, = _adds(doc, 'chain')
+        assert chain['table'] == helper.NFT_IN_TABLE
+        assert chain['hook'] == 'input'
+        assert chain['policy'] == 'drop'
+        json.dumps(doc)
+
+    def test_base_rules_come_first_then_presets(self, layout):
+        rules = _adds(make_core(layout).render_inbound_json(
+            {'syncthing'}), 'rule')
+        lefts = [rule['expr'][0]['match']['left'] for rule in rules]
+        assert lefts[0] == {'ct': {'key': 'state'}}
+        assert rules[0]['expr'][0]['match']['right'] == {
+            'set': ['established', 'related']}
+        assert lefts[1] == {'meta': {'key': 'iif'}}
+        assert {'meta': {'key': 'l4proto'}} in lefts[2:4]
+        rights = [rule['expr'][0]['match']['right'] for rule in rules[2:4]]
+        assert rights == ['icmp', 'ipv6-icmp']
+        dhcp = [[m['match']['right'] for m in rule['expr'][:2]]
+                for rule in rules[4:6]]
+        assert dhcp == [[67, 68], [547, 546]]
+        comments = [rule.get('comment') for rule in rules[6:]]
+        assert comments == ['xxwm syncthing'] * 3
+        assert all(rule['expr'][-1] == {'accept': None} for rule in rules)
+
+    def test_ssh_safeguard_rule_is_marked(self, layout):
+        rules = _adds(make_core(layout).render_inbound_json(
+            set(), keep_ssh=True), 'rule')
+        assert rules[-1]['comment'] == helper.NFT_KEEP_SSH_COMMENT
+        assert rules[-1]['expr'][0]['match']['right'] == 22
+
+    def test_dropin_text_matches_shell_mirror(self, layout):
+        text = make_core(layout).render_inbound_nft({'ssh', 'kdeconnect'})
+        assert 'policy drop;' in text
+        assert 'ct state established,related accept' in text
+        assert 'iif "lo" accept' in text
+        assert 'meta l4proto ipv6-icmp accept' in text
+        assert 'udp sport 67 udp dport 68 accept' in text
+        assert 'tcp dport 1714-1764 accept comment "xxwm kdeconnect";' \
+            in text
+        assert text == firewall.render_nft_rules({'ssh', 'kdeconnect'})
+
+
+# ------------------------------------------- firewall: state from nft -j
+
+
+def _ruleset(policy='drop', ports=(), extra=()):
+    items = [{'metainfo': {'json_schema_version': 1}},
+             {'table': {'family': 'inet', 'name': 'xx_wm'}},
+             {'chain': {'family': 'inet', 'table': 'xx_wm', 'name': 'input',
+                        'type': 'filter', 'hook': 'input', 'prio': 0,
+                        'policy': policy}}]
+    for proto, port, comment in ports:
+        right = {'range': list(port)} if isinstance(port, tuple) else port
+        rule = {'family': 'inet', 'table': 'xx_wm', 'chain': 'input',
+                'expr': [{'match': {'op': '==', 'left': {'payload': {
+                    'protocol': proto, 'field': 'dport'}}, 'right': right}},
+                    {'accept': None}]}
+        if comment:
+            rule['comment'] = comment
+        items.append({'rule': rule})
+    items.extend(extra)
+    return json.dumps({'nftables': items})
+
+
+def _state(layout, ruleset):
+    core = make_core(layout, FakeRun(stdout=ruleset))
+    core.firewall_backend = lambda: 'nftables'
+    return core, core.get_firewall_state()
+
+
+class TestFirewallState:
+    def test_reads_json_listing(self, layout):
+        core, _state_ = _state(layout, _ruleset())
+        core.get_firewall_state()
+        assert ['nft', '-j', 'list', 'ruleset'] in core._run.cmds
+
+    def test_port_22000_is_not_port_22(self, layout):
+        _core, state = _state(layout, _ruleset(ports=(
+            ('tcp', 22000, 'xxwm syncthing'),
+            ('udp', 22000, 'xxwm syncthing'),
+            ('udp', 21027, 'xxwm syncthing'))))
+        assert state['enabled'] is True
+        assert state['allowed']['syncthing'] is True
+        assert state['allowed']['ssh'] is False
+
+    def test_range_must_match_exactly(self, layout):
+        _core, state = _state(layout, _ruleset(ports=(
+            ('tcp', (1714, 1764), 'xxwm kdeconnect'),)))
+        assert state['allowed']['kdeconnect'] is False
+        _core, state = _state(layout, _ruleset(ports=(
+            ('tcp', (1714, 1764), 'xxwm kdeconnect'),
+            ('udp', (1714, 1764), 'xxwm kdeconnect'))))
+        assert state['allowed']['kdeconnect'] is True
+
+    def test_accept_policy_is_not_blocking(self, layout):
+        _core, state = _state(layout, _ruleset(policy='accept'))
+        assert state['enabled'] is False
+
+    def test_safeguard_rule_is_not_the_ssh_feature(self, layout):
+        _core, state = _state(layout, _ruleset(ports=(
+            ('tcp', 22, helper.NFT_KEEP_SSH_COMMENT),)))
+        assert state['allowed']['ssh'] is False
+
+    def test_foreign_drop_ignores_our_own_chain(self, layout):
+        _core, state = _state(layout, _ruleset())
+        assert state['foreign_drop'] is False
+        other = {'chain': {'family': 'inet', 'table': 'filter',
+                           'name': 'input', 'type': 'filter',
+                           'hook': 'input', 'prio': 0, 'policy': 'drop'}}
+        _core, state = _state(layout, _ruleset(extra=(other,)))
+        assert state['foreign_drop'] is True
+
+    def test_no_table_is_off(self, layout):
+        _core, state = _state(layout, json.dumps({'nftables': []}))
+        assert state['enabled'] is False
+
+
+# ------------------------------------- firewall: enabling and its auth
+
+
+class TestFirewallEnable:
+    def test_enable_needs_admin_interactive(self):
+        assert helper.policy_for('SetFirewallEnabled', (True,)) == (
+            helper.ACTION_FW_ENABLE, True)
+        assert helper.policy_for('SetFirewallEnabled', (False,)) == (
+            helper.ACTION_FW_OPEN, True)
+
+    def test_policy_file_enable_is_auth_admin_keep(self):
+        import xml.etree.ElementTree as xml
+        root = xml.parse(str(DATA / 'polkit-1' / 'actions'
+                             / 'io.piercingxx.XXWM.Helper.policy')).getroot()
+        action = next(a for a in root.iter('action')
+                      if a.get('id') == helper.ACTION_FW_ENABLE)
+        assert action.find('defaults/allow_active').text == 'auth_admin_keep'
+
+    def test_enable_installs_drop_chain_as_json(self, layout):
+        run = FakeRun()
+        core = make_core(layout, run)
+        core.firewall_backend = lambda: 'nftables'
+        core.ssh_keep_open = lambda: False
+        core.set_firewall_enabled(True)
+        docs = [json.loads(data) for argv, data in run.calls
+                if argv == ['nft', '-j', '-f', '-']]
+        assert len(docs) == 1
+        chain, = _adds(docs[0], 'chain')
+        assert chain['policy'] == 'drop'
+        assert core.load_inbound()['enabled'] is True
+
+    def test_feature_change_never_enables_by_itself(self, layout):
+        run = FakeRun()
+        core = make_core(layout, run)
+        core.firewall_backend = lambda: 'nftables'
+        core.ssh_keep_open = lambda: False
+        core.set_inbound_allowed(['ssh'])
+        assert not any('add' in argv and 'xx_wm' in argv
+                       for argv in run.cmds)
+        assert [data for _argv, data in run.calls if data] == []
+        assert core.load_inbound()['allowed'] == ['ssh']
+
+    def test_nft_safeguard_keeps_ssh_when_sshd_listens(self, layout):
+        Path(layout.proc, 'net', 'tcp').write_text(
+            '  sl  local_address rem_address   st\n'
+            '   0: 00000000:0016 00000000:0000 0A 00000000:00000000\n')
+        run = FakeRun()
+        core = make_core(layout, run)
+        core.firewall_backend = lambda: 'nftables'
+        core.set_firewall_enabled(True)
+        doc = json.loads(run.scripts()[-1])
+        assert _adds(doc, 'rule')[-1]['comment'] == \
+            helper.NFT_KEEP_SSH_COMMENT
+
+
+UFW_HEAD = 'Status: active\nLogging: on (low)\n'
+
+
+class TestUfw:
+    def _core(self, layout, status=''):
+        run = FakeRun(stdout=status)
+        core = make_core(layout, run)
+        core.firewall_backend = lambda: 'ufw'
+        core.init_system = lambda: 'unknown'
+        return run, core
+
+    def test_keeps_22_when_sshd_listens_without_ssh_connection(
+            self, layout, monkeypatch):
+        monkeypatch.delenv('SSH_CONNECTION', raising=False)
+        Path(layout.proc, 'net', 'tcp6').write_text(
+            '  sl  local_address                         rem_address   st\n'
+            '   0: 00000000000000000000000000000000:0016 '
+            '00000000000000000000000000000000:0000 0A\n')
+        run, core = self._core(layout)
+        core.set_firewall_enabled(True)
+        assert ['ufw', 'allow', '22/tcp'] in run.cmds
+        assert run.cmds.index(['ufw', 'allow', '22/tcp']) < run.cmds.index(
+            ['ufw', '--force', 'enable'])
+
+    def test_keeps_22_when_sshd_enabled_but_stopped(self, layout):
+        run, core = self._core(layout)
+        core.init_system = lambda: 'systemd'
+        core.set_firewall_enabled(True)
+        assert ['ufw', 'allow', '22/tcp'] in run.cmds
+
+    def test_no_22_when_sshd_is_off(self, layout, monkeypatch):
+        monkeypatch.setenv('SSH_CONNECTION', '1.2.3.4 5 6.7.8.9 22')
+        Path(layout.proc, 'net', 'tcp').write_text(
+            '  sl  local_address rem_address   st\n'
+            '   0: 00000000:55F0 00000000:0000 0A\n'
+            '   1: 0100007F:0016 0200007F:9C40 01\n')
+        run, core = self._core(layout)
+        core.set_firewall_enabled(True)
+        assert ['ufw', 'allow', '22/tcp'] not in run.cmds
+
+    def test_enabled_needs_default_deny(self, layout):
+        _run, core = self._core(
+            layout, UFW_HEAD + 'Default: allow (incoming), allow (outgoing)\n')
+        assert core.get_firewall_state()['enabled'] is False
+        _run, core = self._core(
+            layout, UFW_HEAD + 'Default: deny (incoming), allow (outgoing)\n')
+        assert core.get_firewall_state()['enabled'] is True
+
+    def test_spec_match_is_per_rule_not_substring(self, layout):
+        status = (UFW_HEAD + 'Default: deny (incoming), allow (outgoing)\n\n'
+                  'To                         Action      From\n'
+                  '--                         ------      ----\n'
+                  '1722/tcp                   ALLOW IN    Anywhere\n')
+        _run, core = self._core(layout, status)
+        assert core.get_firewall_state()['allowed']['ssh'] is False
+
+
 # ---------------------------------------------- real nft in a namespace
 
 
@@ -257,7 +509,11 @@ _NETNS_DRIVER = textwrap.dedent('''
                               capture_output=True, text=True)
 
     out = {}
-    core = helper.HelperCore(state_file=args['state'])
+    core = helper.HelperCore(state_file=args['state'],
+                             nft_dropin_dir=args['dropin'],
+                             proc_root=args['proc'])
+    core.ssh_keep_open = lambda: False
+    core.init_system = lambda: 'unknown'
     if args['mode'] == 'hostile':
         nft('add', 'table', 'inet', 'sentinel')
         errors = []
@@ -272,6 +528,12 @@ _NETNS_DRIVER = textwrap.dedent('''
     elif args['mode'] == 'probe':
         out['rc'] = nft('-j', '-c', '-f', '-', data=args['doc']).returncode
         out['err'] = nft('-j', '-c', '-f', '-', data=args['doc']).stderr
+    elif args['mode'] == 'firewall':
+        core.set_inbound_allowed(args['allowed'])
+        core.set_firewall_enabled(True)
+        out['state'] = core.get_firewall_state()
+        core.set_firewall_enabled(False)
+        out['after'] = core.get_firewall_state()
     elif args['mode'] == 'block':
         prefix = core.user_slice_prefix(args['uid'])
         core.set_app_network(prefix, False, args['uid'])
@@ -285,6 +547,10 @@ def _in_netns(tmp_path, **args):
     script = tmp_path / 'netns_driver.py'
     script.write_text(_NETNS_DRIVER)
     args.setdefault('state', str(tmp_path / 'state.json'))
+    args.setdefault('dropin', str(tmp_path / 'nftables.d'))
+    proc_dir = tmp_path / 'proc' / 'net'
+    proc_dir.mkdir(parents=True, exist_ok=True)
+    args.setdefault('proc', str(tmp_path / 'proc'))
     proc = subprocess.run(
         ['unshare', '-rn', sys.executable, str(script), str(HELPER_DIR),
          json.dumps(args)],
@@ -323,6 +589,22 @@ class TestRealNft:
         assert ('inet', 'sentinel') in tables
         assert ('inet', 'xxwm') not in tables
         assert not (tmp_path / 'state.json').exists()
+
+    def test_firewall_json_parses_and_is_a_drop_policy(self, tmp_path):
+        core = helper.HelperCore(proc_root=str(tmp_path))
+        doc = core.render_inbound_json(
+            {'ssh', 'syncthing', 'kdeconnect'}, keep_ssh=True)
+        if not _kernel_accepts(tmp_path, doc):
+            pytest.skip('kernel lacks an nft expression module (nft_ct)')
+        out = _in_netns(tmp_path, mode='firewall',
+                        allowed=['syncthing', 'kdeconnect'])
+        state = out['state']
+        assert state['enabled'] is True
+        assert state['allowed']['syncthing'] is True
+        assert state['allowed']['kdeconnect'] is True
+        assert state['allowed']['ssh'] is False
+        assert state['foreign_drop'] is False
+        assert out['after']['enabled'] is False
 
     def test_cgroup_block_applies(self, tmp_path):
         prefix = '/sys/fs/cgroup/user.slice/user-%d.slice' % os.getuid()

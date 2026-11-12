@@ -145,8 +145,18 @@
     </defaults>
   </action>
 
+  <action id="io.piercingxx.XXWM.Helper1.firewall-enable">
+    <description>Turn on the firewall</description>
+    <message>Authentication is required to turn on the firewall.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
   <action id="io.piercingxx.XXWM.Helper1.firewall-restrict">
-    <description>Close an inbound port or enable the firewall</description>
+    <description>Close an inbound port</description>
     <message>Authentication is required to restrict inbound access.</message>
     <defaults>
       <allow_any>no</allow_any>

@@ -37,11 +37,13 @@ class FakeRun:
     def __init__(self, mapping=None):
         self.cmds = []
         self.mapping = dict(mapping or {})
+        self.inputs = []
 
-    def __call__(self, argv, timeout=10):
+    def __call__(self, argv, timeout=10, input=None):
         assert isinstance(argv, list), argv
         assert argv and all(isinstance(a, str) for a in argv), argv
         self.cmds.append((list(argv), timeout))
+        self.inputs.append(input)
         for key, proc in self.mapping.items():
             if argv[:len(key)] == list(key):
                 return proc
@@ -333,9 +335,12 @@ class TestNftOwnedTable:
 
     def test_reconcile_touches_only_owned_tables(self, tmp_path,
                                                  monkeypatch):
+        import json
         run = FakeRun()
         core = make_core(tmp_path, run)
+        core.ssh_keep_open = lambda: False
         monkeypatch.setattr(core, 'firewall_backend', lambda: 'nftables')
+        Path(core.inbound_file()).write_text(json.dumps({'enabled': True}))
         core.set_inbound_preset('ssh', True)
         assert run.cmds
         for cmd, _timeout in run.cmds:
@@ -346,15 +351,23 @@ class TestNftOwnedTable:
             assert 'table inet nat' not in joined
         assert ['nft', 'delete', 'table', 'inet', 'xxwm-inbound'] in [
             cmd for cmd, _timeout in run.cmds]
-        assert any(cmd[:3] == ['nft', 'add', 'table']
-                   and 'xx_wm' in cmd for cmd, _timeout in run.cmds)
+        doc, = [json.loads(data) for data in run.inputs if data]
+        tables = {obj['table']['name'] for item in doc['nftables']
+                  for obj in item.values() if 'table' in obj}
+        assert tables == {'xx_wm'}
 
     def test_state_reads_owned_table(self, tmp_path, monkeypatch):
-        ruleset = ('table inet xx_wm {\n'
-                   '\tchain input {\n'
-                   '\t\ttcp dport 22 accept\n'
-                   '\t}\n}\n')
-        run = FakeRun({('nft', 'list'): _completed(
+        import json
+        ruleset = json.dumps({'nftables': [
+            {'table': {'family': 'inet', 'name': 'xx_wm'}},
+            {'chain': {'family': 'inet', 'table': 'xx_wm', 'name': 'input',
+                       'type': 'filter', 'hook': 'input', 'prio': 0,
+                       'policy': 'drop'}},
+            {'rule': {'family': 'inet', 'table': 'xx_wm', 'chain': 'input',
+                      'expr': [{'match': {'op': '==', 'left': {'payload': {
+                          'protocol': 'tcp', 'field': 'dport'}},
+                          'right': 22}}, {'accept': None}]}}]})
+        run = FakeRun({('nft', '-j', 'list'): _completed(
             ['nft'], stdout=ruleset)})
         core = make_core(tmp_path, run)
         monkeypatch.setattr(core, 'firewall_backend', lambda: 'nftables')

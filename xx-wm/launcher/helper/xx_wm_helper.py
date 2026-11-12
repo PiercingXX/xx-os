@@ -46,6 +46,7 @@ ACTION_SERVICE_REMOTE = BUS_NAME + '.service-remote'
 ACTION_RFKILL = BUS_NAME + '.rfkill'
 ACTION_FW_OPEN = BUS_NAME + '.firewall-open'
 ACTION_FW_RESTRICT = BUS_NAME + '.firewall-restrict'
+ACTION_FW_ENABLE = BUS_NAME + '.firewall-enable'
 ACTION_POWER = BUS_NAME + '.power-profile'
 ACTION_WAKE = BUS_NAME + '.wake-alarm'
 
@@ -122,6 +123,10 @@ NFT_IN_CHAIN = 'input'
 
 NFT_IN_TABLE_LEGACY = 'xxwm-inbound'
 
+# Marks the port-22 rule the helper adds while sshd listens or is
+# enabled, so it is never read back as the SSH feature's own preset.
+NFT_KEEP_SSH_COMMENT = 'xxwm keep-ssh'
+
 # Every cgroup path component below the user slice must match this
 # before it may appear inside an nft string literal: no quotes, spaces,
 # separators, braces, backslashes or newlines can reach nft's lexer.
@@ -190,6 +195,7 @@ INBOUND_PRESETS = {
 }
 
 SYSFS_DEFAULT = '/sys'
+PROC_ROOT_DEFAULT = '/proc'
 CGROUP_ROOT_DEFAULT = '/sys/fs/cgroup'
 MOUNTS_FILE_DEFAULT = '/proc/mounts'
 STATE_DIR_DEFAULT = '/var/lib/xx-wm-helper'
@@ -452,11 +458,13 @@ class HelperCore:
         nft_dropin_dir: str = NFT_DROPIN_DIR,
         log_dir: str = LOG_DIR_DEFAULT,
         wake_file: str | None = None,
+        proc_root: str = PROC_ROOT_DEFAULT,
         run=_default_run,
         spawn=_default_spawn,
         now=time.time,
     ) -> None:
         self.sysfs = sysfs
+        self.proc_root = proc_root
         self.cgroup_root = cgroup_root
         self.mounts_file = mounts_file
         self.state_file = state_file
@@ -1105,33 +1113,97 @@ class HelperCore:
             return '%d-%d' % (port[0], port[1])
         return str(port)
 
-    def render_inbound_nft(self, allowed) -> str:
-        lines = ['# xx-wm inbound presets (managed; do not edit).',
+    @staticmethod
+    def inbound_port_rules(allowed, keep_ssh: bool = False) -> list:
+        """``(proto, port, comment)`` accepts for the allowed presets, in
+        name order, then the SSH safeguard. Constants only: names outside
+        INBOUND_PRESETS raise KeyError."""
+        rules = []
+        for name in sorted(allowed):
+            preset = INBOUND_PRESETS[name]
+            for proto in ('tcp', 'udp'):
+                for port in preset[proto]:
+                    rules.append((proto, port, 'xxwm %s' % name))
+        if keep_ssh:
+            rules.append(('tcp', 22, NFT_KEEP_SSH_COMMENT))
+        return rules
+
+    def render_inbound_json(self, allowed, keep_ssh: bool = False) -> dict:
+        """The ``inet xx_wm`` input chain as an ``nft -j`` document.
+
+        A real policy: drop by default; accept established/related
+        traffic, loopback, ICMP and ICMPv6 (neighbour discovery), DHCP
+        and DHCPv6 client replies, then the allowed presets. Add-then-
+        delete replaces our table whole in the same transaction."""
+        table = {'family': NFT_FAMILY, 'name': NFT_IN_TABLE}
+        where = {'family': NFT_FAMILY, 'table': NFT_IN_TABLE,
+                 'chain': NFT_IN_CHAIN}
+
+        def match(left, right, op='=='):
+            return {'match': {'op': op, 'left': left, 'right': right}}
+
+        def port(proto, field, value):
+            right = ({'range': [value[0], value[1]]}
+                     if isinstance(value, tuple) else value)
+            return match({'payload': {'protocol': proto, 'field': field}},
+                         right)
+
+        accept = {'accept': None}
+        exprs = [
+            [match({'ct': {'key': 'state'}},
+                   {'set': ['established', 'related']}, op='in'), accept],
+            [match({'meta': {'key': 'iif'}}, 'lo'), accept],
+            [match({'meta': {'key': 'l4proto'}}, 'icmp'), accept],
+            [match({'meta': {'key': 'l4proto'}}, 'ipv6-icmp'), accept],
+            [port('udp', 'sport', 67), port('udp', 'dport', 68), accept],
+            [port('udp', 'sport', 547), port('udp', 'dport', 546), accept],
+        ]
+        rules = [dict(where, expr=expr) for expr in exprs]
+        for proto, value, comment in self.inbound_port_rules(allowed,
+                                                             keep_ssh):
+            rules.append(dict(where, expr=[port(proto, 'dport', value),
+                                           accept], comment=comment))
+        return {'nftables': [
+            {'add': {'table': dict(table)}},
+            {'delete': {'table': dict(table)}},
+            {'add': {'table': dict(table)}},
+            {'add': {'chain': {'family': NFT_FAMILY, 'table': NFT_IN_TABLE,
+                               'name': NFT_IN_CHAIN, 'type': 'filter',
+                               'hook': 'input', 'prio': 0,
+                               'policy': 'drop'}}},
+        ] + [{'add': {'rule': rule}} for rule in rules]}
+
+    def render_inbound_nft(self, allowed, keep_ssh: bool = False) -> str:
+        """The boot drop-in: the same chain as :meth:`render_inbound_json`
+        in nft's text syntax (constants only)."""
+        lines = ['# xx-wm inbound firewall (managed; do not edit).',
                  '# An accept here cannot override a drop in another '
                  'base chain.',
                  'table inet %s {' % NFT_IN_TABLE,
                  '    chain %s {' % NFT_IN_CHAIN,
                  '        type filter hook input priority filter; '
-                 'policy accept;']
-        for name in sorted(allowed):
-            preset = INBOUND_PRESETS[name]
-            for port in preset['tcp']:
-                lines.append('        tcp dport %s accept comment "xxwm %s";'
-                             % (self.nft_port(port), name))
-            for port in preset['udp']:
-                lines.append('        udp dport %s accept comment "xxwm %s";'
-                             % (self.nft_port(port), name))
+                 'policy drop;',
+                 '        ct state established,related accept',
+                 '        iif "lo" accept',
+                 '        meta l4proto icmp accept',
+                 '        meta l4proto ipv6-icmp accept',
+                 '        udp sport 67 udp dport 68 accept',
+                 '        udp sport 547 udp dport 546 accept']
+        for proto, port, comment in self.inbound_port_rules(allowed,
+                                                            keep_ssh):
+            lines.append('        %s dport %s accept comment "%s";'
+                         % (proto, self.nft_port(port), comment))
         lines += ['    }', '}']
         return '\n'.join(lines) + '\n'
 
-    def write_inbound_dropin(self, allowed) -> None:
+    def write_inbound_dropin(self, allowed, keep_ssh: bool = False) -> None:
         """Persist the pmOS-style nftables drop-in for the allowed set."""
         try:
             os.makedirs(self.nft_dropin_dir, mode=0o755, exist_ok=True)
             tmp = os.path.join(self.nft_dropin_dir,
                                '.%s.tmp' % NFT_DROPIN_NAME)
             with open(tmp, 'w', encoding='utf-8') as handle:
-                handle.write(self.render_inbound_nft(allowed))
+                handle.write(self.render_inbound_nft(allowed, keep_ssh))
             os.chmod(tmp, 0o644)
             os.replace(tmp, os.path.join(self.nft_dropin_dir,
                                          NFT_DROPIN_NAME))
@@ -1160,92 +1232,212 @@ class HelperCore:
         """Remove the owned live table and drop-in; other tables are
         never touched."""
         try:
-            self._nft(['flush', 'chain', NFT_FAMILY, NFT_IN_TABLE,
-                       NFT_IN_CHAIN])
-        except HelperError:
-            pass
-        try:
             self._nft(['delete', 'table', NFT_FAMILY, NFT_IN_TABLE])
         except HelperError:
             pass
         self._drop_legacy_inbound()
         self._remove_inbound_dropin()
 
-    def apply_inbound(self, allowed) -> None:
-        """Reconcile the live `inet xx_wm` table with `allowed`:
-        our own table and chain only — other tables are never touched."""
+    def apply_inbound(self, allowed, keep_ssh: bool = False) -> None:
+        """Replace the live `inet xx_wm` table with the drop-policy chain
+        in one ``nft -j`` transaction: our own table only, other tables
+        are never touched, and a refusal leaves the old table live."""
         self._drop_legacy_inbound()
-        self._nft(['add', 'table', NFT_FAMILY, NFT_IN_TABLE],
-                  allow_exists=True)
-        self._nft([
-            'add', 'chain', NFT_FAMILY, NFT_IN_TABLE, NFT_IN_CHAIN,
-            '{', 'type', 'filter', 'hook', 'input', 'priority', 'filter',
-            ';', 'policy', 'accept', ';', '}',
-        ], allow_exists=True)
-        self._nft(['flush', 'chain', NFT_FAMILY, NFT_IN_TABLE, NFT_IN_CHAIN])
-        for name in sorted(allowed):
-            preset = INBOUND_PRESETS[name]
-            for port in preset['tcp']:
-                self._nft(['add', 'rule', NFT_FAMILY, NFT_IN_TABLE,
-                           NFT_IN_CHAIN, 'tcp', 'dport',
-                           self.nft_port(port), 'accept'])
-            for port in preset['udp']:
-                self._nft(['add', 'rule', NFT_FAMILY, NFT_IN_TABLE,
-                           NFT_IN_CHAIN, 'udp', 'dport',
-                           self.nft_port(port), 'accept'])
+        self._nft_stdin(['-j'], json.dumps(
+            self.render_inbound_json(allowed, keep_ssh)), 'firewall chain')
 
-    def _nft_preset_allowed(self, ruleset: str, name: str) -> bool:
+    def _install_inbound(self, allowed) -> None:
+        keep = self.ssh_keep_open()
+        self.apply_inbound(allowed, keep)
+        self.write_inbound_dropin(allowed, keep)
+
+    # ------------------------------------------------- SSH reachability
+
+    def ssh_listening(self) -> bool:
+        """True when something listens on TCP port 22 in our network
+        namespace (sshd, or systemd's ssh.socket)."""
+        for name in ('tcp', 'tcp6'):
+            try:
+                with open(os.path.join(self.proc_root, 'net', name),
+                          encoding='ascii', errors='replace') as handle:
+                    lines = handle.read().splitlines()[1:]
+            except OSError:
+                continue
+            for line in lines:
+                fields = line.split()
+                if (len(fields) > 3 and fields[3] == '0A'
+                        and fields[1].rsplit(':', 1)[-1].upper() == '0016'):
+                    return True
+        return False
+
+    def ssh_enabled(self) -> bool:
+        """True when the SSH service starts at boot."""
+        init = self.init_system()
+        if init == 'systemd':
+            for unit in SERVICE_UNITS['ssh']['systemd'] + ('ssh.socket',):
+                try:
+                    proc = self._run(['systemctl', 'is-enabled', '--quiet',
+                                      unit])
+                except OSError:
+                    return False
+                if getattr(proc, 'returncode', 1) == 0:
+                    return True
+            return False
+        if init == 'openrc':
+            return any(os.path.exists(os.path.join(
+                '/etc', 'runlevels', 'default', name))
+                for name in SERVICE_UNITS['ssh']['openrc'])
+        return False
+
+    def ssh_keep_open(self) -> bool:
+        """Keep port 22 reachable when the firewall goes on. Decided from
+        the system, not the caller's environment: this daemon is D-Bus
+        activated, so SSH_CONNECTION is never set here."""
+        return self.ssh_listening() or self.ssh_enabled()
+
+    # ------------------------------------------------- firewall state
+
+    @staticmethod
+    def _rule_open_port(rule: dict):
+        """``(proto, port)`` for a ``<proto> dport <port|lo-hi> accept``
+        rule from ``nft -j``, else None."""
+        expr = rule.get('expr')
+        if not isinstance(expr, list) or len(expr) != 2 \
+                or expr[1] != {'accept': None}:
+            return None
+        match = expr[0].get('match') if isinstance(expr[0], dict) else None
+        if not isinstance(match, dict) or match.get('op') != '==':
+            return None
+        payload = (match.get('left') or {}).get('payload') \
+            if isinstance(match.get('left'), dict) else None
+        if not isinstance(payload, dict) or payload.get('field') != 'dport' \
+                or payload.get('protocol') not in ('tcp', 'udp'):
+            return None
+        right = match.get('right')
+        if isinstance(right, bool):
+            return None
+        if isinstance(right, int):
+            return (payload['protocol'], right)
+        if isinstance(right, dict) and isinstance(right.get('range'), list) \
+                and len(right['range']) == 2 \
+                and all(isinstance(v, int) for v in right['range']):
+            return (payload['protocol'], tuple(right['range']))
+        return None
+
+    def parse_nft_ruleset(self, text: str) -> dict:
+        """From ``nft -j list ruleset``: whether our input chain is a live
+        drop policy, which preset ports it opens (the SSH safeguard rule
+        excluded), and whether another base chain drops input."""
+        try:
+            items = json.loads(text or '{}').get('nftables', [])
+        except (ValueError, AttributeError):
+            items = []
+        if not isinstance(items, list):
+            items = []
+        blocking = False
+        foreign_drop = False
+        open_ports = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            chain = item.get('chain')
+            if isinstance(chain, dict):
+                ours = (chain.get('family') == NFT_FAMILY
+                        and chain.get('table') == NFT_IN_TABLE)
+                is_drop = (chain.get('hook') == 'input'
+                           and chain.get('policy') == 'drop')
+                if ours and chain.get('name') == NFT_IN_CHAIN:
+                    blocking = is_drop
+                elif not ours and is_drop:
+                    foreign_drop = True
+            rule = item.get('rule')
+            if isinstance(rule, dict) \
+                    and rule.get('family') == NFT_FAMILY \
+                    and rule.get('table') == NFT_IN_TABLE \
+                    and rule.get('chain') == NFT_IN_CHAIN \
+                    and rule.get('comment') != NFT_KEEP_SSH_COMMENT:
+                spec = self._rule_open_port(rule)
+                if spec is not None:
+                    open_ports.add(spec)
+        return {'blocking': blocking, 'open_ports': open_ports,
+                'foreign_drop': foreign_drop}
+
+    @staticmethod
+    def preset_open(name: str, open_ports) -> bool:
         preset = INBOUND_PRESETS[name]
-        for port in list(preset['tcp']) + list(preset['udp']):
-            if 'dport %s' % self.nft_port(port) not in ruleset:
-                return False
-        return True
+        return all((proto, port) in open_ports
+                   for proto in ('tcp', 'udp') for port in preset[proto])
+
+    def _ufw_status(self) -> dict:
+        """``ufw status verbose``: active, default-deny incoming, and the
+        allowed rule specs as whole tokens (``22/tcp`` never matches
+        ``1722/tcp``)."""
+        try:
+            proc = self._run(['ufw', 'status', 'verbose'])
+            status = getattr(proc, 'stdout', '') or ''
+        except OSError as err:
+            raise _failed('ufw status failed: %s' % err) from None
+        lines = status.splitlines()
+        active = bool(lines) and lines[0].strip() == 'Status: active'
+        deny_in = any(line.startswith('Default:')
+                      and ('deny (incoming)' in line
+                           or 'reject (incoming)' in line)
+                      for line in lines)
+        specs = set()
+        for line in lines:
+            fields = line.split()
+            if len(fields) >= 2 and fields[1] == 'ALLOW':
+                specs.add(fields[0])
+        return {'active': active, 'deny_in': deny_in, 'specs': specs}
 
     def get_firewall_state(self) -> dict:
-        """Backend, on/off and per-preset state for the section. The ufw
-        answer is the live ruleset; the nftables answer is the live
-        ruleset plus our persisted set. `foreign_drop` flags a drop in
-        another base chain, which our accepts cannot override."""
+        """Backend, on/off and per-preset state for the section.
+
+        ``enabled`` is True only when incoming traffic is really being
+        dropped: our input chain is live with ``policy drop`` (nftables)
+        or ufw is active with a deny/reject incoming default. Presets are
+        read from the live rules; with the firewall off, nftables reports
+        the persisted set. `foreign_drop` flags a drop in another base
+        chain, which our accepts cannot override."""
         backend = self.firewall_backend()
         if backend == 'ufw':
-            try:
-                proc = self._run(['ufw', 'status'])
-                status = getattr(proc, 'stdout', '') or ''
-            except OSError as err:
-                raise _failed('ufw status failed: %s' % err) from None
-            lines = status.splitlines()
-            enabled = bool(lines) and lines[0].strip() == 'Status: active'
+            ufw = self._ufw_status()
+            enabled = ufw['active'] and ufw['deny_in']
             return {
                 'backend': 'ufw',
                 'enabled': enabled,
-                'allowed': {name: all(spec in status for spec in
+                'allowed': {name: all(spec in ufw['specs'] for spec in
                                       self.ufw_specs(name))
                             for name in sorted(INBOUND_PRESETS)},
                 'foreign_drop': enabled,
             }
         if backend == 'nftables':
             try:
-                proc = self._run(['nft', 'list', 'ruleset'])
-                ruleset = getattr(proc, 'stdout', '') or ''
+                proc = self._run([self.nft_bin, '-j', 'list', 'ruleset'])
             except OSError as err:
                 raise _failed('nft list failed: %s' % err) from None
-            installed = 'table %s %s' % (NFT_FAMILY, NFT_IN_TABLE) in ruleset
+            if getattr(proc, 'returncode', 1) != 0:
+                raise self._nft_failed('ruleset listing', proc)
+            live = self.parse_nft_ruleset(getattr(proc, 'stdout', '') or '')
             persisted = self.load_inbound()
+            enabled = live['blocking']
             return {
                 'backend': 'nftables',
-                'enabled': installed,
-                'allowed': {name: (self._nft_preset_allowed(ruleset, name)
-                                   if installed
+                'enabled': enabled,
+                'allowed': {name: (self.preset_open(name,
+                                                    live['open_ports'])
+                                   if enabled
                                    else name in persisted['allowed'])
                             for name in sorted(INBOUND_PRESETS)},
-                'foreign_drop': 'policy drop' in ruleset,
+                'foreign_drop': live['foreign_drop'],
             }
         return {'backend': 'none', 'enabled': False, 'allowed': {},
                 'foreign_drop': False}
 
     def set_inbound_preset(self, name: str, allowed: bool) -> bool:
         """Allow (open) or forbid (close) one preset's ports. Presets only:
-        anything outside INBOUND_PRESETS is InvalidArgs."""
+        anything outside INBOUND_PRESETS is InvalidArgs. nftables only
+        programs the chain while the firewall is on."""
         if name not in INBOUND_PRESETS:
             raise HelperError(ERROR_INVALID_ARGS,
                               'unknown inbound preset: %r' % (name,))
@@ -1267,8 +1459,8 @@ class HelperCore:
             else:
                 current.discard(name)
             state['allowed'] = sorted(current)
-            self.apply_inbound(state['allowed'])
-            self.write_inbound_dropin(state['allowed'])
+            if state.get('enabled') is True:
+                self._install_inbound(state['allowed'])
             self.save_inbound(state)
         else:
             raise _failed('no firewall backend available')
@@ -1284,15 +1476,17 @@ class HelperCore:
         return bool(allowed)
 
     def set_firewall_enabled(self, enabled: bool) -> bool:
-        """Enable (restrict incoming) or disable the firewall. Enabling
-        keeps SSH reachable on a remote box (ref firewall-manager.sh):
-        port 22 is allowed when SSH_CONNECTION is set."""
+        """Enable (drop incoming except the base rules and allowed
+        presets) or disable the firewall. Enabling keeps port 22 open
+        while sshd listens or is enabled (:meth:`ssh_keep_open`), so
+        turning the firewall on cannot lock out a phone reached over
+        SSH."""
         backend = self.firewall_backend()
         if backend == 'ufw':
             if enabled:
                 self._run_cmd(['ufw', 'default', 'deny', 'incoming'])
                 self._run_cmd(['ufw', 'default', 'allow', 'outgoing'])
-                if os.environ.get('SSH_CONNECTION'):
+                if self.ssh_keep_open():
                     self._run_cmd(['ufw', 'allow', '22/tcp'])
                 self._run_cmd(['ufw', '--force', 'enable'])
             else:
@@ -1300,8 +1494,7 @@ class HelperCore:
         elif backend == 'nftables':
             if enabled:
                 state = self.load_inbound()
-                self.apply_inbound(state['allowed'])
-                self.write_inbound_dropin(state['allowed'])
+                self._install_inbound(state['allowed'])
                 state['enabled'] = True
                 self.save_inbound(state)
             else:
@@ -1316,17 +1509,13 @@ class HelperCore:
     def _reconcile_ufw(self, wanted: list) -> None:
         """Bring the ufw ruleset to ``wanted``: allow missing preset
         specs, delete present specs outside it. Argv lists only."""
-        try:
-            proc = self._run(['ufw', 'status'])
-            status = getattr(proc, 'stdout', '') or ''
-        except OSError as err:
-            raise _failed('ufw status failed: %s' % err) from None
+        present = self._ufw_status()['specs']
         wanted_set = set(wanted)
         for name in sorted(INBOUND_PRESETS):
             for spec in self.ufw_specs(name):
-                if name in wanted_set and spec not in status:
+                if name in wanted_set and spec not in present:
                     self._run_cmd(['ufw', 'allow', spec])
-                elif name not in wanted_set and spec in status:
+                elif name not in wanted_set and spec in present:
                     self._run_cmd(['ufw', '--force', 'delete',
                                    'allow', spec])
 
@@ -1340,8 +1529,9 @@ class HelperCore:
         port stays allowed (its feature counts as on for the firewall
         only) without starting any service; the stored keys are read
         once, then left alone. Later calls derive purely.
-        Firewall off (``enabled`` False) persists the set but leaves
-        no table behind.
+        Only an explicitly enabled firewall (``enabled`` True, set by
+        SetFirewallEnabled) gets a table: a feature change alone never
+        turns the drop policy on, and off leaves no table behind.
         """
         if not isinstance(names, (list, tuple, set, frozenset)):
             raise HelperError(ERROR_INVALID_ARGS,
@@ -1360,11 +1550,10 @@ class HelperCore:
         if backend == 'ufw':
             self._reconcile_ufw(wanted)
         elif backend == 'nftables':
-            if state.get('enabled') is False:
-                self._clear_inbound_nft()
+            if state.get('enabled') is True:
+                self._install_inbound(wanted)
             else:
-                self.apply_inbound(wanted)
-                self.write_inbound_dropin(wanted)
+                self._clear_inbound_nft()
         else:
             raise _failed('no firewall backend available')
         self.save_inbound(state)
@@ -1504,10 +1693,11 @@ class HelperCore:
 
     def apply_saved(self) -> dict:
         """Boot re-apply: charge limit, power profile, then the nft blocked
-        set, then the inbound preset set. One leg failing must not skip
+        set, then the inbound firewall. One leg failing must not skip
         the others, so errors are collected and reported together.
         Persisted blocked paths are validated again (a tampered or stale
-        entry is dropped, never handed to nft) and the pruned set saved."""
+        entry is dropped, never handed to nft) and the pruned set saved;
+        the firewall chain is installed only when it was enabled."""
         state = self.load_state()
         applied: dict = {'charge_limit': None, 'power_profile': None,
                          'blocked': [], 'errors': []}
@@ -1538,16 +1728,13 @@ class HelperCore:
                 except HelperError as err:
                     applied['errors'].append(str(err))
         inbound = self.load_inbound()
-        if inbound.get('enabled') is False:
+        if inbound.get('enabled') is not True:
             self._remove_inbound_dropin()
-        elif inbound['allowed'] or inbound['enabled']:
+        else:
             try:
                 if self.firewall_backend() == 'nftables':
-                    self.apply_inbound(inbound['allowed'])
-                    self.write_inbound_dropin(inbound['allowed'])
-                    applied['inbound'] = sorted(inbound['allowed'])
-                else:
-                    applied['inbound'] = sorted(inbound['allowed'])
+                    self._install_inbound(inbound['allowed'])
+                applied['inbound'] = sorted(inbound['allowed'])
             except HelperError as err:
                 applied['errors'].append(str(err))
         return applied
@@ -1794,7 +1981,7 @@ def check_polkit_authorization(connection, sender, action, callback,
     ``interactive`` passes AllowUserInteraction so the session's agent
     prompts for the device password; it is True only for actions whose
     policy is ``auth_admin_keep`` (upgrade, removal, sshd/adbd start/enable,
-    opening an inbound port, disabling the firewall).
+    opening an inbound port, turning the firewall on or off).
     """
     Gio, GLib = _require_gio()
 
@@ -1872,8 +2059,9 @@ def policy_for(method: str, args) -> tuple | None:
     Every call goes through here. Plain methods map statically.
     Argument-dependent ones decide from the already-validated
     arguments: opening remote access (ssh/adbd start/enable), opening an
-    inbound port or disabling the firewall needs auth_admin_keep with
-    user interaction (True); closing a port, enabling the firewall and
+    inbound port, and turning the firewall on (it drops new inbound
+    connections, SSH included unless sshd is up) or off need
+    auth_admin_keep with user interaction (True); closing a port and
     every other allowlisted service change stay allow_active (False).
     None means refused before any authorization: unknown methods,
     unauthenticated probes (GetCapabilities, GetFirewallState) and
@@ -1934,8 +2122,10 @@ def policy_for(method: str, args) -> tuple | None:
             (enabled,) = args
         except (TypeError, ValueError):
             return None
-        return (ACTION_FW_RESTRICT, False) if enabled else (ACTION_FW_OPEN,
-                                                           True)
+        if not isinstance(enabled, bool):
+            return None
+        return (ACTION_FW_ENABLE, True) if enabled else (ACTION_FW_OPEN,
+                                                         True)
     return _METHOD_ACTIONS.get(method)
 
 
@@ -2222,7 +2412,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description='Privileged D-Bus helper for XX-WM (runs as root).')
     parser.add_argument(
         '--apply-saved', action='store_true',
-        help='re-apply the persisted charge limit and nft blocks, then exit '
+        help='re-apply the persisted charge limit, nft blocks and '
+             'firewall, then exit '
              '(used by the boot service; takes no bus name)',
     )
     return parser

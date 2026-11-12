@@ -41,18 +41,25 @@ class FakeRun:
 
     def __init__(self, status_out='', ruleset=''):
         self.cmds = []
+        self.inputs = []
         self.status_out = status_out
         self.ruleset = ruleset
 
-    def __call__(self, argv):
+    def __call__(self, argv, input=None):
         assert isinstance(argv, list), argv
         assert argv and all(isinstance(a, str) for a in argv), argv
         self.cmds.append(list(argv))
+        self.inputs.append(input)
         if argv[:2] == ['ufw', 'status']:
             return _completed(argv, stdout=self.status_out)
-        if argv[:3] == ['nft', 'list', 'ruleset']:
+        if argv[:4] == ['nft', '-j', 'list', 'ruleset']:
             return _completed(argv, stdout=self.ruleset)
         return _completed(argv)
+
+    def nft_docs(self):
+        """The ``nft -j -f -`` documents fed on stdin, parsed."""
+        return [json.loads(data) for argv, data in zip(self.cmds, self.inputs)
+                if argv[:2] == ['nft', '-j'] and data]
 
 
 def make_core(tmp_path, run=None, **over):
@@ -66,7 +73,28 @@ def make_core(tmp_path, run=None, **over):
     kw.update(over)
     core = helper.HelperCore(**kw)
     core.nft_available = lambda: True
+    core.ssh_keep_open = lambda: False
     return core
+
+
+def _enable(core, allowed=(), migrated=False):
+    Path(core.inbound_file()).write_text(
+        json.dumps({'enabled': True, 'allowed': list(allowed),
+                    'migrated': migrated}), encoding='utf-8')
+
+
+def _open_ports(core, doc):
+    """Ports a rendered document opens, read back through the helper's
+    listing parser (the add-wrapped items have the listing's shape)."""
+    listing = {'nftables': [obj for item in doc['nftables']
+                            for obj in item.values()]}
+    return core.parse_nft_ruleset(json.dumps(listing))['open_ports']
+
+
+def _tables(doc):
+    return {(obj['table']['family'], obj['table']['name'])
+            for item in doc['nftables'] for obj in item.values()
+            if 'table' in obj}
 
 
 def _probe_stub(result):
@@ -270,6 +298,7 @@ class TestInboundAllowedArgv:
         run = FakeRun()
         core = make_core(tmp_path, run)
         monkeypatch.setattr(core, 'firewall_backend', lambda: 'nftables')
+        _enable(core)
         assert core.set_inbound_allowed(['ssh', 'nearby']) == [
             'nearby', 'ssh']
         assert run.cmds
@@ -279,16 +308,17 @@ class TestInboundAllowedArgv:
             assert 'table inet filter' not in joined
             assert 'table inet mangle' not in joined
             assert 'table inet nat' not in joined
-        assert any(cmd[:3] == ['nft', 'add', 'table']
-                   and 'xx_wm' in cmd for cmd in run.cmds)
-        assert any('tcp dport 22' in ' '.join(cmd) for cmd in run.cmds)
-        assert any('tcp dport 53317' in ' '.join(cmd)
-                   for cmd in run.cmds)
+        doc, = run.nft_docs()
+        assert _tables(doc) == {('inet', 'xx_wm')}
+        ports = _open_ports(core, doc)
+        assert ('tcp', 22) in ports
+        assert ('tcp', 53317) in ports and ('udp', 53317) in ports
 
     def test_nft_persists_and_drops_in(self, tmp_path, monkeypatch):
         run = FakeRun()
         core = make_core(tmp_path, run)
         monkeypatch.setattr(core, 'firewall_backend', lambda: 'nftables')
+        _enable(core)
         core.set_inbound_allowed(['xxdb'])
         saved = json.loads(
             Path(core.inbound_file()).read_text(encoding='utf-8'))
@@ -330,9 +360,9 @@ class TestMigration:
             encoding='utf-8')
         assert core.set_inbound_allowed([]) == ['ssh', 'syncthing']
         assert core.load_inbound()['migrated'] is True
-        assert any('tcp dport 22' in ' '.join(cmd) for cmd in run.cmds)
-        assert any('tcp dport 22000' in ' '.join(cmd)
-                   for cmd in run.cmds)
+        doc, = run.nft_docs()
+        ports = _open_ports(core, doc)
+        assert ('tcp', 22) in ports and ('tcp', 22000) in ports
         assert all(cmd[0] in ('nft', 'ufw') for cmd in run.cmds)
 
     def test_second_write_derives_purely(self, tmp_path, monkeypatch):
@@ -380,6 +410,7 @@ class TestFirewallOff:
         run = FakeRun()
         core = make_core(tmp_path, run)
         monkeypatch.setattr(core, 'firewall_backend', lambda: 'nftables')
+        _enable(core)
         core.set_inbound_allowed(['ssh'])
         dropin = Path(core.nft_dropin_dir) / helper.NFT_DROPIN_NAME
         assert dropin.is_file()

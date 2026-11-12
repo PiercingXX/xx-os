@@ -18,7 +18,7 @@ service, `io.piercingxx.XXWM.Helper1`, and the shell talks to it via
 | `launcher/helper/xx_wm_helper.py` | `$libexecdir/xx-wm-helper` (mode 755) | daemon (Gio + stdlib only) |
 | `launcher/data/dbus-1/system-services/io.piercingxx.XXWM.Helper1.service` | `$datadir/dbus-1/system-services/` | D-Bus activation, `User=root` |
 | `launcher/data/dbus-1/system.d/io.piercingxx.XXWM.Helper1.conf` | `$datadir/dbus-1/system.d/` | bus policy: root owns, any caller may message the helper interfaces |
-| `launcher/data/polkit-1/actions/io.piercingxx.XXWM.Helper.policy` | `$datadir/polkit-1/actions/` | fifteen actions, `allow_active=yes` except `…upgrade-system`, `…remove-package`, `…service-remote` and `…firewall-open` (`auth_admin_keep`), others `no` |
+| `launcher/data/polkit-1/actions/io.piercingxx.XXWM.Helper.policy` | `$datadir/polkit-1/actions/` | sixteen actions, `allow_active=yes` except `…upgrade-system`, `…remove-package`, `…service-remote`, `…firewall-open` and `…firewall-enable` (`auth_admin_keep`), others `no` |
 | `launcher/data/systemd/xx-wm-helper-boot.service` | `$datadir/systemd/system/` | oneshot `--apply-saved` at boot |
 | `launcher/data/openrc/xx-wm-helper-boot` | `$sysconfdir/init.d/` | OpenRC equivalent |
 | `launcher/src/helper_client.py` | shell datadir | async shell-side client |
@@ -75,10 +75,11 @@ below).
 `allow_active` actions. The `auth_admin_keep` actions —
 `…upgrade-system`, `…remove-package`, `…service-remote` (ssh/adbd
 start/enable, which opens remote access), `…firewall-open` (opening an
-inbound port, disabling the firewall) — pass flags 1
+inbound port, disabling the firewall), `…firewall-enable` (turning the
+drop policy on, which can cut new inbound connections) — pass flags 1
 (AllowUserInteraction) so the in-shell polkit agent prompts for the
-device password. Closing a port, enabling the firewall and every other
-allowlisted service change stay non-interactive.
+device password. Closing a port and every other allowlisted service
+change stay non-interactive.
 
 Validation (allowlists) happens before authorization: `policy_for`
 returns None for unknown methods and out-of-allowlist arguments, and
@@ -103,7 +104,7 @@ the service refuses those with InvalidArgs without contacting polkit.
 | `SetInboundAllowed` non-empty (leaves ports open) | `…firewall-open` | `allow_active=auth_admin_keep` |
 | `SetInboundAllowed` empty (closes everything) | `…firewall-restrict` | `allow_active=yes` |
 | `SetFirewallEnabled` disable (`enabled` false) | `…firewall-open` | `allow_active=auth_admin_keep` |
-| `SetFirewallEnabled` enable (`enabled` true) | `…firewall-restrict` | `allow_active=yes` |
+| `SetFirewallEnabled` enable (`enabled` true) | `…firewall-enable` | `allow_active=auth_admin_keep` |
 | `SetWakeAlarm`, `ClearWakeAlarm` | `…wake-alarm` | `allow_active=yes` |
 | `HasPin`, `VerifyPin`, `SetPin`, `ClearPin` | none (caller's own uid) | — |
 | `GetCapabilities`, `GetFirewallState` | none (no auth) | — |
@@ -181,14 +182,24 @@ the service refuses those with InvalidArgs without contacting polkit.
   the choice persists for `--apply-saved`. Governor writes are
   non-destructive, so the action stays `allow_active=yes`.
 - `SetInboundPreset` accepts only the five presets (nearby, xxdb, ssh,
-  kdeconnect, syncthing): the live `inet xx_wm` table (accept-only
-  input chain, reconciled by flush + re-add — other tables untouched)
-  when nftables is present, `ufw allow|delete` only where nft is
-  missing, plus the `/etc/nftables.d/10-xxwm.nft` drop-in and a
-  persisted allowed-set that `--apply-saved` re-applies at boot. An
-  accept there cannot override a drop in another base chain;
+  kdeconnect, syncthing): with nftables they open ports in the live
+  `inet xx_wm` table while the firewall is on (`ufw allow|delete` only
+  where nft is missing), plus the `/etc/nftables.d/10-xxwm.nft` drop-in
+  and a persisted allowed-set that `--apply-saved` re-applies at boot.
+  An accept there cannot override a drop in another base chain;
   `GetFirewallState` reports such a `foreign_drop` so the shell says
   so.
+- The `inet xx_wm` input chain is a real policy: `policy drop`, then
+  accept `ct state established,related`, `iif lo`, ICMP and ICMPv6,
+  DHCP (`udp sport 67 dport 68`) and DHCPv6 (`udp sport 547 dport
+  546`) replies, then the allowed presets. It is built as an `nft -j`
+  document of constants and fed on stdin as one transaction that
+  replaces our table whole.
+- `GetFirewallState` parses `nft -j list ruleset`: `enabled` is true
+  only while our input chain is live with `policy drop` (ufw: active
+  with a deny or reject incoming default), and a preset counts as
+  allowed only when every one of its exact ports or ranges is accepted
+  (`22` never matches `22000`).
 - `SetInboundAllowed` replaces the whole owned set with the features'
   derived presets (one row per feature: the feature's own control
   owns its port; the shell re-applies this on every feature or
@@ -198,11 +209,18 @@ the service refuses those with InvalidArgs without contacting polkit.
   stored allow-state, so a previously allowed port stays allowed
   (its feature counts as on for the firewall only) without starting
   any service; the stored keys are read once, then left alone.
-- `SetFirewallEnabled` enables (nftables installs the preset chain;
-  ufw fallback: `default deny incoming` / `allow outgoing`, keeping
-  port 22 when `SSH_CONNECTION` is set, then `--force enable`) or
-  disables (nftables removes the owned table and drop-in: off means
-  no table, live or at boot).
+- `SetFirewallEnabled` enables (nftables installs the drop-policy
+  chain; ufw fallback: `default deny incoming` / `allow outgoing`, then
+  `--force enable`) or disables (nftables removes the owned table and
+  drop-in: off means no table, live or at boot). Only an enabled
+  firewall gets a chain: `SetInboundAllowed` and `SetInboundPreset`
+  never turn the drop policy on by themselves.
+- Enabling keeps TCP port 22 open while something listens on it
+  (`/proc/net/tcp{,6}`) or the SSH service is enabled at boot
+  (`systemctl is-enabled` sshd/ssh service or ssh.socket; OpenRC
+  default runlevel). The helper is D-Bus activated, so the caller's
+  `SSH_CONNECTION` is never visible to it. On nftables that rule is
+  commented `xxwm keep-ssh` and not read back as the SSH feature.
 
 - `SetWakeAlarm(t epoch)` accepts only an integer absolute epoch
   between 5 s and 48 h from now (InvalidArgs otherwise, checked against

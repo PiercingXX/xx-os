@@ -488,7 +488,8 @@ class ScriptConn:
                               helper.ACTION_SERVICE,
                               helper.ACTION_SERVICE_REMOTE,
                               helper.ACTION_RFKILL, helper.ACTION_FW_OPEN,
-                              helper.ACTION_FW_RESTRICT)
+                              helper.ACTION_FW_RESTRICT,
+                              helper.ACTION_FW_ENABLE)
             assert details == {}
             assert flags == self.EXPECTED_FLAGS.get(action, 0), action
             if self.auth_error is not None:
@@ -731,12 +732,13 @@ def test_shipped_policy_actions_and_defaults():
     for action in ('io.piercingxx.XXWM.Helper1.upgrade-system',
                    'io.piercingxx.XXWM.Helper1.remove-package',
                    'io.piercingxx.XXWM.Helper1.service-remote',
-                   'io.piercingxx.XXWM.Helper1.firewall-open'):
+                   'io.piercingxx.XXWM.Helper1.firewall-open',
+                   'io.piercingxx.XXWM.Helper1.firewall-enable'):
         assert ('action id="%s"' % action) in text
     assert text.count('<allow_active>yes</allow_active>') == 11
-    assert text.count('<allow_active>auth_admin_keep</allow_active>') == 4
-    assert text.count('<allow_inactive>no</allow_inactive>') == 15
-    assert text.count('<allow_any>no</allow_any>') == 15
+    assert text.count('<allow_active>auth_admin_keep</allow_active>') == 5
+    assert text.count('<allow_inactive>no</allow_inactive>') == 16
+    assert text.count('<allow_any>no</allow_any>') == 16
 
 
 def test_shipped_bus_policy_allows_default_callers_without_at_console():
