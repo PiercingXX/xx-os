@@ -2,10 +2,12 @@
 unlock/notification counts, and optional per-app daily limits.
 
 Data comes from usage_stats (foreground seconds while unlocked, unlocks,
-notification counts). Limits are config-backed ({app_id: minutes}); when
-one is reached the section fires a gentle banner (banner.py policy and
-card) and the drawer greys the app until midnight. "Ignore for today"
-dismisses both until the next day.
+notification counts). Limits are config-backed ({app_id: minutes}); a
+once-a-minute tick (running from shell start, whether or not this page is
+open) reads the tracker's totals, fires a gentle banner when a limit is
+reached (banner.py policy and card) and refreshes the cache the drawer
+greys the app from until midnight. "Ignore for today" dismisses both
+until the next day.
 """
 from __future__ import annotations
 
@@ -20,6 +22,8 @@ LIMIT_CHOICES: tuple = ((0, 'Off'), (15, '15 min'), (30, '30 min'),
                         (60, '1 hour'), (120, '2 hours'), (240, '4 hours'))
 
 _WEEK_LETTERS = ('M', 'T', 'W', 'T', 'F', 'S', 'S')
+
+LIMIT_TICK_SECS = 60
 
 
 def today_key(day=None) -> str:
@@ -215,6 +219,53 @@ class ScreenTimeSection(settings_page._Section):
         self._week_box = None
         self._apps_box = None
         self._selected: str | None = None
+        self._tick_id = None
+
+    def _start_limit_tick(self, win) -> None:
+        """Limits are checked every LIMIT_TICK_SECS for the life of the
+        shell, not only while this page is open. Bare test windows (no
+        application) get no timer."""
+        if self._tick_id is not None:
+            return
+        try:
+            if win.get_application() is None:
+                return
+            from gi.repository import GLib
+            self._tick_id = GLib.timeout_add_seconds(
+                LIMIT_TICK_SECS, self._on_limit_tick, win)
+        except Exception:
+            self._tick_id = None
+
+    def _on_limit_tick(self, win) -> bool:
+        try:
+            limits = win.config.app_time_limits
+        except Exception:
+            limits = None
+        if not isinstance(limits, dict) or not limits:
+            return True
+        from settings_battery_use import usage_tracker_for
+        tracker = usage_tracker_for(win)
+        if tracker is None:
+            return True
+        day = today_key()
+
+        def _work():
+            try:
+                return tracker.daily_totals(day) or {}
+            except Exception:
+                return None
+
+        def _done(totals) -> None:
+            if not isinstance(totals, dict):
+                return
+            try:
+                win._screen_time_cache = {'day': day, 'totals': dict(totals)}
+            except Exception:
+                pass
+            self._check_limits(win, totals, day)
+
+        settings_page._run_bg(_work, _done)
+        return True
 
     def build(self, win) -> list:
         from gi.repository import Gtk
@@ -232,6 +283,7 @@ class ScreenTimeSection(settings_page._Section):
         apps = ui.group('App time and limits',
                         note='Tap an app for its daily limit or its week.')
         self._apps_box = apps[1]
+        self._start_limit_tick(win)
         return top + apps
 
     def refresh(self, win) -> None:

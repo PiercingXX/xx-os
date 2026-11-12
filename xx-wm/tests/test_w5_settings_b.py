@@ -801,6 +801,44 @@ class TestScreenTimeSection:
         section._render(win, ({'a.desktop': 3700}, [], 0, 0))
         assert seen == ['a.desktop']
 
+    def test_limits_checked_by_the_tick_without_the_page(
+            self, fake_gi, monkeypatch):
+        import settings_battery_use as battery_use
+        import settings_screentime as screen_time
+        seen = []
+        tracker = SimpleNamespace(
+            daily_totals=lambda day: {'a.desktop': 3600})
+        monkeypatch.setattr(battery_use, 'usage_tracker_for',
+                            lambda w: tracker)
+        config = SimpleNamespace(
+            app_time_limits={'a.desktop': 60}, app_limit_ignored={},
+            label_for=lambda a, n: n)
+        win = _bare_win(config=config)
+        win._screen_time_banner = lambda a, label, s, lim: seen.append(a)
+        section = screen_time.ScreenTimeSection()
+        assert section._on_limit_tick(win) is True
+        assert seen == ['a.desktop']
+        assert win._screen_time_cache['totals'] == {'a.desktop': 3600}
+        assert section._on_limit_tick(win) is True
+        assert seen == ['a.desktop']
+
+    def test_tick_starts_with_the_shell(self, fake_gi, monkeypatch):
+        import settings_screentime as screen_time
+        from gi.repository import GLib
+        timers = []
+        monkeypatch.setattr(
+            GLib, 'timeout_add_seconds',
+            lambda secs, cb, *args: timers.append((secs, cb, args)) or 9,
+            raising=False)
+        section = screen_time.ScreenTimeSection()
+        section.build(_bare_win())
+        assert timers == []
+        win = _bare_win(get_application=lambda: object())
+        section.build(win)
+        section.build(win)
+        assert [(secs, args) for secs, _cb, args in timers] == [
+            (screen_time.LIMIT_TICK_SECS, (win,))]
+
     def test_breakdown_view(self, fake_gi):
         import settings_screentime as screen_time
         win = _bare_win()
