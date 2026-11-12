@@ -74,7 +74,7 @@ migration steps are ever required.
 |---|---|---|---|
 | `search_auto_launch` | bool | `false` | Launch immediately when a search narrows to one result (never for `!` queries). A leading space suppresses it, as does a matching Launcher Settings row. |
 | `auto_show_keyboard` | bool | `false` | Android "Auto-show Keyboard": opening the drawer focuses search and raises the keyboard. |
-| `drawer_sort` | string | `"default"` | Android "Sort Mode": `"default"` (A–Z, pinned first in their manual order), `"alphabetical"` (A–Z, pinned first), `"alphabetical_no_priority"` (plain A–Z), `"install_date"` (newest first, pinned on top), `"apk_size"` (largest installed package/Flatpak first, pinned on top; sizes are looked up off the main loop). Legacy `"az"`/`"install"` load as `alphabetical_no_priority`/`install_date`. Cycled by the drawer toggle button. |
+| `drawer_sort` | string | `"default"` | Drawer sort: `"default"` (A–Z, pinned first in their manual order), `"alphabetical_no_priority"` (plain A–Z), `"install_date"` (newest first, pinned on top). The drawer toggle flips between A–Z and install date. Retired values load as: `"az"` → `alphabetical_no_priority`, `"install"` → `install_date`, `"alphabetical"` and `"apk_size"` → `default`. |
 | `preload_gesture_apps` | bool | `false` | Warm swipe-bound apps into RAM at session start so gestures open a resident process instead of cold-starting (the camera through the Android HAL can be slow). Opt-in — preloading is counter to the minimalism directive; only takes effect in a real session (`XX_WM_SESSION`). |
 
 ### Sounds & notifications

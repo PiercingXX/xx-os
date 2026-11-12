@@ -45,7 +45,6 @@ install_data(
     'src/app_item_actions.py',
     'src/app_names.py',
     'src/app_permissions.py',
-    'src/app_size.py',
     'src/app_standby.py',
     'src/app_switcher.py',
     'src/auto_suspend.py',

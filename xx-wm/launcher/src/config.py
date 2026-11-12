@@ -174,17 +174,17 @@ def same_app_id(first: object, second: object) -> bool:
 _STRING_KEYS = ('apn', 'apn_user', 'apn_pass', 'weather_location',
                 'keyboard_layout')
 
-# Drawer sort modes, the Android launcher's values (docs/config.md):
+# Drawer sort modes (design.md "App drawer"; docs/config.md):
 # 'default' = A–Z with pinned apps first in their manual order,
-# 'alphabetical' = A–Z with pinned apps first (A–Z among themselves),
-# 'alphabetical_no_priority' = plain A–Z, 'install_date' = newest first,
-# 'apk_size' = largest installed size first; pinned float on all but
-# alphabetical_no_priority.
-DRAWER_SORTS = ('default', 'alphabetical', 'alphabetical_no_priority',
-                'install_date', 'apk_size')
-# Values written before the Android set: read and migrated on load.
+# 'alphabetical_no_priority' = plain A–Z, 'install_date' = newest first
+# with pinned apps on top. No size or usage sorts.
+DRAWER_SORTS = ('default', 'alphabetical_no_priority', 'install_date')
+# Older values: read and migrated on load. 'alphabetical' (pins A–Z among
+# themselves) and 'apk_size' were Android modes the drawer no longer has.
 LEGACY_DRAWER_SORTS = {'az': 'alphabetical_no_priority',
-                       'install': 'install_date'}
+                       'install': 'install_date',
+                       'alphabetical': 'default',
+                       'apk_size': 'default'}
 
 # Android launcher list preferences (values as on Android).
 SLOT_COUNT_MAX = 8
@@ -367,8 +367,7 @@ class ShellConfig:
             data[key] = value
         legacy_sort = LEGACY_DRAWER_SORTS.get(data.get('drawer_sort'))
         if legacy_sort is not None:
-            # 'az'/'install' predate the Android sort names; the next
-            # save writes the new name.
+            # Retired sort names; the next save writes the current one.
             data['drawer_sort'] = legacy_sort
         return data
 

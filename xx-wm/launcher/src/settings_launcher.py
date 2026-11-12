@@ -32,11 +32,9 @@ _ALIGN_CHOICES = (('left', 'Left'), ('center', 'Center'), ('right', 'Right'))
 _DATE_TIME_CHOICES = (('off', 'Off'), ('date_only', 'Date only'),
                       ('date_time', 'Date and time'))
 _TEMP_CHOICES = (('fahrenheit', 'Fahrenheit'), ('celsius', 'Celsius'))
-_SORT_CHOICES = (('default', 'Default (pinned first)'),
-                 ('alphabetical', 'Alphabetical'),
-                 ('alphabetical_no_priority', 'Alphabetical (no priority)'),
-                 ('install_date', 'Install date'),
-                 ('apk_size', 'App size'))
+_SORT_CHOICES = (('default', 'Pinned first'),
+                 ('alphabetical_no_priority', 'A–Z'),
+                 ('install_date', 'Install date'))
 _SWIPE_DOWN_CHOICES = (('notifications', 'Expand notifications'),
                        ('web_search', 'Web search'),
                        ('disabled', 'Disabled'))

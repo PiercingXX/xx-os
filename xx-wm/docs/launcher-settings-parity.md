@@ -52,7 +52,7 @@ equivalent named in the notes.
 | Android (key · default) | Linux (key · default) | Status |
 |---|---|---|
 | Auto-show Keyboard (`auto_show_keyboard` · off) | Auto-show Keyboard (`auto_show_keyboard` · off) | same: opening the drawer focuses search and raises the keyboard |
-| Sort Mode (`sort_mode` · default) — Default (pinned first), Alphabetical, Alphabetical (no priority), Install date, APK size | Sort Mode (`drawer_sort` · default), same five | same, with Android's sort rules (`drawer_page.sort_browse_list`). APK size = installed size of the app's Flatpak or owning package (`app_size.py`, looked up off the main loop). Old `az`/`install` values migrate to `alphabetical_no_priority`/`install_date` |
+| Sort Mode (`sort_mode` · default) — Default (pinned first), Alphabetical, Alphabetical (no priority), Install date, APK size | Sort Mode (`drawer_sort` · default) — Pinned first, A–Z, Install date | design.md drops the size sort and the pinned-A–Z variant (`drawer_page.sort_browse_list`). Old `az`/`install` values migrate to `alphabetical_no_priority`/`install_date`; `alphabetical`/`apk_size` to `default` |
 | Hidden Apps — list; a tap shows the app ("Shown"); none → "No hidden apps" | Hidden Apps — same | same |
 | — | Search Auto-launch (`search_auto_launch` · off) | Linux only (opens a lone search match) |
 

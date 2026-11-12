@@ -188,12 +188,11 @@ try:
     check(not any('Calculator' in text for text in texts), 'bang hides apps')
 
     win._toggle_sort_mode(None)
-    check(win.config.drawer_sort == 'alphabetical', 'toggle 1 -> A-Z')
-    check(win._sort_btn.get_label() == 'A-Z', 'toggle 1 label')
-    for mode in ('alphabetical_no_priority', 'install_date', 'apk_size',
-                 'default'):
-        win._toggle_sort_mode(None)
-        check(win.config.drawer_sort == mode, 'toggle -> ' + mode)
+    check(win.config.drawer_sort == 'install_date', 'toggle 1 -> install')
+    check(win._sort_btn.get_label() == 'Install date', 'toggle 1 label')
+    win._toggle_sort_mode(None)
+    check(win.config.drawer_sort == 'default', 'toggle 2 -> A-Z')
+    check(win._sort_btn.get_label() == 'A-Z', 'toggle 2 label')
 
     helper = window_mod._drawer(win)
     win.stack.set_visible_child_name('apps')
@@ -383,11 +382,28 @@ class TestDrawerSortConfig:
         from config import ShellConfig
         monkeypatch.setenv('HOME', str(tmp_path / 'home'))
         cfg = ShellConfig()
-        for mode in ('default', 'alphabetical', 'alphabetical_no_priority',
-                     'install_date', 'apk_size'):
+        for mode in ('default', 'alphabetical_no_priority', 'install_date'):
             cfg.set_drawer_sort(mode)
             assert cfg.drawer_sort == mode
-        assert ShellConfig().drawer_sort == 'apk_size'
+        assert ShellConfig().drawer_sort == 'install_date'
+
+    def test_size_and_pinned_az_sorts_are_gone(self, tmp_path, monkeypatch):
+        # design.md: no size sort; the default setting is pinned-first,
+        # plain A–Z or install date. Retired values load as pinned-first.
+        import json
+        from config import DRAWER_SORTS, ShellConfig
+        assert DRAWER_SORTS == ('default', 'alphabetical_no_priority',
+                                'install_date')
+        monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+        cfg = ShellConfig()
+        cfg.set_drawer_sort('install_date')
+        path = tmp_path / 'home' / '.config' / 'xx-wm' / 'config.json'
+        for retired in ('apk_size', 'alphabetical'):
+            data = json.loads(path.read_text())
+            data['drawer_sort'] = retired
+            path.write_text(json.dumps(data))
+            assert ShellConfig().drawer_sort == 'default'
+        assert not (Path(drawer_page.__file__).parent / 'app_size.py').exists()
 
     def test_legacy_modes_migrate_to_android_names(self, tmp_path,
                                                    monkeypatch):
@@ -410,31 +426,34 @@ class TestDrawerSortConfig:
         cfg.set_drawer_sort('bogus')
         assert cfg.drawer_sort == 'default'
 
-    def test_next_cycles_the_android_modes(self):
-        order = ['default', 'alphabetical', 'alphabetical_no_priority',
-                 'install_date', 'apk_size']
-        for here, there in zip(order, order[1:] + order[:1]):
-            assert drawer_page.next_drawer_sort(here) == there
-        assert drawer_page.next_drawer_sort('az') == 'install_date'
+    def test_toggle_flips_az_and_install_date(self):
+        nxt = drawer_page.next_drawer_sort
+        assert nxt('default') == 'install_date'
+        assert nxt('alphabetical_no_priority') == 'install_date'
+        assert nxt('install_date') == 'default'
+        assert nxt('install_date', 'alphabetical_no_priority') == (
+            'alphabetical_no_priority')
+        assert nxt('az') == 'install_date'
+        assert nxt('apk_size') == 'install_date'
+        assert drawer_page.drawer_sort_label('default') == 'A-Z'
+        assert drawer_page.drawer_sort_label('install_date') == 'Install date'
 
     def test_sort_browse_list_matches_android(self):
         from types import SimpleNamespace as E
         apps = [E(app_id=a) for a in ('a', 'b', 'c', 'd')]
-        sizes = {'a': 1, 'b': 9, 'c': 5, 'd': 7}
         installed = {'a': 4, 'b': 1, 'c': 3, 'd': 2}
         pins = ['d', 'b']
         ids = lambda rows: [r.app_id for r in rows]  # noqa: E731
         sort = drawer_page.sort_browse_list
         assert ids(sort(apps, 'default', pins)) == ['d', 'b', 'a', 'c']
-        assert ids(sort(apps, 'alphabetical', pins)) == ['b', 'd', 'a', 'c']
         assert ids(sort(apps, 'alphabetical_no_priority', pins)) == [
             'a', 'b', 'c', 'd']
         assert ids(sort(apps, 'install_date', pins,
                         install_time=lambda e: installed[e.app_id])) == [
             'd', 'b', 'a', 'c']
-        assert ids(sort(apps, 'apk_size', [],
-                        size_of=lambda e: sizes[e.app_id])) == [
-            'b', 'd', 'c', 'a']
+        assert ids(sort(apps, 'install_date', [],
+                        install_time=lambda e: installed[e.app_id])) == [
+            'a', 'c', 'd', 'b']
 
     def test_backup_round_trip(self, tmp_path, monkeypatch):
         from config import ShellConfig

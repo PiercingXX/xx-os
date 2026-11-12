@@ -68,8 +68,7 @@ class TestParityContract:
         assert [label for _v, label in sl._TEMP_CHOICES] == [
             'Fahrenheit', 'Celsius']
         assert [label for _v, label in sl._SORT_CHOICES] == [
-            'Default (pinned first)', 'Alphabetical',
-            'Alphabetical (no priority)', 'Install date', 'App size']
+            'Pinned first', 'A–Z', 'Install date']
         assert [label for _v, label in sl._SWIPE_DOWN_CHOICES] == [
             'Expand notifications', 'Web search', 'Disabled']
         assert sl.WIDGETS_SUMMARY == 'Enable, reorder, and set tap actions'
@@ -354,39 +353,6 @@ class TestHomeSlotCount:
         assert rows[1].has_css_class('empty-slot')
         rows[2].emit('clicked')
         assert tapped == [1]
-
-
-class TestAppSize:
-    def test_parsers(self):
-        import app_size
-        assert app_size.parse_size('247.5 MB') == 247_500_000
-        assert app_size.parse_size('9.59 MiB') == int(9.59 * 1024 ** 2)
-        assert app_size.parse_size('nonsense') == 0
-        assert app_size.parse_flatpak_sizes(
-            'org.a.App\t2.4 MB\n') == {'org.a.App': 2_400_000}
-        assert app_size.parse_pacman_sizes(
-            'Name            : foo\nInstalled Size  : 1.00 KiB\n') == {
-            'foo': 1024}
-        assert app_size.parse_dpkg_sizes('foo\t10\n') == {'foo': 10240}
-
-    def test_compute_sizes_batches_per_backend(self):
-        import app_size
-        entries = [types.SimpleNamespace(app_id=a) for a in ('a', 'b', 'c')]
-        owners = {'a': {'flatpak': 'org.a'},
-                  'b': {'owner': 'pkg-b', 'backend': 'pacman'},
-                  'c': {'owner': None}}
-        calls = []
-
-        def run(cmd, timeout=15):
-            calls.append(cmd[:2])
-            out = ('org.a\t3 MB\n' if cmd[0] == 'flatpak' else
-                   'Name : pkg-b\nInstalled Size : 2 KiB\n')
-            return types.SimpleNamespace(stdout=out, returncode=0)
-
-        sizes = app_size.compute_sizes(
-            entries, run=run, resolve=lambda e: owners[e.app_id])
-        assert sizes == {'a': 3_000_000, 'b': 2048}
-        assert calls == [['flatpak', 'list'], ['pacman', '-Qi']]
 
 
 # ---------------------------------------------------------------------------
