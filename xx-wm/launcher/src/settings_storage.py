@@ -565,11 +565,17 @@ class StorageSection(settings_page._Section):
         self._report_text = '\n'.join(lines)
         ui.set_subtitle(self._reports,
                         ' · '.join(counts) if counts else 'None')
+        # Nothing to report: no row (a "None" that opens an empty sheet
+        # carries nothing).
+        try:
+            self._reports.set_visible(bool(counts))
+        except Exception:
+            pass
 
     def _show_reports(self, win, anchor) -> None:
         win.item_actions._show_action_menu(
             anchor, 'Warnings', [('Close', lambda: None)],
-            subtitle=self._report_text or 'No warnings.')
+            subtitle=self._report_text or None)
 
     def _on_clean_pressed(self, win) -> None:
         selected = self._selected()

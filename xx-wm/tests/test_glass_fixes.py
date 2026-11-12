@@ -185,7 +185,7 @@ def test_leave_settings_drops_layer():
     # the category menu, the menu leaves settings and drops the layer.
     page_src = (ROOT / 'launcher' / 'src' / 'settings_page.py').read_text(
         encoding='utf-8')
-    assert "icon_button('go-previous-symbolic', self.back)" in page_src
+    assert 'icon_button(ui.BACK, self.back)' in page_src
     back = page_src.split('    def back(self)')[1].split('    def ')[0]
     assert 'win._leave_settings()' in back
 

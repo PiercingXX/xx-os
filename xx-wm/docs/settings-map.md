@@ -12,8 +12,10 @@ The rules (owner, "minimal"):
 - One entry point per feature. A row is never a second copy of controls
   that live elsewhere. Where a pointer would really help, it is a single
   link row, but the default is to have no second row at all.
-- No empty-state lines: an empty list hides its card. A radio that is
+- No empty-state lines: an empty list hides its group. A radio that is
   unavailable says so in its own row's subtitle.
+- A feature that is not on the phone has no row (and an empty section
+  no caption): no "Not installed", "Not supported" or "Unknown" rows.
 - No confirmation popup for a direct action that was already picked from
   a menu. Destructive bulk actions (mirror backup, restore over the
   current layout, reset home) keep theirs.
@@ -30,7 +32,7 @@ The rules (owner, "minimal"):
 - **Connected devices**
   - `bluetooth`: Bluetooth switch (Unblock and Start service while
     blocked or down), Devices (known and found, Scan)
-  - `nearby`: Nearby share (opens LocalSend)
+  - `nearby`: Nearby share (opens LocalSend; no row unless installed)
 - **Display & appearance**
   - `appearance`: Theme swatches; Look (Mode, Font, Import font, Text
     size)
@@ -41,14 +43,17 @@ The rules (owner, "minimal"):
   - `launcher`: Home screen, Widgets, App drawer, Gestures (home swipes)
 - **Sound**
   - `sound`: Output, Microphone (each hides when there are no devices)
-  - `captions`: Live captions (status; the Captions tile switches it)
+  - `captions`: Live captions (status; the Captions tile switches it; no
+    row unless installed)
   - `recording`: Screen recording (status; the Record tile runs it)
 - **Battery**
-  - `battery`: level, health, cycles, temperature, voltage
+  - `battery`: level, health, cycles, temperature, voltage (each
+    reading only when the battery reports it)
   - `standby`: Battery saver, App standby, Automatic suspend (Suspend
     when screen is off: Off / 1 / 5 / 15 min; Caffeine turns off: after
     30 min / 1 hour / 2 hours / when turned off)
-  - `charging`: Charge limit
+  - `charging`: Charge limit (only where the battery driver has the
+    knob)
   - `batteryuse`: Battery use since full charge
 - **Apps**
   - `screentime`: Screen time today, App time and limits
@@ -72,7 +77,8 @@ The rules (owner, "minimal"):
   - `gestures`: Navigation gestures (long-press home, the system swipes)
   - `developer`: Wireless debugging, Pair with code
   - `services`: ModemManager, EG25 modem helper, NetworkManager, BlueZ,
-    SSH server, Tailscale, Waydroid container; Failed units
+    SSH server, Tailscale, Waydroid container, KDE Connect and Syncthing
+    (when installed); Failed units
   - `firewall`: Firewall (one on/off row; the subtitle names what is
     currently allowed in — the ports follow their features)
   - `about`: About phone (version, device, OS, kernel, uptime, CPU,
@@ -98,14 +104,23 @@ Quick-tile long-press targets: Wi-Fi → `wifi`, Bluetooth →
 | "No devices yet. Scan to find some.", "Bluetooth is unavailable on this device." | Just the Scan row | The Bluetooth row's subtitle already gives the state. |
 | Sound "No output devices." / "Audio system unavailable." | The card hides | Empty-state line. |
 | Apps "No apps indexed yet.", Screen time "No screen time yet today.", Permissions "No use in the last 24 h." | The card (and its caption and footnote) hides | Empty-state lines. |
+| Home & launcher › Default Launcher ("XX-WM is always the home screen") | Removed | A row with no control and nothing to report: the shell is always home. |
+| Nearby share / Live captions "Not installed on this device" | No row (and no caption) unless installed | A feature the phone lacks has nothing to show. |
+| Charge limit "Not supported on this phone" | The Charging group hides | Same rule: no knob, no row. |
+| Battery Health, Charge cycles, Temperature, Voltage "Unknown" | Each row only when the reading exists | An unknown reading says nothing. |
+| Services KDE Connect / Syncthing "Not installed" | No row unless installed | Nothing to start or stop. |
+| Storage › Warnings "None" (opening "No warnings.") | The row shows only when there is something to report | Empty-state line. |
+| Screen recording footnote "Record tile · ~/Videos/Screenrecordings" | Removed | It restated the tile and a fixed path. |
+| Last update log "Empty.", Permissions "Permission store unavailable." | Removed | Empty-state lines. |
+| Row titles in Title Case on Home & launcher ("Home Slot Count", "Swipe Left App") | Sentence case like every other page ("Home slot count", "Swipe left app") | One casing for every row title. |
 
 ## Still overlapping
 
 This overlap remains on purpose: it is a different setting, not a
 second copy of another row.
 
-- **Home & launcher › Show Status Bar and Display › Status bar height.**
+- **Home & launcher › Show status bar and Display › Status bar height.**
   These are different settings: one controls the clock and glyphs, the
-  other the strip's height. Show Status Bar is pinned to the launcher's
+  other the strip's height. Show status bar is pinned to the launcher's
   parity screen. First boot also sets the height (the Status bar step),
   and that is a setup step, not a second Settings entry.

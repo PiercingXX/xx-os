@@ -45,7 +45,7 @@ def sheet_css(tokens: dict) -> str:
     color: {foreground};
     border: 1px solid {border};
     border-bottom: none;
-    border-radius: 28px 28px 0 0;
+    border-radius: 16px 16px 0 0;
     padding: 0 20px 24px 20px;
 }}
 .xx-sheet-handle {{
@@ -64,6 +64,7 @@ def sheet_css(tokens: dict) -> str:
 .xx-sheet .xx-menu-row {{
     min-height: 52px;
 }}
+.xx-sheet .xx-dialog-title {{ margin-bottom: 6px; }}
 /* An entry on the surface-colored sheet sinks to the page color with a
    hairline (the Settings sheets' field look); surface on surface drew
    the Rename field as bare text. */

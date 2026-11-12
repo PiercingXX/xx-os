@@ -1,11 +1,12 @@
 """Settings row grammar: the one way every settings section draws.
 
-A settings subpage is a column of groups: a caps caption, a rounded
-``surface`` card of rows split by hairlines, and at most one muted
-footnote under the card. A row is a title, an optional muted subtitle
-and one trailing control (a switch, a value + chevron, or a small
-inline action). Live status goes in a row's subtitle; values that need
-typing open a sheet (``form_sheet``) instead of sitting inline.
+A settings subpage is a column of groups, flat on the page like the
+Android xx-* apps' settings: a caps caption, its rows split by 1 px
+hairlines (none after the last), and at most one muted footnote. A row
+is a title, an optional muted subtitle and one trailing control (a
+switch, a thin chevron, or a small caps action). Live status goes in a
+row's subtitle; values that need typing open a sheet (``form_sheet``)
+instead of sitting inline; a continuous value is a ``slider_row``.
 
 Sizes are settings-scoped (``css``): row titles 18 px, subtitles 14 px,
 captions 12 px at 360 px wide (the Android xx-launcher settings sizes),
@@ -14,7 +15,9 @@ every other surface uses stay untouched.
 """
 from __future__ import annotations
 
-# Settings-only type sizes (px at scale 1.0) and card geometry.
+from pathlib import Path
+
+# Settings-only type sizes (px at scale 1.0) and row geometry.
 TITLE_PX = 18
 SUBTITLE_PX = 14
 CAPTION_PX = 12
@@ -23,9 +26,15 @@ BODY_PX = 17
 DIALOG_PX = 21
 BAR_TITLE_PX = 18
 INFO_PX = 14
+VALUE_PX = 15
+# The thin chevron: drawn with the 1.6 px stroke of the type, muted.
+CHEVRON = 'xx-shade-forward-symbolic'
+BACK = 'xx-shade-back-symbolic'
+CHEVRON_PX = 18
 _WRAP_CHARS = 18
 _SHEET_FIELDS_UNSCROLLED = 3
 _SHEET_MAX_HEIGHT = 340
+_ICON_DIR = Path(__file__).with_name('icons')
 
 
 def css(theme, scale: float) -> str:
@@ -39,19 +48,19 @@ def css(theme, scale: float) -> str:
 .xx-settings .xx-caption {{ font-size: {cap}; letter-spacing: 0.14em; }}
 .xx-settings .xx-set-header {{ font-size: {header}; color: {fg}; }}
 .xx-settings .xx-set-bar-title {{ font-size: {bar}; color: {fg}; }}
-.xx-set-bar {{ min-height: 56px; padding: 4px 8px 0 4px; }}
-.xx-set-body {{ padding: 4px 20px 32px 20px; }}
-.xx-set-header {{ margin: 8px 0 8px 0; }}
-.xx-set-caption {{ margin: 24px 16px 8px 16px; }}
-.xx-set-card {{
-    background-color: {surface};
-    border-radius: 16px;
-}}
+.xx-set-bar {{ min-height: 48px; padding: 4px 8px 0 8px; }}
+.xx-set-bar button {{ color: {fg}; }}
+.xx-set-body {{ padding: 0 20px 40px 20px; }}
+.xx-set-header {{ margin: 6px 0 4px 0; }}
+.xx-set-caption {{ margin: 28px 0 2px 0; }}
+.xx-set-card {{ background: none; }}
+.xx-set-card.xx-set-menu {{ margin-top: 16px; }}
 .xx-set-card > .xx-set-row {{
     min-height: 40px;
-    padding: 14px 16px;
+    padding: 12px 0;
     border-bottom: 1px solid {border};
     border-radius: 0;
+    background: none;
 }}
 .xx-set-card > .xx-set-row:last-child {{ border-bottom: none; }}
 .xx-set-card > button.xx-set-row:active,
@@ -59,9 +68,37 @@ def css(theme, scale: float) -> str:
 .xx-set-card .xx-set-press {{ padding: 0; border-radius: 0; }}
 .xx-set-card switch {{ background-color: {border}; }}
 .xx-set-card switch:checked {{ background-color: {fg}; }}
-.xx-set-card .xx-set-note {{ padding: 20px 16px; }}
-.xx-set-card .xx-set-wide {{ padding: 16px; }}
-.xx-set-footnote {{ margin: 10px 16px 0 16px; }}
+.xx-set-card .xx-set-note {{ padding: 14px 0; }}
+.xx-set-card .xx-set-wide {{ padding: 14px 0; }}
+.xx-set-chevron {{ color: {muted}; }}
+.xx-set-value {{
+    font-size: {value};
+    font-feature-settings: "tnum";
+    color: {muted};
+}}
+scale.xx-set-slider {{ padding: 0; margin: 2px 0 0 0; min-height: 36px; }}
+scale.xx-set-slider trough {{
+    background-color: {border};
+    min-height: 2px;
+    border-radius: 1px;
+    margin: 0 2px;
+}}
+scale.xx-set-slider highlight {{
+    background-color: {fg};
+    min-height: 2px;
+    border-radius: 1px;
+}}
+scale.xx-set-slider slider {{
+    background-color: {fg};
+    border: none;
+    box-shadow: none;
+    outline: none;
+    border-radius: 2px;
+    min-width: 4px;
+    min-height: 22px;
+    margin: -10px -2px;
+}}
+.xx-set-footnote {{ margin: 8px 0 0 0; }}
 .xx-set-primary {{ margin-top: 24px; }}
 .xx-set-sheet {{ min-width: 280px; }}
 .xx-set-sheet .xx-caption {{ margin-top: 8px; }}
@@ -71,13 +108,23 @@ def css(theme, scale: float) -> str:
     font-size: {body};
     font-weight: 400;
     min-height: 52px;
-    padding: 0 8px;
+    padding: 0;
 }}
 .xx-settings .xx-set-big {{ font-size: {header}; color: {fg}; }}
 .xx-settings .xx-set-info {{ font-size: {info}; line-height: 1.25; }}
 .xx-settings .xx-menu-check {{ font-size: {body}; color: {fg}; }}
-.xx-settings .xx-widget-line {{ min-height: 88px; }}
-.xx-settings .xx-widget-move {{ min-height: 44px; min-width: 48px; padding: 0 8px; }}
+.xx-settings .xx-widget-line {{
+    min-height: 88px;
+    border-bottom: 1px solid {border};
+}}
+.xx-settings .xx-widget-line:last-child {{ border-bottom: none; }}
+.xx-settings .xx-widget-line .xx-set-press {{ padding: 0; background: none; }}
+.xx-settings .xx-widget-move {{
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0;
+    color: {muted};
+}}
 .xx-settings list.reorder-list {{ background-color: transparent; }}
 .xx-settings list.reorder-list > row {{
     background-color: transparent;
@@ -86,13 +133,40 @@ def css(theme, scale: float) -> str:
 }}
 .xx-settings list.reorder-list > row:last-child {{ border-bottom: none; }}
 .xx-settings list.reorder-list .app-name {{ font-size: {body}; }}
-.xx-set-chart-bar {{ background-color: {border}; border-radius: 4px; }}
+.xx-set-chart-bar {{ background-color: {border}; border-radius: 2px; }}
 .xx-set-chart-bar.today {{ background-color: {fg}; }}
 """.format(title=px(TITLE_PX), sub=px(SUBTITLE_PX), cap=px(CAPTION_PX),
-           header=px(HEADER_PX), bar=px(BAR_TITLE_PX),
+           header=px(HEADER_PX), bar=px(BAR_TITLE_PX), value=px(VALUE_PX),
            body=px(BODY_PX), dialog=px(DIALOG_PX), info=px(INFO_PX),
-           fg=theme.foreground, bg=theme.background, surface=theme.surface,
+           fg=theme.foreground, bg=theme.background, muted=theme.muted,
            surface_alt=theme.surface_alt, border=theme.border)
+
+
+def ensure_icons() -> None:
+    """Put the shell's glyph directory on the display's icon search path
+    (once): the thin chevrons live there with the shade glyphs."""
+    try:
+        from gi.repository import Gdk, Gtk
+
+        display = Gdk.Display.get_default()
+        if display is None:
+            return
+        icon_theme = Gtk.IconTheme.get_for_display(display)
+        path = str(_ICON_DIR)
+        if path not in list(icon_theme.get_search_path() or []):
+            icon_theme.add_search_path(path)
+    except Exception:
+        pass
+
+
+def chevron():
+    """Thin muted trailing chevron (the 1.6 px stroke of the type)."""
+    from xx_ui import widgets
+
+    ensure_icons()
+    image = widgets.icon_image(CHEVRON, CHEVRON_PX)
+    image.add_css_class('xx-set-chevron')
+    return image
 
 
 def _wrap(label) -> None:
@@ -159,9 +233,7 @@ def row(title: str, subtitle: str = '', trailing=None, on_activate=None):
 
 def nav_row(title: str, subtitle: str = '', on_activate=None):
     """Value or secondary-action row: subtitle + trailing chevron."""
-    from xx_ui import widgets
-
-    return row(title, subtitle, widgets.chevron(), on_activate)
+    return row(title, subtitle, chevron(), on_activate)
 
 
 def switch_row(title: str, subtitle: str = '', active: bool = False,
@@ -207,6 +279,43 @@ def wide_row(child):
     box.add_css_class('xx-set-wide')
     box.append(child)
     return box
+
+
+def slider_row(title: str, value_text: str, scale):
+    """A continuous value: the title with its live value on the same
+    line (tabular, muted), the slider full width under them, its thumb
+    kept inside the row's text edges. ``row.value_label`` is the value."""
+    from gi.repository import Gtk, Pango
+    from xx_ui import widgets
+
+    head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+    name = widgets.label(title, 'xx-title')
+    name.set_hexpand(True)
+    # At large text the title wraps beside its value instead of being
+    # cut to "Color tempe…".
+    name.set_ellipsize(Pango.EllipsizeMode.NONE)
+    name.set_wrap(True)
+    name.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    value = Gtk.Label(label=value_text, xalign=1.0)
+    value.add_css_class('xx-set-value')
+    baseline = Gtk.Align.CENTER
+    for align in ('BASELINE_CENTER', 'BASELINE'):
+        if hasattr(Gtk.Align, align):
+            baseline = getattr(Gtk.Align, align)
+            break
+    name.set_valign(baseline)
+    value.set_valign(baseline)
+    head.append(name)
+    head.append(value)
+    scale.add_css_class('xx-set-slider')
+    scale.set_hexpand(True)
+    column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    column.append(head)
+    column.append(scale)
+    built = wide_row(column)
+    built.value_label = value
+    built.title_label = name
+    return built
 
 
 def set_subtitle(target, text: str) -> None:

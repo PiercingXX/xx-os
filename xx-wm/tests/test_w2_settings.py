@@ -559,7 +559,12 @@ class TestSettingsMenu:
             assert w.stack.visible == 'settings', key
             assert w._settings_stack.get_visible_child_name() == (
                 'cat-' + category), key
-            title = w._settings_section_titles[key]
+            title = w._settings_section_titles.get(key)
+            if title is None:
+                # A feature missing from the phone builds no rows: its
+                # deep link lands on its category, at the top.
+                assert key in ('captions', 'nearby'), key
+                continue
             assert title in list(_walk(pages['cat-' + category])), key
             assert w._settings_scroll is helper._scrolls[category], key
 

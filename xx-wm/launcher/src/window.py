@@ -2252,7 +2252,7 @@ class ShellWindow(Adw.ApplicationWindow):
             inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             inner.set_halign(Gtk.Align.CENTER)
             swatch = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            swatch.set_size_request(40, 40)
+            swatch.set_size_request(48, 48)
             swatch.set_halign(Gtk.Align.CENTER)
             swatch.add_css_class('swatch')
             swatch.add_css_class(f'swatch-{key}')
@@ -2263,18 +2263,18 @@ class ShellWindow(Adw.ApplicationWindow):
             glyph.set_vexpand(True)
             swatch.append(glyph)
             name = 'Custom' if key == 'custom' else THEME_PRESETS[key].name
-            caption = Gtk.Label(label=name)
-            caption.add_css_class('dim-label')
+            caption = Gtk.Label(label=name.upper())
+            caption.add_css_class('xx-caption')
             caption.add_css_class('swatch-cap')
-            caption.set_max_width_chars(10)
-            # Preset names are short: unconditional ellipsize misfires on
-            # fractional rounding and shows "Graphit…" for fitting text.
-            if len(name) > 10:
-                caption.set_ellipsize(Pango.EllipsizeMode.END)
-            else:
-                caption.set_ellipsize(Pango.EllipsizeMode.NONE)
             inner.append(swatch)
-            inner.append(caption)
+            # Caps names read whole: at large text a name wider than its
+            # third of the row scales down instead of widening the page.
+            try:
+                from xx_ui import widgets as xx_widgets
+                holder = xx_widgets.shrink_to_fit(caption, 0.6, 0.5)
+            except Exception:  # headless stand-ins without the toolkit
+                holder = caption
+            inner.append(holder)
             btn.set_child(inner)
             if key == 'custom':
                 self._custom_swatch_btn = btn
@@ -2291,9 +2291,15 @@ class ShellWindow(Adw.ApplicationWindow):
         custom_bg = getattr(self.config, 'custom_background', None)
         rules = [
             '.theme-swatch { background: transparent; border: none; '
-            'box-shadow: none; padding: 4px; }',
-            '.swatch { border-radius: 12px; }',
-            '.swatch-cap { font-size: 11px; }',
+            'box-shadow: none; padding: 6px 0 4px 0; }',
+            # A hairline keeps a swatch the page's own color (AMOLED on
+            # AMOLED) visible; the selected one carries a ring with a gap
+            # and a foreground name, the rest stay muted.
+            f'.swatch {{ border-radius: 8px; '
+            f'border: 1px solid {resolved.border}; '
+            f'font-size: 15px; }}',
+            '.swatch-cap { margin-top: 6px; }',
+            f'.theme-swatch.sel .swatch-cap {{ color: {resolved.foreground}; }}',
         ]
         for key, preset in THEME_PRESETS.items():
             rules.append(
@@ -2304,7 +2310,7 @@ class ShellWindow(Adw.ApplicationWindow):
             f"color: {resolved.foreground}; }}")
         rules.append(
             '.theme-swatch.sel .swatch { box-shadow: 0 0 0 2px '
-            f'{resolved.foreground}; }}')
+            f'{resolved.background}, 0 0 0 4px {resolved.foreground}; }}')
         provider = getattr(self, '_swatch_provider', None)
         if provider is not None:
             provider.load_from_data('\n'.join(rules).encode('utf-8'))

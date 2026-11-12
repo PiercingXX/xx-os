@@ -42,7 +42,8 @@ SETTINGS_CATEGORIES: tuple = (
                           'services', 'firewall', 'about', 'shell')),
 )
 
-# Menu cards: categories that belong together share one rounded card.
+# Menu order, in groups of categories that belong together (one flat
+# list on the page: the order carries the grouping).
 _MENU_GROUPS = (('network', 'devices'), ('display', 'home', 'sound'),
                 ('battery', 'apps', 'storage'), ('privacy', 'system'))
 
@@ -158,8 +159,8 @@ def slow_summaries() -> dict:
 
 # Home side swipes (Home & launcher › Gestures; drawer pick status text)
 _GESTURE_TITLES = {
-    'swipe_left_home': 'Swipe Left App',
-    'swipe_right_home': 'Swipe Right App',
+    'swipe_left_home': 'Swipe left app',
+    'swipe_right_home': 'Swipe right app',
 }
 
 # System-level lisgd slots (design.md "Gestures"): they fire over any
@@ -295,7 +296,7 @@ class SystemSection(_Section):
     def _show_log(self, win, anchor) -> None:
         win.item_actions._show_action_menu(
             anchor, 'Last update log', [('Close', lambda: None)],
-            subtitle=self._log_text or 'Empty.')
+            subtitle=self._log_text or None)
 
 
 class WifiSection(_Section):
@@ -419,7 +420,10 @@ class BatterySection(_Section):
         for title, key in (('Health', 'health'), ('Charge cycles', 'cycles'),
                            ('Temperature', 'temperature'),
                            ('Voltage', 'voltage')):
-            rows.append(ui.row(title, str(health.get(key, 'Unknown'))))
+            value = str(health.get(key, 'Unknown'))
+            # An unknown reading says nothing: no row.
+            if value and value != 'Unknown':
+                rows.append(ui.row(title, value))
         ui.fill(self._health_box, rows)
 
     @staticmethod
@@ -875,8 +879,7 @@ class RecordingSection(_Section):
 
     def build(self, win) -> list:
         self._row = ui.row(self.title, 'Not recording')
-        return ui.group(self.title, [self._row],
-                        note='Record tile · ~/Videos/Screenrecordings')
+        return ui.group(self.title, [self._row])
 
     def refresh(self, win) -> None:
         def _state():
@@ -907,11 +910,12 @@ class CaptionsSection(_Section):
             installed = captions.captions_installed()
         except Exception:
             installed = False
-        if installed:
-            text = 'Available · switch on from the Captions tile'
-        else:
-            text = 'Not installed on this device'
-        return ui.group(self.title, [ui.row(self.title, text)])
+        # Not installed: no row at all (a feature that is not on the
+        # phone has nothing to show).
+        if not installed:
+            return []
+        return ui.group(self.title, [ui.row(
+            self.title, 'Available · switch on from the Captions tile')])
 
 
 SHARE_APP_ID = 'io.piercingxx.XXShare.desktop'
@@ -928,8 +932,7 @@ class NearbySection(_Section):
         except Exception:
             installed = False
         if not installed:
-            return ui.group(self.title, [ui.row(
-                self.title, 'Not installed on this device')])
+            return []
         return ui.group(self.title, [ui.nav_row(
             self.title, 'Send files to nearby phones and computers '
             '(LocalSend)', lambda _r: win._launch_app_id(SHARE_APP_ID))])
@@ -1123,7 +1126,8 @@ class SettingsPage:
 
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         bar.add_css_class('xx-set-bar')
-        back = widgets.icon_button('go-previous-symbolic', self.back)
+        ui.ensure_icons()
+        back = widgets.icon_button(ui.BACK, self.back)
         back.set_tooltip_text('Back')
         bar.append(back)
         small = widgets.label(title, 'xx-set-bar-title')
@@ -1158,18 +1162,16 @@ class SettingsPage:
     def _build_menu(self) -> list:
         titles = {key: title for key, title, _s in SETTINGS_CATEGORIES}
         self._menu_rows: dict = {}
-        cards = []
+        rows = []
         for group in _MENU_GROUPS:
-            rows = []
             for key in group:
                 row = ui.nav_row(titles[key], '',
                                  lambda _r, k=key: self.show_category(k))
                 self._menu_rows[key] = row
                 rows.append(row)
-            card = ui.card(rows)
-            card.add_css_class('xx-set-menu-card')
-            cards.append(card)
-        return cards
+        menu = ui.card(rows)
+        menu.add_css_class('xx-set-menu')
+        return [menu]
 
     def show_category(self, key: str | None,
                       scroll_top: bool = True) -> None:

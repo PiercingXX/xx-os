@@ -77,8 +77,8 @@ GESTURES_HELP = (
     'folders, uninstall\n'
     'In search, start with ! for a web search')
 
-_SWIPE_APP_TITLES = {'swipe_left_home': 'Swipe Left App',
-                     'swipe_right_home': 'Swipe Right App'}
+_SWIPE_APP_TITLES = {'swipe_left_home': 'Swipe left app',
+                     'swipe_right_home': 'Swipe right app'}
 
 
 def _config_get(win, key: str, default):
@@ -364,31 +364,9 @@ def _choice_label(choices, value, fallback: str) -> str:
 
 
 def _scale_row(title: str, value_text: str, slider):
-    """Card row: title and live value over a full-width slider."""
-    from gi.repository import Gtk
-    from xx_ui import widgets
-
-    head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-    from gi.repository import Pango
-
-    name = widgets.label(title, 'xx-title')
-    name.set_hexpand(True)
-    # At large text the title wraps beside its value instead of being
-    # cut to "Color tempe…".
-    name.set_ellipsize(Pango.EllipsizeMode.NONE)
-    name.set_wrap(True)
-    name.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-    value = Gtk.Label(label=value_text, xalign=1.0)
-    value.add_css_class('xx-secondary')
-    value.set_valign(Gtk.Align.START)
-    head.append(name)
-    head.append(value)
-    column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-    column.append(head)
-    column.append(slider)
-    row = ui.wide_row(column)
-    row.value_label = value
-    return row
+    """Title and live value over a full-width slider (the shared
+    ``settings_ui.slider_row``)."""
+    return ui.slider_row(title, value_text, slider)
 
 
 def _attr(win, name: str, default):
@@ -513,61 +491,60 @@ class LauncherSection(settings_page._Section):
 
         config = win.config
         home = ui.group('Home Screen', [
-            # Android asks for the HOME role here; XX-WM is the shell,
-            # so it is always the home screen.
-            ui.row('Default Launcher', 'XX-WM is always the home screen'),
-            nav('slot_count', 'Home Slot Count', '',
-                lambda r: self._pick(win, r, 'Home Slot Count',
+            # Android's Default Launcher row (the HOME role) has no
+            # Linux counterpart: XX-WM is the shell, always home.
+            nav('slot_count', 'Home slot count', '',
+                lambda r: self._pick(win, r, 'Home slot count',
                                      _SLOT_COUNT_CHOICES,
                                      self._slot_count_value(win),
                                      lambda v: self._set_slot_count(win, v))),
-            nav('alignment', 'Text Alignment', '',
-                lambda r: self._pick(win, r, 'Text Alignment',
+            nav('alignment', 'Text alignment', '',
+                lambda r: self._pick(win, r, 'Text alignment',
                                      _ALIGN_CHOICES,
                                      _attr(win, 'home_alignment', 'center'),
                                      lambda v: self._set_alignment(win, v))),
-            nav('date_time', 'Date/Time Mode', '',
-                lambda r: self._pick(win, r, 'Date/Time Mode',
+            nav('date_time', 'Date/time mode', '',
+                lambda r: self._pick(win, r, 'Date/time mode',
                                      _DATE_TIME_CHOICES,
                                      _attr(win, 'date_time_mode',
                                            'date_time'),
                                      lambda v: self._set_date_time(win, v))),
             # The top status bar's clock and glyphs (status_bar.py); the
             # strip keeps the camera area clear either way.
-            switch('status_bar', 'Show Status Bar', '',
+            switch('status_bar', 'Show status bar', '',
                    _attr(win, 'status_bar_visible', False),
                    self._on_status_bar),
-            nav('clock', 'Clock Format', '',
-                lambda r: self._pick(win, r, 'Clock Format', _CLOCK_CHOICES,
+            nav('clock', 'Clock format', '',
+                lambda r: self._pick(win, r, 'Clock format', _CLOCK_CHOICES,
                                      _config_get(win, 'clock_24h', None),
                                      lambda v: self._set_clock(win, v))),
         ])
         widgets = ui.group('Widgets', [
             nav('widgets', 'Widgets', WIDGETS_SUMMARY,
                 lambda r: self._open_widgets(win, r)),
-            nav('temp_unit', 'Temperature Unit', '',
-                lambda r: self._pick(win, r, 'Temperature Unit',
+            nav('temp_unit', 'Temperature unit', '',
+                lambda r: self._pick(win, r, 'Temperature unit',
                                      _TEMP_CHOICES,
                                      _config_get(win, 'weather_temp_unit',
                                                  'fahrenheit'),
                                      lambda v: self._set_temp_unit(win, v))),
-            switch('auto_location', 'Auto Location', 'For the forecast',
+            switch('auto_location', 'Auto location', 'For the forecast',
                    _config_get(win, 'weather_auto_location', True),
                    self._on_auto_loc),
-            nav('location', 'Manual Location', '',
+            nav('location', 'Manual location', '',
                 lambda r: self._open_location(win, r)),
         ])
         drawer = ui.group('App Drawer', [
-            switch('auto_keyboard', 'Auto-show Keyboard', '',
+            switch('auto_keyboard', 'Auto-show keyboard', '',
                    _attr(win, 'auto_show_keyboard', False),
                    self._on_auto_keyboard),
-            nav('sort', 'Sort Mode', '',
-                lambda r: self._pick(win, r, 'Sort Mode', _SORT_CHOICES,
+            nav('sort', 'Sort mode', '',
+                lambda r: self._pick(win, r, 'Sort mode', _SORT_CHOICES,
                                      _attr(win, 'drawer_sort', 'default'),
                                      lambda v: self._set_sort(win, v))),
-            nav('hidden', 'Hidden Apps', '',
+            nav('hidden', 'Hidden apps', '',
                 lambda r: self._open_hidden_apps(win, r)),
-            switch('auto_launch', 'Search Auto-launch',
+            switch('auto_launch', 'Search auto-launch',
                    'Opens a lone match; a leading space stops it',
                    _attr(win, 'search_auto_launch', False),
                    self._on_auto_launch),
@@ -575,27 +552,27 @@ class LauncherSection(settings_page._Section):
         gestures = ui.group('Gestures', [
             nav('help', 'Gestures', GESTURES_SUMMARY,
                 lambda r: self._open_help(win, r)),
-            switch('swipe_left_on', 'Enable Swipe Left', '',
+            switch('swipe_left_on', 'Enable swipe left', '',
                    _attr(win, 'swipe_left_enabled', True),
                    lambda w, on: self._set_bool(
                        w, 'set_swipe_left_enabled', on)),
-            nav('swipe_left_home', 'Swipe Left App', '',
+            nav('swipe_left_home', 'Swipe left app', '',
                 lambda r: self._pick_swipe_app(win, r, 'swipe_left_home')),
-            switch('swipe_right_on', 'Enable Swipe Right', '',
+            switch('swipe_right_on', 'Enable swipe right', '',
                    _attr(win, 'swipe_right_enabled', True),
                    lambda w, on: self._set_bool(
                        w, 'set_swipe_right_enabled', on)),
-            nav('swipe_right_home', 'Swipe Right App', '',
+            nav('swipe_right_home', 'Swipe right app', '',
                 lambda r: self._pick_swipe_app(win, r, 'swipe_right_home')),
-            nav('swipe_down', 'Swipe Down Action', '',
-                lambda r: self._pick(win, r, 'Swipe Down Action',
+            nav('swipe_down', 'Swipe down action', '',
+                lambda r: self._pick(win, r, 'Swipe down action',
                                      _SWIPE_DOWN_CHOICES,
                                      _attr(win, 'swipe_down_action',
                                            'notifications'),
                                      lambda v: self._set_swipe_down(win, v))),
-            switch('double_tap', 'Double Tap to Lock', '',
+            switch('double_tap', 'Double tap to lock', '',
                    self._double_tap_on(win), self._on_double_tap),
-            switch('recents', 'Home Button Opens Recents', '',
+            switch('recents', 'Home button opens recents', '',
                    _config_get(win, 'home_to_recents', False),
                    self._on_recents),
         ])
@@ -798,12 +775,13 @@ class LauncherSection(settings_page._Section):
                 'enabled', True))
         except Exception:
             enabled = True
-        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        # The row grammar: name and tap action, the ↑ ↓ pair, then the
+        # switch as the one trailing control.
+        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         line.add_css_class('xx-widget-line')
         switch = widgets.make_switch(enabled)
         switch.connect('notify::active', lambda sw, _p: self._flip_widget(
             win, key, sw.get_active(), rebuild))
-        line.append(switch)
         text = Gtk.Button()
         text.add_css_class('xx-set-press')
         column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -828,6 +806,7 @@ class LauncherSection(settings_page._Section):
                 win, key, d, rebuild))
             arrows.append(move)
         line.append(arrows)
+        line.append(switch)
         return line
 
     def _flip_widget(self, win, key: str, on: bool, rebuild) -> None:
@@ -911,7 +890,7 @@ class LauncherSection(settings_page._Section):
         except Exception:
             lat, lon = None, None
         return ui.form_sheet(
-            win, anchor, 'Manual Location',
+            win, anchor, 'Manual location',
             [('lat', 'Latitude', '' if lat is None else lat, 'number'),
              ('lon', 'Longitude', '' if lon is None else lon, 'number')],
             'Save location', lambda values: self._save_location(win, values),
@@ -987,7 +966,7 @@ class LauncherSection(settings_page._Section):
         if actions is None:
             return
         actions._show_action_menu(
-            anchor, 'Hidden Apps',
+            anchor, 'Hidden apps',
             [(label, lambda app_id=app_id: self._unhide(win, app_id))
              for label, app_id in labels])
 
@@ -1067,7 +1046,7 @@ class LauncherSection(settings_page._Section):
         for name, app_id in sorted(((n, a) for a, n in names.items()),
                                    key=lambda p: p[0].casefold()):
             choices.append((name, lambda app_id=app_id: on_pick(app_id)))
-        actions._show_action_menu(anchor, 'Select App', choices)
+        actions._show_action_menu(anchor, 'Select app', choices)
 
     # -- Appearance (shown on the Display & appearance page) -------------
 
@@ -1122,7 +1101,6 @@ class LauncherSection(settings_page._Section):
         slider.set_digits(0)
         slider.set_draw_value(False)
         slider.set_hexpand(True)
-        slider.set_size_request(0, 44)
         row = _scale_row('Text size',
                          '%d%%' % round(adjustment.get_value() * 100),
                          slider)

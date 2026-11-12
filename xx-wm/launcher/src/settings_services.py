@@ -316,6 +316,9 @@ class ServicesSection(settings_page._Section):
             rows.append(row)
         for entry in USER_SERVICES:
             info = user.get(entry.key) or {}
+            if info.get('installed') is False:
+                # Not on this phone: no row (nothing to start or stop).
+                continue
             subtitle = self._user_subtitle(connect, info)
             row = ui.nav_row(
                 entry.title, subtitle,

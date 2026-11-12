@@ -43,15 +43,15 @@ class TestParityContract:
         build = src.split('    def build(self, win) -> list:')[1].split(
             '    def refresh(self, win)')[0]
         titles = [
-            "'Home Screen'", "'Default Launcher'", "'Home Slot Count'",
-            "'Text Alignment'", "'Date/Time Mode'", "'Show Status Bar'",
-            "'Widgets'", "'Temperature Unit'",
-            "'App Drawer'", "'Auto-show Keyboard'", "'Sort Mode'",
-            "'Hidden Apps'",
-            "'Gestures'", "'Enable Swipe Left'", "'Swipe Left App'",
-            "'Enable Swipe Right'", "'Swipe Right App'",
-            "'Swipe Down Action'", "'Double Tap to Lock'",
-            "'Home Button Opens Recents'",
+            "'Home Screen'", "'Home slot count'",
+            "'Text alignment'", "'Date/time mode'", "'Show status bar'",
+            "'Widgets'", "'Temperature unit'",
+            "'App Drawer'", "'Auto-show keyboard'", "'Sort mode'",
+            "'Hidden apps'",
+            "'Gestures'", "'Enable swipe left'", "'Swipe left app'",
+            "'Enable swipe right'", "'Swipe right app'",
+            "'Swipe down action'", "'Double tap to lock'",
+            "'Home button opens recents'",
         ]
         positions = [build.index(title) for title in titles]
         assert positions == sorted(positions), titles
@@ -498,10 +498,10 @@ try:
     win._settings_page.show_category('home')
     pump(0.8)
 
-    pickers = ['Home Slot Count', 'Text Alignment', 'Date/Time Mode',
-               'Clock Format', 'Widgets', 'Temperature Unit',
-               'Manual Location', 'Sort Mode', 'Hidden Apps', 'Gestures',
-               'Swipe Left App', 'Swipe Right App', 'Swipe Down Action']
+    pickers = ['Home slot count', 'Text alignment', 'Date/time mode',
+               'Clock format', 'Widgets', 'Temperature unit',
+               'Manual location', 'Sort mode', 'Hidden apps', 'Gestures',
+               'Swipe left app', 'Swipe right app', 'Swipe down action']
     for title in pickers:
         win._sheet_host.close_all()
         tap(row(title))
@@ -523,7 +523,7 @@ try:
 
     # A picked value applies and closes the sheet.
     win._sheet_host.close_all()
-    tap(row('Text Alignment'))
+    tap(row('Text alignment'))
     pump(0.2)
     left = [b for b in sheet_rows() if row_label(b) == 'Left']
     check(len(left) == 1, 'no Left row')
@@ -531,11 +531,11 @@ try:
     pump(0.2)
     check(win.config.home_alignment == 'left', 'alignment not applied')
     check(not win._sheet_host.is_open(), 'sheet stayed open')
-    check(row('Text Alignment').subtitle_label.get_text() == 'Left',
+    check(row('Text alignment').subtitle_label.get_text() == 'Left',
           'row value not refreshed')
 
     # Swipe Right App: the picker lists apps and binds the pick.
-    tap(row('Swipe Right App'))
+    tap(row('Swipe right app'))
     pump(0.2)
     calc = [b for b in sheet_rows() if row_label(b) == 'Calculator']
     check(len(calc) == 1, 'Calculator missing from Select App')
@@ -543,11 +543,11 @@ try:
     pump(0.2)
     check(win.gesture_config.get('swipe_right_home') == 'launch:calc.desktop',
           'swipe app not bound: %r' % win.gesture_config.get('swipe_right_home'))
-    check(row('Swipe Right App').subtitle_label.get_text() == 'Calculator',
+    check(row('Swipe right app').subtitle_label.get_text() == 'Calculator',
           'swipe app summary not shown')
 
     # Hidden Apps: a tap shows the app again.
-    tap(row('Hidden Apps'))
+    tap(row('Hidden apps'))
     pump(0.2)
     notes = [b for b in sheet_rows() if row_label(b) == 'Notes']
     check(len(notes) == 1, 'Notes missing from Hidden Apps')

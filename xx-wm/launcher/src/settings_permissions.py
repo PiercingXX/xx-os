@@ -366,8 +366,6 @@ class PermissionsSection(settings_page._Section):
                     text = {True: 'Allowed', False: 'Denied'}.get(
                         state, 'Ask')
                     rows.append(ui.row(app_id, '%s · %s' % (label, text)))
-            elif maps is None:
-                rows.append(ui.note_row('Permission store unavailable.'))
         # No app with this access lists nothing but Done (no empty line).
         ui.fill(box, rows + [ui.nav_row(
             'Done', '', lambda _r: self._close_views(win))])

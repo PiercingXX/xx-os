@@ -1285,7 +1285,10 @@ class TestSettingsCss:
         assert '.xx-settings .xx-caption { font-size: 12px;' in base
         big = settings_ui.css(theme, 1.5)
         assert '.xx-settings .xx-title { font-size: 27px; }' in big
-        assert theme.surface in base and theme.border in base
+        # Rows sit flat on the page: hairlines in the border color, the
+        # pressed state in surface_alt, no card fill.
+        assert theme.border in base and theme.surface_alt in base
+        assert '.xx-set-card { background: none; }' in base
 
     def test_window_loads_settings_sheet(self):
         text = (SRC / 'window.py').read_text(encoding='utf-8')

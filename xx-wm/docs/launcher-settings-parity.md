@@ -8,8 +8,12 @@ the same choices with the same labels, and the same defaults. The page
 is `launcher/src/settings_launcher.py`; `tests/test_settings_sheets.py`
 pins the contract.
 
-Two presentation rules are shared by every Settings page, not changed
+Three presentation rules are shared by every Settings page, not changed
 for parity:
+
+- Row titles are in sentence case like every other Settings page
+  ("Home slot count" for Android's "Home Slot Count"); the words are
+  Android's.
 
 - A list preference shows its current entry under the title (Android
   shows the entry only in its dialog). The sheet that opens lists the
@@ -28,7 +32,7 @@ equivalent named in the notes.
 
 | Android (key · default) | Linux (key · default) | Status |
 |---|---|---|
-| Default Launcher (`default_launcher`) — asks for the HOME role | Default Launcher — "XX-WM is always the home screen", no action | same (Linux): XX-WM is the shell, so it is always home; there is no role to request |
+| Default Launcher (`default_launcher`) — asks for the HOME role | — (no row) | Linux: XX-WM is the shell, so it is always home; there is no role to request, and a row with nothing to do is not shown |
 | Home Slot Count (`slot_count` · 4) — None, 1–8 | Home Slot Count (`home_slot_count` · unset = every stored slot, 4 on the seeded layout) — None, 1–8 | same. Empty slots show `· · ·` at 40% and a tap picks an app; slots past the count stay stored; removing a slot shrinks the count, adding one past it grows it, as on Android |
 | Text Alignment (`text_alignment` · center) — Left, Center, Right | Text Alignment (`home_alignment` · center) | same |
 | Date/Time Mode (`date_time_mode` · date_time) — Off, Date only, Date and time | Date/Time Mode (`date_time_mode` · date_time) | same: Off hides the clock and date widgets, Date only hides the clock |

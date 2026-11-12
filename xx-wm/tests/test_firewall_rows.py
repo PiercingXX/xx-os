@@ -772,8 +772,16 @@ def _section_texts(key, fake_gi):
         return _texts(built)
     if key == 'nearby':
         import settings_page as page
+        from types import SimpleNamespace
+        from gi.repository import Gio
         cls = next(cls for k, cls in page.SETTINGS_SECTIONS if k == key)
-        return _texts(cls().build(win))
+        # Installed: a feature missing from the phone has no row at all.
+        saved = getattr(Gio, 'DesktopAppInfo', None)
+        Gio.DesktopAppInfo = SimpleNamespace(new=lambda _id: object())
+        try:
+            return _texts(cls().build(win))
+        finally:
+            Gio.DesktopAppInfo = saved
     if key == 'developer':
         page = settings_page.SettingsPage(win)
         return _texts([page._build_developer_card()])

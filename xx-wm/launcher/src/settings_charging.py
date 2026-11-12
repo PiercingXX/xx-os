@@ -155,18 +155,17 @@ class ChargingSection(settings_page._Section):
 
     def _render_options(self, win) -> None:
         """One row: the limit as a value row when the battery driver has
-        a knob, the honest no-knob sentence (no control) otherwise."""
+        a knob. Without one (or until that is known) the whole Charging
+        group stays hidden: a control the phone lacks has no row."""
         if self._row is None:
             return
         current = getattr(win.config, 'charge_limit', None)
         if self._supported is True:
             ui.set_subtitle(self._row, 'Off · charges to 100%'
                             if current is None else 'Stops at %d%%' % current)
-            ui.fill(self._card, [self._row])
+            ui.fill(self._card, [self._row], hide_empty=True)
             return
-        text = (NO_KNOB_TEXT if self._supported is False
-                else 'Checking battery support…')
-        ui.fill(self._card, [ui.row('Charge limit', text)])
+        ui.fill(self._card, [], hide_empty=True)
 
     def _pick(self, win, anchor) -> None:
         choices = [(label, lambda v=value: self._apply(win, v))

@@ -492,7 +492,9 @@ class TestChargingSection:
         built = section.build(win)
         assert 'xx-set-caption' in built[0].classes
         assert 'CHARGING' in _texts(built[0])
-        assert 'Checking battery support…' in _built_texts(built)
+        # Until support is known the group stays hidden (no "Checking…").
+        assert built[0].get_visible() is False
+        assert built[1].get_visible() is False
 
     def test_unsupported_message(self, fake_gi):
         import settings_charging as charging
@@ -500,7 +502,10 @@ class TestChargingSection:
         section = charging.ChargingSection()
         built = section.build(win)
         section._on_state(win, (False, None))
-        assert charging.NO_KNOB_TEXT in _built_texts(built)
+        # No knob on this phone: no row, and the caption hides with it.
+        assert charging.NO_KNOB_TEXT not in _built_texts(built)
+        assert built[0].get_visible() is False
+        assert built[1].get_visible() is False
 
     def test_supported_row_opens_presets(self, fake_gi):
         import settings_charging as charging
@@ -588,9 +593,10 @@ class TestChargingSection:
         section = charging.ChargingSection()
         built = section.build(win)
         section._on_state(win, (False, None))
-        rows = built[1].children
-        assert len(rows) == 1
-        assert 'clicked' not in rows[0].handlers
+        assert built[1].children == []
+        section._on_state(win, (True, None))
+        assert built[0].get_visible() is True
+        assert len(built[1].children) == 1
 
 
 # --- battery-use model ---------------------------------------------------

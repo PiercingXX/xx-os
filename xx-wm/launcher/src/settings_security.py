@@ -264,7 +264,7 @@ class SecuritySection(settings_page._Section):
             'Scan a file…', 'Pick a file or folder by path',
             lambda r: self._open_scan_file(win, r))
         self._scan_rows = [
-            ui.nav_row('Scan Downloads', 'ClamAV, on demand',
+            ui.nav_row('Scan downloads', 'ClamAV, on demand',
                        lambda _r: self._on_scan_downloads(win)),
             self._scan_btn]
         scan = ui.group('Malware scan', list(self._scan_rows), note='')
