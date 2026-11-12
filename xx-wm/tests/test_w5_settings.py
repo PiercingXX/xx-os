@@ -21,6 +21,7 @@ import app_permissions  # noqa: E402
 import app_standby  # noqa: E402
 import config as config_mod  # noqa: E402
 import privacy_monitor  # noqa: E402
+import settings_lock  # noqa: E402
 import settings_page  # noqa: E402
 import settings_permissions  # noqa: E402
 import settings_smart_lock  # noqa: E402
@@ -1028,6 +1029,10 @@ def trusted_live():
         smart_lock._reset_runtime_state()
 
 
+_HOME = {'ssid': 'Home', 'bssid': '11:22:33:44:55:66'}
+_HOME_AP = dict(_HOME, secure=True)
+
+
 class TestSmartLockSection:
     def _section(self):
         return settings_smart_lock.SmartLockSection()
@@ -1049,7 +1054,7 @@ class TestSmartLockSection:
     def test_configured_but_untrusted_shows_reason(self, fake_gtk):
         win = _bare_win()
         win.config.pin_hash = 'set'
-        win.config.smart_lock_wifi_ssids = ['Home']
+        win.config.smart_lock_wifi_ssids = [_HOME]
         status, detail = settings_smart_lock.trust_status(win)
         assert status == 'Off'
         assert detail.startswith('PIN required')
@@ -1065,10 +1070,11 @@ class TestSmartLockSection:
     def test_trusted_lists_and_remove(self, fake_gtk):
         win = _bare_win()
         win.config.smart_lock_bt_devices = ['AA:BB:CC:DD:EE:FF']
-        win.config.smart_lock_wifi_ssids = ['Home']
+        win.config.smart_lock_wifi_ssids = [_HOME]
         self._section().build(win)
         assert 'AA:BB:CC:DD:EE:FF' in _labels(win._slock_bt_box)
         assert 'Home' in _labels(win._slock_wifi_box)
+        assert _HOME['bssid'] in _labels(win._slock_wifi_box)
         home = next(btn for btn in _buttons(win._slock_wifi_box)
                     if 'Home' in _labels(btn))
         _click(home)
@@ -1076,14 +1082,16 @@ class TestSmartLockSection:
         assert win.config.smart_lock_wifi_ssids == []
         assert 'Home' not in _labels(win._slock_wifi_box)
 
-    def test_bt_picker_adds_paired(self, fake_gtk, monkeypatch):
-        devs = [SimpleNamespace(address='AA:BB:CC:DD:EE:FF',
-                                name='Buds', paired=True, connected=True),
-                SimpleNamespace(address='11:22:33:44:55:66',
-                                name='Speaker', paired=False,
-                                connected=False)]
-        monkeypatch.setattr(system_settings, 'list_bt_devices',
-                            lambda: devs)
+    def test_bt_picker_offers_bonded_and_asks_pin(self, fake_gtk,
+                                                  monkeypatch):
+        devs = [smart_lock.BondedDevice('AA:BB:CC:DD:EE:FF', 'Buds')]
+        monkeypatch.setattr(smart_lock, 'query_bonded_bt_devices',
+                            lambda on_done: on_done(devs))
+        asked = []
+        monkeypatch.setattr(
+            settings_lock, 'ask_pin',
+            lambda win, anchor, title, label, on_ok: asked.append(
+                (title, label, on_ok)))
         win = _bare_win()
         section = self._section()
         section.build(win)
@@ -1092,26 +1100,87 @@ class TestSmartLockSection:
         choices = dict(win._menus[-1][1])
         assert set(choices) == {'Buds (AA:BB:CC:DD:EE:FF)'}
         choices['Buds (AA:BB:CC:DD:EE:FF)']()
+        assert win.config.smart_lock_bt_devices == []
+        (title, label, on_ok), = asked
+        assert (title, label) == ('Trust Buds (AA:BB:CC:DD:EE:FF)', 'Trust')
+        on_ok()
+        assert win.config.smart_lock_bt_devices == ['AA:BB:CC:DD:EE:FF']
+
+    def test_bt_trust_needs_the_right_pin(self, fake_gtk, monkeypatch):
+        devs = [smart_lock.BondedDevice('AA:BB:CC:DD:EE:FF', 'Buds')]
+        monkeypatch.setattr(smart_lock, 'query_bonded_bt_devices',
+                            lambda on_done: on_done(devs))
+        win = _sheet_win()
+        win.config.pin_hash = 'set'
+        win.config.verify_pin = lambda pin: pin == '135790'
+        win.config.get_lockout_state = lambda: (0, 0.0)
+        win.config.set_lockout_state = lambda *a, **k: None
+        win.config.clear_lockout_state = lambda: None
+        win.config.get_lockout_start = lambda: 0.0
+        section = self._section()
+        section.build(win)
+        section._pick_bt_device(win, object())
+        dict(win._menus[-1][1])['Buds (AA:BB:CC:DD:EE:FF)']()
+        (box, _popover), = win.popovers
+        commit = box.children[-1]
+        callback, _args = commit.handlers['clicked']
+        entry = next(child for child in box.children
+                     if hasattr(child, 'set_text')
+                     and not isinstance(child, _FakeLabel))
+        entry.set_text('000000')
+        callback(commit)
+        assert win.config.smart_lock_bt_devices == []
+        entry.set_text('135790')
+        callback(commit)
         assert win.config.smart_lock_bt_devices == ['AA:BB:CC:DD:EE:FF']
 
     def test_bt_unavailable_announced(self, fake_gtk, monkeypatch):
-        monkeypatch.setattr(system_settings, 'list_bt_devices', lambda: None)
+        monkeypatch.setattr(smart_lock, 'query_bonded_bt_devices',
+                            lambda on_done: on_done(None))
         win = _bare_win()
         self._section()._pick_bt_device(win, object())
         assert win._statuses == ['Bluetooth unavailable.']
 
-    def test_ssid_picker_adds_saved(self, fake_gtk, monkeypatch):
-        monkeypatch.setattr(system_settings, 'saved_wifi_ssids',
-                            lambda: ['Cafe', 'Home'])
+    def test_network_picker_trusts_the_connected_ap(self, fake_gtk,
+                                                    monkeypatch):
+        cafe = {'ssid': 'Cafe', 'bssid': '22:22:22:22:22:22', 'secure': True}
+        monkeypatch.setattr(smart_lock, 'query_connected_wifi',
+                            lambda on_done: on_done(cafe))
+        asked = []
+        monkeypatch.setattr(
+            settings_lock, 'ask_pin',
+            lambda win, anchor, title, label, on_ok: asked.append(
+                (title, on_ok)))
         win = _bare_win()
-        win.config.smart_lock_wifi_ssids = ['Home']
+        win.config.smart_lock_wifi_ssids = [_HOME]
         section = self._section()
         section.build(win)
         section._pick_ssid(win, object())
-        choices = dict(win._menus[-1][1])
-        assert set(choices) == {'Cafe'}
-        choices['Cafe']()
-        assert win.config.smart_lock_wifi_ssids == ['Home', 'Cafe']
+        (title, on_ok), = asked
+        assert title == 'Trust Cafe'
+        assert win.config.smart_lock_wifi_ssids == [_HOME]
+        on_ok()
+        assert win.config.smart_lock_wifi_ssids == [
+            _HOME, {'ssid': 'Cafe', 'bssid': '22:22:22:22:22:22'}]
+
+    @pytest.mark.parametrize('ap, status', [
+        (None, 'NetworkManager unavailable.'),
+        ({}, 'Connect to the Wi-Fi network first.'),
+        ({'ssid': 'Free', 'bssid': '33:33:33:33:33:33', 'secure': False},
+         'Open networks cannot be trusted.'),
+        (dict(_HOME_AP), 'This network is trusted.'),
+    ])
+    def test_network_picker_refusals(self, fake_gtk, monkeypatch, ap,
+                                     status):
+        monkeypatch.setattr(smart_lock, 'query_connected_wifi',
+                            lambda on_done: on_done(ap))
+        monkeypatch.setattr(settings_lock, 'ask_pin',
+                            lambda *a: pytest.fail('no PIN for a refusal'))
+        win = _bare_win()
+        win.config.smart_lock_wifi_ssids = [_HOME]
+        self._section()._pick_ssid(win, object())
+        assert win._statuses == [status]
+        assert win.config.smart_lock_wifi_ssids == [_HOME]
 
     def test_reauth_text(self):
         assert settings_smart_lock.reauth_text() == (

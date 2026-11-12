@@ -115,18 +115,31 @@ class _StubConfig:
 def _bluez_objects(devices):
     objects = {}
     for path, address, connected, alias in devices:
-        props = {'Address': address, 'Connected': connected}
+        props = {'Address': address, 'Connected': connected,
+                 'Paired': True, 'Bonded': True,
+                 'ServicesResolved': connected}
         if alias is not None:
             props['Alias'] = alias
-        objects[path] = {'org.bluez.Device1': props}
+        objects[path] = {'org.bluez.Device1': props,
+                         'org.bluez.MediaControl1': {'Connected': connected}}
     return objects
+
+
+BSSID = '11:22:33:44:55:66'
 
 
 def _nm_objects(connections):
     objects = {}
     for path, ssid, conn_type, state in connections:
         objects[path] = {'org.freedesktop.NetworkManager.Connection.Active': {
-            'Id': ssid, 'Type': conn_type, 'State': state}}
+            'Id': ssid, 'Type': conn_type, 'State': state,
+            'Devices': ['/dev/w'], 'SpecificObject': '/ap/0'}}
+        objects['/dev/w'] = {
+            'org.freedesktop.NetworkManager.Device.Wireless': {
+                'ActiveAccessPoint': '/ap/0'}}
+        objects['/ap/0'] = {'org.freedesktop.NetworkManager.AccessPoint': {
+            'Ssid': list(ssid.encode()), 'HwAddress': BSSID,
+            'RsnFlags': 0x100}}
     return objects
 
 
@@ -158,7 +171,7 @@ class TestFailureClearsTrust:
 
     def test_nm_failure_drops_cached_ssid(self):
         notified: list = []
-        mon, bus = _monitor(_StubConfig(ssids=['Home']), notified)
+        mon, bus = _monitor(_StubConfig(ssids=[{'ssid': 'Home', 'bssid': BSSID}]), notified)
         bus.answer(0, _bluez_objects([]))
         bus.answer(1, _nm_objects([('/a/0', 'Home', '802-11-wireless', 2)]))
         assert mon.trusted_ssid == 'Home'

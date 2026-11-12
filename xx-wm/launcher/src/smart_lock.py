@@ -2,9 +2,19 @@
 
 While the phone sits in a trusted situation, swipe-up unlocks without the
 PIN. Trust comes from two opt-in agents — a connected trusted Bluetooth
-device (BlueZ) or the currently connected trusted Wi-Fi network
+device (BlueZ) or the currently connected trusted Wi-Fi access point
 (NetworkManager) — and never from anything else: on-body detection is not
 implemented (no reliable sensor on this hardware).
+
+What counts as connected (an address or a network name alone is easy to
+copy):
+- Bluetooth: the device is Paired and Bonded (BlueZ holds its link key),
+  Connected with ServicesResolved, and has a profile connected over that
+  link (an A2DP/LE audio transport, AVRCP, PAN or HID). A trusted entry
+  whose device is no longer bonded is dropped from the list.
+- Wi-Fi: the active Wi-Fi connection's access point matches a trusted
+  {ssid, bssid} pair and uses a key (WPA/WPA2/WPA3 personal or
+  enterprise). Open, OWE and WEP networks are never trusted.
 
 Rules (kept exactly):
 1. Trust applies only while a trusted agent is connected, and only when at
@@ -26,6 +36,7 @@ swipe-unlock it should not.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -36,14 +47,30 @@ TRUST_MAX_PIN_AGE_S = 4 * 3600
 
 _BLUEZ_BUS = 'org.bluez'
 _NM_BUS = 'org.freedesktop.NetworkManager'
-_NM_PATH = '/org/freedesktop/NetworkManager'
+# NetworkManager's ObjectManager lives on /org/freedesktop, not on
+# /org/freedesktop/NetworkManager (which answers "No such interface").
+_NM_PATH = '/org/freedesktop'
 _OBJMGR_IFACE = 'org.freedesktop.DBus.ObjectManager'
 _PROPS_IFACE = 'org.freedesktop.DBus.Properties'
+_BLUEZ_ADAPTER_IFACE = 'org.bluez.Adapter1'
 _BLUEZ_DEVICE_IFACE = 'org.bluez.Device1'
+_BLUEZ_TRANSPORT_IFACE = 'org.bluez.MediaTransport1'
+_BLUEZ_CONNECTED_PROFILE_IFACES = ('org.bluez.MediaControl1',
+                                   'org.bluez.Network1')
+_BLUEZ_HID_IFACE = 'org.bluez.Input1'
+_BT_TRUST_PROPS = frozenset(('Connected', 'ServicesResolved', 'Paired',
+                             'Bonded'))
 _NM_ACTIVE_IFACE = 'org.freedesktop.NetworkManager.Connection.Active'
+_NM_WIRELESS_IFACE = 'org.freedesktop.NetworkManager.Device.Wireless'
+_NM_AP_IFACE = 'org.freedesktop.NetworkManager.AccessPoint'
 
 _NM_STATE_ACTIVATED = 2
+# NM80211ApSecurityFlags key-management bits that mean "a key is needed":
+# PSK, 802.1X, SAE (WPA3) and EAP Suite-B. OWE (0x800, 0x1000) encrypts
+# without authenticating anyone, so it counts as open.
+_NM_KEY_MGMT_SECURE = 0x100 | 0x200 | 0x400 | 0x2000
 _DBUS_TIMEOUT_MS = 5_000
+_BSSID_RE = re.compile(r'^[0-9A-F]{2}(:[0-9A-F]{2}){5}$')
 
 
 def sanitize_bt_devices(raw: object) -> list[str]:
@@ -60,16 +87,26 @@ def sanitize_bt_devices(raw: object) -> list[str]:
     return out
 
 
-def sanitize_ssids(raw: object) -> list[str]:
-    """Trusted Wi-Fi SSIDs: non-empty strings kept verbatim (SSIDs are
-    case-sensitive). Anything else is dropped."""
+def sanitize_ssids(raw: object) -> list[dict]:
+    """Trusted Wi-Fi access points: ``{'ssid', 'bssid'}`` dicts, SSID kept
+    verbatim (case-sensitive), BSSID upper-cased. Anything else is dropped,
+    including the bare network names older versions stored: a name alone
+    is not trust, so those entries simply disappear."""
     if not isinstance(raw, list):
         return []
-    out: list[str] = []
+    out: list[dict] = []
     for entry in raw:
-        if isinstance(entry, str) and entry:
-            if entry not in out:
-                out.append(entry)
+        if not isinstance(entry, dict):
+            continue
+        ssid, bssid = entry.get('ssid'), entry.get('bssid')
+        if not isinstance(ssid, str) or not ssid or not isinstance(bssid, str):
+            continue
+        bssid = bssid.strip().upper()
+        if not _BSSID_RE.match(bssid):
+            continue
+        clean = {'ssid': ssid, 'bssid': bssid}
+        if clean not in out:
+            out.append(clean)
     return out
 
 
@@ -191,58 +228,208 @@ def explicit_lock_pending() -> bool:
     return _force_pin_until_next_unlock
 
 
-def _parse_bluez_objects(objects: dict, trusted: set[str]) -> list[str]:
-    """Display labels (Alias, else Address) of connected trusted devices."""
-    wanted = {str(entry).strip().upper() for entry in trusted}
-    found: list[str] = []
-    for _path, ifaces in objects.items():
-        if not isinstance(ifaces, dict):
-            continue
-        dev = ifaces.get(_BLUEZ_DEVICE_IFACE)
-        if not isinstance(dev, dict):
-            continue
-        try:
-            props = dict(dev)
-        except (TypeError, ValueError):
-            continue
-        if not props.get('Connected', False):
+def _iface_props(ifaces: object, name: str) -> dict | None:
+    if not isinstance(ifaces, dict):
+        return None
+    props = ifaces.get(name)
+    if not isinstance(props, dict):
+        return None
+    try:
+        return dict(props)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bt_bonded(props: dict) -> bool:
+    return props.get('Paired') is True and props.get('Bonded') is True
+
+
+def _bt_profile_connected(path: str, ifaces: dict, objects: dict) -> bool:
+    """A profile is up over the link: an audio transport object under the
+    device, AVRCP or PAN reporting Connected, or a HID device."""
+    for name in _BLUEZ_CONNECTED_PROFILE_IFACES:
+        props = _iface_props(ifaces, name)
+        if props is not None and props.get('Connected') is True:
+            return True
+    if _iface_props(ifaces, _BLUEZ_HID_IFACE) is not None:
+        return True
+    prefix = str(path).rstrip('/') + '/'
+    return any(str(child).startswith(prefix)
+               and _iface_props(child_ifaces, _BLUEZ_TRANSPORT_IFACE)
+               is not None
+               for child, child_ifaces in objects.items())
+
+
+def _bluez_devices(objects: dict):
+    """(path, ifaces, Device1 props, upper-cased address) per device."""
+    for path, ifaces in objects.items():
+        props = _iface_props(ifaces, _BLUEZ_DEVICE_IFACE)
+        if props is None:
             continue
         address = props.get('Address')
-        if not isinstance(address, str):
+        if isinstance(address, str) and address.strip():
+            yield path, ifaces, props, address.strip().upper()
+
+
+def _bt_label(props: dict, address: str) -> str:
+    alias = props.get('Alias')
+    return alias if isinstance(alias, str) and alias else address
+
+
+def _parse_bluez_objects(objects: dict, trusted) -> list[str]:
+    """Display labels (Alias, else Address) of trusted devices that are
+    bonded, connected with services resolved, and have a profile up."""
+    wanted = {str(entry).strip().upper() for entry in trusted}
+    found: list[str] = []
+    for path, ifaces, props, address in _bluez_devices(objects):
+        if address not in wanted or not _bt_bonded(props):
             continue
-        if address.strip().upper() not in wanted:
+        if not (props.get('Connected') is True
+                and props.get('ServicesResolved') is True):
             continue
-        alias = props.get('Alias')
-        label = alias if isinstance(alias, str) and alias else address
+        if not _bt_profile_connected(path, ifaces, objects):
+            continue
+        label = _bt_label(props, address)
         if label not in found:
             found.append(label)
     return found
 
 
-def _parse_nm_objects(objects: dict, trusted: set[str]) -> str | None:
-    """SSID of the first activated Wi-Fi connection in the trusted list."""
+def _unbonded_trusted(objects: dict, trusted) -> list[str]:
+    """Trusted addresses BlueZ no longer holds a bond for: the device is
+    gone (unpaired) or no longer Paired and Bonded. Only judged while an
+    adapter is present, so BlueZ being down never empties the list."""
+    if not any(_iface_props(ifaces, _BLUEZ_ADAPTER_IFACE) is not None
+               for ifaces in objects.values()):
+        return []
+    bonded = {address for _p, _i, props, address in _bluez_devices(objects)
+              if _bt_bonded(props)}
+    return [entry for entry in trusted
+            if str(entry).strip().upper() not in bonded]
+
+
+@dataclass
+class BondedDevice:
+    address: str
+    name: str
+
+
+def bonded_devices_from(objects: dict) -> list[BondedDevice]:
+    """Devices the Trust a device picker may offer: Paired and Bonded."""
+    return [BondedDevice(address, _bt_label(props, address))
+            for _path, _ifaces, props, address in _bluez_devices(objects)
+            if _bt_bonded(props)]
+
+
+def _ssid_text(raw: object) -> str | None:
+    if isinstance(raw, str):
+        return raw or None
+    try:
+        data = bytes(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not data:
+        return None
+    return data.decode('utf-8', errors='replace')
+
+
+def ap_is_secured(props: dict) -> bool:
+    """The access point needs a key: WPA/WPA2/WPA3 personal or enterprise.
+    Open, OWE-only and WEP (privacy bit, no WPA/RSN key management) are
+    not."""
+    flags = 0
+    for key in ('WpaFlags', 'RsnFlags'):
+        try:
+            flags |= int(props.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    return bool(flags & _NM_KEY_MGMT_SECURE)
+
+
+def connected_ap(objects: dict) -> dict | None:
+    """``{'ssid', 'bssid', 'secure'}`` for the access point of the first
+    activated Wi-Fi connection, or None when there is none."""
     for _path, ifaces in objects.items():
-        if not isinstance(ifaces, dict):
-            continue
-        active = ifaces.get(_NM_ACTIVE_IFACE)
-        if not isinstance(active, dict):
+        props = _iface_props(ifaces, _NM_ACTIVE_IFACE)
+        if props is None or props.get('Type') != '802-11-wireless':
             continue
         try:
-            props = dict(active)
+            if int(props.get('State', 0)) != _NM_STATE_ACTIVATED:
+                continue
         except (TypeError, ValueError):
             continue
-        try:
-            state = int(props.get('State', 0))
-        except (TypeError, ValueError):
-            continue
-        if state != _NM_STATE_ACTIVATED:
-            continue
-        if props.get('Type') != '802-11-wireless':
-            continue
-        ssid = props.get('Id')
-        if isinstance(ssid, str) and ssid in trusted:
-            return ssid
+        ap_paths = []
+        devices = props.get('Devices')
+        for device in devices if isinstance(devices, (list, tuple)) else ():
+            wireless = _iface_props(objects.get(device), _NM_WIRELESS_IFACE)
+            if wireless is not None:
+                ap_paths.append(wireless.get('ActiveAccessPoint'))
+        ap_paths.append(props.get('SpecificObject'))
+        for ap_path in ap_paths:
+            if not isinstance(ap_path, str) or ap_path in ('', '/'):
+                continue
+            ap = _iface_props(objects.get(ap_path), _NM_AP_IFACE)
+            if ap is None:
+                continue
+            ssid = _ssid_text(ap.get('Ssid'))
+            bssid = ap.get('HwAddress')
+            if ssid is None or not isinstance(bssid, str):
+                continue
+            return {'ssid': ssid, 'bssid': bssid.strip().upper(),
+                    'secure': ap_is_secured(ap)}
     return None
+
+
+def _parse_nm_objects(objects: dict, trusted) -> str | None:
+    """SSID of the connected access point when it is secured and its
+    {ssid, bssid} pair is trusted."""
+    ap = connected_ap(objects)
+    if ap is None or not ap['secure']:
+        return None
+    pair = {'ssid': ap['ssid'], 'bssid': ap['bssid']}
+    return ap['ssid'] if pair in sanitize_ssids(list(trusted)) else None
+
+
+def _query_objects(bus_name: str, path: str,
+                   on_done: Callable[[dict | None], None], bus=None) -> None:
+    """Async GetManagedObjects; ``on_done(objects)`` on the main loop,
+    ``on_done(None)`` when the service is unreachable."""
+    try:
+        if bus is None:
+            from gi.repository import Gio
+            bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+    except Exception:
+        on_done(None)
+        return
+
+    def _reply(conn, result) -> None:
+        try:
+            objects = dict(conn.call_finish(result).unpack()[0])
+        except Exception:
+            objects = None
+        on_done(objects)
+
+    try:
+        bus.call(bus_name, path, _OBJMGR_IFACE, 'GetManagedObjects',
+                 None, None, 0, _DBUS_TIMEOUT_MS, None, _reply)
+    except Exception:
+        on_done(None)
+
+
+def query_bonded_bt_devices(
+        on_done: Callable[[list[BondedDevice] | None], None],
+        bus=None) -> None:
+    """Devices that may be trusted; ``on_done(None)`` without BlueZ."""
+    _query_objects(_BLUEZ_BUS, '/', lambda objects: on_done(
+        None if objects is None else bonded_devices_from(objects)), bus)
+
+
+def query_connected_wifi(on_done: Callable[[dict | None], None],
+                         bus=None) -> None:
+    """The connected access point (connected_ap); ``{}`` when no Wi-Fi is
+    connected, None without NetworkManager."""
+    _query_objects(_NM_BUS, _NM_PATH, lambda objects: on_done(
+        None if objects is None else (connected_ap(objects) or {})), bus)
 
 
 class SmartLockMonitor:
@@ -368,9 +555,16 @@ class SmartLockMonitor:
             self._emit_if_changed(bt=[])
             return
         try:
-            trusted = set(self._config.smart_lock_bt_devices)
+            trusted = list(self._config.smart_lock_bt_devices)
         except Exception:
-            trusted = set()
+            trusted = []
+        gone = _unbonded_trusted(objects, trusted)
+        if gone:
+            try:
+                self._config.set_smart_lock_bt_devices(
+                    [entry for entry in trusted if entry not in gone])
+            except Exception:
+                pass
         self._emit_if_changed(bt=_parse_bluez_objects(objects, trusted))
 
     def _on_nm_objects(self, conn, result) -> None:
@@ -380,9 +574,9 @@ class SmartLockMonitor:
             self._emit_if_changed(ssid=None)
             return
         try:
-            trusted = set(self._config.smart_lock_wifi_ssids)
+            trusted = list(self._config.smart_lock_wifi_ssids)
         except Exception:
-            trusted = set()
+            trusted = []
         self._emit_if_changed(ssid=_parse_nm_objects(objects, trusted))
 
     def _on_bt_properties_changed(self, _conn, _sender, _path, _iface,
@@ -393,13 +587,17 @@ class SmartLockMonitor:
                 unpacked[0], unpacked[1], unpacked[2])
         except Exception:
             return
-        if iface_name != _BLUEZ_DEVICE_IFACE:
-            return
         try:
             changed = dict(changed)
         except (TypeError, ValueError):
             return
-        if 'Connected' not in changed:
+        if iface_name == _BLUEZ_DEVICE_IFACE:
+            if not _BT_TRUST_PROPS & changed.keys():
+                return
+        elif iface_name in _BLUEZ_CONNECTED_PROFILE_IFACES:
+            if 'Connected' not in changed:
+                return
+        else:
             return
         self._enum_bluez()
 
@@ -410,10 +608,18 @@ class SmartLockMonitor:
     def _on_nm_properties_changed(self, _conn, _sender, _path, _iface,
                                   _signal, params, _user_data) -> None:
         try:
-            iface_name = params.unpack()[0]
+            unpacked = params.unpack()
+            iface_name = unpacked[0]
         except Exception:
             return
-        if iface_name not in (_NM_BUS, _NM_ACTIVE_IFACE):
+        if iface_name == _NM_WIRELESS_IFACE:
+            # Roaming to another access point of the same network.
+            try:
+                if 'ActiveAccessPoint' not in dict(unpacked[1]):
+                    return
+            except Exception:
+                return
+        elif iface_name not in (_NM_BUS, _NM_ACTIVE_IFACE):
             return
         self._enum_nm()
 

@@ -1,12 +1,13 @@
 """Smart Lock settings (UI over smart_lock).
 
-Trusted Bluetooth devices (paired, via the system_settings BlueZ
-helpers), trusted Wi-Fi networks (saved, via NetworkManager), the 4-hour
-re-auth rule, and a clear status line. On-body unlock stays hidden: the
-backend does not support it.
+Trusted Bluetooth devices (bonded, via BlueZ), trusted Wi-Fi access
+points (the connected one, via NetworkManager), the 4-hour re-auth rule,
+and a clear status line. Adding trust asks for the PIN first; removing it
+does not. On-body unlock stays hidden: the backend does not support it.
 """
 from __future__ import annotations
 
+import settings_lock
 import settings_page
 import settings_ui as ui
 
@@ -66,7 +67,7 @@ class SmartLockSection(settings_page._Section):
         devices = ui.group('Trusted devices', [win._slock_bt_add])
         win._slock_bt_box = devices[1]
         win._slock_wifi_add = ui.nav_row(
-            'Trust a network…', 'A saved Wi-Fi network',
+            'Trust a network…', 'The connected Wi-Fi network',
             lambda r: self._pick_ssid(win, r))
         networks = ui.group('Trusted networks', [win._slock_wifi_add])
         win._slock_wifi_box = networks[1]
@@ -92,26 +93,30 @@ class SmartLockSection(settings_page._Section):
                         '%s · %s' % (status, detail) if detail else status)
 
     def _trusted_rows(self, win, items, remove, add_row) -> list:
-        rows = [ui.row(item, 'Trusted', on_activate=lambda r, i=item:
+        """``items``: (entry, title, subtitle) per trusted entry."""
+        rows = [ui.row(title, subtitle, on_activate=lambda r, i=entry, t=title:
                        win.item_actions._show_action_menu(
-                           r, item, [('Remove', lambda: remove(win, i)),
-                                     ('Cancel', lambda: None)]))
-                for item in items]
+                           r, t, [('Remove', lambda: remove(win, i)),
+                                  ('Cancel', lambda: None)]))
+                for entry, title, subtitle in items]
         return rows + [add_row]
 
     def _render_bt(self, win) -> None:
         box = getattr(win, '_slock_bt_box', None)
         if box is None:
             return
-        ui.fill(box, self._trusted_rows(win, trusted_bt(win), self._remove_bt,
+        items = [(entry, entry, 'Trusted') for entry in trusted_bt(win)]
+        ui.fill(box, self._trusted_rows(win, items, self._remove_bt,
                                         win._slock_bt_add))
 
     def _render_wifi(self, win) -> None:
         box = getattr(win, '_slock_wifi_box', None)
         if box is None:
             return
-        ui.fill(box, self._trusted_rows(win, trusted_ssids(win),
-                                        self._remove_ssid,
+        items = [(entry, str(entry.get('ssid', '')),
+                  str(entry.get('bssid', '')))
+                 for entry in trusted_ssids(win) if isinstance(entry, dict)]
+        ui.fill(box, self._trusted_rows(win, items, self._remove_ssid,
                                         win._slock_wifi_add))
 
     def _remove_bt(self, win, address: str) -> None:
@@ -124,9 +129,9 @@ class SmartLockSection(settings_page._Section):
         self._render_bt(win)
         self._render_status(win)
 
-    def _remove_ssid(self, win, ssid: str) -> None:
+    def _remove_ssid(self, win, network: dict) -> None:
         try:
-            kept = [entry for entry in trusted_ssids(win) if entry != ssid]
+            kept = [entry for entry in trusted_ssids(win) if entry != network]
             win.config.set_smart_lock_wifi_ssids(kept)
         except Exception:
             pass
@@ -134,21 +139,15 @@ class SmartLockSection(settings_page._Section):
         self._render_status(win)
 
     def _pick_bt_device(self, win, anchor) -> None:
-        try:
-            run_bg = win._run_bg
-        except AttributeError:
-            return
-        import system_settings
-        run_bg(system_settings.list_bt_devices,
-               lambda devices: self._show_bt_picker(win, anchor, devices))
+        import smart_lock
+        smart_lock.query_bonded_bt_devices(
+            lambda devices: self._show_bt_picker(win, anchor, devices))
 
     def _show_bt_picker(self, win, anchor, devices) -> None:
         if devices is None:
             self._announce(win, 'Bluetooth unavailable.')
             return
-        paired = [dev for dev in devices
-                  if getattr(dev, 'paired', False)]
-        if not paired:
+        if not devices:
             self._announce(win, 'No paired devices — pair in Bluetooth.')
             return
         actions = getattr(win, 'item_actions', None)
@@ -156,13 +155,18 @@ class SmartLockSection(settings_page._Section):
             return
         known = {str(entry).strip().upper() for entry in trusted_bt(win)}
         choices = [(_device_label(dev),
-                    lambda dev=dev: self._add_bt(win, dev.address))
-                   for dev in paired
+                    lambda dev=dev: self._confirm_bt(win, anchor, dev))
+                   for dev in devices
                    if str(getattr(dev, 'address', '')).strip().upper() not in known]
         if not choices:
             self._announce(win, 'Every paired device is trusted.')
             return
         actions._show_action_menu(anchor, 'Trust a device', choices)
+
+    def _confirm_bt(self, win, anchor, dev) -> None:
+        settings_lock.ask_pin(
+            win, anchor, 'Trust %s' % _device_label(dev), 'Trust',
+            lambda: self._add_bt(win, dev.address))
 
     def _add_bt(self, win, address: str) -> None:
         try:
@@ -174,32 +178,33 @@ class SmartLockSection(settings_page._Section):
         self._render_status(win)
 
     def _pick_ssid(self, win, anchor) -> None:
-        try:
-            run_bg = win._run_bg
-        except AttributeError:
-            return
-        import system_settings
-        run_bg(system_settings.saved_wifi_ssids,
-               lambda ssids: self._show_ssid_picker(win, anchor, ssids))
+        import smart_lock
+        smart_lock.query_connected_wifi(
+            lambda ap: self._show_ssid_picker(win, anchor, ap))
 
-    def _show_ssid_picker(self, win, anchor, ssids) -> None:
-        if ssids is None:
+    def _show_ssid_picker(self, win, anchor, ap) -> None:
+        """Trust the access point the phone is connected to right now."""
+        if ap is None:
             self._announce(win, 'NetworkManager unavailable.')
             return
-        known = set(trusted_ssids(win))
-        choices = [(ssid, lambda ssid=ssid: self._add_ssid(win, ssid))
-                   for ssid in ssids if ssid not in known]
-        if not choices:
-            self._announce(win, 'No other saved networks.')
+        if not ap:
+            self._announce(win, 'Connect to the Wi-Fi network first.')
             return
-        actions = getattr(win, 'item_actions', None)
-        if actions is None:
+        if not ap.get('secure'):
+            self._announce(win, 'Open networks cannot be trusted.')
             return
-        actions._show_action_menu(anchor, 'Trust a network', choices)
+        network = {'ssid': ap['ssid'], 'bssid': ap['bssid']}
+        if network in trusted_ssids(win):
+            self._announce(win, 'This network is trusted.')
+            return
+        settings_lock.ask_pin(
+            win, anchor, 'Trust %s' % network['ssid'], 'Trust',
+            lambda: self._add_ssid(win, network))
 
-    def _add_ssid(self, win, ssid: str) -> None:
+    def _add_ssid(self, win, network: dict) -> None:
         try:
-            win.config.set_smart_lock_wifi_ssids(trusted_ssids(win) + [ssid])
+            win.config.set_smart_lock_wifi_ssids(
+                trusted_ssids(win) + [network])
         except Exception:
             pass
         self._render_wifi(win)

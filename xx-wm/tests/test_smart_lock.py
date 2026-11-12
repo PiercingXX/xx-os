@@ -28,6 +28,8 @@ from smart_lock import (
 
 NOW = 1_700_000_000.0
 BT = 'AA:BB:CC:DD:EE:FF'
+BSSID = '11:22:33:44:55:66'
+HOME = {'ssid': 'Home', 'bssid': BSSID}
 
 
 @pytest.fixture(autouse=True)
@@ -145,24 +147,54 @@ class FakeBus:
         raise KeyError(member)
 
 
-def _bluez_objects(devices):
-    """devices: (path, address, connected, alias-or-None)."""
-    return {
-        path: {'org.bluez.Device1': {
-            'Address': address, 'Connected': connected, 'Alias': alias,
-        }}
-        for path, address, connected, alias in devices
-    }
+def _bluez_objects(devices, adapter=True):
+    """devices: (path, address, connected, alias-or-None[, bonded]).
+    Shaped like BlueZ: a connected device is Paired+Bonded with services
+    resolved and AVRCP up; an adapter object sits next to the devices."""
+    objects = {}
+    if adapter:
+        objects['/org/bluez/hci0'] = {'org.bluez.Adapter1': {
+            'Address': '00:00:00:00:00:01', 'Powered': True}}
+    for path, address, connected, alias, *rest in devices:
+        bonded = rest[0] if rest else True
+        objects[path] = {
+            'org.bluez.Device1': {
+                'Address': address, 'Connected': connected, 'Alias': alias,
+                'Paired': bonded, 'Bonded': bonded,
+                'ServicesResolved': connected,
+            },
+            'org.bluez.MediaControl1': {'Connected': connected},
+        }
+    return objects
+
+
+_WPA2_PSK = 0x100 | 0x8 | 0x80    # key-mgmt PSK, pair/group CCMP
 
 
 def _nm_objects(connections):
-    """connections: (path, ssid, type, state)."""
-    return {
-        path: {'org.freedesktop.NetworkManager.Connection.Active': {
-            'Id': ssid, 'Type': ctype, 'State': state,
+    """connections: (path, ssid, type, state[, bssid[, rsn_flags]]).
+    Shaped like NetworkManager's /org/freedesktop ObjectManager: the
+    active connection names its device, the device its access point."""
+    objects = {}
+    for index, (path, ssid, ctype, state, *rest) in enumerate(connections):
+        bssid = rest[0] if rest else BSSID
+        rsn = rest[1] if len(rest) > 1 else _WPA2_PSK
+        device = '/org/freedesktop/NetworkManager/Devices/%d' % (index + 3)
+        ap = '/org/freedesktop/NetworkManager/AccessPoint/%d' % (index + 7)
+        objects[path] = {'org.freedesktop.NetworkManager.Connection.Active': {
+            'Id': ssid, 'Type': ctype, 'State': state, 'Devices': [device],
+            'SpecificObject': ap,
         }}
-        for path, ssid, ctype, state in connections
-    }
+        objects[device] = {
+            'org.freedesktop.NetworkManager.Device': {'Interface': 'wlan0'},
+            'org.freedesktop.NetworkManager.Device.Wireless': {
+                'ActiveAccessPoint': ap},
+        }
+        objects[ap] = {'org.freedesktop.NetworkManager.AccessPoint': {
+            'Ssid': list(ssid.encode()), 'HwAddress': bssid,
+            'Flags': 1 if rsn else 0, 'WpaFlags': 0, 'RsnFlags': rsn,
+        }}
+    return objects
 
 
 class _StubConfig:
@@ -192,6 +224,9 @@ class _StubConfig:
     def record_smart_lock_pin_time(self, timestamp):
         self._last_pin = timestamp
         self.recorded.append(timestamp)
+
+    def set_smart_lock_bt_devices(self, addresses):
+        self._bt = list(addresses)
 
     def verify_pin(self, pin):
         return self.pin_hash is not None and pin == '123456'
@@ -312,8 +347,16 @@ class TestSanitizers:
         assert smart_lock.sanitize_bt_devices(None) == []
 
     def test_ssids_verbatim_and_case_sensitive(self):
-        assert smart_lock.sanitize_ssids(['Home', 'home', '', None]) == [
-            'Home', 'home']
+        lower = {'ssid': 'home', 'bssid': BSSID.lower()}
+        assert smart_lock.sanitize_ssids([HOME, lower, HOME]) == [
+            HOME, {'ssid': 'home', 'bssid': BSSID}]
+
+    def test_name_only_and_malformed_entries_dropped(self):
+        """Old configs stored bare names: they disappear, nothing crashes."""
+        assert smart_lock.sanitize_ssids([
+            'Home', '', None, {'ssid': 'Home'}, {'bssid': BSSID},
+            {'ssid': '', 'bssid': BSSID}, {'ssid': 'Home', 'bssid': 'nope'},
+            {'ssid': 'Home', 'bssid': 7}, HOME]) == [HOME]
 
     def test_ssids_reject_non_lists(self):
         assert smart_lock.sanitize_ssids('Home') == []
@@ -387,10 +430,10 @@ class TestPinGates:
     def test_is_configured_needs_a_non_empty_list(self):
         assert is_configured(_StubConfig()) is False
         assert is_configured(_StubConfig(bt=[BT])) is True
-        assert is_configured(_StubConfig(ssids=['Home'])) is True
+        assert is_configured(_StubConfig(ssids=[HOME])) is True
 
     def test_stale_clock_flows_through_current_state(self):
-        config = _StubConfig(ssids=['Home'], last_pin=NOW - 5 * 3600)
+        config = _StubConfig(ssids=[HOME], last_pin=NOW - 5 * 3600)
         note_pin_unlock(config, now=NOW - 5 * 3600)
         mon, bus = _monitor(config)
         smart_lock._LIVE = mon
@@ -549,14 +592,14 @@ class TestBlueZTrust:
 
 class TestNetworkManagerTrust:
     def test_activated_trusted_ssid_grants_trust(self):
-        mon, bus = _monitor(_StubConfig(ssids=['Home']))
+        mon, bus = _monitor(_StubConfig(ssids=[HOME]))
         bus.answer(0, _bluez_objects([]))
         bus.answer(1, _nm_objects([('/a/0', 'Home', '802-11-wireless', 2)]))
         assert mon.trusted_ssid == 'Home'
         mon.stop()
 
     def test_activating_or_wired_or_unknown_ssid_ignored(self):
-        mon, bus = _monitor(_StubConfig(ssids=['Home']))
+        mon, bus = _monitor(_StubConfig(ssids=[HOME]))
         bus.answer(0, _bluez_objects([]))
         bus.answer(1, _nm_objects([
             ('/a/0', 'Home', '802-11-wireless', 1),
@@ -567,7 +610,7 @@ class TestNetworkManagerTrust:
         mon.stop()
 
     def test_nm_property_change_requeries(self):
-        mon, bus = _monitor(_StubConfig(ssids=['Home']))
+        mon, bus = _monitor(_StubConfig(ssids=[HOME]))
         bus.answer(0, _bluez_objects([]))
         bus.answer(1, _nm_objects([]))
         assert mon.trusted_ssid is None
@@ -586,7 +629,7 @@ class TestNetworkManagerTrust:
         mon.stop()
 
     def test_active_connection_state_change_requeries(self):
-        mon, bus = _monitor(_StubConfig(ssids=['Home']))
+        mon, bus = _monitor(_StubConfig(ssids=[HOME]))
         bus.answer(0, _bluez_objects([]))
         bus.answer(1, _nm_objects([]))
         calls_before = len(bus.calls)
@@ -600,7 +643,7 @@ class TestNetworkManagerTrust:
         mon.stop()
 
     def test_unrelated_nm_signal_ignored(self):
-        mon, bus = _monitor(_StubConfig(ssids=['Home']))
+        mon, bus = _monitor(_StubConfig(ssids=[HOME]))
         bus.answer(0, _bluez_objects([]))
         bus.answer(1, _nm_objects([]))
         calls_before = len(bus.calls)
@@ -931,13 +974,24 @@ class TestSmartLockConfig:
     def test_setters_round_trip_and_normalize(self):
         config = self._config()
         config.set_smart_lock_bt_devices(['aa:bb:cc:dd:ee:ff'])
-        config.set_smart_lock_wifi_ssids(['Home'])
+        config.set_smart_lock_wifi_ssids(
+            [{'ssid': 'Home', 'bssid': BSSID.lower()}])
         assert config.smart_lock_bt_devices == [BT]
-        assert config.smart_lock_wifi_ssids == ['Home']
+        assert config.smart_lock_wifi_ssids == [HOME]
         assert is_configured(config) is True
         reread = self._config()
         assert reread.smart_lock_bt_devices == [BT]
-        assert reread.smart_lock_wifi_ssids == ['Home']
+        assert reread.smart_lock_wifi_ssids == [HOME]
+
+    def test_old_name_only_config_loads_unconfigured(self):
+        import json
+        config = self._config()
+        config.config_dir.mkdir(parents=True, exist_ok=True)
+        config.config_path.write_text(json.dumps(
+            {'smart_lock_wifi_ssids': ['Home', 'Work']}), encoding='utf-8')
+        old = self._config()
+        assert old.smart_lock_wifi_ssids == []
+        assert is_configured(old) is False
 
     def test_corrupt_values_fail_soft(self):
         config = self._config()
@@ -955,11 +1009,11 @@ class TestSmartLockConfig:
         import backup
         config = self._config()
         config.set_smart_lock_bt_devices([BT])
-        config.set_smart_lock_wifi_ssids(['Home'])
+        config.set_smart_lock_wifi_ssids([HOME])
         config.record_smart_lock_pin_time(NOW)
         exported = backup.export_backup(config)
         assert exported['smart_lock_bt_devices'] == [BT]
-        assert exported['smart_lock_wifi_ssids'] == ['Home']
+        assert exported['smart_lock_wifi_ssids'] == [HOME]
         assert 'smart_lock_last_pin_time' not in exported
         ok, error = backup.validate_backup(exported)
         assert ok, error
@@ -968,5 +1022,5 @@ class TestSmartLockConfig:
         exported['smart_lock_last_pin_time'] = 999.0
         assert backup.restore_backup(fresh, exported) is True
         assert fresh.smart_lock_bt_devices == [BT]
-        assert fresh.smart_lock_wifi_ssids == ['Home']
+        assert fresh.smart_lock_wifi_ssids == [HOME]
         assert fresh.smart_lock_last_pin_time == 123.0

@@ -169,11 +169,20 @@ implemented — there is no reliable on-body sensor on this hardware.
 
 Trust agents:
 
-- A trusted Bluetooth device is currently connected (BlueZ
-  `org.bluez.Device1` `Connected` for an address in
-  `smart_lock_bt_devices`).
-- The phone is connected to a trusted Wi-Fi network (the active
-  NetworkManager connection's SSID is in `smart_lock_wifi_ssids`).
+- A trusted Bluetooth device is connected: its BlueZ `org.bluez.Device1`
+  is `Paired`, `Bonded`, `Connected` and `ServicesResolved`, and a profile
+  is up over the link (an audio transport, AVRCP, PAN or HID), for an
+  address in `smart_lock_bt_devices`. An address whose device BlueZ no
+  longer holds a bond for (unpaired) is removed from the list.
+- The phone is connected to a trusted Wi-Fi access point: the active
+  NetworkManager Wi-Fi connection's access point has the SSID and BSSID
+  of an entry in `smart_lock_wifi_ssids` and needs a key (WPA/WPA2/WPA3
+  personal or enterprise). Open, OWE and WEP networks never count and
+  cannot be added.
+
+Adding a device or network in Settings › Smart Lock asks for the PIN
+first; Settings only offers bonded devices and the access point the
+phone is connected to. Removing trust needs no PIN.
 
 Even inside trust, the PIN is always required: after boot until the
 first successful PIN unlock, when the last successful PIN unlock was
@@ -189,7 +198,7 @@ reason otherwise — but only while Smart Lock is configured.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `smart_lock_bt_devices` | list | `[]` | Trusted Bluetooth addresses (`AA:BB:CC:DD:EE:FF`; matched case-insensitively). Included in backups. |
-| `smart_lock_wifi_ssids` | list | `[]` | Trusted Wi-Fi SSIDs (matched verbatim — SSIDs are case-sensitive). Included in backups. |
+| `smart_lock_wifi_ssids` | list | `[]` | Trusted Wi-Fi access points as `{"ssid": "Home", "bssid": "AA:BB:CC:DD:EE:FF"}` objects (SSID matched verbatim — SSIDs are case-sensitive; BSSID case-insensitively). A mesh or multi-AP network needs one entry per access point. Plain network-name strings from older versions are ignored (trust by name alone is gone); add the network again in Settings. Included in backups. |
 | `smart_lock_last_pin_time` | float | `0.0` | Wall-clock epoch of the last successful PIN unlock (the 4-hour clock). Written automatically; device-local transient — never exported in backups and never overwritten by a restore. |
 
 ### App standby & battery saver
