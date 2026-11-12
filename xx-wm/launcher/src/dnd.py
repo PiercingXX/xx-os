@@ -41,6 +41,22 @@ _log = get_logger('dnd')
 
 REPEAT_CALLER_WINDOW = 15 * 60
 
+# Only an alarm category passes DnD and Focus. Critical urgency alone does
+# not: any app can ask for it.
+ALARM_CATEGORY = 'alarm'
+
+
+def is_alarm_notification(hints: object) -> bool:
+    """True for a notification whose category is 'alarm' (or 'alarm.*')."""
+    if not isinstance(hints, dict):
+        return False
+    category = hints.get('category', '')
+    if not isinstance(category, str):
+        return False
+    category = category.strip().casefold()
+    return (category == ALARM_CATEGORY
+            or category.startswith(ALARM_CATEGORY + '.'))
+
 
 def normalize_number(number: str) -> str:
     """Digits only (a leading '+' is dropped); for display/keys, not matching."""

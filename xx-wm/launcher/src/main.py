@@ -654,9 +654,8 @@ class XXWMApplication(Adw.Application):
             _log.debug('notification %d dropped: %s is muted', notif_id, desktop_entry or app_name)
             return
 
-        category = str(hints.get('category', ''))
-        urgency = hints.get('urgency', 1)
-        is_alarm = category.startswith('alarm') or urgency == 2
+        from dnd import is_alarm_notification
+        is_alarm = is_alarm_notification(hints)
 
         # Nope: notifications from blocked apps are dropped outright —
         # never held, never shown (Android fallback cancels them).

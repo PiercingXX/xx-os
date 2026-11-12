@@ -274,5 +274,60 @@ class TestNotificationLogging:
         assert 'from the bank' not in text
 
 
+class _Dnd:
+    def __init__(self, active=True):
+        self.active = active
+
+    def is_active(self):
+        return self.active
+
+
+class _Focus:
+    def __init__(self, apps=(), active=True):
+        self.apps = set(apps)
+        self.active = active
+
+    def is_active(self):
+        return self.active
+
+    def is_paused_app(self, app_id):
+        return bool(app_id) and self.active and app_id in self.apps
+
+    def is_paused_sender(self, desktop_entry, app_name, name_of=None):
+        return self.active and bool(
+            {desktop_entry, app_name} & self.apps)
+
+
+class TestOnlyAlarmsPassDndAndFocus:
+    def _route(self, hints, entry='org.example.Chat', focus=None):
+        app = _app()
+        banners: list = []
+        app._maybe_banner = lambda *a, **k: banners.append(k)
+        app._shell = _shell(dnd_state=_Dnd(), focus_state=focus)
+        app._on_notification(3, 'Chat', 'S', 'B', entry, hints)
+        return app, banners
+
+    def test_critical_urgency_alone_is_not_an_alarm(self):
+        _app_, banners = self._route({'urgency': 2})
+        assert banners[0]['is_alarm'] is False
+
+    def test_alarm_category_is_an_alarm(self):
+        for category in ('alarm', 'alarm.ringing'):
+            _app_, banners = self._route(
+                {'category': category, 'urgency': 2})
+            assert banners[0]['is_alarm'] is True
+
+    def test_lookalike_categories_are_not(self):
+        for category in ('alarmist', 'im.alarm', 'x-alarm'):
+            _app_, banners = self._route({'category': category})
+            assert banners[0]['is_alarm'] is False
+
+    def test_critical_from_a_paused_app_is_held(self):
+        focus = _Focus(apps={'org.example.Chat'})
+        app, banners = self._route({'urgency': 2}, focus=focus)
+        assert banners == []
+        assert len(app._held_notifications) == 1
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

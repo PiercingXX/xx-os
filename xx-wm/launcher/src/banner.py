@@ -92,9 +92,10 @@ def should_show_banner(
 
     Suppressed for shell-internal ids, the x-xx-wm-no-banner hint, low
     urgency, a visible lock screen, an open notification shade (the card
-    would cover the shade header redundantly), and DnD (alarms/urgency 2
-    punch through). Muted apps and Focus-held notifications never reach
-    here: main.py drops those before the shade, same as sounds.
+    would cover the shade header redundantly), and DnD (only alarms
+    punch through; critical urgency alone does not). Muted apps and
+    Focus-held notifications never reach here: main.py drops those
+    before the shade, same as sounds.
     """
     try:
         nid = int(notif_id)
@@ -111,7 +112,7 @@ def should_show_banner(
         return False
     if shade_visible:
         return False
-    if dnd_active and not (is_alarm or urg == 2):
+    if dnd_active and not is_alarm:
         return False
     return True
 

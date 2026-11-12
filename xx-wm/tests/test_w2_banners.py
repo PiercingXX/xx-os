@@ -102,9 +102,9 @@ class TestBannerPolicy:
         assert banner.should_show_banner(
             True, True, 1, False, {}, 42) is True
 
-    def test_dnd_urgency2_punches_through(self):
+    def test_dnd_urgency2_alone_stays_silent(self):
         assert banner.should_show_banner(
-            True, False, 2, False, {}, 42) is True
+            True, False, 2, False, {}, 42) is False
 
     def test_low_urgency_never_banners(self):
         assert banner.should_show_banner(
