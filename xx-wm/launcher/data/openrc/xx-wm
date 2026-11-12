@@ -12,7 +12,10 @@ command_user="${XX_WM_USER}"
 command_background=false
 supervisor=supervise-daemon
 respawn_delay=2
-respawn_max=0
+# The wrapper respawns a crashing shell itself and exits non-zero only
+# when it crash-loops at startup: retry that a few times, then stop.
+respawn_max=3
+respawn_period=600
 output_log="/var/log/xx-wm.log"
 error_log="/var/log/xx-wm.log"
 
@@ -23,11 +26,16 @@ depend() {
 }
 
 start_pre() {
+    # Never fall back to root: a missing user would otherwise run the
+    # whole session as root.
+    if ! _uid=$(id -u "${XX_WM_USER}" 2>/dev/null) || [ "$_uid" = 0 ]; then
+        eerror "XX_WM_USER='${XX_WM_USER}' is not a regular user; set it in /etc/conf.d/xx-wm"
+        return 1
+    fi
     checkpath -f -o "${XX_WM_USER}" "$output_log"
     # Without an active logind session nothing creates the per-user
     # runtime dir: make it here so the shell (and its IPC socket) lands
     # in the same place it does under systemd.
-    _uid=$(id -u "${XX_WM_USER}" 2>/dev/null || id -u)
     _rdir="/run/user/${_uid}"
     mkdir -p "$_rdir" 2>/dev/null || true
     chown "${_uid}" "$_rdir" 2>/dev/null || true

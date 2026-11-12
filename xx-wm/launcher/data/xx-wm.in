@@ -183,6 +183,9 @@ _xx_session_end() {
     # and the session-start instance is this wrapper's child): kill it or
     # every bezel gesture fires twice on the next login.
     pkill -x -U "$(id -u)" lisgd 2>/dev/null || true
+    if [ -n "${_xx_log_watch:-}" ]; then
+        kill "$_xx_log_watch" 2>/dev/null || true
+    fi
 }
 
 # Do not exec python: phoc -E must keep this wrapper as its client.
@@ -191,7 +194,7 @@ _xx_session_end() {
 # then returns 0. Do not use those signals for iterate — 0 is session end.
 _child=
 _xx_wm_cleanup() {
-    trap - TERM INT
+    trap - TERM INT HUP
     if [ -n "$_child" ]; then
         kill "$_child" 2>/dev/null || true
         wait "$_child" 2>/dev/null || true
@@ -199,13 +202,16 @@ _xx_wm_cleanup() {
     _xx_session_end
     exit 0
 }
-trap '_xx_wm_cleanup' TERM INT
+trap '_xx_wm_cleanup' TERM INT HUP
 
 _xx_session_begin
 
 # Shell stderr goes to a rotated log, not phoc's /dev/tty7: the wrapper's
 # python child would otherwise inherit a bare-phone stderr and every
-# traceback would vanish. Rotated at each (re)spawn past 1 MB.
+# traceback would vanish. Apps the shell starts inherit the same stderr
+# and outlive shell restarts, so the log is copied to .1 and truncated
+# in place (writers hold it O_APPEND and carry on at the new end) at
+# each (re)spawn and every few minutes while the session runs.
 _xx_err_log="$HOME/.local/share/xx-wm/stderr.log"
 _xx_rotate_err_log() {
     [ -f "$_xx_err_log" ] || return 0
@@ -214,11 +220,25 @@ _xx_rotate_err_log() {
         ''|*[!0-9]*) return 0 ;;
     esac
     if [ "$_size" -gt 1048576 ]; then
-        mv -f "$_xx_err_log" "$_xx_err_log.1" 2>/dev/null || true
+        cp -f "$_xx_err_log" "$_xx_err_log.1" 2>/dev/null && \
+            : >"$_xx_err_log"
     fi
+    return 0
 }
+_xx_wrapper=$$
+(
+    trap 'kill "$_xx_nap" 2>/dev/null; exit 0' TERM
+    while kill -0 "$_xx_wrapper" 2>/dev/null; do
+        sleep "${XX_WM_ERR_LOG_CHECK:-300}" &
+        _xx_nap=$!
+        wait "$_xx_nap"
+        _xx_rotate_err_log
+    done
+) &
+_xx_log_watch=$!
 
 _backoff=1
+_fast_crashes=0
 # phoc started this wrapper as its client (`phoc -E .../xx-wm`). When the
 # compositor is gone a respawned shell would attach to the next login's
 # compositor and race it, so every pass checks the parent is still alive.
@@ -252,7 +272,20 @@ while :; do
         _backoff=1
         continue
     fi
-    [ $(( $(date +%s) - _started )) -ge 60 ] && _backoff=1
+    # A shell that keeps dying at startup will not come up: end the
+    # session with its status (phoc exits with us; systemd and OpenRC
+    # see a failure) instead of retrying behind a black screen forever.
+    if [ $(( $(date +%s) - _started )) -ge 60 ]; then
+        _backoff=1
+        _fast_crashes=0
+    else
+        _fast_crashes=$(( _fast_crashes + 1 ))
+    fi
+    if [ "$_fast_crashes" -ge "${XX_WM_MAX_FAST_CRASHES:-6}" ]; then
+        echo "xx-wm: shell exited with status $_st $_fast_crashes times in a row within a minute; ending the session" >&2
+        _xx_session_end
+        exit "$_st"
+    fi
     echo "xx-wm: shell exited with status $_st; restarting in ${_backoff}s" >&2
     sleep "$_backoff"
     _backoff=$(( _backoff * 2 ))

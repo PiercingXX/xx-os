@@ -551,10 +551,10 @@ build_install() {
     install_fonts
     install_logind_dropin
     select_phoc_scale || return 1
-    enable_service
+    _build_status=0
+    enable_service || _build_status=1
     setup_greeter
-    add_input_group
-    _build_status=$?
+    add_input_group || _build_status=1
     refresh_icon_caches
     # Resident suite processes still run the old code until they restart;
     # refresh them now so the new code shows without a reboot. Best
@@ -1034,11 +1034,14 @@ write_openrc_conf() {
 }
 
 enable_service() {
+    _es_status=0
     if is_systemd; then
         systemctl --user daemon-reload 2>/dev/null || true
         # Re-apply the saved charge limit and network blocks at boot.
-        $SUDO systemctl enable xx-wm-helper-boot.service 2>/dev/null || \
+        $SUDO systemctl enable xx-wm-helper-boot.service 2>/dev/null || {
             echo "warn: enable xx-wm-helper-boot.service failed" >&2
+            _es_status=1
+        }
         if [ -f /usr/share/wayland-sessions/xx-wm.desktop ]; then
             # Idempotent: a previous install.sh always-enabled the unit.
             # --now stops a running duplicate if we are somehow inside a session.
@@ -1054,13 +1057,18 @@ enable_service() {
     elif has_openrc; then
         # OpenRC hosts (older pmOS images): no systemd unit to fight with.
         write_openrc_conf
-        $SUDO rc-update add xx-wm default 2>/dev/null || \
+        $SUDO rc-update add xx-wm default 2>/dev/null || {
             echo "warn: rc-update add xx-wm default failed" >&2
-        $SUDO rc-update add xx-wm-helper-boot boot 2>/dev/null || \
+            _es_status=1
+        }
+        $SUDO rc-update add xx-wm-helper-boot boot 2>/dev/null || {
             echo "warn: rc-update add xx-wm-helper-boot boot failed" >&2
+            _es_status=1
+        }
     else
         echo "warn: no supported init detected (neither systemd nor OpenRC) — start xx-wm-session from your display manager" >&2
     fi
+    return $_es_status
 }
 
 # --- GDM Colemak OSK (24) ---------------------------------------------------

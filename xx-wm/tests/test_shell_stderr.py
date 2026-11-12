@@ -2,8 +2,8 @@
 
 The wrapper's python child used to inherit phoc's stderr (/dev/tty7), so
 tracebacks vanished on a phone. The wrapper now redirects stderr to
-~/.local/share/xx-wm/stderr.log with rotation past 1 MB at each
-(re)spawn, the README documents it, and xxdb logcat tails it alongside
+~/.local/share/xx-wm/stderr.log, copied to stderr.log.1 and truncated
+past 1 MB at each (re)spawn and every few minutes, the README documents it, and xxdb logcat tails it alongside
 shell.log.
 """
 import re
@@ -92,8 +92,9 @@ class TestRotationBehavior:
     def test_large_log_rotates(self, tmp_path):
         _run_rotate_harness(tmp_path, 1_200_000)
         log_dir = tmp_path / '.local' / 'share' / 'xx-wm'
-        assert (log_dir / 'stderr.log.1').is_file()
-        assert not (log_dir / 'stderr.log').exists()
+        assert (log_dir / 'stderr.log.1').stat().st_size == 1_200_000
+        # Copy-truncate: apps holding the log keep writing to stderr.log.
+        assert (log_dir / 'stderr.log').read_bytes() == b''
 
     def test_small_log_kept(self, tmp_path):
         _run_rotate_harness(tmp_path, 100)

@@ -3,6 +3,10 @@ Description=XX-WM Shell
 Documentation=https://github.com/piercingxx/linux-phone
 PartOf=graphical-session.target
 After=graphical-session.target
+# The wrapper respawns a crashing shell itself and exits non-zero only
+# when it crash-loops at startup: retry that a few times, then stop.
+StartLimitIntervalSec=600
+StartLimitBurst=3
 
 [Service]
 Type=simple

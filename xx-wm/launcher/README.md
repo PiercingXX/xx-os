@@ -110,9 +110,14 @@ ps -p 1                            # systemd or OpenRC?
 ## Troubleshooting
 
 - Shell stderr (tracebacks): the session wrapper redirects the shell's
-  stderr to `~/.local/share/xx-wm/stderr.log`, rotated to `stderr.log.1`
-  past 1 MB at each restart — phoc's own stderr is `/dev/tty7`, so
-  without this tracebacks vanish on a phone. The structured shell log
+  stderr to `~/.local/share/xx-wm/stderr.log`, copied to `stderr.log.1`
+  and truncated past 1 MB at each restart and every five minutes (apps
+  the shell starts write there too) — phoc's own stderr is `/dev/tty7`,
+  so without this tracebacks vanish on a phone.
+- Session ends right after login: the wrapper restarts a crashing shell
+  with a growing delay, but after six crashes in a row, each within a
+  minute of starting, it ends the session with the shell's exit status
+  (look in `stderr.log` for the traceback). The structured shell log
   stays at `~/.local/share/xx-wm/shell.log`.
 - From a paired host, `xxdb logcat` tails both logs (`[shell.log]` and
   `[stderr.log]` sources) plus the journal snapshot.
