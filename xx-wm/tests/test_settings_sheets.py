@@ -121,10 +121,8 @@ class TestParityConfig:
         assert cfg.home_slot_count is None
         assert cfg.effective_slot_count() == 3
         assert len(cfg.visible_home_slots()) == 3
-        assert cfg.empty_home_slots() == 0
         cfg.set_home_slot_count(5)
         assert cfg.visible_home_slots() == cfg.home_slots
-        assert cfg.empty_home_slots() == 2
         cfg.set_home_slot_count(2)
         assert [s['label'] for s in cfg.visible_home_slots()] == ['A', 'B']
         assert len(cfg.home_slots) == 3  # past the count stays stored
@@ -316,7 +314,6 @@ class TestHomeSlotCount:
         HomePage(win)._add_app_slot(self._entry('C'))
         assert [s['label'] for s in win.config.home_slots] == ['A', 'B', 'C']
         assert win.config.home_slot_count == 4
-        assert win.config.empty_home_slots() == 1
 
     def test_add_past_a_full_count_grows_it(self, home):
         from home_page import HomePage
@@ -333,26 +330,35 @@ class TestHomeSlotCount:
         win.config.set_home_slot_count(2)
         HomePage(win)._remove_slot(0)
         assert win.config.home_slot_count == 1
-        assert win.config.empty_home_slots() == 0
 
-    def test_launcher_renders_placeholders(self):
+    def test_launcher_draws_no_placeholder_rows(self):
+        # design.md: slots compact (no gaps), and edit rows carry the
+        # folder's name only, no decorative arrow.
         pytest.importorskip('gi')
-        from home_launcher import EMPTY_SLOT_TEXT, HomeLauncher
-        tapped = []
-        launcher = HomeLauncher(
-            get_slots_fn=lambda: [{'type': 'app', 'label': 'A'}],
-            get_empty_count_fn=lambda: 2,
-            on_empty_tap=lambda: tapped.append(1))
+        from gi.repository import Gtk
+        from home_launcher import HomeLauncher
+        slots = [{'type': 'app', 'label': 'A'},
+                 {'type': 'folder', 'label': 'Tools', 'folder': []}]
+        import inspect
+        assert 'get_empty_count_fn' not in inspect.signature(
+            HomeLauncher).parameters
+        launcher = HomeLauncher(get_slots_fn=lambda: slots)
         rows = []
         child = launcher.get_first_child()
         while child is not None:
             rows.append(child)
             child = child.get_next_sibling()
-        texts = [row.get_child().get_text() for row in rows]
-        assert texts == ['A', EMPTY_SLOT_TEXT, EMPTY_SLOT_TEXT]
-        assert rows[1].has_css_class('empty-slot')
-        rows[2].emit('clicked')
-        assert tapped == [1]
+        assert len(rows) == 2
+        launcher.set_edit_mode(True)
+        texts = []
+        child = launcher.get_first_child()
+        while child is not None:
+            name = child.get_first_child()
+            if isinstance(name, Gtk.Button):
+                texts.append(name.get_label() or '')
+            child = child.get_next_sibling()
+        assert 'Tools' in texts
+        assert not any('›' in t or '·' in t for t in texts)
 
 
 # ---------------------------------------------------------------------------

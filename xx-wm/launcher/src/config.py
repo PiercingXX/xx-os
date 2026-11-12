@@ -1177,13 +1177,6 @@ class ShellConfig:
         count = self.home_slot_count
         return slots if count is None else slots[:count]
 
-    def empty_home_slots(self) -> int:
-        """Placeholder rows ("· · ·") under the filled visible slots."""
-        count = self.home_slot_count
-        if count is None:
-            return 0
-        return max(0, count - len(self.home_slots))
-
     @property
     def date_time_mode(self) -> str:
         value = self.data.get('date_time_mode', 'date_time')

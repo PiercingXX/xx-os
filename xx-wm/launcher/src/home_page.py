@@ -70,10 +70,6 @@ class HomePage:
             visible = getattr(win.config, 'visible_home_slots', None)
             return visible() if callable(visible) else win.config.home_slots
 
-        def _empty_slots() -> int:
-            empty = getattr(win.config, 'empty_home_slots', None)
-            return empty() if callable(empty) else 0
-
         def _launch_slot(slot: dict) -> None:
             win._launch_slot(slot)
 
@@ -89,8 +85,6 @@ class HomePage:
             is_paused_fn=win.focus_state.is_paused_app,
             get_alignment_fn=lambda: win.config.home_alignment,
             on_status_fn=win._show_status,
-            get_empty_count_fn=_empty_slots,
-            on_empty_tap=lambda: self._pick_empty_slot(),
         )
 
         launcher_inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -518,14 +512,6 @@ class HomePage:
         if isinstance(count, int) and index >= count:
             win.config.set_home_slot_count(index + 1)
 
-    def _pick_empty_slot(self) -> None:
-        """An empty "· · ·" slot goes straight to the app picker."""
-        win = self._win
-        win._pick_slot_mode = True
-        win._pick_slot_target = None
-        win.stack.set_visible_child_name('apps')
-        win._show_status('Tap an app to add it to home.')
-
     def _add_app_slot(self, entry: AppEntry) -> None:
         win = self._win
         slots = win.config.home_slots
@@ -586,7 +572,7 @@ class HomePage:
         count = getattr(win.config, 'home_slot_count', None)
         if isinstance(count, int) and idx < count:
             # Android's removeSlot shifts later slots up and shrinks the
-            # count, so no empty "· · ·" row is left behind.
+            # count.
             win.config.set_home_slot_count(count - 1)
         win._home_launcher.refresh(preserve_folder=True)
         win._populate_apps(win.apps_search.get_text())

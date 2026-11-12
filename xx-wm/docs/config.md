@@ -46,7 +46,7 @@ migration steps are ever required.
 |---|---|---|---|
 | `home_slots` | list | `[]` | Up to 8 slots: `{type: 'app'\|'folder', label, app_id, cmd, folder}`. `app_id` is a `.desktop` id; `cmd` an argv list for non-desktop entries; `folder` a list of `{label, app_id or cmd}` members. Seeded on first boot when empty. |
 | `home_to_recents` | bool | `false` | Pressing Home while already on home with nothing on top opens the app switcher instead of staying. |
-| `home_slot_count` | int\|null | `null` | Android "Home Slot Count" (0–8): home shows the first N slots; empty ones render as `· · ·` and a tap picks an app; slots past N stay stored. `null` (never set) shows every slot. |
+| `home_slot_count` | int\|null | `null` | Android "Home Slot Count" (0–8): home shows the first N slots, compacted (a count above the filled slots draws no placeholder rows); slots past N stay stored. `null` (never set) shows every slot. |
 | `date_time_mode` | string | `"date_time"` | Android "Date/Time Mode": `"off"` hides the clock and date widgets, `"date_only"` hides the clock, `"date_time"` shows both. |
 | `status_bar_visible` | bool | `false` | Android "Show Status Bar": the top status bar (status_bar.py) shows its clock and status glyphs. Off, the strip stays empty but still keeps apps below the camera hole. |
 | `swipe_left_enabled` / `swipe_right_enabled` | bool | `true` | Android "Enable Swipe Left/Right". Off: that side swipe on home does nothing. |
