@@ -504,9 +504,6 @@ def launcher_text_css(scale: float, home_scale: float | None = None) -> str:
 .app-name {{
     font-size: {_app};
 }}
-.app-subtitle {{
-    font-size: {_sub};
-}}
 entry.drawer-search, searchentry.drawer-search {{
     font-size: {_search};
 }}
@@ -518,7 +515,6 @@ entry.drawer-search, searchentry.drawer-search {{
         _date=_scaled_pt(12, scale if home_scale is None else home_scale),
         _dim=_scaled_pt(11.5, scale),
         _app=_scaled_pt(14, scale),
-        _sub=_scaled_pt(10.5, scale),
         _search=_scaled_pt(13, scale),
         _alpha=_scaled_pt(10, scale),
     )
@@ -539,8 +535,7 @@ _SHELL_SHEET_TEMPLATE = Template("""
     border: none;
 }
 
-.dim-label,
-.eyebrow {
+.dim-label {
     color: ${muted};
 }
 
@@ -813,12 +808,6 @@ class ShellWindow(Adw.ApplicationWindow):
         search_tap.connect('pressed', self._on_search_pressed)
         self.apps_search.add_controller(search_tap)
 
-        self.status_label = Gtk.Label(xalign=0)
-        self.status_label.add_css_class('dim-label')
-
-        self.app_count_label = Gtk.Label(xalign=0)
-        self.app_count_label.add_css_class('dim-label')
-
         self.clock_label = Gtk.Label(xalign=0)
         self.clock_label.add_css_class('display-clock')
         # An 81 pt clock at large text scales is wider than the phone:
@@ -888,12 +877,6 @@ class ShellWindow(Adw.ApplicationWindow):
         # locked when a PIN is set, and only then tells phoc (-S) to drop
         # its shield; logind lock-session requests show the lock too.
         GLib.idle_add(self._startup_lock_gate)
-        try:
-            self._attach_osk(self.apn_entry)
-            self._attach_osk(self.apn_user_entry)
-            self._attach_osk(self.apn_pass_entry)
-        except Exception:
-            pass
         self._lock_before_first_frame()
 
     def _warm_toplevel_manager(self) -> bool:
@@ -2263,7 +2246,7 @@ class ShellWindow(Adw.ApplicationWindow):
                                bottom_strip=strip)
         except Exception:
             ok = False
-        if notify and getattr(self, 'status_label', None) is not None:
+        if notify and getattr(self, 'toast_overlay', None) is not None:
             try:
                 self._show_status(
                     'System gestures updated.' if ok
@@ -2998,7 +2981,6 @@ class ShellWindow(Adw.ApplicationWindow):
         return _settings(self)._snooze_updates()
 
     def _show_status(self, message: str) -> None:
-        self.status_label.set_text(message)
         self.toast_overlay.add_toast(Adw.Toast.new(message))
     def _on_export_backup(self) -> None:
         return _settings(self)._on_export_backup()

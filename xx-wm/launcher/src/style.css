@@ -14,12 +14,6 @@ window.xx-wm paned {
   letter-spacing: 0.02em;
 }
 
-.eyebrow {
-  font-size: 11pt;
-  font-weight: 700;
-  letter-spacing: 0.22em;
-}
-
 /* Home clock: big, light, tabular like the reference launcher */
 .display-clock {
   font-size: 54pt;
@@ -71,11 +65,6 @@ entry {
   font-weight: 400;
 }
 
-.app-subtitle {
-  font-size: 10.5pt;
-}
-
-.nav-button,
 .action-link {
   font-size: 12.5pt;
 }

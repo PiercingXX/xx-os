@@ -68,7 +68,6 @@ def _drawer_page(hidden, installed, monkeypatch):
         app_index=_FakeIndex(installed),
         apps_list=_RecordingList(),
         apps_search=types.SimpleNamespace(get_text=lambda: ''),
-        app_count_label=types.SimpleNamespace(set_text=lambda _t: None),
         _sort_mode='az',
         _drawer_open_folder=None,
         _home_slot_app_ids=lambda: set(),
@@ -169,3 +168,28 @@ class TestNoConfirmationToasts:
         src = Path(__file__).parent.parent / 'launcher' / 'src' / 'window.py'
         assert 'Application index rebuilt' not in src.read_text(
             encoding='utf-8')
+
+
+class TestWindowHasNoUnshownWidgets:
+    """window.py built two labels it never put in a container (a status
+    line and an app count the drawer kept writing to) and attached the
+    keyboard to APN entries that do not exist (always AttributeError)."""
+
+    def test_no_orphan_labels_or_apn_attach(self):
+        root = Path(__file__).parent.parent / 'launcher' / 'src'
+        window_src = (root / 'window.py').read_text(encoding='utf-8')
+        drawer_src = (root / 'drawer_page.py').read_text(encoding='utf-8')
+        assert 'self.status_label' not in window_src
+        assert 'app_count_label' not in window_src + drawer_src
+        assert 'self.apn_entry' not in window_src
+
+
+class TestNoUnusedShellCss:
+    """No widget carries .eyebrow, .nav-button or .app-subtitle."""
+
+    def test_unused_classes_are_gone(self):
+        root = Path(__file__).parent.parent / 'launcher' / 'src'
+        sheets = (root / 'style.css').read_text(encoding='utf-8') + (
+            root / 'window.py').read_text(encoding='utf-8')
+        for name in ('.eyebrow', '.nav-button', '.app-subtitle'):
+            assert name not in sheets, name

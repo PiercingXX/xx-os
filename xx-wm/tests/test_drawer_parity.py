@@ -514,7 +514,6 @@ def _populate_win(entries, monkeypatch, query='', pinned=(),
         get_vadjustment=lambda: types.SimpleNamespace(
             set_value=lambda _v: None, get_value=lambda: 0.0),
         get_height=lambda: 600)
-    win.app_count_label = types.SimpleNamespace(set_text=lambda _t: None)
     win.focus_state = types.SimpleNamespace(is_paused_app=lambda _a: False)
     page = DrawerPage(win)
     made = {}

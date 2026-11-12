@@ -218,7 +218,11 @@ def test_sliders_are_not_hidden_at_build():
 def test_wifi_password_dialog_is_wired_to_osk():
     assert 'on_keyboard=self._on_entry_keyboard' in WINDOW_SRC
     assert 'def _attach_osk' in WINDOW_SRC
-    assert '_attach_osk(self.apn_pass_entry)' in WINDOW_SRC
+    # Typed values (APN, passwords) open settings_ui sheets, whose entries
+    # attach the keyboard through the window.
+    settings_ui = (ROOT / 'launcher' / 'src' / 'settings_ui.py').read_text(
+        encoding='utf-8')
+    assert "'_attach_osk'" in settings_ui
 
 
 def test_home_remaps_superseded_slots_at_start():

@@ -161,7 +161,6 @@ def test_stale_open_folder_closes_on_refresh(window, monkeypatch):
     w._last_search_results = []
     w._sort_mode = 'az'
     w.apps_list = _FakeListBox()
-    w.app_count_label = types.SimpleNamespace(set_text=lambda _t: None)
     monkeypatch.setattr(w, '_replace_rows', lambda *a, **k: None)
     monkeypatch.setattr(w, '_make_app_row', lambda e: None)
     monkeypatch.setattr(w, '_make_settings_row', lambda: None)
