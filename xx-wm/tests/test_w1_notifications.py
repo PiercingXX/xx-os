@@ -1201,6 +1201,23 @@ class TestBodyMarkup:
         assert '<b>loud</b>' in out
         assert '"hi"' not in out
 
+    def test_entities_are_escaped_once(self):
+        out = notification_shade.notif_body_to_pango_markup(
+            'Tom &amp; Jerry &lt;3')
+        assert out == 'Tom &amp; Jerry &lt;3'
+
+    def test_misnested_tags_still_render(self):
+        import gi
+        gi.require_version('Pango', '1.0')
+        from gi.repository import Pango
+        for body in ('<b><i>x</b></i>', '<i><b>x</i> y</b>',
+                     '</b>stray <u>u', 'a < b & <b>c</b>'):
+            out = notification_shade.notif_body_to_pango_markup(body)
+            ok, _attrs, text, _accel = Pango.parse_markup(out, -1, '\0')
+            assert ok and text.strip(), (body, out)
+        assert notification_shade.notif_body_to_pango_markup(
+            '<b><i>x</b></i>').startswith('<b><i>x</i></b>')
+
     def test_row_body_uses_markup_not_raw_text(self, monkeypatch):
         _pin_gtk(notification_shade, monkeypatch)
         shade = _bare_shade(daemon=_FakeDaemon())

@@ -135,32 +135,88 @@ def _is_shell_row(notif_id: int) -> bool:
     return notif_id in _SHELL_INTERNAL_IDS or notif_id >= _SHELL_ROW_FLOOR
 
 _ALLOWED_BODY_TAGS = ('b', 'i', 'u')
-_ANCHOR_RE = re.compile(r'&lt;a\b.*?&gt;(.*?)&lt;/a&gt;',
-                       re.DOTALL | re.IGNORECASE)
+_DROPPED_BODY_TAGS = ('a', 'img')
+_BODY_TAG_RE = re.compile(r'<(/?)([A-Za-z][A-Za-z0-9]*)\b[^<>]*?(/?)>')
+
+
+def _escape_markup(text: str) -> str:
+    escape = getattr(GLib, 'markup_escape_text', None)
+    if callable(escape):
+        try:
+            return escape(text)
+        except Exception:
+            pass
+    return html.escape(text, quote=True)
+
+
+def _pango_accepts(markup: str) -> bool:
+    try:
+        gi.require_version('Pango', '1.0')
+        from gi.repository import Pango
+        Pango.parse_markup(markup, -1, '\0')
+    except ImportError:
+        return True
+    except Exception:
+        return False
+    return True
 
 
 def notif_body_to_pango_markup(body: str) -> str:
     """Render the advertised body-markup subset as safe Pango markup.
 
-    Everything untrusted is escaped first; only <b>/<i>/<u> pairs are
-    re-allowed and links keep their text with the target dropped. An
-    unbalanced tag is left escaped so Pango never sees malformed markup.
+    The body is tokenised into tags and text. Text is unescaped once
+    (apps send ``&amp;`` for ``&``) and re-escaped; only <b>/<i>/<u> are
+    kept, re-nested when a sender closes them out of order; links and
+    images keep only their text. Any other tag, a stray closer or an
+    opener never closed stays visible as literal text. The result is
+    checked with Pango, and plain text is the fallback, so a body never
+    renders blank.
     """
-    escape = getattr(GLib, 'markup_escape_text', None)
-    if callable(escape):
-        try:
-            text = escape(body)
-        except Exception:
-            text = html.escape(body, quote=True)
-    else:
-        text = html.escape(body, quote=True)
-    for tag in _ALLOWED_BODY_TAGS:
-        text = text.replace(f'&lt;{tag}&gt;', f'<{tag}>')
-        text = text.replace(f'&lt;/{tag}&gt;', f'</{tag}>')
-        if text.count(f'<{tag}>') != text.count(f'</{tag}>'):
-            text = text.replace(f'<{tag}>', f'&lt;{tag}&gt;')
-            text = text.replace(f'</{tag}>', f'&lt;/{tag}&gt;')
-    return _ANCHOR_RE.sub(r'\1', text)
+    body = str(body or '')
+    out: list[str] = []
+    # (tag, index of its opener in out, opened by the sender)
+    stack: list[tuple[str, int, bool]] = []
+    pos = 0
+    for match in _BODY_TAG_RE.finditer(body):
+        if match.start() > pos:
+            out.append(_escape_markup(html.unescape(body[pos:match.start()])))
+        pos = match.end()
+        closing, tag = match.group(1) == '/', match.group(2).lower()
+        literal = _escape_markup(match.group(0))
+        if tag in _DROPPED_BODY_TAGS:
+            continue
+        if tag not in _ALLOWED_BODY_TAGS or match.group(3):
+            out.append(literal)
+            continue
+        if not closing:
+            stack.append((tag, len(out), True))
+            out.append(f'<{tag}>')
+            continue
+        names = [entry[0] for entry in stack]
+        if tag not in names:
+            out.append(literal)
+            continue
+        reopen: list[str] = []
+        while stack[-1][0] != tag:
+            inner = stack.pop()[0]
+            out.append(f'</{inner}>')
+            reopen.append(inner)
+        stack.pop()
+        out.append(f'</{tag}>')
+        for inner in reversed(reopen):
+            stack.append((inner, len(out), False))
+            out.append(f'<{inner}>')
+    if pos < len(body):
+        out.append(_escape_markup(html.unescape(body[pos:])))
+    while stack:
+        tag, index, from_sender = stack.pop()
+        # A sender's unclosed opener shows as text; one re-opened after
+        # re-nesting was never in the body, so it just goes.
+        out[index] = _escape_markup(f'<{tag}>') if from_sender else ''
+    markup = ''.join(out)
+    if _pango_accepts(markup):
+        return markup
+    return _escape_markup(html.unescape(_BODY_TAG_RE.sub('', body)))
 
 
 def _normalize_notif_actions(
