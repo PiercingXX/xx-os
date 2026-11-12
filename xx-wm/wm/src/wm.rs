@@ -11,6 +11,7 @@ use wayland_client::protocol::wl_registry;
 use wayland_client::{event_created_child, Connection, Dispatch, Proxy, QueueHandle, WEnum};
 
 use crate::config::{Action, Config};
+use crate::focus::{self, LayerFocus, REFOCUS_DELAY};
 use crate::ipc::{self, json_str};
 use crate::keysym::mods;
 use crate::layout::{self, centered, dwindle, neighbor, Dir, Rect, Split};
@@ -66,6 +67,7 @@ pub struct Window {
     closed: bool,
     has_parent: bool,
     fixed_size: bool,
+    refocus_at: Option<std::time::Instant>,
 }
 
 pub struct Output {
@@ -77,13 +79,6 @@ pub struct Output {
     handset: bool,
     removed: bool,
     is_new: bool,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum LayerFocus {
-    None,
-    Exclusive,
-    NonExclusive,
 }
 
 struct Op {
@@ -139,8 +134,12 @@ pub struct State {
     last_snapshot: String,
     last_subscriber_count: usize,
     socket: Option<std::path::PathBuf>,
+    waker: Option<Waker>,
     pub exit: Option<i32>,
 }
+
+/// Starts a manage sequence from outside the event loop.
+pub type Waker = std::sync::Arc<dyn Fn() + Send + Sync>;
 
 impl State {
     pub fn new(
@@ -175,7 +174,22 @@ impl State {
             last_snapshot: String::new(),
             last_subscriber_count: 0,
             socket,
+            waker: None,
             exit: None,
+        }
+    }
+
+    pub fn set_waker(&mut self, waker: Waker) {
+        self.waker = Some(waker);
+    }
+
+    /// A manage sequence `after` from now.
+    fn wake_after(&self, after: std::time::Duration) {
+        if let Some(w) = self.waker.clone() {
+            std::thread::spawn(move || {
+                std::thread::sleep(after);
+                w();
+            });
         }
     }
 
@@ -568,6 +582,13 @@ impl State {
             Pending::Interact(id) => {
                 if self.windows.contains_key(&id) {
                     self.focus(&id);
+                    // A tap on a window takes the keyboard back from a
+                    // layer surface holding non-exclusive focus.
+                    for s in self.seats.values_mut() {
+                        if s.layer_focus == LayerFocus::NonExclusive {
+                            s.sent_focus = None;
+                        }
+                    }
                 }
             }
             Pending::Fullscreen(id, on) => self.set_fullscreen(&id, on),
@@ -931,18 +952,38 @@ impl State {
 
     fn send_focus(&mut self) {
         let want = if self.locked { None } else { self.focused() };
+        let now = std::time::Instant::now();
+        let refocus = want
+            .as_ref()
+            .and_then(|id| self.windows.get(id))
+            .and_then(|w| w.refocus_at)
+            .map_or(false, |at| now >= at);
+        let mut cleared = false;
         for seat in self.seats.values_mut() {
-            if seat.layer_focus == LayerFocus::Exclusive {
-                continue;
+            match focus::decide(seat.layer_focus, &seat.sent_focus, &want, refocus) {
+                focus::Cmd::Keep => {}
+                focus::Cmd::Focus(id) => {
+                    match self.windows.get(&id) {
+                        Some(w) => seat.proxy.focus_window(&w.proxy),
+                        None => seat.proxy.clear_focus(),
+                    }
+                    seat.sent_focus = Some(Some(id));
+                }
+                focus::Cmd::Clear => {
+                    seat.proxy.clear_focus();
+                    seat.sent_focus = Some(None);
+                    cleared |= want.is_some();
+                }
             }
-            if seat.sent_focus.as_ref() == Some(&want) {
-                continue;
+        }
+        if refocus {
+            if let Some(w) = want.as_ref().and_then(|id| self.windows.get_mut(id)) {
+                w.refocus_at = None;
             }
-            match want.as_ref().and_then(|id| self.windows.get(id)) {
-                Some(w) => seat.proxy.focus_window(&w.proxy),
-                None => seat.proxy.clear_focus(),
-            }
-            seat.sent_focus = Some(want.clone());
+        }
+        if cleared {
+            log!("focus sent again so river enters the window's text inputs");
+            self.wm.manage_dirty();
         }
     }
 
@@ -1151,6 +1192,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for State {
                         closed: false,
                         has_parent: false,
                         fixed_size: false,
+                        refocus_at: None,
                     },
                 );
                 state.order.push(key);
@@ -1209,11 +1251,19 @@ impl Dispatch<RiverWindowV1, ()> for State {
         match event {
             E::FullscreenRequested { .. } => state.pending.push(Pending::Fullscreen(id, true)),
             E::ExitFullscreenRequested => state.pending.push(Pending::Fullscreen(id, false)),
+            E::Dimensions { width, height } => {
+                let Some(w) = state.windows.get_mut(&id) else { return };
+                let first = w.dims.is_none();
+                w.dims = Some((width, height));
+                if first {
+                    w.refocus_at = Some(std::time::Instant::now() + REFOCUS_DELAY);
+                    state.wake_after(REFOCUS_DELAY);
+                }
+            }
             event => {
                 let Some(w) = state.windows.get_mut(&id) else { return };
                 match event {
                     E::Closed => w.closed = true,
-                    E::Dimensions { width, height } => w.dims = Some((width, height)),
                     E::AppId { app_id } => w.app_id = app_id,
                     E::Title { title } => w.title = title,
                     E::Identifier { identifier } => w.identifier = identifier,
@@ -1358,11 +1408,7 @@ impl Dispatch<RiverLayerShellSeatV1, ObjectId> for State {
         let Some(s) = state.seats.get_mut(seat) else { return };
         match event {
             E::FocusExclusive => s.layer_focus = LayerFocus::Exclusive,
-            E::FocusNonExclusive => {
-                s.layer_focus = LayerFocus::NonExclusive;
-                // The layer surface has focus now; our record is stale.
-                s.sent_focus = None;
-            }
+            E::FocusNonExclusive => s.layer_focus = LayerFocus::NonExclusive,
             E::FocusNone => {
                 s.layer_focus = LayerFocus::None;
                 // Give focus back to the window that had it.

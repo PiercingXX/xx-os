@@ -7,6 +7,7 @@
 #[macro_use]
 mod wm;
 mod config;
+mod focus;
 mod ipc;
 mod keysym;
 mod layout;
@@ -91,19 +92,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let queue_ipc: ipc::Queue = Arc::new(Mutex::new(Vec::new()));
     let subscribers: ipc::Subscribers = Arc::new(Mutex::new(Vec::new()));
     let socket = ipc::socket_path();
-    if let Some(sock) = &socket {
+    let waker: wm::Waker = {
         let wake_manager = manager.clone();
         let wake_conn = conn.clone();
-        match ipc::start(sock, queue_ipc.clone(), subscribers.clone(), move || {
+        Arc::new(move || {
             wake_manager.manage_dirty();
             let _ = wake_conn.flush();
-        }) {
+        })
+    };
+    if let Some(sock) = &socket {
+        let wake = waker.clone();
+        match ipc::start(sock, queue_ipc.clone(), subscribers.clone(), move || wake()) {
             Ok(()) => eprintln!("xxwm: control socket {}", sock.display()),
             Err(e) => eprintln!("xxwm: no control socket: {e}"),
         }
     }
 
     let mut state = wm::State::new(manager, xkb, layer, config, path, queue_ipc, subscribers, socket.clone());
+    state.set_waker(waker);
     let code = loop {
         queue.blocking_dispatch(&mut state)?;
         if let Some(code) = state.exit {
