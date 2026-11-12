@@ -20,15 +20,34 @@ are in [`../docs/pixel-9-pro-design.md`](../docs/pixel-9-pro-design.md). In shor
 
 ## Now
 
-1. **Fix list.** [`docs/review-2026-11-11.md`](docs/review-2026-11-11.md), P0 then
-   P1. Several P0/P1 items were already closed by the lock, DnD and modem work now on
-   `main`; verify each before starting it.
-2. **M1 — compositor prototype.** The Rust core on river, run nested on a workstation:
-   handset policy, dwindle, the piercing-dots binds. Then this shell on top of it:
-   lock, on-screen keyboard resizing the app, layer surfaces.
-3. **M2 — docked session.** Top bar, launcher on Super, phone screen as trackpad, on a
-   real monitor.
-4. **M3 onwards** need the Pixel; see the design document.
+M0 (the fix list in [`docs/review-2026-11-11.md`](docs/review-2026-11-11.md), P0 to
+P4 and the process section) is closed in code, except P0.6's update signing, which
+waits for a signing key. M1 and M2 pass on headless and nested river (session lock that
+survives a shell kill, calls and the power menu inside it, the keyboard resizing the
+app, dock and undock, top bar, Super launcher, keybind sheet, the phone as trackpad).
+None of it has run on hardware yet.
+
+1. **Device pass.** Work through "On-device checks" below on the FLX1s and Librem 5
+   (phoc), then river on the Librem 5. Debian forky has no river package, so that
+   needs river 0.5 built on the device.
+2. **Open items.**
+   - Update signing (P0.6): a signed manifest or signed tags checked by
+     `xx_apps_update.py`; `update-system.sh` still self-updates from piercing-dots
+     `main` (Settings could pass `PX_NO_SELF_UPDATE=1`).
+   - Per-app network blocking (P1.6 rest): persist app ids rather than pid-scoped
+     cgroup paths, and show a failed block in the UI.
+   - river text-input: a text field that first appears after an app's first frame
+     gets no keyboard until focus moves. The fix belongs in river's
+     `TextInput.create`; the alternative is xxwm asking xx-keyboard to re-create its
+     input method after a tap.
+   - xx-radio's player: match the seek's seqnum so a stale ASYNC_DONE from the
+     preceding pause can't end a seek early.
+   - Tests: a fake GLib leaks between `test_dialer_argv.py` and
+     `test_telephony_modem_io.py` when they run back to back; snapshot runs still
+     subscribe to logind on the host's system bus.
+   - One toplevel manager shared by the window, standby and usage tracking.
+   - First boot: a searchable time-zone list.
+3. **M3 onwards** need the Pixel; see the design document.
 
 ## Ground rules
 
