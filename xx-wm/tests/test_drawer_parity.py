@@ -324,6 +324,39 @@ class TestAccentInsensitiveSearch:
         assert index.search('zzz') == []
 
 
+class TestWebSearchLeavesTheDrawer:
+    def _win(self):
+        calls = []
+        win = types.SimpleNamespace(
+            drop_to_background=lambda: calls.append('drop'),
+            _show_status=lambda text: calls.append(('status', text)))
+        page = DrawerPage.__new__(DrawerPage)
+        page._win = win
+        return page, calls
+
+    def test_search_drops_the_drawer_below_the_browser(self, monkeypatch):
+        from gi.repository import Gio
+        opened = []
+        monkeypatch.setattr(Gio.AppInfo, 'launch_default_for_uri',
+                            lambda uri, ctx: opened.append(uri))
+        page, calls = self._win()
+        page._open_web_search('linux phone')
+        assert opened and opened[0].endswith('linux+phone')
+        assert calls == ['drop']
+
+    def test_no_browser_keeps_the_drawer_and_says_so(self, monkeypatch):
+        from gi.repository import Gio, GLib
+
+        def _fail(uri, ctx):
+            raise GLib.Error('no handler')
+
+        monkeypatch.setattr(Gio.AppInfo, 'launch_default_for_uri', _fail)
+        page, calls = self._win()
+        page._open_web_search('linux phone')
+        assert 'drop' not in calls
+        assert calls and calls[0][0] == 'status'
+
+
 class TestWebRowQuery:
     def test_no_results_shows_web_row(self):
         assert drawer_page.web_search_row_query('zzz', 0) == 'zzz'

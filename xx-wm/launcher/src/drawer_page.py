@@ -262,16 +262,19 @@ def launch_app(win, entry: AppEntry) -> bool:
     return False
 
 
-def open_web_search(win, query: str) -> None:
+def open_web_search(win, query: str) -> bool:
+    """Open the browser on a web search; True when it launched."""
     from gi.repository import Gio, GLib
     from urllib.parse import quote_plus
 
     if not query:
-        return
+        return False
     try:
         Gio.AppInfo.launch_default_for_uri(_WEB_SEARCH_URL + quote_plus(query), None)
     except GLib.Error as error:
         win._show_status(f'No browser available: {error.message}')
+        return False
+    return True
 
 
 def _open_settings(win) -> None:
@@ -898,4 +901,7 @@ class DrawerPage:
             entry.set_text('')
 
     def _open_web_search(self, query: str) -> None:
-        open_web_search(self._win, query)
+        # Like an app launch: the browser surfacing is the feedback, and
+        # the drawer must not stay layered over it.
+        if open_web_search(self._win, query):
+            self._win.drop_to_background()
