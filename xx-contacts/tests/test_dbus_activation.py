@@ -17,12 +17,13 @@ import pytest
 
 REPO = Path(__file__).parent.parent
 SRC = REPO / "src"
+COMMON = REPO.parent / "common"
 DATA = REPO / "data"
 
 BUS_LINE = "Name=io.piercingxx.Contacts"
 
 ADA_CARD = ("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Ada Lovelace\r\n"
-            "TEL;TYPE=CELL:+1 555 0100\r\nEND:VCARD\r\n")
+            "TEL;TYPE=CELL:+1 614 555 0100\r\nEND:VCARD\r\n")
 
 ACTIVATION_DRIVER = """
 import sys
@@ -57,14 +58,14 @@ def name_owner():
         return reply.unpack()[0]
     except Exception:
         return ""
-print("lookup-before", lookup("5550100"), flush=True)
+print("lookup-before", lookup("+1 614-555-0100"), flush=True)
 uid = create(CARD)
 print("created", uid, flush=True)
-print("lookup-after", lookup("5550100"), flush=True)
+print("lookup-after", lookup("+1 614-555-0100"), flush=True)
 print("owner-before-sleep", bool(name_owner()), flush=True)
 time.sleep(__SLEEP__)
 print("owner-after-idle", repr(name_owner()), flush=True)
-print("lookup-reactivated", lookup("5550100"), flush=True)
+print("lookup-reactivated", lookup("+1 614-555-0100"), flush=True)
 """
 
 CHANGED_DRIVER = """
@@ -141,7 +142,8 @@ def _configure_tree(tmp_path: Path) -> dict:
         "XDG_DATA_DIRS", "/usr/local/share:/usr/share")
     env = dict(os.environ)
     env["XDG_DATA_DIRS"] = session_xdg
-    env["PYTHONPATH"] = str(SRC) + ":" + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (str(SRC) + ":" + str(COMMON) + ":"
+                         + env.get("PYTHONPATH", ""))
     return {"env": env, "db": str(db_path), "launcher": str(launcher_path)}
 
 
