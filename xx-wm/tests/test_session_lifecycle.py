@@ -122,11 +122,22 @@ def _wait_for(predicate, timeout=10.0):
 
 
 def _group_gone(pgid):
+    """No live process left in the group. Zombies don't count: in a CI
+    container whose PID 1 never reaps (GitHub runs `tail -f /dev/null`),
+    an exited orphan stays a zombie and killpg(pgid, 0) still succeeds."""
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
         return True
-    return False
+    for stat in Path('/proc').glob('[0-9]*/stat'):
+        try:
+            text = stat.read_text()
+        except OSError:
+            continue
+        fields = text.rsplit(')', 1)[-1].split()
+        if len(fields) > 2 and fields[2] == str(pgid) and fields[0] != 'Z':
+            return False
+    return True
 
 
 def _pid_alive(pid):
