@@ -32,6 +32,7 @@ Hardware shortcuts (handled via evdev):
 """
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
 import struct
@@ -129,6 +130,28 @@ def filter_evdev_data(
                 wanted.append((path, ev_type, code, value))
                 last_touch_ms = now_ms
     return wanted, last_touch_ms
+
+_KEY_MAX = 0x2ff
+_KEY_BITS_LEN = (_KEY_MAX + 8) // 8
+# EVIOCGKEY(len) = _IOC(_IOC_READ, 'E', 0x18, len)
+_EVIOCGKEY = (2 << 30) | (_KEY_BITS_LEN << 16) | (ord('E') << 8) | 0x18
+
+
+def _key_is_down(path: str, code: int) -> bool | None:
+    """Ask the kernel whether `code` is held on the node at `path`
+    (EVIOCGKEY: one non-blocking ioctl). None when it can't be asked."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        bits = fcntl.ioctl(fd, _EVIOCGKEY, bytes(_KEY_BITS_LEN))
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return bool(bits[code // 8] & (1 << (code % 8)))
+
 
 # Wake devices and the output name used to be hardcoded per-device (the FP5's
 # event0-3 / HWCOMPOSER-1). That silently traps every other device in the dark:
@@ -470,6 +493,7 @@ class DisplayManager:
         # Combo state: both keys must be logically held simultaneously
         self._power_held   = False
         self._voldown_held = False
+        self._voldown_dev: str | None = None
 
         # Watch every readable input node so power/volume wake the display
         # regardless of which event number the device landed on. The reader
@@ -732,7 +756,11 @@ class DisplayManager:
                 self._power_long_fired = False
                 self._power_press_consumed = consumed
                 self._power_down_at = time.monotonic()
-                # Check Power+VolDown combo immediately
+                # Check Power+VolDown combo immediately. A volume-down
+                # release lost with a re-enumerated node would otherwise
+                # turn every later power press into a screenshot.
+                if self._voldown_held and not self._voldown_really_held():
+                    self._voldown_held = False
                 if self._voldown_held:
                     self._cancel_long_press()
                     self._trigger_screenshot()
@@ -744,8 +772,10 @@ class DisplayManager:
             elif value == 0:  # key up
                 self._power_held = False
                 was_long = self._cancel_long_press()
-                if (not was_long and not self._power_press_consumed
-                        and not self._voldown_held):
+                # Only a consumed press (combo, menu) skips the toggle; a
+                # volume-down state is never consulted here, so a lost
+                # release can't disable the power key.
+                if not was_long and not self._power_press_consumed:
                     # Short press toggles blank/wake using our own state
                     if not self._blanked:
                         if self._idle_src is not None:
@@ -763,6 +793,7 @@ class DisplayManager:
         if ev_type == EV_KEY and code == KEY_VOLUMEDOWN:
             if value == 1:
                 self._voldown_held = True
+                self._voldown_dev = path
                 if self._power_held:
                     self._cancel_long_press()
                     self._trigger_screenshot()
@@ -826,6 +857,15 @@ class DisplayManager:
                 self.reset_idle()
 
         return GLib.SOURCE_REMOVE
+
+    def _voldown_really_held(self) -> bool:
+        """The kernel's view of the volume-down key on the node that
+        reported the press. A node that can no longer be asked (it
+        re-enumerated) can't be holding the key."""
+        dev = getattr(self, '_voldown_dev', None)
+        if not dev:
+            return True
+        return bool(_key_is_down(dev, KEY_VOLUMEDOWN))
 
     def _on_power_long_press(self) -> bool:
         self._power_long_src = None

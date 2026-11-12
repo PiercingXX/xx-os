@@ -82,6 +82,9 @@ def dm(monkeypatch):
                         lambda *a, **k: None)
     monkeypatch.setattr(display_manager, '_detect_fp_node',
                         lambda: '/dev/input/event9')
+    # The kernel agrees with the logical key state unless a test says not.
+    monkeypatch.setattr(display_manager, '_key_is_down', lambda *_a: True,
+                        raising=False)
     blanks: list[bool] = []
     wakes: list[bool] = []
     monkeypatch.setattr(display_manager.DisplayManager, '_blank',
@@ -160,6 +163,55 @@ class TestScreenshotConsumesPowerPress:
         mgr._on_event(*_voldown(0))
         mgr._on_event(*_power(0))
         assert blanks == []
+
+
+class TestLostVolumeDownRelease:
+    """A volume-down release that never arrives (node re-enumerated, event
+    dropped) must not disable the power key."""
+
+    def test_stale_voldown_does_not_eat_short_press(self, dm, monkeypatch):
+        shots: list[bool] = []
+        mgr, blanks, _wakes = dm(on_screenshot=lambda: shots.append(True))
+        mgr._on_event(*_voldown(1))   # the release is lost
+        monkeypatch.setattr(display_manager, '_key_is_down', lambda *_a: False,
+                            raising=False)
+        mgr._on_event(*_power(1))
+        mgr._on_event(*_power(0))
+        assert shots == []
+        assert len(blanks) == 1
+
+    def test_unreadable_voldown_node_counts_as_released(self, dm, monkeypatch):
+        mgr, blanks, _wakes = dm(on_screenshot=lambda: None)
+        mgr._on_event(*_voldown(1))
+        monkeypatch.setattr(display_manager, '_key_is_down', lambda *_a: None,
+                            raising=False)
+        mgr._on_event(*_power(1))
+        mgr._on_event(*_power(0))
+        assert len(blanks) == 1
+
+    def test_short_press_toggles_even_with_voldown_flag_set(self, dm):
+        # Key-up never consults volume-down: only a consumed press skips.
+        mgr, blanks, _wakes = dm()
+        mgr._on_event(*_power(1))
+        mgr._voldown_held = True
+        mgr._on_event(*_power(0))
+        assert len(blanks) == 1
+
+    def test_real_combo_with_voldown_first_still_screenshots(self, dm):
+        shots: list[bool] = []
+        mgr, blanks, _wakes = dm(on_screenshot=lambda: shots.append(True))
+        mgr._on_event(*_voldown(1))
+        mgr._on_event(*_power(1))
+        mgr._on_event(*_power(0))
+        mgr._on_event(*_voldown(0))
+        assert shots == [True]
+        assert blanks == []
+
+    def test_key_is_down_on_a_non_evdev_file_is_none(self, tmp_path):
+        node = tmp_path / 'event0'
+        node.write_bytes(b'')
+        assert display_manager._key_is_down(str(node), 114) is None
+        assert display_manager._key_is_down(str(tmp_path / 'gone'), 114) is None
 
 
 class TestLongPressContract:
