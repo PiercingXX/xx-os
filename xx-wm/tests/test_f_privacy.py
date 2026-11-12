@@ -321,6 +321,44 @@ class TestMonitorSnapshot:
         assert monitor.snapshot[MIC] == {'Calls'}
         assert len(seen) == before
 
+    def test_location_not_asked_while_screen_off(self):
+        asked = []
+        monitor, _seen = self._monitor(
+            location_provider=lambda: asked.append(1) or ['Maps'])
+        monitor.set_screen_on(False)
+        monitor.refresh_location()
+        assert asked == []
+        monitor.set_screen_on(True)
+        monitor.refresh_location()
+        assert asked == [1]
+
+    def test_stop_terminates_the_monitor_child(self, monkeypatch):
+        import privacy_monitor
+        import subprocess as sp
+        procs = []
+
+        def _popen(argv, **kw):
+            proc = sp.Popen(['sleep', '30'], stdout=sp.PIPE)
+            proc.kw = kw
+            procs.append(proc)
+            return proc
+
+        monkeypatch.setattr(privacy_monitor.shutil, 'which',
+                            lambda name: '/usr/bin/' + name)
+        monitor = privacy_monitor.PrivacyMonitor(
+            popen_factory=_popen, poll_interval=1.0)
+        monitor.start()
+        try:
+            for _ in range(200):
+                if procs:
+                    break
+                monitor._stop_event.wait(0.01)
+            assert procs
+            assert procs[0].kw['preexec_fn'] is privacy_monitor._die_with_thread
+        finally:
+            monitor.stop()
+        assert procs[0].poll() is not None
+
     def test_fallback_tick_gated_by_screen(self):
         calls = []
         monitor, _seen = self._monitor(
@@ -407,6 +445,15 @@ class TestGeoclueClients:
         assert state.active_clients(bus=_FakeSyncBus(
             lambda _args: (_ for _ in ()).throw(Exception('down')))) == []
         assert state.active_clients(bus=_FailBus()) == []
+
+    def test_client_query_never_starts_geoclue(self):
+        bus = self._clients_bus()
+        state = _real_quick_actions().LocationState()
+        state.active_clients(bus=bus)
+        from gi.repository import Gio
+        assert bus.calls
+        assert all(call[6] == Gio.DBusCallFlags.NO_AUTO_START
+                   for call in bus.calls)
 
     def test_duplicate_clients_deduplicated(self):
         def _handler(args):

@@ -611,11 +611,12 @@ class LocationState:
         if bus is None:
             return []
         try:
+            # Polled by the privacy monitor: never start geoclue for it.
             paths = bus.call_sync(
                 _GEOCLUE_NAME, _GEOCLUE_MGR_PATH, _GEOCLUE_MGR_IFACE,
                 'GetClients', None,
                 GLib.VariantType('(ao)'),
-                Gio.DBusCallFlags.NONE, 1500, None,
+                Gio.DBusCallFlags.NO_AUTO_START, 1500, None,
             ).unpack()[0]
         except Exception:
             return []
@@ -627,7 +628,7 @@ class LocationState:
                     'org.freedesktop.DBus.Properties', 'GetAll',
                     GLib.Variant('(s)', (_GEOCLUE_CLIENT_IFACE,)),
                     GLib.VariantType('(a{sv})'),
-                    Gio.DBusCallFlags.NONE, 1500, None,
+                    Gio.DBusCallFlags.NO_AUTO_START, 1500, None,
                 ).unpack()[0]
             except Exception:
                 continue

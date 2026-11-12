@@ -6,7 +6,11 @@ with backoff when it dies. When pw-dump is absent the monitor degrades to
 polling single-shot `pw-dump` every few seconds, and only while the screen
 is on. Location users come from the shell's GeoClue2 agent
 (quick_actions.LocationState) through a provider callback, so this module
-never re-implements the agent.
+never re-implements the agent; they are only asked for while the screen is
+on, and the query never starts geoclue.
+
+The monitor child is tied to the monitor thread (PR_SET_PDEATHSIG) and
+terminated on stop, so it never outlives the shell.
 
 Snapshots are `{kind: set(display names)}` with kinds `mic`, `camera` and
 `location`. `on_change` fires only when the snapshot actually changes, off
@@ -14,10 +18,12 @@ the GTK main thread — handlers must hop back with GLib.idle_add.
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import select
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -339,6 +345,37 @@ class PwDumpParser:
         return values
 
 
+def _resolve_prctl():
+    try:
+        return ctypes.CDLL(None, use_errno=True).prctl
+    except (OSError, AttributeError):
+        return None
+
+
+_prctl = _resolve_prctl()
+_PR_SET_PDEATHSIG = 1
+
+
+def _die_with_thread() -> None:
+    """preexec_fn: SIGTERM the child when the spawning (monitor) thread
+    ends, including when the shell dies without calling stop()."""
+    if _prctl is not None:
+        _prctl(_PR_SET_PDEATHSIG, signal.SIGTERM)
+
+
+def _end_child(proc) -> None:
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+        proc.wait(timeout=1)
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=1)
+        except Exception:
+            pass
+
+
 def _default_pw_dump_once() -> str:
     try:
         out = subprocess.run(['pw-dump'], capture_output=True, text=True,
@@ -435,7 +472,10 @@ class PrivacyMonitor:
         self._snapshot = fresh
 
     def refresh_location(self) -> None:
-        """Re-query the location provider (GeoClue active clients)."""
+        """Re-query the location provider (GeoClue active clients); never
+        while the screen is off, where nobody can see the indicator."""
+        if not self._screen_on:
+            return
         try:
             apps = self._location_provider() if self._location_provider else ()
         except Exception:
@@ -523,8 +563,7 @@ class PrivacyMonitor:
             self._fallback_loop()
             return
         try:
-            proc = self._popen(list(_MONITOR_ARGV), stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, close_fds=True)
+            proc = self._spawn_monitor()
         except (OSError, ValueError):
             self._fallback_loop()
             return
@@ -546,15 +585,18 @@ class PrivacyMonitor:
             if self._stop_event.wait(wait):
                 break
             try:
-                proc = self._popen(
-                    list(_MONITOR_ARGV), stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL, close_fds=True)
+                proc = self._spawn_monitor()
             except (OSError, ValueError):
                 self._fallback_loop()
                 return
             if proc is None or getattr(proc, 'stdout', None) is None:
                 self._fallback_loop()
                 return
+
+    def _spawn_monitor(self):
+        return self._popen(list(_MONITOR_ARGV), stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, close_fds=True,
+                           preexec_fn=_die_with_thread)
 
     def _watch(self, proc) -> bool:
         """Drain one monitor child until it dies; True only on a clean
@@ -586,10 +628,7 @@ class PrivacyMonitor:
                 for value in parser.feed(chunk):
                     self.update_from_value(value)
             self.refresh_location()
-        try:
-            proc.wait(timeout=1)
-        except Exception:
-            pass
+        _end_child(proc)
         return self._stop_event.is_set()
 
     def _fallback_loop(self) -> None:

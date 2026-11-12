@@ -107,7 +107,7 @@ ALLOW = {
         'privacy monitor thread.',
     ('privacy_monitor.py', '_run'):
         'privacy monitor thread (pw-dump child lifecycle).',
-    ('privacy_monitor.py', '_watch'):
+    ('privacy_monitor.py', '_end_child'):
         'privacy monitor thread (child reap, 1 s cap).',
     ('tailscale.py', '_run'):
         'tile query worker (_query_tile_states) and toggle worker (_set_tailscale).',
