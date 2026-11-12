@@ -11,7 +11,9 @@ never depend on querying any backend to wake back up.
 Wake sources and the output name are auto-detected, not hardcoded: every
 readable /dev/input/event* node is watched (reads are non-exclusive) and
 _on_event filters by code, so power/touch/volume wake the display whatever
-event number they land on and whatever the device. This replaces an earlier
+event number they land on and whatever the device. /dev/input itself is
+watched: new nodes are opened, and a node whose reader ends is reopened
+when it comes back. This replaces an earlier
 FP5-specific map (event0-3 / HWCOMPOSER-1) that trapped other devices dark.
 
 The fingerprint reader node is resolved at init and on every input rescan:
@@ -492,6 +494,7 @@ class DisplayManager:
 
         # Combo state: both keys must be logically held simultaneously
         self._power_held   = False
+        self._power_dev: str | None = None
         self._voldown_held = False
         self._voldown_dev: str | None = None
 
@@ -499,14 +502,19 @@ class DisplayManager:
         # regardless of which event number the device landed on. The reader
         # threads filter in-thread (filter_evdev_data) so only actionable
         # events are posted to the GTK loop.
+        # Nodes come and go (a re-enumerated power-key node must not leave
+        # the phone dark with no way to wake): /dev/input is watched, and
+        # a reader that ends triggers a rescan that reopens what is there.
         self._fp_node = _detect_fp_node()
-        self._wake_devs = _all_event_devices()
-        for dev in self._wake_devs:
-            _watch_evdev(dev, self._fp_node, self._on_event)
+        self._readers: dict[str, object] = {}
+        self._rescan_src: int | None = None
+        for dev in _all_event_devices():
+            self._start_reader(dev)
+        self._input_monitor = _monitor_input_dir(self._on_input_dir_changed)
 
         # Safety: only ever blank the backlight if we actually have a way to
         # wake it back up. With no readable input device, leave the screen on.
-        self._idle_enabled = bool(self._wake_devs)
+        self._idle_enabled = bool(self._readers)
         self.reset_idle()
 
     # ------------------------------------------------------------------
@@ -576,6 +584,56 @@ class DisplayManager:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    @property
+    def _wake_devs(self) -> list[str]:
+        return sorted(getattr(self, '_readers', {}) or ())
+
+    def _start_reader(self, dev: str) -> None:
+        token = object()
+        self._readers[dev] = token
+        _watch_evdev(dev, lambda: self._fp_node, self._on_event,
+                     on_exit=lambda path=dev, t=token:
+                     self._on_reader_exit(path, t))
+
+    def _on_reader_exit(self, path: str, token: object) -> bool:
+        """A reader thread ended (node removed, read error): forget it,
+        drop key state that node can no longer release, and rescan."""
+        readers = getattr(self, '_readers', {})
+        if readers.get(path) is token:
+            del readers[path]
+        if getattr(self, '_voldown_dev', None) == path:
+            self._voldown_held = False
+            self._voldown_dev = None
+        if getattr(self, '_power_dev', None) == path and self._power_held:
+            self._power_held = False
+            self._cancel_long_press()
+        self._schedule_rescan(_RESCAN_AFTER_EXIT_MS)
+        return GLib.SOURCE_REMOVE
+
+    def _on_input_dir_changed(self, name: str) -> None:
+        if os.path.basename(name).startswith('event'):
+            self._schedule_rescan(_RESCAN_DEBOUNCE_MS)
+
+    def _schedule_rescan(self, delay_ms: int) -> None:
+        if getattr(self, '_rescan_src', None) is not None:
+            return
+        self._rescan_src = GLib.timeout_add(delay_ms, self._rescan_inputs)
+
+    def _rescan_inputs(self) -> bool:
+        """Open every readable node without a live reader; re-detect the
+        fingerprint node (its event number can change too)."""
+        self._rescan_src = None
+        self._fp_node = _detect_fp_node()
+        for dev in _all_event_devices():
+            if dev not in self._readers:
+                log.info('input node %s appeared; watching it', dev)
+                self._start_reader(dev)
+        was_enabled = getattr(self, '_idle_enabled', False)
+        self._idle_enabled = bool(self._readers)
+        if self._idle_enabled and not was_enabled:
+            self.reset_idle()
+        return GLib.SOURCE_REMOVE
 
     def _blank_timeout_secs(self) -> int:
         if self._get_blank_timeout is None:
@@ -753,6 +811,7 @@ class DisplayManager:
                     except Exception:
                         pass
                 self._power_held = True
+                self._power_dev = path
                 self._power_long_fired = False
                 self._power_press_consumed = consumed
                 self._power_down_at = time.monotonic()
@@ -904,15 +963,48 @@ class DisplayManager:
 # evdev reader
 # ---------------------------------------------------------------------------
 
+_RESCAN_DEBOUNCE_MS = 300    # udev chmods a new node just after creating it
+_RESCAN_AFTER_EXIT_MS = 1000
+
+
+def _monitor_input_dir(on_change: Callable[[str], None],
+                       path: str = '/dev/input') -> object | None:
+    """Gio directory monitor on /dev/input calling on_change(name) for
+    created / attribute-changed entries (a new node, or udev granting
+    access to it). None when Gio or inotify is unavailable."""
+    try:
+        from gi.repository import Gio
+        monitor = Gio.File.new_for_path(path).monitor_directory(
+            Gio.FileMonitorFlags.NONE, None)
+    except Exception as exc:
+        log.warning('cannot watch %s for new input nodes: %s', path, exc)
+        return None
+    wanted = (Gio.FileMonitorEvent.CREATED,
+              Gio.FileMonitorEvent.ATTRIBUTE_CHANGED)
+
+    def _changed(_monitor, file, _other, event) -> None:
+        if event in wanted:
+            on_change(file.get_path() or '')
+
+    monitor.connect('changed', _changed)
+    return monitor
+
+
 def _watch_evdev(
     path: str,
-    fp_node: str,
+    fp_node: str | Callable[[], str],
     callback: Callable[[str, int, int, int], bool],
+    on_exit: Callable[[], object] | None = None,
 ) -> None:
+    """Reader thread for one node. fp_node may be a getter so a rescan's
+    re-detected fingerprint node applies to live readers; on_exit runs on
+    the main loop once the reader ends (open failure, ENODEV, EOF)."""
     def _reader() -> None:
         try:
             fd = os.open(path, os.O_RDONLY)
         except OSError:
+            if on_exit is not None:
+                GLib.idle_add(on_exit)
             return
         last_touch_ms: float | None = None
         buf = b''
@@ -928,8 +1020,9 @@ def _watch_evdev(
                 cut = len(buf) // _EV_SIZE * _EV_SIZE
                 if not cut:
                     continue
+                fp = fp_node() if callable(fp_node) else fp_node
                 wanted, last_touch_ms = filter_evdev_data(
-                    buf[:cut], path, fp_node,
+                    buf[:cut], path, fp,
                     time.monotonic() * 1000.0, last_touch_ms,
                 )
                 buf = buf[cut:]
@@ -942,6 +1035,8 @@ def _watch_evdev(
                 os.close(fd)
             except OSError:
                 pass
+            if on_exit is not None:
+                GLib.idle_add(on_exit)
 
     t = threading.Thread(target=_reader, daemon=True, name=f'evdev:{path}')
     t.start()
