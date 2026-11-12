@@ -101,7 +101,6 @@ def end_reason_text(reason) -> str:
 
 _CALL_TIMEOUT_MS = 5_000
 _ENUM_TIMEOUT_MS = 8_000
-_OWNER_PROBE_TIMEOUT_MS = 500
 _IO_TIMEOUT_MS = 15_000
 #: Backoff between GetAll attempts on a new call; one entry per retry.
 _FETCH_RETRY_MS = (250, 500, 1_000, 2_000)
@@ -110,6 +109,12 @@ _FETCH_RETRY_MS = (250, 500, 1_000, 2_000)
 _CALLER_ID_WAIT_MS = 1_500
 
 _last_monitor: ModemMonitor | None = None
+
+#: Session-bus apps that take over the call or SMS surface when they run.
+_TELEPHONY_APP_NAMES = (CALLS_BUS_NAME, CHATTY_BUS_NAME, TXXT_BUS_NAME)
+_name_watches: dict[str, int] = {}
+_name_owned: dict[str, bool] = {}
+_activatable: set[str] = set()
 
 
 @dataclass
@@ -313,25 +318,111 @@ def _call_method(call_path: str, method: str, on_done: CallResultCallback) -> No
         _fail(getattr(err, 'message', None) or str(err))
 
 
-def bus_name_has_owner(name: str, timeout_ms: int = _OWNER_PROBE_TIMEOUT_MS) -> bool:
+def bus_name_has_owner(name: str, timeout_ms: int | None = None) -> bool:
     """True when some process owns ``name`` on the session bus.
 
     Used to defer to the device's real telephony apps (GNOME Calls for
     voice, Chatty or TxxT for SMS): when they own their bus name they
-    handle the user-visible surface, so the shell must stay quiet.
+    handle the user-visible surface, so the shell must stay quiet. Read
+    from a Gio.bus_watch_name watcher (:func:`watch_telephony_apps`), so
+    it never blocks; ``timeout_ms`` is accepted for old callers and
+    ignored. A name nobody watched yet starts a watch and reads False.
     """
+    _watch_session_name(name)
+    return bool(_name_owned.get(name, False))
+
+
+def bus_name_activatable(name: str) -> bool:
+    """True when the session bus can start ``name`` on demand (a D-Bus
+    service file is installed), whether or not it runs now."""
+    return name in _activatable
+
+
+def watch_telephony_apps() -> None:
+    """Follow GNOME Calls, Chatty and TxxT on the session bus (one
+    watcher each) and load the activatable names. Idempotent."""
+    for name in _TELEPHONY_APP_NAMES:
+        _watch_session_name(name)
+    _refresh_activatable()
+
+
+def _watch_session_name(name: str) -> None:
+    if name in _name_watches:
+        return
     try:
-        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-        if bus is None:
-            return False
-        owner = bus.call_sync(
-            'org.freedesktop.DBus', _DBUS_PATH, _DBUS_IFACE, 'GetNameOwner',
-            GLib.Variant('(s)', (name,)), None,
-            Gio.DBusCallFlags.NONE, timeout_ms, None,
-        ).unpack()[0]
-    except Exception:
-        return False
-    return bool(owner)
+        _name_watches[name] = Gio.bus_watch_name(
+            Gio.BusType.SESSION, name, Gio.BusNameWatcherFlags.NONE,
+            _on_session_name_appeared, _on_session_name_vanished)
+    except Exception as err:  # noqa: BLE001 - reads as not running
+        _name_watches[name] = 0
+        from shell_log import get_logger
+        get_logger('modem_monitor').warning(
+            'cannot watch %s: %s', name, _err_message(err))
+
+
+def _on_session_name_appeared(_conn, name, _owner) -> None:
+    _name_owned[str(name)] = True
+    _refresh_activatable()
+
+
+def _on_session_name_vanished(_conn, name) -> None:
+    _name_owned[str(name)] = False
+    _refresh_activatable()
+
+
+def _refresh_activatable() -> None:
+    """ListActivatableNames on the session bus, async; the cached set
+    stays as it was when the bus cannot be reached."""
+    def _on_reply(conn, result) -> None:
+        try:
+            names = conn.call_finish(result).unpack()[0]
+        except Exception:  # noqa: BLE001 - keep the last good answer
+            return
+        _activatable.clear()
+        _activatable.update(str(n) for n in names
+                            if str(n) in _TELEPHONY_APP_NAMES)
+
+    def _on_bus(_source, result) -> None:
+        try:
+            conn = Gio.bus_get_finish(result)
+            conn.call(
+                'org.freedesktop.DBus', _DBUS_PATH, _DBUS_IFACE,
+                'ListActivatableNames', None, None,
+                Gio.DBusCallFlags.NONE, _CALL_TIMEOUT_MS, None, _on_reply)
+        except Exception:  # noqa: BLE001 - optional
+            return
+
+    try:
+        Gio.bus_get(Gio.BusType.SESSION, None, _on_bus)
+    except Exception:  # noqa: BLE001 - optional
+        pass
+
+
+def start_bus_name(name: str) -> None:
+    """Ask the session bus to start an activatable service now
+    (StartServiceByName, async, errors ignored)."""
+    def _on_reply(conn, result) -> None:
+        try:
+            conn.call_finish(result)
+        except Exception as err:  # noqa: BLE001 - logged only
+            from shell_log import get_logger
+            get_logger('modem_monitor').warning(
+                'cannot start %s: %s', name, _err_message(err))
+
+    def _on_bus(_source, result) -> None:
+        try:
+            conn = Gio.bus_get_finish(result)
+            conn.call(
+                'org.freedesktop.DBus', _DBUS_PATH, _DBUS_IFACE,
+                'StartServiceByName', GLib.Variant('(su)', (name, 0)), None,
+                Gio.DBusCallFlags.NONE, _IO_TIMEOUT_MS, None, _on_reply)
+        except Exception:  # noqa: BLE001 - optional
+            return
+
+    try:
+        Gio.bus_get(Gio.BusType.SESSION, None, _on_bus)
+    except Exception:  # noqa: BLE001 - optional
+        pass
 
 
 def _pick_modem_path(objects: dict, interface: str) -> str | None:
@@ -596,6 +687,7 @@ class ModemMonitor:
 
     def _init_bus(self) -> bool:
         from shell_log import get_logger
+        watch_telephony_apps()
         try:
             self._bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
             self._bus.signal_subscribe(

@@ -574,37 +574,79 @@ class TestModemResolution:
 
 
 class TestSessionBusOwnership:
+    """Whether GNOME Calls, Chatty or TxxT run comes from three
+    Gio.bus_watch_name watchers on the session bus, kept current by
+    their appeared/vanished callbacks. bus_name_has_owner never makes a
+    synchronous D-Bus call: it ran on every call snapshot and SMS on the
+    GTK main loop (a 500 ms GetNameOwner each time)."""
+
     @staticmethod
-    def _session_bus(monkeypatch):
-        """The shared Gio fake comes from whichever sibling module imported
-        first and may lack SESSION; script what this suite needs."""
+    def _fresh(monkeypatch):
         import types as _types
+        watches = {}
+
+        def _watch(bus_type, name, flags, appeared, vanished):
+            watches[name] = (bus_type, appeared, vanished)
+            return len(watches)
+
         monkeypatch.setattr(modem_monitor.Gio, 'BusType',
                             _types.SimpleNamespace(SYSTEM=1, SESSION=2))
+        monkeypatch.setattr(modem_monitor.Gio, 'BusNameWatcherFlags',
+                            _types.SimpleNamespace(NONE=0), raising=False)
+        monkeypatch.setattr(modem_monitor.Gio, 'bus_watch_name', _watch,
+                            raising=False)
+        monkeypatch.setattr(modem_monitor.Gio, 'bus_get', lambda *a, **k: None,
+                            raising=False)
 
-    def test_owned_name_reports_true(self, monkeypatch):
-        self._session_bus(monkeypatch)
-        bus = FakeBus()
-        bus.sync_replies.append(FakeReply((':1.42',)))
-        monkeypatch.setattr(modem_monitor.Gio, 'bus_get_sync',
-                            lambda *a, **k: bus)
-        assert modem_monitor.bus_name_has_owner('org.gnome.Calls') is True
-        assert bus.sync_calls[0][3] == 'GetNameOwner'
+        def _no_sync(*_a, **_k):
+            raise AssertionError('no synchronous bus access expected')
 
-    def test_unowned_name_reports_false(self, monkeypatch):
-        self._session_bus(monkeypatch)
-        bus = FakeBus()
-        bus.sync_replies.append(Exception(
-            'org.freedesktop.DBus.Error.NameHasNoOwner'))
-        monkeypatch.setattr(modem_monitor.Gio, 'bus_get_sync',
-                            lambda *a, **k: bus)
-        assert modem_monitor.bus_name_has_owner('sm.puri.Chatty') is False
+        monkeypatch.setattr(modem_monitor.Gio, 'bus_get_sync', _no_sync)
+        monkeypatch.setattr(modem_monitor, '_name_watches', {})
+        monkeypatch.setattr(modem_monitor, '_name_owned', {})
+        monkeypatch.setattr(modem_monitor, '_activatable', set())
+        return watches
 
-    def test_missing_bus_reports_false(self, monkeypatch):
-        self._session_bus(monkeypatch)
-        monkeypatch.setattr(modem_monitor.Gio, 'bus_get_sync',
-                            lambda *a, **k: None)
+    def test_three_session_watchers(self, monkeypatch):
+        watches = self._fresh(monkeypatch)
+        modem_monitor.watch_telephony_apps()
+        assert set(watches) == {modem_monitor.CALLS_BUS_NAME,
+                                modem_monitor.CHATTY_BUS_NAME,
+                                modem_monitor.TXXT_BUS_NAME}
+        assert {w[0] for w in watches.values()} == {
+            modem_monitor.Gio.BusType.SESSION}
+        modem_monitor.watch_telephony_apps()
+        assert len(watches) == 3
+
+    def test_owner_follows_appeared_and_vanished(self, monkeypatch):
+        watches = self._fresh(monkeypatch)
+        modem_monitor.watch_telephony_apps()
+        name = modem_monitor.CALLS_BUS_NAME
+        assert modem_monitor.bus_name_has_owner(name) is False
+        _bus_type, appeared, vanished = watches[name]
+        appeared(None, name, ':1.42')
+        assert modem_monitor.bus_name_has_owner(name) is True
+        assert modem_monitor.bus_name_has_owner(
+            modem_monitor.CHATTY_BUS_NAME) is False
+        vanished(None, name)
+        assert modem_monitor.bus_name_has_owner(name) is False
+
+    def test_unwatched_name_starts_a_watch_without_blocking(self, monkeypatch):
+        watches = self._fresh(monkeypatch)
+        assert modem_monitor.bus_name_has_owner('org.example.Other') is False
+        assert 'org.example.Other' in watches
+
+    def test_missing_watch_api_reports_false(self, monkeypatch):
+        self._fresh(monkeypatch)
+        monkeypatch.delattr(modem_monitor.Gio, 'bus_watch_name')
         assert modem_monitor.bus_name_has_owner('org.gnome.Calls') is False
+
+    def test_monitor_starts_the_watchers(self, monkeypatch):
+        watches = self._fresh(monkeypatch)
+        bus = FakeBus()
+        _make_monitor(bus, monkeypatch)
+        assert modem_monitor.TXXT_BUS_NAME in watches
+        assert modem_monitor.CALLS_BUS_NAME in watches
 
 
 class TestCallInfo:

@@ -89,8 +89,6 @@ ALLOW = {
         'fingerprint probe worker (_fp_probe_sync).',
     ('lock_screen.py', '_fp_thread'):
         'fingerprint verify worker thread.',
-    ('modem_monitor.py', 'bus_name_has_owner'):
-        'call/SMS signal-callback GetNameOwner probe (500 ms cap), no scan.',
     ('modem_monitor.py', 'resolve_modem_path'):
         'telephony workers (dial/sms threads).',
     ('modem_monitor.py', 'voice_create_and_start'):
