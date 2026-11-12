@@ -504,9 +504,27 @@ class TestIpcReplayBeforePresent:
 
     def test_pre_present_commands_queue_in_order(self):
         app = self._preshell_app()
-        app._on_ipc_command('gesture.home')
+        app._on_ipc_command('lock')
         app._on_ipc_command('page.apps')
-        assert app._pending_ipc == ['gesture.home', 'page.apps']
+        assert app._pending_ipc == ['lock', 'page.apps']
+
+    def test_pre_present_queue_is_bounded_and_drops_gestures(self):
+        # A swipe during the first-boot wizard must not replay when the
+        # shell first presents, and the queue must not grow without bound.
+        app = self._preshell_app()
+        for _ in range(500):
+            app._on_ipc_command('gesture.home')
+            app._on_ipc_command('gesture.switcher')
+            app._on_ipc_command('shade.show')
+        for n in range(20):
+            app._on_ipc_command(f'settings.open:s{n}')
+        app._on_ipc_command('page.apps')
+        app._on_ipc_command('page.apps')
+        assert len(app._pending_ipc) <= 8
+        assert not any(c.startswith(('gesture.', 'shade.', 'switcher.'))
+                       for c in app._pending_ipc)
+        assert app._pending_ipc[-1] == 'page.apps'
+        assert app._pending_ipc.count('page.apps') == 1
 
     def test_replay_runs_queued_commands_in_order(self):
         app, calls = _app_with_shell(locked=False)

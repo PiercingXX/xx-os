@@ -48,6 +48,28 @@ def parse_page_command(command: str) -> tuple[str, str | None] | None:
     return None
 
 
+# Verbs that arrive before the shell exists (the first-boot wizard can be
+# up for minutes) queue for the first present. Only this many are kept.
+PENDING_LIMIT = 8
+
+# Touches on whatever was on screen when they happened: replaying them
+# after the wizard would go home, open recents or the shade unasked.
+_STALE_BEFORE_PRESENT = ('gesture.', 'shade.', 'switcher.')
+
+
+def queue_pending_command(pending: list[str], command: str,
+                          limit: int = PENDING_LIMIT) -> None:
+    """Queue a verb for the shell's first present, bounded: gesture and
+    shade/switcher verbs are dropped, a repeated verb moves to the end
+    instead of queueing twice, and past `limit` the oldest falls off."""
+    if command.startswith(_STALE_BEFORE_PRESENT):
+        return
+    if command in pending:
+        pending.remove(command)
+    pending.append(command)
+    del pending[:-limit]
+
+
 def suppress_during_tour(command: str, tour_visible: bool) -> bool:
     """True when `command` must be dropped because the tour is up."""
     return bool(tour_visible) and command in TOUR_SUPPRESSED_VERBS

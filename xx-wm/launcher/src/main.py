@@ -12,7 +12,9 @@ gi.require_version('Adw', '1')
 from gi.repository import Adw, GLib, Gio
 
 from first_boot import FirstBootWizard
-from ipc import IPCServer, parse_page_command, suppress_during_tour
+from ipc import (
+    IPCServer, parse_page_command, queue_pending_command, suppress_during_tour,
+)
 from notif_daemon import NotificationDaemon
 from shell_log import get_logger, setup_logging
 from window import ShellWindow
@@ -953,7 +955,7 @@ class XXWMApplication(Adw.Application):
             pending = getattr(self, '_pending_ipc', None)
             if pending is None:
                 pending = self._pending_ipc = []
-            pending.append(command)
+            queue_pending_command(pending, command)
             return
         if (self._shell.is_locked()
                 and self._ipc_silenced_while_locked(command)):
