@@ -803,18 +803,30 @@ class AppItemActions:
 
         shown: dict = {}
 
+        # Rows rebuild however the sheet closes (scrim tap, Back), not only
+        # on Done: drops persist silently, so the rows under the sheet are
+        # stale until then.
+        def _refresh(*_args) -> None:
+            if shown.get('refreshed'):
+                return
+            shown['refreshed'] = True
+            self._on_changed()
+
         def _done() -> None:
             popover = shown.get('popover')
             if popover is not None:
                 shown['popover'] = None
                 popover.popdown()
-            self._on_changed()
+            _refresh()
 
         box, view = reorder_sheet.build_reorder_box(
             title, items, on_order_changed,
             on_sort=(lambda: on_sort(view)) if on_sort is not None else None,
             on_done=_done)
-        shown['popover'] = self._show_popover(anchor, box)
+        popover = self._show_popover(anchor, box)
+        shown['popover'] = popover
+        if popover is not None:
+            popover.connect('closed', _refresh)
 
     def _show_folder_reorder(self, anchor: Gtk.Widget, slot_index: int) -> None:
         slot = self._folder_slot(slot_index)
@@ -827,16 +839,21 @@ class AppItemActions:
         name = slot.get('label', 'Folder')
         items = [(str(i), str(m.get('label', '')))
                  for i, m in enumerate(members)]
+        # Row ids index the order the sheet opened with, so every drop is
+        # a permutation of that base, not of the order the last drop saved.
+        base = {'members': list(members)}
 
         def _on_sort(view) -> None:
             self.sort_folder_members(slot_index, notify=False)
             ordered = (self._folder_slot(slot_index) or {}).get('folder') or []
+            base['members'] = list(ordered)
             view.replace([(str(i), str(m.get('label', '')))
                           for i, m in enumerate(ordered)])
 
         self.show_reorder(
             anchor, f'Rearrange {name}', items,
-            on_order_changed=lambda ids: self.apply_member_order(slot_index, ids),
+            on_order_changed=lambda ids: self.apply_member_order(
+                slot_index, ids, base['members']),
             on_sort=_on_sort)
 
     def show_home_reorder(self, anchor: Gtk.Widget) -> None:
@@ -846,16 +863,21 @@ class AppItemActions:
             return
         items = [(str(i), str(s.get('label', '')))
                  for i, s in enumerate(slots)]
+        base = list(slots)
         self.show_reorder(
             anchor, 'Rearrange Home Screen', items,
-            on_order_changed=self.apply_slot_order)
+            on_order_changed=lambda ids: self.apply_slot_order(ids, base))
 
-    def apply_member_order(self, slot_index: int, ids: list[str]) -> bool:
-        """Persist a whole member permutation silently; Done refreshes."""
+    def apply_member_order(self, slot_index: int, ids: list[str],
+                           base: list | None = None) -> bool:
+        """Persist a whole member permutation silently; Done refreshes.
+
+        ``ids`` index ``base`` (the order the sheet opened with) when given,
+        else the current members."""
         slot = self._folder_slot(slot_index)
         if slot is None:
             return False
-        members = slot.get('folder') or []
+        members = base if base is not None else (slot.get('folder') or [])
         try:
             order = [int(i) for i in ids]
         except (TypeError, ValueError):
@@ -866,9 +888,12 @@ class AppItemActions:
         self._config.set_home_slots(self._config.home_slots)
         return True
 
-    def apply_slot_order(self, ids: list[str]) -> bool:
-        """Persist a whole home-slot permutation silently; Done refreshes."""
-        slots = self._config.home_slots
+    def apply_slot_order(self, ids: list[str], base: list | None = None) -> bool:
+        """Persist a whole home-slot permutation silently; Done refreshes.
+
+        ``ids`` index ``base`` (the order the sheet opened with) when given,
+        else the current slots."""
+        slots = base if base is not None else self._config.home_slots
         try:
             order = [int(i) for i in ids]
         except (TypeError, ValueError):

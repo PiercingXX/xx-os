@@ -272,6 +272,65 @@ class TestApplyOrder:
         actions.apply_slot_order(['1', '0'])
         assert [s['label'] for s in config.home_slots] == before
 
+    def _drive_sheet(self, actions, show):
+        """Open a reorder sheet with a fake host; return its model and the
+        saver and closed callbacks the real sheet would wire."""
+        seen = {}
+
+        class _Sheet:
+            def connect(self, signal, cb):
+                seen[signal] = cb
+
+            def popdown(self):
+                seen['closed'](self)
+
+        def _fake_build(_title, items, on_order_changed, **kw):
+            seen['model'] = reorder_sheet.ReorderModel(items)
+            seen['save'] = on_order_changed
+            seen['done'] = kw.get('on_done')
+            return object(), SimpleNamespace(model=seen['model'])
+
+        actions._show_popover = lambda _anchor, _box: _Sheet()
+        orig = reorder_sheet.build_reorder_box
+        reorder_sheet.build_reorder_box = _fake_build
+        try:
+            show()
+        finally:
+            reorder_sheet.build_reorder_box = orig
+        return seen
+
+    def _drag(self, seen, src, dst):
+        model = seen['model']
+        assert model.move(src, dst)
+        seen['save'](model.ids())
+
+    def test_second_home_drag_saves_visual_order(self, actions, config):
+        seen = self._drive_sheet(actions, lambda: actions.show_home_reorder(None))
+        self._drag(seen, 0, 2)
+        assert [s['label'] for s in config.home_slots] == ['Tools', 'Comms', 'Notes']
+        self._drag(seen, 0, 1)
+        assert [s['label'] for s in config.home_slots] == ['Comms', 'Tools', 'Notes']
+
+    def test_second_folder_drag_saves_visual_order(self, actions, config):
+        config.home_slots[1]['folder'].append({'label': 'Maps', 'app_id': 'maps.desktop'})
+        seen = self._drive_sheet(actions, lambda: actions._show_folder_reorder(None, 1))
+        self._drag(seen, 0, 2)
+        self._drag(seen, 0, 1)
+        assert [m['label'] for m in config.home_slots[1]['folder']] == [
+            'Maps', 'Calc', 'Camera']
+
+    def test_closing_sheet_without_done_refreshes_rows(self, actions, config):
+        seen = self._drive_sheet(actions, lambda: actions.show_home_reorder(None))
+        self._drag(seen, 0, 2)
+        assert 'changed' not in actions.events
+        seen['closed'](None)
+        assert actions.events.count('changed') == 1
+
+    def test_done_refreshes_once(self, actions, config):
+        seen = self._drive_sheet(actions, lambda: actions.show_home_reorder(None))
+        seen['done']()
+        assert actions.events.count('changed') == 1
+
     def test_app_menu_is_the_design_list(self, actions, config):
         menus = _capture_menus(actions)
         actions.show_app_menu(object(), _entry('a.desktop', 'A'))
