@@ -230,9 +230,9 @@ class ScreenTimeSection(settings_page._Section):
         try:
             if win.get_application() is None:
                 return
-            from gi.repository import GLib
-            self._tick_id = GLib.timeout_add_seconds(
-                LIMIT_TICK_SECS, self._on_limit_tick, win)
+            from ticker import get_ticker
+            self._tick_id = get_ticker().add(
+                lambda: self._on_limit_tick(win), LIMIT_TICK_SECS)
         except Exception:
             self._tick_id = None
 

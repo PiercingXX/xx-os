@@ -836,6 +836,24 @@ class TestMediaCard:
         # SOURCE_REMOVE callback; the cleared _pos_src above is the proof
         # the timer stops.
 
+    def test_no_polling_on_a_dark_screen(self, card, monkeypatch):
+        import ticker
+        dark = ticker.Ticker(timeout_add=lambda _ms, _cb: 1,
+                             source_remove=lambda _src: None)
+        monkeypatch.setattr(ticker, '_TICKER', dark)
+        hw = card.hw
+        _adopt(hw, VLC, ROOT_VLC, _player_props())
+        assert len(card.timers) == 1
+        _tid, (_secs, tick) = next(iter(card.timers.items()))
+        # The lock stays mapped while the display is blank.
+        dark.set_blanked(True)
+        card.card.update_polling()
+        assert card.card._pos_src is None
+        assert tick() is False
+        dark.set_blanked(False)
+        card.card.update_polling()
+        assert card.card._pos_src is not None
+
     def test_no_polling_without_length(self, card):
         hw = card.hw
         props = _player_props(length=0)

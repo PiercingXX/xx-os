@@ -139,6 +139,7 @@ install_data(
     'src/system_status.py',
     'src/tailscale.py',
     'src/thumbnail_store.py',
+    'src/ticker.py',
     'src/toplevel_manager.py',
     'src/trackpad.py',
     'src/update_checker.py',

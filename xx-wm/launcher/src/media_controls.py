@@ -645,6 +645,16 @@ class MprisWatcher:
         self._emit()
 
 
+def _screen_dark() -> bool:
+    """The display is blank: a lock screen that stays mapped while dark
+    must not poll the player every second."""
+    try:
+        from ticker import get_ticker
+        return get_ticker().blanked
+    except Exception:
+        return False
+
+
 def _ensure_icons() -> None:
     """Put the shell glyph directory on the icon search path (once), so
     the transport glyphs resolve on the lock screen too."""
@@ -922,7 +932,12 @@ if _HAS_GTK:
             return (snapshot is not None
                     and snapshot.status == _STATUS_PLAYING
                     and snapshot.length_us is not None
-                    and self._is_shown())
+                    and self._is_shown()
+                    and not _screen_dark())
+
+        def update_polling(self) -> None:
+            """Re-check the position poll (display blank/wake)."""
+            self._update_polling()
 
         def _update_polling(self) -> None:
             want = self._want_polling()

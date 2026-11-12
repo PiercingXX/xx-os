@@ -1739,19 +1739,61 @@ class StandbyController:
                 return True
         return False
 
+    def _standby_on(self) -> bool:
+        return saver_effective_minutes(self._standby_minutes, False) > 0
+
     def _sweep_tick(self) -> bool:
         try:
-            self.sweep()
+            if self._standby_on():
+                self.sweep()
+            else:
+                # Standby off: nothing to freeze, only the battery saver.
+                self._update_saver_auto()
+                self._maybe_notify_saver()
         except Exception as error:
             _log.warning('standby sweep failed: %s', error)
         return True
 
     def _refresh_tick(self) -> bool:
+        """Standby off spawns no pw-dump and asks no media players; the
+        automatic battery saver still needs the battery level."""
         try:
-            self.refresh_exemptions_async()
+            if self._standby_on():
+                self.refresh_exemptions_async()
+            elif self._saver_auto_enabled:
+                self.refresh_battery_async()
         except Exception as error:
             _log.warning('standby refresh failed: %s', error)
         return True
+
+    def refresh_battery_async(self) -> object | None:
+        def _work() -> None:
+            batt: tuple[float | None, bool] = (None, False)
+            try:
+                sysbus = self._system_bus_factory()
+            except Exception:
+                sysbus = None
+            if sysbus is not None:
+                try:
+                    batt = query_battery(sysbus)
+                except Exception:
+                    pass
+            try:
+                GLib.idle_add(self._apply_battery, batt)
+            except Exception as error:
+                _log.info('standby battery post failed: %s', error)
+        try:
+            thread = threading.Thread(target=_work, daemon=True,
+                                      name='xx-wm-standby-battery')
+            thread.start()
+            return thread
+        except Exception as error:
+            _log.info('standby battery thread failed: %s', error)
+            return None
+
+    def _apply_battery(self, batt: tuple) -> bool:
+        self._battery = batt
+        return False
 
     # -- exemption refresh (worker thread, never the main loop) -----------------
 
@@ -1870,11 +1912,14 @@ class StandbyController:
         except Exception as error:
             _log.info('standby scope re-adopt failed: %s', error)
         try:
-            self.refresh_exemptions_async()
-            self._sweep_src = GLib.timeout_add_seconds(
-                SWEEP_SECONDS, self._sweep_tick)
-            self._refresh_src = GLib.timeout_add_seconds(
-                EXEMPT_REFRESH_SECONDS, self._refresh_tick)
+            from ticker import get_ticker
+            self._refresh_tick()
+            # Blank-screen freezing is the point of standby: these keep
+            # running while the display is dark.
+            self._sweep_src = get_ticker().add(
+                self._sweep_tick, SWEEP_SECONDS, while_blank=True)
+            self._refresh_src = get_ticker().add(
+                self._refresh_tick, EXEMPT_REFRESH_SECONDS, while_blank=True)
         except Exception as error:
             _log.info('standby start failed: %s', error)
 
@@ -2010,7 +2055,8 @@ class StandbyController:
             src = getattr(self, attr)
             if src is not None:
                 try:
-                    GLib.source_remove(src)
+                    from ticker import get_ticker
+                    get_ticker().remove(src)
                 except Exception:
                     pass
                 setattr(self, attr, None)

@@ -1971,6 +1971,10 @@ class LockScreen(Gtk.Window):
     def on_blank_changed(self, blanked: bool) -> None:
         """Shell callback for every blank/wake: fingerprint verify and
         the clock tick run only while the lock is visible on a lit screen."""
+        update_media = getattr(getattr(self, '_media', None),
+                               'update_polling', None)
+        if callable(update_media):
+            update_media()
         if blanked:
             LockScreen._stop_fingerprint(self)
             LockScreen._stop_clock_tick(self)
@@ -1983,14 +1987,17 @@ class LockScreen(Gtk.Window):
     def _start_clock_tick(self) -> None:
         if getattr(self, '_clock_src', None) is not None:
             return
+        from ticker import get_ticker
         self._refresh_clock()
-        self._clock_src = GLib.timeout_add_seconds(1, self._tick_clock)
+        self._clock_src = get_ticker().add(self._tick_clock, 60,
+                                           align_minute=True)
 
     def _stop_clock_tick(self) -> None:
         src = getattr(self, '_clock_src', None)
         self._clock_src = None
         if src is not None:
-            GLib.source_remove(src)
+            from ticker import get_ticker
+            get_ticker().remove(src)
 
     def _tick_clock(self) -> bool:
         if not self.get_visible() or LockScreen._screen_blanked(self):

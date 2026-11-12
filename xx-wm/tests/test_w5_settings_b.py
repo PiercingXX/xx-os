@@ -824,20 +824,20 @@ class TestScreenTimeSection:
 
     def test_tick_starts_with_the_shell(self, fake_gi, monkeypatch):
         import settings_screentime as screen_time
-        from gi.repository import GLib
-        timers = []
-        monkeypatch.setattr(
-            GLib, 'timeout_add_seconds',
-            lambda secs, cb, *args: timers.append((secs, cb, args)) or 9,
-            raising=False)
+        import ticker
+        fake = ticker.Ticker(timeout_add=lambda _ms, _cb: 1,
+                             source_remove=lambda _src: None)
+        monkeypatch.setattr(ticker, '_TICKER', fake)
         section = screen_time.ScreenTimeSection()
         section.build(_bare_win())
-        assert timers == []
+        assert len(fake) == 0
         win = _bare_win(get_application=lambda: object())
         section.build(win)
         section.build(win)
-        assert [(secs, args) for secs, _cb, args in timers] == [
-            (screen_time.LIMIT_TICK_SECS, (win,))]
+        assert [job.period for job in fake._jobs.values()] == [
+            screen_time.LIMIT_TICK_SECS]
+        # Paused with the screen: no usage accrues while it is dark.
+        assert not any(job.while_blank for job in fake._jobs.values())
 
     def test_breakdown_view(self, fake_gi):
         import settings_screentime as screen_time

@@ -192,7 +192,7 @@ class XXWMApplication(Adw.Application):
         self._dock = None
         from focus_mode import HeldNotifications
         self._held_notifications = HeldNotifications()
-        GLib.timeout_add_seconds(30, self._tick_focus_release)
+        self._focus_release_job = None
 
     def do_activate(self) -> None:
         drop_portal_opt_out()
@@ -801,6 +801,7 @@ class XXWMApplication(Adw.Application):
                 notif_id, app_name, summary, body, desktop_entry,
                 actions if actions is not None else [],
                 hints if isinstance(hints, dict) else {})
+            self._arm_focus_release()
             _log.debug('notification %d held by Focus: %s', notif_id,
                        desktop_entry or app_name)
             return
@@ -922,16 +923,26 @@ class XXWMApplication(Adw.Application):
         except Exception:
             pass
 
+    def _arm_focus_release(self) -> None:
+        """Check for the end of Focus only while it holds something."""
+        from ticker import get_ticker
+        ticker = get_ticker()
+        if not ticker.has(getattr(self, '_focus_release_job', None)):
+            self._focus_release_job = ticker.add(
+                self._tick_focus_release, 30)
+
     def _tick_focus_release(self) -> bool:
+        if len(self._held_notifications) == 0:
+            self._focus_release_job = None
+            return False
         focus = getattr(self._shell, 'focus_state', None) if self._shell else None
-        if focus is None or len(self._held_notifications) == 0:
-            return True
-        if focus.is_active():
+        if focus is None or focus.is_active():
             return True
         for held in self._held_notifications.release_all():
             self._shell._ensure_shade().add_notification(*held)
         self._refresh_lock_notifications()
-        return True
+        self._focus_release_job = None
+        return False
 
     def _refresh_lock_notifications(self) -> None:
         """The lock-screen list follows the shade while locked."""
@@ -1108,6 +1119,11 @@ class XXWMApplication(Adw.Application):
         """Fan-out for DisplayManager blank reports: the shell's auto-lock
         plus the standby controller's blank freeze timer."""
         try:
+            from ticker import get_ticker
+            get_ticker().set_blanked(blanked)
+        except Exception as exc:
+            _log.warning('ticker blank hook failed: %s', exc)
+        try:
             import capture
             capture.set_blanked(blanked)
             if blanked:
@@ -1197,18 +1213,44 @@ class XXWMApplication(Adw.Application):
                 except Exception:
                     pass
 
-        ctrl.on_state_changed = _on_xxdb_state_changed
+        def _on_xxdb_changed() -> None:
+            self._arm_xxdb_idle()
+            _on_xxdb_state_changed()
+
+        ctrl.on_state_changed = _on_xxdb_changed
         self._shell.xxdb_controller = ctrl
         self._xxdb = ctrl
+        self._xxdb_job = None
         self._shell._refresh_xxdb_section()
         if ctrl.ensure_boot_state():
             ctrl.request_enable()
-        GLib.timeout_add_seconds(60, self._tick_xxdb)
+        self._arm_xxdb_idle()
+
+    def _arm_xxdb_idle(self) -> None:
+        """The idle auto-off check runs only while wireless debugging is
+        on, and keeps running on a dark screen (an open port must still
+        close on time)."""
+        from ticker import get_ticker
+        ctrl = getattr(self, '_xxdb', None)
+        on = ctrl is not None and bool(
+            getattr(ctrl, 'enabled', False) or getattr(ctrl, 'starting', False))
+        ticker = get_ticker()
+        job = getattr(self, '_xxdb_job', None)
+        if on and not ticker.has(job):
+            self._xxdb_job = ticker.add(self._tick_xxdb, 60, while_blank=True)
+        elif not on and job is not None:
+            ticker.remove(job)
+            self._xxdb_job = None
 
     def _tick_xxdb(self) -> bool:
+        ctrl = self._xxdb
+        if ctrl is None or not (ctrl.enabled or getattr(ctrl, 'starting', False)):
+            self._xxdb_job = None
+            return False
         try:
-            if self._xxdb is not None:
-                self._xxdb.idle_check()
+            if not ctrl.idle_check():
+                self._xxdb_job = None
+                return False
         except Exception:
             _log.exception('xxdb idle check failed')
         return True

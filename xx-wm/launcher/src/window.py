@@ -653,6 +653,8 @@ class ShellWindow(Adw.ApplicationWindow):
         from nope_mode import NopeState
         self.dnd_state = DndState(self.config)
         self.focus_state = FocusState(self.config)
+        self.dnd_state.on_change = self._refresh_clock
+        self.focus_state.on_change = self._refresh_clock
         self.nope_state = NopeState(self.config)
         try:
             # One address book for the shell: warms the xx-contacts cache
@@ -850,8 +852,9 @@ class ShellWindow(Adw.ApplicationWindow):
         self._refresh_status()
         self._setup_config_monitor()
         self._setup_app_monitor()
-        GLib.timeout_add_seconds(1, self._tick_clock)
-        GLib.timeout_add_seconds(60, self._tick_status)
+        from ticker import get_ticker
+        get_ticker().add(self._tick_clock, 60, align_minute=True)
+        get_ticker().add(self._tick_status, 60)
 
         from update_checker import UpdateChecker
         self._update_checker = UpdateChecker(

@@ -156,6 +156,10 @@ def glib(monkeypatch):
                         raising=False)
     monkeypatch.setattr(ls.GLib, 'SOURCE_REMOVE', False, raising=False)
     monkeypatch.setattr(ls.GLib, 'SOURCE_CONTINUE', True, raising=False)
+    import ticker
+    rec.ticker = ticker.Ticker(timeout_add=lambda _ms, _cb: 1,
+                               source_remove=lambda _src: None)
+    monkeypatch.setattr(ticker, '_TICKER', rec.ticker)
     return rec
 
 
@@ -183,15 +187,25 @@ class TestClockTick:
         lock = _lock()
         ls.LockScreen.on_shown(lock)
         ls.LockScreen.on_shown(lock)
-        ticks = [cb for _id, cb in glib.timeouts if cb == lock._tick_clock]
+        ticks = [job for job in glib.ticker._jobs.values()
+                 if job.fn == lock._tick_clock]
         assert len(ticks) == 1
         assert lock._clock_src is not None
+
+    def test_tick_is_once_a_minute_on_the_minute(self, glib, threads):
+        ls = _ls()
+        lock = _lock()
+        ls.LockScreen.on_shown(lock)
+        job = glib.ticker._jobs[lock._clock_src]
+        assert job.period == 60 and job.align
+        assert [t for t in glib.timeouts if t[1] == lock._tick_clock] == []
 
     def test_shown_on_dark_screen_starts_no_tick(self, glib, threads):
         ls = _ls()
         lock = _lock(blanked=True)
         ls.LockScreen.on_shown(lock)
         assert glib.timeouts == []
+        assert len(glib.ticker) == 0
 
     def test_unlock_stops_tick(self, glib, threads):
         ls = _ls()
@@ -199,7 +213,7 @@ class TestClockTick:
         ls.LockScreen.on_shown(lock)
         src = lock._clock_src
         lock._unlock()
-        assert src in glib.removed
+        assert not glib.ticker.has(src)
         assert lock._clock_src is None
 
     def test_blank_stops_and_wake_restarts_tick(self, glib, threads):
@@ -208,7 +222,7 @@ class TestClockTick:
         ls.LockScreen.on_shown(lock)
         src = lock._clock_src
         ls.LockScreen.on_blank_changed(lock, True)
-        assert src in glib.removed
+        assert not glib.ticker.has(src)
         ls.LockScreen.on_blank_changed(lock, False)
         assert lock._clock_src is not None and lock._clock_src != src
 

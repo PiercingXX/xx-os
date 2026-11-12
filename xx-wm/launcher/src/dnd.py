@@ -137,6 +137,18 @@ def schedule_skipped(skip_until: object, now: datetime) -> bool:
 class DndState:
     """Config-backed DnD state plus repeat-caller tracking (in-memory)."""
 
+    # Called after the on/off state or schedule changes (the status bar
+    # flags redraw at once instead of on the next minute tick).
+    on_change = None
+
+    def _changed(self) -> None:
+        callback = self.on_change
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                pass
+
     def __init__(self, config: ShellConfig) -> None:
         self._config = config
         self._recent_calls: list[tuple[str, float]] = []
@@ -152,6 +164,7 @@ class DndState:
             0.0 if enabled else scheduled_session_end(
                 self.schedules, now or datetime.now()))
         self._config.save()
+        self._changed()
 
     @property
     def schedules(self) -> list[dict]:
@@ -175,6 +188,7 @@ class DndState:
             })
         self._config.data['dnd_schedules'] = cleaned
         self._config.save()
+        self._changed()
 
     @property
     def starred_numbers(self) -> list[str]:

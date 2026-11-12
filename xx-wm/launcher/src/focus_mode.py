@@ -24,6 +24,18 @@ def _norm(app_id: str) -> str:
 
 
 class FocusState:
+    # Called after the on/off state or schedule changes (the status bar
+    # flags redraw at once instead of on the next minute tick).
+    on_change = None
+
+    def _changed(self) -> None:
+        callback = self.on_change
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                pass
+
     def __init__(self, config: ShellConfig) -> None:
         self._config = config
 
@@ -40,6 +52,7 @@ class FocusState:
         if not enabled:
             self._config.data['focus_break_until'] = 0.0
         self._config.save()
+        self._changed()
 
     @property
     def focus_apps(self) -> list[str]:
@@ -81,6 +94,7 @@ class FocusState:
             })
         self._config.data['focus_schedules'] = cleaned
         self._config.save()
+        self._changed()
 
     @property
     def break_until(self) -> float:
@@ -97,6 +111,7 @@ class FocusState:
         now_ts = _time.time() if now_ts is None else now_ts
         self._config.data['focus_break_until'] = now_ts + minutes * 60
         self._config.save()
+        self._changed()
 
     def is_active(self, now: datetime | None = None,
                   now_ts: float | None = None) -> bool:
