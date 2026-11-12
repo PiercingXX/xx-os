@@ -145,7 +145,9 @@ def test_info_requires_client_cert(stub, mtls_pair):
 
     (_stub, _sk), (cli_cert, cli_key) = mtls_pair
     _server, _state, port = stub
-    with pytest.raises(ssl.SSLError):
+    # TLS 1.3 sends the client-cert refusal after the handshake, so the
+    # client sees it as an alert or as a reset, depending on timing.
+    with pytest.raises((ssl.SSLError, ConnectionResetError, BrokenPipeError)):
         fetch_info("127.0.0.1", port, timeout=5.0)
     body = fetch_info("127.0.0.1", port, timeout=5.0,
                       cert_path=str(cli_cert), key_path=str(cli_key))
