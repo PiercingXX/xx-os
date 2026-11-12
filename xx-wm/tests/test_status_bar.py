@@ -111,6 +111,19 @@ class TestHeightFromConfig:
                            ls.Edge.RIGHT: True, ls.Edge.BOTTOM: False}
         assert ('set_keyboard_mode', ls.KeyboardMode.NONE) in ls.calls
 
+    def test_strip_stays_resizable_so_it_spans_the_output(self, sb):
+        # A non-resizable GTK window keeps its natural width: river and
+        # phoc then size the left+right anchored strip to ~150-200 of 360
+        # px and leave a black block at the top right.
+        import ast
+        import inspect
+        import textwrap
+        tree = ast.parse(textwrap.dedent(inspect.getsource(sb.StatusBar)))
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and getattr(n.func, 'attr', None) == 'set_resizable']
+        assert not [c for c in calls
+                    if not (c.args and getattr(c.args[0], 'value', None))]
+
     def test_apply_config_moves_the_zone(self, sb, monkeypatch):
         ls = _FakeLayerShell()
         monkeypatch.setattr(sb, 'LayerShell', ls, raising=False)

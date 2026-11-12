@@ -503,8 +503,12 @@ if _HAS_GTK:
             self._pull_fired = False
             self._panel = monitor_panel(self.get_display())
             self.height = resolve_height(config, self._device, self._panel)
+            # Resizable on purpose: a non-resizable window keeps its
+            # natural width, so river and phoc both left the left+right
+            # anchored strip ~150-200 of 360 px wide with a black block
+            # beside it. Resizable, it takes the width the compositor
+            # configures.
             self.set_decorated(False)
-            self.set_resizable(False)
             self.add_css_class('xx-statusbar')
             configure_layer(self, self.height, LayerShell)
 
