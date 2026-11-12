@@ -1,4 +1,4 @@
-"""_detect_fp_node: sysfs scan, FP_INPUT_DEV override, legacy fallback."""
+"""_detect_fp_node: sysfs scan, FP_INPUT_DEV override, no guessed fallback."""
 import sys
 import types
 
@@ -59,16 +59,34 @@ class TestDetectFpNode:
         })
         assert display_manager._detect_fp_node(str(base)) == '/dev/input/event4'
 
-    def test_no_match_falls_back_to_legacy_event3(self, tmp_path):
+    def test_no_match_means_no_fingerprint_node(self, tmp_path):
+        # FLX1: event3 is the fts_ts touchscreen; a guessed event3 turned
+        # every touch into a fingerprint key event.
         base = _make_sysfs(tmp_path, {
-            'input0': ('FTSC1000 touchscreen', 'event3'),
+            'input0': ('fts_ts', 'event3'),
         })
-        assert display_manager._detect_fp_node(str(base)) == '/dev/input/event3'
+        assert display_manager._detect_fp_node(str(base)) == ''
 
-    def test_empty_sysfs_falls_back_to_legacy_event3(self, tmp_path):
+    def test_empty_sysfs_means_no_fingerprint_node(self, tmp_path):
         base = tmp_path / 'class' / 'input'
         base.mkdir(parents=True)
-        assert display_manager._detect_fp_node(str(base)) == '/dev/input/event3'
+        assert display_manager._detect_fp_node(str(base)) == ''
+
+    def test_touchscreen_with_reader_vendor_name_is_skipped(self, tmp_path):
+        base = _make_sysfs(tmp_path, {
+            'input1': ('Goodix Capacitive TouchScreen', 'event1'),
+            'input4': ('goodix_fp', 'event4'),
+        })
+        (base / 'input1' / 'properties').write_text('2\n')
+        assert display_manager._detect_fp_node(str(base)) == '/dev/input/event4'
+
+    def test_touch_key_on_event3_is_not_a_fingerprint(self):
+        import struct
+        btn_touch = struct.pack(display_manager._EV_FMT, 0, 0,
+                                display_manager.EV_KEY, 330, 1)
+        wanted, _ = display_manager.filter_evdev_data(
+            btn_touch, '/dev/input/event3', '', 1000.0)
+        assert wanted == []
 
     def test_env_override_wins_over_detection(self, tmp_path, monkeypatch):
         base = _make_sysfs(tmp_path, {

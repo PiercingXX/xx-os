@@ -14,10 +14,12 @@ _on_event filters by code, so power/touch/volume wake the display whatever
 event number they land on and whatever the device. This replaces an earlier
 FP5-specific map (event0-3 / HWCOMPOSER-1) that trapped other devices dark.
 
-The fingerprint reader node is resolved once at init: the FP_INPUT_DEV env
-var overrides, else /sys/class/input/*/name is scanned for reader
-identifiers (fingerprint/goodix/focaltech, case-insensitive);
-/dev/input/event3 remains the fallback when detection finds nothing.
+The fingerprint reader node is resolved at init and on every input rescan:
+the FP_INPUT_DEV env var overrides, else /sys/class/input/*/name is scanned
+for reader identifiers (fingerprint/goodix/focaltech, case-insensitive),
+skipping touchscreens (INPUT_PROP_DIRECT). When detection finds nothing
+there is no fingerprint node: no fixed event number is safe to guess (on
+the FLX1 event3 is the touchscreen).
 
 Hardware shortcuts (handled via evdev):
   - Power short press                  → blank / wake (toggle)
@@ -115,7 +117,7 @@ def filter_evdev_data(
             _EV_FMT, data[offset:offset + _EV_SIZE])
         if ev_type == EV_KEY:
             if (code in (KEY_POWER, KEY_VOLUMEUP, KEY_VOLUMEDOWN)
-                    or (path == fp_node and value == 1)):
+                    or (fp_node and path == fp_node and value == 1)):
                 wanted.append((path, ev_type, code, value))
             elif ((code in _MEDIA_KEY_ACTIONS or code == KEY_WAKEUP)
                     and value == 1):
@@ -143,11 +145,24 @@ def _all_event_devices() -> list[str]:
     return sorted(d for d in glob.glob('/dev/input/event*') if os.access(d, os.R_OK))
 
 
+_INPUT_PROP_DIRECT = 0x2
+
+
+def _is_touchscreen(input_dir: str) -> bool:
+    """INPUT_PROP_DIRECT set: a touchscreen, never a fingerprint reader,
+    whatever its vendor name says (Goodix and FocalTech make both)."""
+    try:
+        with open(os.path.join(input_dir, 'properties'), encoding='ascii') as f:
+            return bool(int(f.read().strip() or '0', 16) & _INPUT_PROP_DIRECT)
+    except (OSError, ValueError):
+        return False
+
+
 def _detect_fp_node(sysfs_dir: str = '/sys/class/input') -> str:
-    """Fingerprint reader evdev node. FP_INPUT_DEV wins outright; else the
-    input device whose sysfs name matches a known reader identifier is mapped
-    to its event* child. Legacy /dev/input/event3 fallback keeps devices
-    where detection finds nothing working until verified per-device."""
+    """Fingerprint reader evdev node, or '' when there is none. FP_INPUT_DEV
+    wins outright; else the input device whose sysfs name matches a known
+    reader identifier (and is not a touchscreen) is mapped to its event*
+    child."""
     override = os.environ.get('FP_INPUT_DEV')
     if override:
         return override
@@ -160,10 +175,13 @@ def _detect_fp_node(sysfs_dir: str = '/sys/class/input') -> str:
             continue
         if not any(tag in name.lower() for tag in _FP_IDENTIFIERS):
             continue
-        events = sorted(glob.glob(os.path.join(os.path.dirname(name_path), 'event*')))
+        input_dir = os.path.dirname(name_path)
+        if _is_touchscreen(input_dir):
+            continue
+        events = sorted(glob.glob(os.path.join(input_dir, 'event*')))
         if events:
             return '/dev/input/' + os.path.basename(events[0])
-    return '/dev/input/event3'
+    return ''
 
 
 def _detect_output() -> str:
@@ -791,7 +809,8 @@ class DisplayManager:
             return GLib.SOURCE_REMOVE
 
         # --- Fingerprint touch → wake if off, else try auth ---
-        if path == self._fp_node and ev_type == EV_KEY and value == 1:
+        if (self._fp_node and path == self._fp_node
+                and ev_type == EV_KEY and value == 1):
             if self._blanked:
                 self._wake()
             elif self._on_fingerprint:
