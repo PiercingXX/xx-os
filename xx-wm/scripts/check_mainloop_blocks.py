@@ -95,6 +95,8 @@ ALLOW = {
         'telephony workers (dial/sms threads).',
     ('modem_monitor.py', 'voice_create_and_start'):
         'telephony worker (dialer _place_call thread).',
+    ('modem_monitor.py', '_delete_created_call'):
+        'voice_create_and_start cleanup after a failed Start; same worker.',
     ('modem_monitor.py', 'messaging_create_and_send'):
         'telephony worker (sms send thread).',
     ('modem_monitor.py', 'messaging_list'):

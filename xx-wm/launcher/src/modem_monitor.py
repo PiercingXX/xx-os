@@ -419,6 +419,7 @@ def voice_create_and_start(
     modem = modem or resolve_modem_path(_VOICE_IFACE)
     if modem is None:
         return False, 'no modem found'
+    call_path = None
     try:
         call_path = bus.call_sync(
             _MM1, modem, _VOICE_IFACE, 'CreateCall',
@@ -432,8 +433,24 @@ def voice_create_and_start(
     except Exception as err:
         detail = _err_message(err)
         get_logger('modem_monitor').warning('call to %s failed: %s', number, detail)
+        if call_path is not None:
+            _delete_created_call(bus, modem, str(call_path), timeout_ms)
         return False, detail
     return True, str(call_path)
+
+
+def _delete_created_call(bus, modem: str, call_path: str,
+                         timeout_ms: int) -> None:
+    """Voice.DeleteCall for a call whose Start failed: it would sit in
+    state UNKNOWN until ModemManager restarts. Worker thread only."""
+    try:
+        bus.call_sync(
+            _MM1, modem, _VOICE_IFACE, 'DeleteCall',
+            GLib.Variant('(o)', (call_path,)), None,
+            Gio.DBusCallFlags.NONE, timeout_ms, None,
+        )
+    except Exception:  # noqa: BLE001 - already gone is fine
+        pass
 
 
 def messaging_create_and_send(
@@ -558,7 +575,8 @@ class ModemMonitor:
         self._call_subs: dict[str, list[int]] = {}
         self._announced_incoming: set[str] = set()
         self._announced_active: set[str] = set()
-        self._ended_announced = False
+        # True while no live call is up (nothing for on_ended to report).
+        self._ended_announced = True
         self._active_call_path: str | None = None
         self._screened_waiting: set[str] = set()
         self._last_ended: CallInfo | None = None
@@ -664,8 +682,12 @@ class ModemMonitor:
     # ------------------------------------------------------------- tracking
 
     def calls(self) -> list[CallInfo]:
-        """Snapshot of every tracked call for the UI to render from."""
-        return [replace(call) for call in self._calls.values()]
+        """Snapshot of every live call for the UI to render from. A call
+        still in state UNKNOWN (created, never started: a failed Start
+        leaves one) is tracked but not live, so it never shows a surface
+        or holds the phone awake."""
+        return [replace(call) for call in self._calls.values()
+                if call.state in _LIVE_STATES]
 
     def modem_path(self, interface: str = _VOICE_IFACE) -> str | None:
         """First known modem object path carrying ``interface``."""
@@ -797,7 +819,8 @@ class ModemMonitor:
         call.number = number
         call.state_reason = reason
         self._subscribe_call(call_path)
-        self._ended_announced = False
+        if state in _LIVE_STATES:
+            self._ended_announced = False
         if direction == _DIR_INCOMING and state == _STATE_RINGING_IN:
             self._announce_incoming(call_path)
         elif direction == _DIR_INCOMING and state == _STATE_WAITING:
@@ -850,7 +873,7 @@ class ModemMonitor:
                     'call %s ended: %s', call_path, tracked.end_reason)
         self._refresh_active_path()
         self._emit_changed()
-        if not self._calls and not self._ended_announced:
+        if not self.calls() and not self._ended_announced:
             self._ended_announced = True
             GLib.idle_add(self._on_ended)
 
@@ -988,6 +1011,8 @@ class ModemMonitor:
         except (TypeError, ValueError):
             pass
         call.state = new_state
+        if new_state in _LIVE_STATES:
+            self._ended_announced = False
         if new_state == _STATE_ACTIVE:
             self._announce_active(call_path)
         elif new_state == _STATE_TERMINATED:

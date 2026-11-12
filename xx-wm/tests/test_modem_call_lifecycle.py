@@ -14,9 +14,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from test_modem_monitor_calls import (  # noqa: E402
-    CALL1, MODEM, FakeBus, FakeParams, FakeReply, _CALL_IFACE, _MM1,
-    _VOICE_IFACE, _delete_call, _make_monitor, _ringing_props, _shown,
-    _state_changed, modem_monitor,
+    CALL1, CALL2, MODEM, FakeBus, FakeParams, FakeReply, _CALL_IFACE, _MM1,
+    _VOICE_IFACE, _add_call, _delete_call, _make_monitor, _ringing_props,
+    _shown, _state_changed, modem_monitor,
 )
 
 
@@ -105,3 +105,60 @@ class TestCallFetchRetry:
         drain()
         assert fired['incoming'] == []
         assert monitor.calls() == []
+
+
+class TestUnknownStateCalls:
+    """A call in MMCallState UNKNOWN (0) was created but never started
+    (a failed Start leaves one behind): it is not a live call, so it
+    neither shows a surface nor blocks auto-lock nor holds back on_ended."""
+
+    def test_unknown_state_call_not_in_snapshot(self, monkeypatch):
+        bus = FakeBus()
+        monitor, fired, _, drain = _make_monitor(bus, monkeypatch)
+        _add_call(monitor, bus, drain, CALL1,
+                  _ringing_props(direction=2, state=0))
+        assert monitor.calls() == []
+        assert all(snapshot == [] for snapshot in fired['changed'])
+        assert modem_monitor.active_call_path() is None
+
+    def test_unknown_call_shows_once_started(self, monkeypatch):
+        bus = FakeBus()
+        monitor, _, _, drain = _make_monitor(bus, monkeypatch)
+        _add_call(monitor, bus, drain, CALL1,
+                  _ringing_props(direction=2, state=0))
+        _state_changed(monitor, drain, CALL1, modem_monitor._STATE_DIALING)
+        assert [c.path for c in monitor.calls()] == [CALL1]
+
+    def test_phantom_does_not_hold_back_ended(self, monkeypatch):
+        bus = FakeBus()
+        monitor, fired, _, drain = _make_monitor(bus, monkeypatch)
+        _add_call(monitor, bus, drain, CALL1,
+                  _ringing_props(direction=2, state=0))
+        _add_call(monitor, bus, drain, CALL2, _ringing_props())
+        _state_changed(monitor, drain, CALL2, modem_monitor._STATE_TERMINATED)
+        assert fired['ended'] == 1
+        assert monitor.calls() == []
+
+
+class TestFailedStartDeletesCall:
+    def test_start_failure_deletes_created_call(self, monkeypatch):
+        bus = FakeBus()
+        bus.sync_replies.extend([
+            FakeReply((CALL1,)), Exception('No network'), FakeReply(())])
+        monkeypatch.setattr(modem_monitor.Gio, 'bus_get_sync',
+                            lambda *a, **k: bus)
+        ok, detail = modem_monitor.voice_create_and_start(
+            '+15550001111', modem=MODEM)
+        assert (ok, detail) == (False, 'No network')
+        assert [c[3] for c in bus.sync_calls] == [
+            'CreateCall', 'Start', 'DeleteCall']
+        assert bus.sync_calls[2][1:3] == (MODEM, _VOICE_IFACE)
+
+    def test_create_failure_deletes_nothing(self, monkeypatch):
+        bus = FakeBus()
+        bus.sync_replies.append(Exception('rejected'))
+        monkeypatch.setattr(modem_monitor.Gio, 'bus_get_sync',
+                            lambda *a, **k: bus)
+        assert modem_monitor.voice_create_and_start(
+            '+1', modem=MODEM) == (False, 'rejected')
+        assert [c[3] for c in bus.sync_calls] == ['CreateCall']
