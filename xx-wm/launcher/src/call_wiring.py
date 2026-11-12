@@ -68,6 +68,19 @@ def ringer_tone_for(verdict: str, reason: str) -> str:
     return "ringtone.ogg"
 
 
+def ringer_active(win) -> bool:
+    """True while an incoming call rings (feedbackd or the sound loop):
+    notification sounds stay quiet over it."""
+    ui = getattr(win, '_call_ui', None)
+    if bool(getattr(getattr(ui, '_ringer', None), 'ringing', False)):
+        return True
+    try:
+        import sound
+        return bool(sound.ringing())
+    except Exception:
+        return False
+
+
 class CallWiring:
     """Call/telephony glue for ShellWindow.
 
