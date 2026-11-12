@@ -883,7 +883,17 @@ def _make_default_backend() -> object | None:
 
     Generation and connect run in a worker thread inside
     DeferredWaylandBackend, so this never blocks the GTK main loop.
+
+    Under river the xxwm window manager owns window switching, so its
+    control socket wins over the Wayland protocol client when present.
     """
+    try:
+        import xxwm_backend
+        if xxwm_backend.present():
+            log.info('toplevel manager: using the xxwm window manager')
+            return xxwm_backend.XxwmBackend()
+    except Exception as exc:  # noqa: BLE001 - fall back to the protocol client
+        log.warning('xxwm backend unavailable: %s', exc)
     if not _DISPLAY_AVAILABLE:
         log.info('pywayland unavailable, toplevel manager disabled')
         return None

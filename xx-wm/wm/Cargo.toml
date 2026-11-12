@@ -1,0 +1,17 @@
+[package]
+name = "xxwm"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "XX-WM window manager: handset and tiling policy for the river compositor"
+publish = false
+
+[dependencies]
+bitflags = "2"
+wayland-backend = "0.3"
+wayland-client = "0.31"
+wayland-scanner = "0.31"
+
+[profile.release]
+lto = true
+codegen-units = 1

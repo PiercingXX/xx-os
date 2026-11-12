@@ -145,6 +145,7 @@ install_data(
     'src/xxdb_controller.py',
     'src/xxdb_daemon.py',
     'src/xxdb_input.py',
+    'src/xxwm_backend.py',
   ],
   install_dir: shell_datadir,
 )

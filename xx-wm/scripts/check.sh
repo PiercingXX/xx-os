@@ -47,6 +47,16 @@ else
     echo "pytest not available, skipping"
 fi
 
+echo "=== Running cargo test (wm) ==="
+if command -v cargo >/dev/null 2>&1; then
+    (cd wm && cargo test --quiet) || {
+        echo "cargo test FAILED"
+        exit 1
+    }
+else
+    echo "cargo test SKIPPED - cargo not found"
+fi
+
 echo "=== Running shellcheck ==="
 if command -v shellcheck >/dev/null 2>&1; then
     for f in scripts/*.sh devices/*/*.sh; do
