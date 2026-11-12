@@ -865,6 +865,7 @@ class ShellWindow(Adw.ApplicationWindow):
             self._attach_osk(self.apn_pass_entry)
         except Exception:
             pass
+        self._lock_before_first_frame()
 
     def _warm_toplevel_manager(self) -> bool:
         self._ensure_toplevel_manager()
@@ -1693,6 +1694,22 @@ class ShellWindow(Adw.ApplicationWindow):
             get_logger('window').error('startup lock failed: %s', exc)
         if reporter is not None:
             reporter.note_shell_ready()
+
+    def _lock_before_first_frame(self) -> None:
+        """ext-session-lock (river): with a PIN set, lock before this
+        window or any other shell surface maps. There is no compositor
+        shield there; the compositor keeps the lock if the shell dies, and
+        a restarted shell takes it over here."""
+        if self.config.pin_hash is None:
+            return
+        try:
+            import session_lock
+            if session_lock.backend() != session_lock.SESSION_LOCK:
+                return
+            self._show_lock_screen()
+        except Exception as exc:
+            from shell_log import get_logger
+            get_logger('window').error('early lock failed: %s', exc)
 
     def _show_lock_screen(self) -> None:
         self._disarm_search_keyboard()

@@ -34,6 +34,12 @@ def _gi_signal_names() -> set[str]:
         modules.append(PolkitAgent)
     except (ImportError, ValueError):
         pass
+    try:
+        gi.require_version('Gtk4SessionLock', '1.0')
+        from gi.repository import Gtk4SessionLock
+        modules.append(Gtk4SessionLock)
+    except (ImportError, ValueError):
+        pass
     names: set[str] = set()
     warnings.simplefilter('ignore')
     for module in modules:

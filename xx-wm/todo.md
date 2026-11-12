@@ -60,4 +60,5 @@ Landed in code with headless tests only; each needs a device to confirm.
 - [ ] **PIN / PUK SIM flow**: locked SIM prompts after unlock, attempts left shown, wrong PIN count drops, PUK + new PIN, "Later" then Settings → Mobile data → SIM PIN reopens it.
 - [ ] **Busy / network-error end notices** show briefly (and stay off while GNOME Calls owns calls, back once it quits).
 - [ ] **Waiting call during DnD** counts as the repeat caller; the second call rings through.
+- [ ] **Session lock on a real river** (Librem 5, then the Pixel): boot with a PIN comes up locked with nothing shown first; `kill -9` the shell while locked and every output stays locked; the restarted shell takes the lock over; touch swipe and keypad work on the lock surface; a docked monitor gets the plain cover. Known gap: the call UI, banners and the power menu are separate surfaces, so they do not show over a session lock; an incoming call while locked needs its UI inside the lock surface.
 - [ ] **FLX1 modem stack**: is it oFono or ModemManager? `busctl --system list | grep -E 'ofono|ModemManager'` — everything above assumes ModemManager.

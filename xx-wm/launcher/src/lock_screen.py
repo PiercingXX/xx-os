@@ -201,6 +201,17 @@ def _shell_state():
         return None
 
 
+def _lock_backend() -> str:
+    """session_lock's process-wide choice; the layer-shell lock when it
+    cannot be decided."""
+    try:
+        import session_lock
+        return session_lock.backend()
+    except Exception as exc:
+        _log.warning('lock backend check failed, using layer shell: %s', exc)
+        return 'layer-shell'
+
+
 def theme_css(preset: ThemePreset) -> str:
     return f"""
 .lock-root {{
@@ -583,20 +594,16 @@ class LockScreen(Gtk.Window):
                  media_watcher=None) -> None:
         super().__init__(title='PiercingXX')
 
-        if _LAYER_SHELL and LayerShell.is_supported():
-            LayerShell.init_for_window(self)
-            LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
-            for edge in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM,
-                         LayerShell.Edge.LEFT, LayerShell.Edge.RIGHT):
-                LayerShell.set_anchor(self, edge, True)
-            LayerShell.set_exclusive_zone(self, -1)
-            # ON_DEMAND is layer-shell v4+; phoc 0.56 speaks v3 only, where
-            # requesting it leaves the surface without key focus. EXCLUSIVE
-            # is the v3 mode that receives keys.
-            LayerShell.set_keyboard_mode(self, LayerShell.KeyboardMode.EXCLUSIVE)
-        else:
-            self.set_default_size(420, 860)
-            self.fullscreen()
+        # ext-session-lock: each lock maps this window's content in a fresh
+        # lock surface (session_lock.SessionLock); the compositor keeps the
+        # outputs locked if the shell dies. Otherwise this window is the
+        # OVERLAY layer surface itself.
+        self._session = None
+        self._host: Gtk.Window | None = None
+        self._content: Gtk.Widget | None = None
+        self._use_session_lock = _lock_backend() == 'session-lock'
+        if not self._use_session_lock:
+            self._init_overlay_surface()
 
         self._on_unlock   = on_unlock
         self._get_notifications = get_notifications or (lambda: [])
@@ -630,7 +637,19 @@ class LockScreen(Gtk.Window):
 
         _apply_lock_theme(self._display_preset())
 
-        self.set_child(self._build())
+        content = self._build()
+        if self._use_session_lock:
+            # A lock surface must commit exactly the configured size; one
+            # pixel of overflow is a protocol error that kills the shell.
+            # EXTERNAL scrolling drops the content's minimum size from the
+            # window's, so overflow is clipped instead.
+            clip = Gtk.ScrolledWindow()
+            clip.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.EXTERNAL)
+            clip.set_kinetic_scrolling(False)
+            clip.set_child(content)
+            content = clip
+        self._content = content
+        self.set_child(content)
         self._refresh_clock()
         self._resume_lockout_state()
         self.refresh_fp_state()
@@ -671,6 +690,118 @@ class LockScreen(Gtk.Window):
             logind_session().set_locked_hint(bool(self.get_visible()))
         except Exception:
             pass
+
+    def _init_overlay_surface(self) -> None:
+        if _LAYER_SHELL and LayerShell.is_supported():
+            LayerShell.init_for_window(self)
+            LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
+            for edge in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM,
+                         LayerShell.Edge.LEFT, LayerShell.Edge.RIGHT):
+                LayerShell.set_anchor(self, edge, True)
+            LayerShell.set_exclusive_zone(self, -1)
+            # ON_DEMAND is layer-shell v4+; phoc 0.56 speaks v3 only, where
+            # requesting it leaves the surface without key focus. EXCLUSIVE
+            # is the v3 mode that receives keys.
+            LayerShell.set_keyboard_mode(self, LayerShell.KeyboardMode.EXCLUSIVE)
+        else:
+            self.set_default_size(420, 860)
+            self.fullscreen()
+
+    # ------------------------------------------------------------------
+    # ext-session-lock: present() locks, hiding unlocks. This window
+    # itself is never mapped there: gtk4-session-lock destroys the windows
+    # it is given when a lock ends, so each lock gets a fresh host window
+    # and the content moves into it and back.
+    # ------------------------------------------------------------------
+
+    def _session_mode(self) -> bool:
+        return getattr(self, '_use_session_lock', False)
+
+    def present(self) -> None:
+        if not self._session_mode():
+            Gtk.Window.present(self)
+            return
+        if self._session is not None and self._session.active:
+            return
+        import session_lock
+        self._session = session_lock.SessionLock(
+            self._make_host, make_cover=self._make_cover,
+            on_ended=self._on_session_ended)
+        if self._session.lock():
+            self.notify('visible')
+
+    def set_visible(self, visible: bool) -> None:
+        # A lock surface must never be hidden while locked (a protocol
+        # error); hiding means unlocking, which unmaps it.
+        if not self._session_mode():
+            Gtk.Window.set_visible(self, visible)
+        elif visible:
+            self.present()
+        elif self._session is not None:
+            self._session.unlock()
+
+    def get_visible(self) -> bool:
+        if not self._session_mode():
+            return Gtk.Window.get_visible(self)
+        return self._session is not None and self._session.active
+
+    def get_width(self) -> int:
+        host = getattr(self, '_host', None)
+        return host.get_width() if host is not None else Gtk.Window.get_width(self)
+
+    def get_height(self) -> int:
+        host = getattr(self, '_host', None)
+        return host.get_height() if host is not None else Gtk.Window.get_height(self)
+
+    def _new_lock_window(self) -> Gtk.Window:
+        window = Gtk.Window(title='PiercingXX')
+        app = self.get_application()
+        if app is not None:
+            window.set_application(app)
+        return window
+
+    def _make_host(self) -> Gtk.Window:
+        host = self._new_lock_window()
+        content = self._content
+        if content is not None:
+            if content.get_parent() is not None:
+                self.set_child(None)
+            host.set_child(content)
+        self._host = host
+        return host
+
+    def _make_cover(self) -> Gtk.Window:
+        cover = self._new_lock_window()
+        fill = Gtk.Box()
+        fill.add_css_class('lock-root')
+        cover.set_child(fill)
+        return cover
+
+    def _reclaim_content(self) -> None:
+        host, self._host = self._host, None
+        content = self._content
+        if host is not None:
+            host.set_child(None)
+        if content is not None and content.get_parent() is None:
+            self.set_child(content)
+
+    def _on_session_ended(self, failed: bool) -> None:
+        """Runs before gtk4-session-lock destroys the host: take the
+        content back for the next lock. A lock the compositor refused
+        falls back to the overlay surface right away."""
+        self._reclaim_content()
+        self.notify('visible')
+        if not failed:
+            return
+        try:
+            import session_lock
+            session_lock.fall_back('the session lock failed')
+        except Exception:
+            pass
+        self._use_session_lock = False
+        self._session = None
+        self._init_overlay_surface()
+        Gtk.Window.present(self)
 
     def _display_preset(self) -> ThemePreset:
         """Preset this surface renders with: window.resolve_theme over the
@@ -730,10 +861,16 @@ class LockScreen(Gtk.Window):
         self.error_label = Gtk.Label(label='')
         self.error_label.add_css_class('lock-error')
         self.error_label.set_halign(Gtk.Align.CENTER)
+        self.error_label.set_wrap(True)
+        self.error_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.error_label.set_justify(Gtk.Justification.CENTER)
 
         self.lockout_label = Gtk.Label(label='')
         self.lockout_label.add_css_class('lock-lockout')
         self.lockout_label.set_halign(Gtk.Align.CENTER)
+        self.lockout_label.set_wrap(True)
+        self.lockout_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.lockout_label.set_justify(Gtk.Justification.CENTER)
 
         keypad = Gtk.Grid(row_spacing=_KEYPAD_SPACING,
                           column_spacing=_KEYPAD_SPACING)

@@ -110,6 +110,7 @@ lock screen (6-digit PIN, fingerprint when hardware supports), notification shad
 - **Swipe up to unlock.** No PIN set → an upward swipe unlocks directly. PIN set → the swipe reveals the keypad (keypad is not shown until the swipe).
 - 6-digit PIN with escalating lockout; fingerprint when hardware supports it.
 - **Notifications on the lock screen**: a text list of app name + summary (no bodies, no actions), fed by the shell's notification daemon. Config `lock_screen_notifications`: `summary` (default) / `count` / `off`. Hidden while Do Not Disturb is active. Tapping one prompts unlock, then opens the shade.
+- **Every screen locks.** The lock UI sits on the handset screen (the portrait output, else the built-in panel, else the first); every other connected monitor shows a plain surface in the theme's background color, including one plugged in while locked. On river and other compositors with ext-session-lock, the compositor holds the lock: a shell crash leaves every screen locked, and the restarted shell comes back on the lock. On phoc the lock is an overlay behind phoc's shell-mode shield.
 
 ### Notification shade & quick settings
 

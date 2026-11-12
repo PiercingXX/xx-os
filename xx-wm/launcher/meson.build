@@ -102,6 +102,7 @@ install_data(
     'src/quick_actions.py',
     'src/reorder_sheet.py',
     'src/screensaver_service.py',
+    'src/session_lock.py',
     'src/settings_apps.py',
     'src/settings_battery_use.py',
     'src/settings_charging.py',
