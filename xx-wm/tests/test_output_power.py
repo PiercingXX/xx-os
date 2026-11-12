@@ -677,7 +677,7 @@ class _SyncGLib:
 
     @staticmethod
     def source_remove(_tid):
-        None
+        return None
 
 
 class FakeOutputPower:

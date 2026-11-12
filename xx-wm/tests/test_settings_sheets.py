@@ -572,6 +572,6 @@ class TestBroadwaySettingsSheets:
         script.write_text(_SHEETS_BROADWAY)
         proc = subprocess.run(
             [sys.executable, str(script), str(SRC), str(run_dir)],
-            capture_output=True, text=True, timeout=180)
+            capture_output=True, text=True, timeout=180, check=False)
         assert 'SHEETS SMOKE OK' in proc.stdout, (
             proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:])

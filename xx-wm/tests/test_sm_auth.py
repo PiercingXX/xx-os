@@ -174,13 +174,11 @@ class TestInteractiveFlags:
     def test_new_destructive_actions_pass_interaction_flag(self):
         pytest.importorskip('gi')
         conn = FlagConn(UID)
-        for method, action in (
-                ('UpgradeSystem', helper.ACTION_UPGRADE),
-                ('RemovePackage', helper.ACTION_REMOVE)):
+        for action in (helper.ACTION_UPGRADE, helper.ACTION_REMOVE):
             done = []
             helper.check_polkit_authorization(
                 conn, ':1.7', action,
-                lambda ok, uid, err: done.append((ok, uid, err)),
+                lambda ok, uid, err, done=done: done.append((ok, uid, err)),
                 interactive=True)
             assert done == [(True, UID, None)]
         assert conn.flags[helper.ACTION_UPGRADE] == 1
@@ -194,7 +192,7 @@ class TestInteractiveFlags:
             done = []
             helper.check_polkit_authorization(
                 conn, ':1.7', action,
-                lambda ok, uid, err: done.append((ok, uid, err)))
+                lambda ok, uid, err, done=done: done.append((ok, uid, err)))
             assert done == [(True, UID, None)]
             assert conn.flags[action] == 0
 

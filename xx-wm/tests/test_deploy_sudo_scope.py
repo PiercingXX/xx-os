@@ -35,7 +35,7 @@ class TestGrant:
                    XX_WM_USER='tester')
         proc = subprocess.run(['sh', str(GRANT), '--dry-run'],
                               capture_output=True, text=True, env=env,
-                              timeout=30)
+                              timeout=30, check=False)
         assert proc.returncode == 0, proc.stderr
         assert 'tester ALL=(root) NOPASSWD: %s' % SYNC_PATH in proc.stdout
         assert 'NOPASSWD: ALL' not in proc.stdout
@@ -46,7 +46,7 @@ class TestGrant:
                    XX_WM_USER='tester')
         proc = subprocess.run(['sh', str(GRANT), '--revoke', '--dry-run'],
                               capture_output=True, text=True, env=env,
-                              timeout=30)
+                              timeout=30, check=False)
         assert proc.returncode == 0, proc.stderr
         assert SYNC_PATH in proc.stdout
 
@@ -97,7 +97,7 @@ def sync(tmp_path):
             env = {}
         proc = subprocess.run([shutil.which('sh'), str(script), str(arg)],
                               capture_output=True, text=True, env=env,
-                              timeout=30)
+                              timeout=30, check=False)
         ran = record.read_text().splitlines() if record.exists() else None
         return proc, ran
 

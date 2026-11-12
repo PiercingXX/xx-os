@@ -254,6 +254,7 @@ def _run_scanner(package_dir: Path, base: Path, targets: list) -> None:
              '-o', str(package_dir),
              '-i', stripped_path, *targets],
             capture_output=True, text=True, timeout=_SCANNER_TIMEOUT_SECONDS,
+            check=False,
         )
     finally:
         try:

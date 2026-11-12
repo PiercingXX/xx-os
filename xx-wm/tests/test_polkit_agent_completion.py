@@ -236,7 +236,7 @@ def test_real_finish_path_does_not_crash():
         [sys.executable, '-c', _REAL_PATH, str(SRC)],
         capture_output=True, text=True, timeout=60,
         env={k: v for k, v in os.environ.items()
-             if k != 'DBUS_SESSION_BUS_ADDRESS'})
+             if k != 'DBUS_SESSION_BUS_ADDRESS'}, check=False)
     assert proc.returncode == 0, (proc.returncode, proc.stderr)
     assert proc.stdout.split('\n')[:2] == ['finish True', 'finish True'], \
         proc.stdout

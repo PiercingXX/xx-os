@@ -551,6 +551,6 @@ class TestBroadwayReorderSheet:
         src = Path(__file__).parent.parent / 'launcher' / 'src'
         proc = subprocess.run(
             [sys.executable, str(script), str(src), str(run_dir)],
-            capture_output=True, text=True, timeout=180)
+            capture_output=True, text=True, timeout=180, check=False)
         assert 'LP_FOLDERS SMOKE OK' in proc.stdout, (
             proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:])

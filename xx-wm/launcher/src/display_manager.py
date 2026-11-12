@@ -254,7 +254,7 @@ def _wlopm(mode: str) -> bool:
         r = subprocess.run(
             ['wlopm', f'--{mode}', _output()],
             env=_WL_ENV, timeout=3,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )
         return r.returncode == 0
     except Exception:
@@ -307,7 +307,7 @@ def _set_volume(delta: str) -> None:
         subprocess.run(
             ['pactl', 'set-sink-volume', '@DEFAULT_SINK@', delta],
             close_fds=True, timeout=2,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         pass

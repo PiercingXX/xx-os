@@ -86,18 +86,21 @@ def pinned_tree(fetch=None) -> tuple[str, dict]:
         commit_doc = json.loads(fetch(API_COMMIT_URL).decode("utf-8"))
         sha = commit_doc["sha"]
     except (ValueError, KeyError, TypeError) as error:
-        raise UpdateError("could not read the latest commit: %s" % error)
+        raise UpdateError(
+            "could not read the latest commit: %s" % error) from error
     except Exception as error:
-        raise UpdateError("could not reach GitHub: %s" % error)
+        raise UpdateError("could not reach GitHub: %s" % error) from error
     if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise UpdateError("bad commit SHA from GitHub.")
     try:
         manifest = json.loads(
             fetch(RAW_APPS_URL.format(sha=sha)).decode("utf-8"))
     except ValueError as error:
-        raise UpdateError("published apps.json is invalid: %s" % error)
+        raise UpdateError(
+            "published apps.json is invalid: %s" % error) from error
     except Exception as error:
-        raise UpdateError("could not download apps.json: %s" % error)
+        raise UpdateError(
+            "could not download apps.json: %s" % error) from error
     if not isinstance(manifest, dict):
         raise UpdateError("published apps.json is invalid.")
     return sha, manifest
@@ -109,9 +112,11 @@ def load_installed(path: str | None = None) -> dict:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
     except FileNotFoundError:
-        raise UpdateError("installed state not found (run install.sh first).")
+        raise UpdateError(
+            "installed state not found (run install.sh first).") from None
     except (OSError, ValueError) as error:
-        raise UpdateError("installed state is unreadable: %s" % error)
+        raise UpdateError(
+            "installed state is unreadable: %s" % error) from error
     if not isinstance(data, dict):
         raise UpdateError("installed state is unreadable.")
     return data
@@ -225,7 +230,7 @@ def safe_extract(tarball: str, dest: str) -> str:
     try:
         handle = tarfile.open(tarball, "r:*")
     except (tarfile.TarError, OSError) as error:
-        raise UnsafeTarball("not a readable tarball: %s" % error)
+        raise UnsafeTarball("not a readable tarball: %s" % error) from error
     with handle:
         tops: set[str] = set()
         for member in handle.getmembers():
@@ -310,7 +315,8 @@ def build_apps(tree: str, apps: list[str], manifest: dict,
             result = run([meson, "compile", "-C", "build"], cwd=src,
                          timeout=INSTALL_TIMEOUT)
         except (OSError, subprocess.SubprocessError) as error:
-            raise UpdateError("build failed for %s: %s" % (app, error))
+            raise UpdateError(
+                "build failed for %s: %s" % (app, error)) from error
         if result.returncode != 0:
             err = (result.stderr or result.stdout or "").strip()[-200:]
             raise UpdateError("build failed for %s%s"
@@ -349,7 +355,8 @@ def install_built(tree: str, apps: list[str], manifest: dict,
             result = run(prefix + [meson, "install", "-C", build],
                          cwd=src, timeout=INSTALL_TIMEOUT)
         except (OSError, subprocess.SubprocessError) as error:
-            raise UpdateError("install failed for %s: %s" % (app, error))
+            raise UpdateError(
+                "install failed for %s: %s" % (app, error)) from error
         if result.returncode != 0:
             raise UpdateError("install failed for %s." % app)
 
@@ -386,7 +393,8 @@ def record_state(path: str, apps: list[str], manifest: dict,
         try:
             os.makedirs(parent, mode=0o755, exist_ok=True)
         except OSError as error:
-            raise UpdateError("could not write installed state: %s" % error)
+            raise UpdateError(
+                "could not write installed state: %s" % error) from error
     data = _merged_state(path, apps, manifest, commit)
     tmp = path + ".tmp"
     try:
@@ -395,7 +403,8 @@ def record_state(path: str, apps: list[str], manifest: dict,
             handle.write("\n")
         os.replace(tmp, path)
     except OSError as error:
-        raise UpdateError("could not write installed state: %s" % error)
+        raise UpdateError(
+            "could not write installed state: %s" % error) from error
 
 
 def _can_write(directory: str) -> bool:
@@ -422,7 +431,8 @@ def _record_privileged(path: str, data: dict, run, prefix: list[str],
             result = run(prefix + ["install", "-D", "-m", "0644", staged,
                                    path], cwd="/", timeout=SETUP_TIMEOUT)
         except (OSError, subprocess.SubprocessError) as error:
-            raise UpdateError("could not write installed state: %s" % error)
+            raise UpdateError(
+                "could not write installed state: %s" % error) from error
         if result.returncode != 0:
             raise UpdateError("could not write installed state.")
     finally:
@@ -522,7 +532,7 @@ def cmd_apply(wanted: list[str] | None, fetch=None, run=None,
                 payload = fetch(TARBALL_URL.format(sha=sha))
             except Exception as error:
                 raise UpdateError("could not download the release: %s"
-                                  % error)
+                                  % error) from error
             with open(tarball, "wb") as handle:
                 handle.write(payload)
             tree = safe_extract(tarball, workdir)

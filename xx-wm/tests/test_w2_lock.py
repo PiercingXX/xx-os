@@ -923,8 +923,9 @@ class TestFingerprintProbe:
             lock = types.SimpleNamespace(
                 _pin=attrs['pin'], _lockout_src=None, _fp_running=False,
                 get_visible=lambda v=attrs['visible']: v,
-                _update_fp_hint=lambda: events.append('hint'),
-                try_fingerprint_unlock=lambda: events.append('verify'))
+                _update_fp_hint=lambda events=events: events.append('hint'),
+                try_fingerprint_unlock=lambda events=events: events.append(
+                    'verify'))
             lock_screen.LockScreen._fp_probe_done(lock, True)
             assert events == ['hint']
 

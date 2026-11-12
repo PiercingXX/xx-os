@@ -206,6 +206,7 @@ def _pactl_card_names() -> list[str]:
     try:
         proc = subprocess.run(
             ['pactl', 'list', 'cards'], capture_output=True, text=True, timeout=10,
+            check=False,
         )
     except (FileNotFoundError, subprocess.SubprocessError):
         return []
@@ -231,7 +232,7 @@ def _run_pactl_hunts(hunts: list[list[list[str]]]) -> None:
             try:
                 proc = subprocess.run(
                     cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=10,
+                    timeout=10, check=False,
                 )
             except (FileNotFoundError, subprocess.SubprocessError):
                 return
@@ -267,7 +268,7 @@ def _set_source_mute(muted: bool) -> None:
             subprocess.run(
                 ['pactl', 'set-source-mute', '@DEFAULT_SOURCE@',
                  '1' if muted else '0'],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False,
             )
         except (FileNotFoundError, subprocess.SubprocessError):
             pass

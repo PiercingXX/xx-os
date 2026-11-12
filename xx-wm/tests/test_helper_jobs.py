@@ -472,7 +472,7 @@ class JobConn:
         return ClientVariant((self.job_id,))
 
     def emit(self, member, values):
-        for sender, sub_member, arg0, cb, data in list(self.subs.values()):
+        for sender, sub_member, _arg0, cb, data in list(self.subs.values()):
             if sub_member == member:
                 cb(self, sender, '/p', 'i', member, ClientVariant(values),
                    data)

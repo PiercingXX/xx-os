@@ -125,7 +125,7 @@ def stitch(frames: list[tuple[int, int, bytes]]) -> tuple[int, int, bytes]:
 
     kept_hashes: list[bytes] = list(content(all_hashes[0]))
     kept_rows: list[bytes] = content_rows(frames[0])
-    for hashes, frame in zip(all_hashes[1:], frames[1:]):
+    for hashes, frame in zip(all_hashes[1:], frames[1:], strict=True):
         rows = content_rows(frame)
         overlap = find_overlap(kept_hashes, content(hashes))
         kept_hashes.extend(content(hashes)[overlap:])

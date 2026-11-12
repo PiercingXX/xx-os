@@ -67,7 +67,8 @@ def test_power_menu_fits_320x640(tmp_path):
     cmd = [sys.executable, str(script), str(SRC), str(run_dir)]
     if shutil.which('dbus-run-session'):
         cmd = ['dbus-run-session', '--'] + cmd
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                          check=False)
     assert 'POWER FIT OK' in proc.stdout, (
         proc.returncode, proc.stdout[-2000:], proc.stderr[-2000:])
 

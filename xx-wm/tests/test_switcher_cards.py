@@ -12,6 +12,7 @@ raw window title) with the window title as a second line only when it adds
 information.
 """
 import sys
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -309,7 +310,7 @@ if __name__ == '__main__':
 def _card_drag(points):
     """Linear (t_ms, dy) drag, one sample per 10 ms like a touchscreen."""
     samples = [(float(points[0][0]), float(points[0][1]))]
-    for (t0, y0), (t1, y1) in zip(points, points[1:]):
+    for (t0, y0), (t1, y1) in pairwise(points):
         steps = max(1, int((t1 - t0) // 10))
         for i in range(1, steps + 1):
             f = i / steps

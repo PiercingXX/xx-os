@@ -85,13 +85,13 @@ class _FakeListBox:
     """Just enough ListBox for _populate_apps' row insertion calls."""
 
     def insert(self, *_a):
-        None
+        return None
 
     def append(self, *_a):
-        None
+        return None
 
     def set_valign(self, *_a):
-        None
+        return None
 
 
 def _bare(window, slots, installed_ids):

@@ -146,7 +146,7 @@ def test_old_module_paths_keep_working(window):
     assert window._UPDATE_NOTIF_ID == settings_page._UPDATE_NOTIF_ID
     assert window._WEB_SEARCH_URL == drawer_page._WEB_SEARCH_URL
     with pytest.raises(AttributeError):
-        window._no_such_split_name
+        _ = window._no_such_split_name
 
 
 def test_no_circular_imports_at_import_time():

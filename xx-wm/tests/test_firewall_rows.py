@@ -58,7 +58,8 @@ class FakeRun:
 
     def nft_docs(self):
         """The ``nft -j -f -`` documents fed on stdin, parsed."""
-        return [json.loads(data) for argv, data in zip(self.cmds, self.inputs)
+        return [json.loads(data) for argv, data in zip(self.cmds, self.inputs,
+                                                       strict=True)
                 if argv[:2] == ['nft', '-j'] and data]
 
 
@@ -124,7 +125,7 @@ class TestDerivation:
         assert len(names) == 5
         seen = 0
         for bits in itertools.product((False, True), repeat=len(names)):
-            features = dict(zip(names, bits))
+            features = dict(zip(names, bits, strict=True))
             assert firewall.features_to_allowed(features) == {
                 name for name, on in features.items() if on}
             seen += 1

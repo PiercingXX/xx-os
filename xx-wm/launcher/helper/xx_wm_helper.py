@@ -407,6 +407,7 @@ def _default_run(argv: list[str],
                  input: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         argv, input=input, capture_output=True, text=True, timeout=30,
+        check=False,
     )
 
 

@@ -593,5 +593,6 @@ class TestInstallerSuite:
 
     def test_script_parses(self):
         result = subprocess.run(
-            ['sh', '-n', str(APPS_SH)], capture_output=True, text=True)
+            ['sh', '-n', str(APPS_SH)], capture_output=True, text=True,
+            check=False)
         assert result.returncode == 0, result.stderr

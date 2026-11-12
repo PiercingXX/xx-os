@@ -58,7 +58,7 @@ def _run_snippet(snippet: str, home: Path) -> str:
     code = snippet.replace('$HOME', str(home))
     proc = subprocess.run(
         [sys.executable, '-c', code],
-        capture_output=True, text=True, timeout=20,
+        capture_output=True, text=True, timeout=20, check=False,
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout.strip()

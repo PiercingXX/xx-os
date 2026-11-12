@@ -8,7 +8,11 @@
 # classic default (E4/E7/E9/F) with E402 deliberately ignored for the GTK
 # import pattern. Pinning `select` keeps the gate deterministic across ruff
 # versions instead of failing on rules the project never opted into.
+#
+# On top of that classic set the gate opts into bug-finding families that
+# cost nothing on correct code: flake8-bugbear (B), pylint errors (PLE),
+# subprocess.run without an explicit check= (PLW1510) and flake8-async.
 
 [lint]
-select = ["E4", "E7", "E9", "F"]
+select = ["E4", "E7", "E9", "F", "B", "PLE", "PLW1510", "ASYNC"]
 extend-ignore = ["E402"]

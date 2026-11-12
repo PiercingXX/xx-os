@@ -61,7 +61,8 @@ def _run_fallback(tmp_path, zip_path, extra_env=None):
     env.update(extra_env or {})
     proc = subprocess.run(
         ['sh', '-c', '. "%s"; download_nerd_font_fallback' % funcs],
-        capture_output=True, text=True, env=env, cwd=str(tmp_path))
+        capture_output=True, text=True, env=env, cwd=str(tmp_path),
+        check=False)
     return proc, (log.read_text() if log.exists() else '')
 
 

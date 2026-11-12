@@ -119,7 +119,8 @@ class TestDeployStaging:
 
     def test_wrapper_syntax_parses(self) -> None:
         result = subprocess.run(
-            ['sh', '-n', str(WRAPPER_IN)], capture_output=True, text=True)
+            ['sh', '-n', str(WRAPPER_IN)], capture_output=True, text=True,
+            check=False)
         assert result.returncode == 0, result.stderr
 
 

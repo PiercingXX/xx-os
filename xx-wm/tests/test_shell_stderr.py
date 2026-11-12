@@ -84,7 +84,7 @@ def _run_rotate_harness(home: Path, size: int | None) -> None:
     )
     env = {'HOME': str(home), 'PATH': '/usr/bin:/bin'}
     proc = subprocess.run(['sh', str(harness)], capture_output=True,
-                          text=True, env=env, timeout=30)
+                          text=True, env=env, timeout=30, check=False)
     assert proc.returncode == 0, proc.stderr
 
 

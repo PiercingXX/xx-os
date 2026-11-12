@@ -49,7 +49,8 @@ def _run_funcs(names, driver, tmp_path, env=None):
     full_env.update(env or {})
     return subprocess.run(
         ['sh', '-c', '. "%s"; %s' % (funcs, driver)],
-        capture_output=True, text=True, env=full_env, cwd=str(tmp_path))
+        capture_output=True, text=True, env=full_env, cwd=str(tmp_path),
+        check=False)
 
 
 def _media_block(script):
@@ -106,7 +107,8 @@ def test_media_deps_wired(install_script):
 
 def test_script_syntax_parses():
     result = subprocess.run(
-        ['sh', '-n', str(INSTALL_SH)], capture_output=True, text=True)
+        ['sh', '-n', str(INSTALL_SH)], capture_output=True, text=True,
+        check=False)
     assert result.returncode == 0, result.stderr
 
 

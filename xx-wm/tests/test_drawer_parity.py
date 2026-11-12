@@ -251,7 +251,7 @@ class TestDrawerBroadwaySmoke:
         proc = _subprocess.run(
             [sys.executable, str(script), str(SRC), str(run_dir), display,
              port],
-            capture_output=True, text=True, timeout=180)
+            capture_output=True, text=True, timeout=180, check=False)
         assert 'DRAWER SMOKE OK' in proc.stdout, (
             proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:])
         noise = ('layer_shell_global', 'startup signal has been emitted',

@@ -72,6 +72,7 @@ def _run_block(kb_block, tmp_path, kb_body, fallbacks, with_logger=True):
     }
     proc = subprocess.run(
         ['sh', str(harness)], capture_output=True, text=True, env=env, timeout=30,
+        check=False,
     )
     return proc, markers
 
@@ -95,7 +96,8 @@ def _kill_long_keyboard(markers):
 
 
 def test_wrapper_parses():
-    result = subprocess.run(['sh', '-n', str(WRAPPER_IN)], capture_output=True, text=True)
+    result = subprocess.run(['sh', '-n', str(WRAPPER_IN)], capture_output=True, text=True,
+                            check=False)
     assert result.returncode == 0, result.stderr
 
 

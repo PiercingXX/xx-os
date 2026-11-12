@@ -109,7 +109,7 @@ def test_no_dead_key_objects(layouts):
 
 
 def test_key_objects_are_dicts(layouts):
-    for name, layout in layouts:
+    for _name, layout in layouts:
         for lv in layout['levels']:
             for row in lv['rows']:
                 assert all(isinstance(key, dict) for key in row)
@@ -243,7 +243,8 @@ def test_gdm_osk_warns_about_overwrite_and_restore(install_script):
 
 def test_install_script_still_parses(install_script):
     result = subprocess.run(
-        ['sh', '-n', str(INSTALL_SH)], capture_output=True, text=True)
+        ['sh', '-n', str(INSTALL_SH)], capture_output=True, text=True,
+        check=False)
     assert result.returncode == 0, result.stderr
 
 

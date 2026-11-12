@@ -49,7 +49,7 @@ class OutputCapture:
             result = subprocess.run(
                 ['grim', '-s', '0.25', '-t', 'ppm', path],
                 timeout=5,
-                capture_output=True,
+                capture_output=True, check=False,
             )
             if result.returncode != 0:
                 err = (result.stderr or b'').decode('utf-8', 'replace')[-200:]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from itertools import pairwise
 
 from app_names import fallback_app_name
 from config import DANGER_RED, DESTRUCTIVE_TINT_BG, ShellConfig, ThemePreset
@@ -148,7 +149,7 @@ def card_dismiss_speed(samples) -> float:
     while start > 1 and t_last - float(samples[start - 1][0]) <= _DISMISS_SPEED_WINDOW_MS:
         start -= 1
     speeds = []
-    for prev, cur in zip(samples[start - 1:], samples[start:]):
+    for prev, cur in pairwise(samples[start - 1:]):
         span = max(1.0, float(cur[0]) - float(prev[0]))
         speeds.append(-(float(cur[1]) - float(prev[1])) / span)
     return sum(speeds) / len(speeds) * 1000.0

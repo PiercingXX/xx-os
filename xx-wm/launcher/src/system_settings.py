@@ -23,7 +23,8 @@ _RunFn = Callable[..., subprocess.CompletedProcess]
 
 
 def _run(cmd: list[str], timeout: int = 15) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                          check=False)
 
 
 # ------------------------------------------------------------------ WiFi

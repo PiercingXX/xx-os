@@ -157,7 +157,7 @@ def _brightnessctl_set(value: int, device: str | None = None) -> bool:
         cmd = ['brightnessctl', '--device', device]
         result = subprocess.run(
             cmd + ['set', str(max(0, int(value)))],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, check=False,
         )
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired, ValueError):

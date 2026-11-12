@@ -132,7 +132,8 @@ def _run_funcs(tmp_path, env_extra, driver='set -u; refresh_running_apps'):
     shell = shutil.which('sh') or 'sh'
     return subprocess.run(
         [shell, '-c', '. "%s"; %s' % (funcs, driver)],
-        capture_output=True, text=True, env=env, cwd=str(tmp_path))
+        capture_output=True, text=True, env=env, cwd=str(tmp_path),
+        check=False)
 
 
 def _session_env(tmp_path, path, logdir, proc, run_dir):
@@ -147,7 +148,8 @@ def _session_env(tmp_path, path, logdir, proc, run_dir):
 
 def test_script_syntax_parses():
     result = subprocess.run(
-        ['sh', '-n', str(INSTALL_SH)], capture_output=True, text=True)
+        ['sh', '-n', str(INSTALL_SH)], capture_output=True, text=True,
+        check=False)
     assert result.returncode == 0, result.stderr
 
 

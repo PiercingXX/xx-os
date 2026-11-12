@@ -40,7 +40,7 @@ def notifs_for_app(notifications: object, app_id: str) -> list[int]:
         try:
             entry = getattr(notif, 'desktop_entry', '') or ''
             name = getattr(notif, 'app_name', '') or ''
-            nid = int(getattr(notif, 'id'))
+            nid = int(notif.id)
         except (AttributeError, TypeError, ValueError):
             continue
         if same_app_id(entry, app_id) or same_app_id(name, app_id):

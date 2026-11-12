@@ -36,7 +36,7 @@ def clamp_charge_limit(percent: int) -> int:
     try:
         value = int(percent)
     except (TypeError, ValueError):
-        raise ValueError('charge limit is not a number')
+        raise ValueError('charge limit is not a number') from None
     return max(CHARGE_MIN, min(CHARGE_MAX, value))
 
 

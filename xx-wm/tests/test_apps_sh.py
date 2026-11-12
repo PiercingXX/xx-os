@@ -13,7 +13,7 @@ SCRIPT = Path(__file__).parent.parent / 'scripts' / 'apps.sh'
 
 def test_script_syntax_parses():
     result = subprocess.run(
-        ['sh', '-n', str(SCRIPT)], capture_output=True, text=True)
+        ['sh', '-n', str(SCRIPT)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
 
 
@@ -121,7 +121,8 @@ def _run_sharing_section(tmp_path, pkg, sshd_before):
                 'SUDO': 'fakesudo', 'PKG': pkg})
     proc = subprocess.run(['sh', '-c', '. "%s"' % funcs],
                           capture_output=True, stdin=subprocess.DEVNULL,
-                          text=True, env=env, cwd=str(tmp_path), timeout=60)
+                          text=True, env=env, cwd=str(tmp_path), timeout=60,
+                          check=False)
     return proc, (log.read_text() if log.exists() else '')
 
 
@@ -222,7 +223,7 @@ def _run_ts_static(tmp_path, tarball, sha_override=None):
                 'SUDO': 'fakesudo', 'PKG': 'apt'})
     proc = subprocess.run(['sh', '-c', driver], capture_output=True,
                           stdin=subprocess.DEVNULL, text=True, env=env,
-                          cwd=str(tmp_path), timeout=60)
+                          cwd=str(tmp_path), timeout=60, check=False)
     return proc, (log.read_text() if log.exists() else '')
 
 

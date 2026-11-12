@@ -171,7 +171,7 @@ class TestConsultShape:
             bus = FakeBus(verdict=verdict)
             got = []
             call_screen.consult_check_number(
-                '+15550001111', lambda v, r: got.append((v, r)),
+                '+15550001111', lambda v, r, got=got: got.append((v, r)),
                 bus=bus, gio=FakeGio(), glib=FakeGlib())
             bus.drain()
             assert got == [verdict]
@@ -917,7 +917,7 @@ def test_shell_consult_activates_real_service(tmp_path):
         'XDG_DATA_DIRS', '/usr/local/share:/usr/share')
     proc = subprocess.run(
         ['dbus-run-session', '--', sys.executable, str(driver)],
-        capture_output=True, text=True, timeout=90, env=env)
+        capture_output=True, text=True, timeout=90, env=env, check=False)
     assert proc.returncode == 0, proc.stderr[-2000:]
     assert 'SHELL-CONSULT-OK block blocked' in proc.stdout
 

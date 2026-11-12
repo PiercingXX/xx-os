@@ -11,6 +11,7 @@ import importlib
 import json
 import sys
 import types
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,7 @@ def _drag(points, height=1000.0):
     """Linear drag through (t_ms, dx, dy) points, one sample per 10 ms
     (a touchscreen's report rate), the way GTK delivers drag-update."""
     samples = [(float(points[0][0]), float(points[0][1]), float(points[0][2]))]
-    for (t0, x0, y0), (t1, x1, y1) in zip(points, points[1:]):
+    for (t0, x0, y0), (t1, x1, y1) in pairwise(points):
         steps = max(1, int((t1 - t0) // 10))
         for i in range(1, steps + 1):
             f = i / steps
@@ -76,7 +77,7 @@ class TestThresholds:
 
     def test_scale_with_output_height(self, bg):
         small, big = bg.thresholds(800), bg.thresholds(1600)
-        for a, b in zip(small, big):
+        for a, b in zip(small, big, strict=True):
             assert b == pytest.approx(2 * a)
 
     def test_flx1_values(self, bg):

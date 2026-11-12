@@ -636,7 +636,7 @@ class TestHomeAccessibility:
         src = str(Path(__file__).parent.parent / 'launcher' / 'src')
         proc = subprocess.run(
             [sys.executable, str(script), src, str(run_dir)],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=120, check=False)
         assert 'LP INFO A11Y OK' in proc.stdout, (
             proc.returncode, proc.stdout[-2000:], proc.stderr[-2000:])
 

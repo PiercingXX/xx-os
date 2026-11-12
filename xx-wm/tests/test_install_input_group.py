@@ -61,5 +61,6 @@ def test_script_syntax_parses(install_script):
     """The script must still parse as valid POSIX sh (sh -n)."""
     import subprocess
     result = subprocess.run(
-        ['sh', '-n', str(INSTALL_SH)], capture_output=True, text=True)
+        ['sh', '-n', str(INSTALL_SH)], capture_output=True, text=True,
+        check=False)
     assert result.returncode == 0, result.stderr

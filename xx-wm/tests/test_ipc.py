@@ -208,7 +208,7 @@ class TestIpcClient:
         env = dict(os.environ, XDG_RUNTIME_DIR=str(runtime))
         proc = subprocess.run(
             [sys.executable, '-S', '-E', str(body_file), 'lock'],
-            capture_output=True, text=True, env=env, timeout=30)
+            capture_output=True, text=True, env=env, timeout=30, check=False)
         assert proc.returncode == 0, proc.stderr
         _pump(server)
         assert handled == ['lock']
@@ -220,7 +220,7 @@ class TestIpcClient:
         env = dict(os.environ, XDG_RUNTIME_DIR=str(tmp_path / 'no-such-runtime'))
         proc = subprocess.run(
             [sys.executable, '-S', '-E', str(body_file), 'lock'],
-            capture_output=True, text=True, env=env, timeout=30)
+            capture_output=True, text=True, env=env, timeout=30, check=False)
         assert proc.returncode != 0
 
     def test_client_exits_nonzero_without_command(self, tmp_path):
@@ -230,7 +230,7 @@ class TestIpcClient:
         env = dict(os.environ)
         proc = subprocess.run(
             [sys.executable, '-S', '-E', str(body_file)],
-            capture_output=True, text=True, env=env, timeout=30)
+            capture_output=True, text=True, env=env, timeout=30, check=False)
         assert proc.returncode != 0
 
 

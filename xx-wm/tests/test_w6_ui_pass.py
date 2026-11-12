@@ -343,7 +343,7 @@ class TestMainloopLint:
         proc = subprocess.run(
             [sys.executable, str(SRC.parent.parent / 'scripts'
                                 / 'check_mainloop_blocks.py')],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=120, check=False)
         assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
@@ -525,6 +525,6 @@ class TestBroadwayW6:
         script.write_text(_W6_BROADWAY_SMOKE)
         proc = subprocess.run(
             [sys.executable, str(script), str(SRC), str(run_dir)],
-            capture_output=True, text=True, timeout=180)
+            capture_output=True, text=True, timeout=180, check=False)
         assert 'W6 SMOKE OK' in proc.stdout, (
             proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:])

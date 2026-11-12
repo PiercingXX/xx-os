@@ -173,7 +173,7 @@ def _run_grim(path: str) -> bool:
         result = subprocess.run(
             ['grim', path],
             env=_wl_env(), timeout=10,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
         )
         return result.returncode == 0
     except Exception:
@@ -392,7 +392,7 @@ def probe_h264() -> bool:
     try:
         out = subprocess.run(
             ['ffmpeg', '-hide_banner', '-encoders'],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, check=False,
         ).stdout
     except Exception:
         return False

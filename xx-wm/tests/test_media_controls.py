@@ -6,6 +6,7 @@ Gtk fakes. Gio replies mirror the real library: every reply is a TUPLE of
 out-args, async callbacks take (conn, result), and signal handlers take
 (conn, sender, path, iface, signal, params, user_data).
 """
+import dataclasses
 import struct
 import sys
 import types
@@ -529,8 +530,8 @@ class TestActiveSelection:
     def test_snapshot_is_immutable(self, hw):
         _adopt(hw, VLC, ROOT_VLC, _player_props())
         snap = hw.watcher.active_snapshot()
-        with pytest.raises(Exception):
-            snap.title = 'mutated'  # frozen dataclass
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            snap.title = 'mutated'
         assert hw.watcher.active_snapshot().title == 'Song'
 
 
@@ -616,7 +617,7 @@ class TestControls:
         assert hw.watcher.next_track() is True
         assert hw.watcher.previous_track() is True
         assert hw.bus.methods()[-3:] == ['PlayPause', 'Next', 'Previous']
-        for bus_name, path, iface, method, _p in hw.bus.calls[-3:]:
+        for bus_name, path, iface, _method, _p in hw.bus.calls[-3:]:
             assert bus_name == VLC
             assert path == '/org/mpris/MediaPlayer2'
             assert iface == 'org.mpris.MediaPlayer2.Player'

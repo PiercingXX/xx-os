@@ -97,7 +97,7 @@ def test_dry_run_prints_real_paths():
     env['PIERCING_DEVICE'] = '192.168.1.129'
     result = subprocess.run(
         ['sh', str(DEPLOY_SH), '--dry-run'],
-        capture_output=True, text=True, env=env,
+        capture_output=True, text=True, env=env, check=False,
     )
     assert result.returncode == 0, result.stderr
     out = result.stdout
@@ -133,7 +133,8 @@ def test_ships_every_protocol_xml(deploy_script):
 
 def test_script_syntax_parses():
     result = subprocess.run(
-        ['sh', '-n', str(DEPLOY_SH)], capture_output=True, text=True)
+        ['sh', '-n', str(DEPLOY_SH)], capture_output=True, text=True,
+        check=False)
     assert result.returncode == 0, result.stderr
 
 

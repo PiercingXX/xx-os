@@ -100,7 +100,7 @@ def ensure_host_cert(home: Path | None = None):
         ['openssl', 'req', '-x509', '-newkey', 'rsa:2048',
          '-keyout', str(key_path), '-out', str(cert_path),
          '-days', '825', '-nodes', '-subj', f'/CN=xxdb-host-{user}'],
-        capture_output=True, text=True, timeout=120)
+        capture_output=True, text=True, timeout=120, check=False)
     if result.returncode != 0:
         raise SystemExit('openssl could not create the host certificate')
     for path in (key_path, cert_path):
@@ -151,7 +151,7 @@ def discover(timeout: int = 5) -> list[tuple[str, int, str]]:
     try:
         result = subprocess.run(
             ['avahi-browse', '-t', '-r', '-p', '_xxdb._tcp'],
-            capture_output=True, text=True, timeout=timeout + 5)
+            capture_output=True, text=True, timeout=timeout + 5, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return []
     found = []
@@ -193,17 +193,19 @@ class XxdbClient:
                 context.load_cert_chain(str(self.cert_path),
                                         str(self.key_path))
             except (OSError, ssl.SSLError) as error:
-                raise ClientError(f'cannot load host certificate: {error}')
+                raise ClientError(
+                    f'cannot load host certificate: {error}') from error
         try:
             raw = socket.create_connection((self.host, self.port), timeout=15)
             self._sock = context.wrap_socket(raw, server_hostname=self.host)
         except (OSError, ssl.SSLError) as error:
             raise ClientError(f'cannot connect to {self.host}:{self.port}: '
-                              f'{error}')
+                              f'{error}') from error
         try:
             der = self._sock.getpeercert(binary_form=True)
         except (ValueError, ssl.SSLError) as error:
-            raise ClientError(f'cannot read phone certificate: {error}')
+            raise ClientError(
+                f'cannot read phone certificate: {error}') from error
         self._server_fp = hashlib.sha256(bytes(der)).hexdigest()
         if self.phone_fp and not hmac.compare_digest(self.phone_fp,
                                                      self._server_fp):
@@ -263,7 +265,7 @@ class XxdbClient:
         try:
             self._sock.sendall(data)
         except (OSError, AttributeError) as error:
-            raise ClientError(f'send failed: {error}')
+            raise ClientError(f'send failed: {error}') from error
 
     def _wait(self, request_id, timeout: int = 130):
         with self._lock:
@@ -271,7 +273,7 @@ class XxdbClient:
         try:
             return box.get(timeout=timeout)
         except queue.Empty:
-            raise ClientError('phone did not answer in time')
+            raise ClientError('phone did not answer in time') from None
 
     def new_id(self) -> int:
         with self._lock:

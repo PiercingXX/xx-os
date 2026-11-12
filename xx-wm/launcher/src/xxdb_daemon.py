@@ -234,7 +234,7 @@ class _Session:
 
 def _default_shell_runner(argv: list[str], timeout: int = 120) -> tuple[int, str, str]:
     result = subprocess.run(argv, capture_output=True, text=True,
-                            timeout=timeout)
+                            timeout=timeout, check=False)
     return result.returncode, result.stdout[-1_000_000:], result.stderr[-1_000_000:]
 
 
@@ -246,9 +246,10 @@ def _default_screenshot() -> bytes:
             env['WAYLAND_DISPLAY'] = 'wayland-1'
     try:
         result = subprocess.run(['grim', '-'], capture_output=True,
-                                timeout=30, env=env)
+                                timeout=30, env=env, check=False)
     except FileNotFoundError:
-        raise DaemonError('grim is not installed: screenshots unavailable')
+        raise DaemonError(
+            'grim is not installed: screenshots unavailable') from None
     if result.returncode != 0 or not result.stdout:
         raise DaemonError('grim failed to capture the screen')
     return result.stdout
@@ -269,7 +270,7 @@ def _default_ipc_forward(verb: str) -> None:
 def _default_sudo_check() -> bool:
     try:
         return subprocess.run(['sudo', '-n', 'true'], capture_output=True,
-                              timeout=10).returncode == 0
+                              timeout=10, check=False).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
 
@@ -331,7 +332,7 @@ def _journalctl_snapshot(lines: int) -> list[str]:
         result = subprocess.run(
             ['journalctl', '--user', '-n', str(lines), '--no-pager',
              '--output=short'],
-            capture_output=True, text=True, timeout=15)
+            capture_output=True, text=True, timeout=15, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return []
     if result.returncode != 0:
@@ -1064,7 +1065,7 @@ class XxdbDaemon:
                 cmd = ['sudo', '-n', 'cp', '-R'] + [
                     str(p) for p in stage.iterdir()] + [self.install_dest + '/']
             result = subprocess.run(cmd, capture_output=True, text=True,
-                                    timeout=300)
+                                    timeout=300, check=False)
             if result.returncode != 0:
                 detail = (result.stderr or result.stdout or '').strip()
                 yield {'id': request_id, 'ok': False,

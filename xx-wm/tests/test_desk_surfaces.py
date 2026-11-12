@@ -561,6 +561,6 @@ def test_real_widgets_on_broadway(tmp_path):
     proc = subprocess.run(
         [sys.executable, str(script), str(REPO / 'launcher' / 'src'),
          str(REPO.parent / 'common'), str(run_dir)],
-        capture_output=True, text=True, timeout=120, env=env)
+        capture_output=True, text=True, timeout=120, env=env, check=False)
     assert 'SMOKE OK' in proc.stdout, (
         proc.returncode, proc.stdout[-2000:], proc.stderr[-2000:])

@@ -338,10 +338,12 @@ def test_service_authorizes_each_method_with_own_action(layout):
     ]:
         invocation = FakeInvocation()
         service._on_method_call(service.connection, ':1.7', '/p', 'i',
-                                method, SimpleNamespace(unpack=lambda: args),
+                                method,
+                                SimpleNamespace(unpack=lambda args=args: args),
                                 invocation)
         assert invocation.error is None, (method, invocation.error)
         assert invocation.value is not None
+        assert allow_all.seen[-1] == (action, False)
     assert allow_all.seen == [(helper.ACTION_CHARGE, False),
                               (helper.ACTION_NETWORK, False),
                               (helper.ACTION_FREEZE, False)]

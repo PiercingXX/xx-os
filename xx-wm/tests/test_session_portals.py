@@ -134,12 +134,12 @@ class TestWrapperSessionWiring:
 
     def test_wrapper_template_parses(self):
         proc = subprocess.run(['sh', '-n', str(WRAPPER)],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr
 
     def test_session_template_parses(self):
         proc = subprocess.run(['sh', '-n', str(SESSION)],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr
 
 
@@ -166,7 +166,7 @@ class TestInstallPortals:
 
     def test_install_script_parses(self):
         proc = subprocess.run(['sh', '-n', str(INSTALL_SH)],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr
 
 

@@ -576,7 +576,8 @@ def _fp_list_enrolled() -> bool:
     user = os.environ.get('USER', os.environ.get('LOGNAME', 'user'))
     try:
         r = subprocess.run(['fprintd-list', user],
-                           capture_output=True, timeout=10, text=True)
+                           capture_output=True, timeout=10, text=True,
+                           check=False)
     except (OSError, subprocess.SubprocessError):
         return False
     out = (r.stdout + r.stderr).lower()

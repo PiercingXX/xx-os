@@ -255,7 +255,7 @@ class TestServiceRestartPolicy:
             'XX_WM_USER=no-such-user-xxwm\n'
             'start_pre() {%s}\nstart_pre\n' % (tmp_path, tmp_path, body))
         proc = subprocess.run(['sh', str(harness)], capture_output=True,
-                              text=True, timeout=30)
+                              text=True, timeout=30, check=False)
         assert proc.returncode != 0
         assert 'no-such-user-xxwm' in proc.stderr
         assert not (tmp_path / 'calls').exists(), \
@@ -298,7 +298,7 @@ class TestInstallStatus:
                    SUDO='', REPO_DIR=str(repo))
         return subprocess.run(['sh', '-c', '. "%s"; build_install' % funcs],
                               capture_output=True, text=True, env=env,
-                              cwd=str(tmp_path), timeout=30)
+                              cwd=str(tmp_path), timeout=30, check=False)
 
     def test_failed_service_enable_fails_the_install(self, tmp_path):
         assert self._run(tmp_path, enable_rc=1).returncode != 0
@@ -323,6 +323,6 @@ class TestInstallStatus:
                    SUDO='', XX_WM_SYSTEMD_RUN_DIR=str(rundir))
         proc = subprocess.run(['sh', '-c', '. "%s"; enable_service' % funcs],
                               capture_output=True, text=True, env=env,
-                              timeout=30)
+                              timeout=30, check=False)
         assert proc.returncode != 0
         assert 'xx-wm-helper-boot' in proc.stderr

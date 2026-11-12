@@ -385,10 +385,11 @@ class ServicesSection(settings_page._Section):
     def _on_service_menu(self, win, entry, anchor=None) -> None:
         actions = []
         for action in SERVICE_ACTIONS:
-            if is_critical(entry.key, action.lower()):
+            verb = action.lower()
+            if is_critical(entry.key, verb):
                 actions.append(
                     (action,
-                     lambda a=action.lower(), e=entry,
+                     lambda a=verb, e=entry,
                      r=anchor: self._confirm_critical(win, e, a, r)))
             elif action == 'Stop':
                 actions.append(
@@ -396,8 +397,7 @@ class ServicesSection(settings_page._Section):
             else:
                 actions.append(
                     (action,
-                     lambda a=action.lower(), e=entry: self._apply(
-                         win, e, a)))
+                     lambda a=verb, e=entry: self._apply(win, e, a)))
         actions.append(('Cancel', lambda: None))
         win.item_actions._show_action_menu(
             anchor or self._rows_box, entry.title, actions)
@@ -413,9 +413,10 @@ class ServicesSection(settings_page._Section):
                     ('Stop',
                      lambda e=entry: self._on_user_stop_tapped(win, e)))
             else:
+                verb = action.lower()
                 actions.append(
                     (action,
-                     lambda a=action.lower(), e=entry,
+                     lambda a=verb, e=entry,
                      r=anchor: self._apply_user(win, e, a, r)))
         actions.append(('Cancel', lambda: None))
         subtitle = None

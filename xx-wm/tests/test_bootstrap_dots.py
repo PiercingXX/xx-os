@@ -73,7 +73,7 @@ def _run_script(home: Path, bindir: Path | None = None,
         env.update(extra_env)
     return subprocess.run(
         ['sh', str(SCRIPT)], capture_output=True, text=True, env=env,
-        timeout=60)
+        timeout=60, check=False)
 
 
 @pytest.fixture(scope='module')
@@ -129,7 +129,7 @@ def test_cache_clone_still_fresh(script_text):
 
 def test_script_syntax_parses():
     result = subprocess.run(
-        ['sh', '-n', str(SCRIPT)], capture_output=True, text=True)
+        ['sh', '-n', str(SCRIPT)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
 
 
@@ -259,7 +259,7 @@ def test_missing_git_fails_loudly(tmp_path):
     env = {'HOME': str(home), 'PATH': str(empty)}
     result = subprocess.run(
         [shutil.which('sh'), str(SCRIPT)], capture_output=True, text=True,
-        env=env, timeout=60)
+        env=env, timeout=60, check=False)
     assert result.returncode != 0
     assert 'git is required' in result.stderr
 

@@ -31,7 +31,7 @@ def available() -> bool:
 
 def _run(*args: str, timeout: float = 5.0) -> subprocess.CompletedProcess:
     return subprocess.run(['tailscale', *args], capture_output=True,
-                          text=True, timeout=timeout)
+                          text=True, timeout=timeout, check=False)
 
 
 def parse_status(raw: str) -> Status:

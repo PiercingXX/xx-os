@@ -413,9 +413,9 @@ class TestChargeClamp:
         import settings_charging as charging
         helper = _load_helper()
         for bad in ('many', None, ''):
-            with pytest.raises(Exception):
+            with pytest.raises(ValueError):
                 charging.clamp_charge_limit(bad)
-            with pytest.raises(Exception):
+            with pytest.raises(helper.HelperError):
                 helper.clamp_charge_limit(bad)
 
     def test_boundaries(self):

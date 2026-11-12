@@ -40,5 +40,5 @@ def test_installer_still_parses():
     import subprocess
     result = subprocess.run(
         ['sh', '-n', str(ROOT / 'scripts' / 'install.sh')],
-        capture_output=True, text=True)
+        capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr

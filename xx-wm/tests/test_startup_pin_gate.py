@@ -42,7 +42,7 @@ def _home(tmp_path, monkeypatch):
             for name in ('_HELPER_PIN_PATHS', '_FAILED_PATHS')]
     saved = [set(s) for s in sets]
     yield
-    for live, before in zip(sets, saved):
+    for live, before in zip(sets, saved, strict=True):
         live.clear()
         live.update(before)
 

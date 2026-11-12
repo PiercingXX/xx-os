@@ -894,6 +894,6 @@ def test_cover_window_builds_under_real_gtk(tmp_path):
         '    daemon.terminate()\n')
     result = subprocess.run(
         [sys.executable, str(script), str(SRC), str(tmp_path), str(common)],
-        capture_output=True, text=True, timeout=60)
+        capture_output=True, text=True, timeout=60, check=False)
     assert 'MAPPED True ERRORS 0' in result.stdout, (
         result.stdout + result.stderr)

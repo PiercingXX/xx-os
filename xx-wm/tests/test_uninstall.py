@@ -81,7 +81,7 @@ def staged(tmp_path):
     def run(*args):
         return subprocess.run(
             ['sh', str(repo / 'xx-wm' / 'scripts' / 'uninstall.sh'), *args],
-            capture_output=True, text=True, env=env, timeout=120)
+            capture_output=True, text=True, env=env, timeout=120, check=False)
 
     return {'repo': repo, 'root': root, 'home': home, 'calls': calls,
             'install': install, 'run': run}
@@ -120,7 +120,8 @@ def _extras(staged):
     state.mkdir(parents=True)
     (state / 'installed.json').write_text(json.dumps(
         {'xx-wm': {}, 'xx-keyboard': {}, 'xx-calendar': {}, 'common': {}}))
-    me = subprocess.run(['id', '-un'], capture_output=True, text=True).stdout.strip()
+    me = subprocess.run(['id', '-un'], capture_output=True, text=True,
+                        check=False).stdout.strip()
     (state / 'input-group-added').write_text(me + '\n')
     made['keep'] = keep
     made['state'] = state
@@ -210,7 +211,8 @@ class TestScript:
 
     def test_rejects_unknown_arguments(self):
         proc = subprocess.run(['sh', str(UNINSTALL_SH), '--bogus'],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, timeout=30,
+                              check=False)
         assert proc.returncode != 0
 
 
@@ -245,10 +247,10 @@ class TestInstallRecords:
                    SUDO='', XX_APPS_STATE_DIR=str(state))
         proc = subprocess.run(['sh', '-c', '. "%s"; add_input_group' % funcs],
                               capture_output=True, text=True, env=env,
-                              timeout=30)
+                              timeout=30, check=False)
         assert proc.returncode == 0, proc.stderr
         me = subprocess.run([real_id, '-un'], capture_output=True,
-                            text=True).stdout.strip()
+                            text=True, check=False).stdout.strip()
         assert (state / 'input-group-added').read_text() == me + '\n'
 
     def test_existing_member_is_not_recorded(self, tmp_path):

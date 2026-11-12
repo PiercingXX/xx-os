@@ -259,7 +259,7 @@ class TestApply:
 
         def fake_mkdtemp(*args, **kwargs):
             path = real_mkdtemp(
-                dir=str(tmp_path), *args[1:], **kwargs)
+                *args[1:], dir=str(tmp_path), **kwargs)
             created.append(path)
             return path
         monkeypatch.setattr(updater.tempfile, "mkdtemp", fake_mkdtemp)
@@ -647,7 +647,7 @@ class TestInstallRecord:
                   "record_installed common; ls %s" % (
                       REPO_ROOT / "xx-wm", funcs, state))
         result = subprocess.run(["sh", "-c", script], capture_output=True,
-                                text=True, timeout=60, env=env)
+                                text=True, timeout=60, env=env, check=False)
         assert result.returncode == 0, result.stderr
         assert ".installed.json.tmp." not in result.stdout
         data = json.loads((state / "installed.json").read_text(

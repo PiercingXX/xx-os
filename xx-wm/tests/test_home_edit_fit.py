@@ -159,7 +159,8 @@ def test_edit_footer_stays_on_screen(tmp_path, size, count):
     # Private session bus: the real window talks to services.
     if shutil.which('dbus-run-session'):
         cmd = ['dbus-run-session', '--'] + cmd
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180,
+                          check=False)
     assert 'EDIT FIT OK' in proc.stdout, (
         proc.returncode, proc.stdout[-3000:], proc.stderr[-3000:])
 

@@ -741,7 +741,7 @@ def _run_driver(tmp_path, xx_src, home, mode):
     proc = subprocess.run(
         ['dbus-run-session', '--', sys.executable, str(driver),
          str(SRC), str(xx_src), str(home), mode],
-        capture_output=True, text=True, timeout=120, env=env)
+        capture_output=True, text=True, timeout=120, env=env, check=False)
     return proc
 
 

@@ -774,7 +774,7 @@ class TestSectionRegistry:
         proc = sp.run(
             [sys.executable, str(Path(__file__).parent.parent / 'scripts'
                                  / 'check_mainloop_blocks.py')],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=120, check=False)
         assert proc.returncode == 0, proc.stdout + proc.stderr
 
     def _fake_ui(self, monkeypatch, sec):

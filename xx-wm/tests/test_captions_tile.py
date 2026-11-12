@@ -1001,7 +1001,7 @@ class TestLiveServiceRoundTrip:
             ['dbus-run-session', '--', sys.executable, str(driver),
              str(REPO / 'launcher' / 'src'), str(ref_xx_captions),
              str(home)],
-            capture_output=True, text=True, timeout=90)
+            capture_output=True, text=True, timeout=90, check=False)
         assert 'INTEGRATION OK' in proc.stdout, (
             proc.returncode, proc.stdout[-2000:], proc.stderr[-2000:])
 
@@ -1208,6 +1208,6 @@ class TestBroadwayPanelSmoke:
         proc = subprocess.run(
             [sys.executable, str(script), str(REPO / 'launcher' / 'src'),
              str(run_dir)],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=120, check=False)
         assert 'SMOKE OK' in proc.stdout, (
             proc.returncode, proc.stdout[-2000:], proc.stderr[-2000:])

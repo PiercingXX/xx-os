@@ -383,7 +383,7 @@ def _end_child(proc) -> None:
 def _default_pw_dump_once() -> str:
     try:
         out = subprocess.run(['pw-dump'], capture_output=True, text=True,
-                             timeout=10)
+                             timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return ''
     return out.stdout if out.returncode == 0 else ''

@@ -761,7 +761,7 @@ def _default_pw_dump() -> str | None:
     is an empty dump and MPRIS stays the media guard."""
     try:
         out = subprocess.run(['pw-dump'], capture_output=True, text=True,
-                             timeout=10)
+                             timeout=10, check=False)
     except FileNotFoundError:
         return '[]'
     except (OSError, subprocess.SubprocessError):

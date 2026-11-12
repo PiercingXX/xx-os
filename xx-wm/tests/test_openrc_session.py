@@ -62,7 +62,7 @@ def _openrc_host(tmp_path, *, tinydm=False, greetd=False, elogind=True):
     def run(driver):
         proc = subprocess.run(['sh', '-c', '. "%s"; %s' % (funcs, driver)],
                               capture_output=True, text=True, env=env,
-                              timeout=30)
+                              timeout=30, check=False)
         calls = log.read_text() if log.exists() else ''
         return proc, calls
 

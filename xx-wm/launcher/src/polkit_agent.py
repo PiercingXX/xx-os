@@ -529,4 +529,6 @@ def stop_agent() -> None:
 __all__ = ['OBJECT_PATH', 'Pending', 'agent_subject', 'base_listener_type',
            'build_auth_dialog', 'display_name_for_uid', 'pick_identity',
            'register_listener', 'show_auth_dialog', 'start_agent',
-           'stop_agent'] + (['ShellListener'] if _HAVE_AGENT else [])
+           'stop_agent']
+if _HAVE_AGENT:
+    __all__ += ['ShellListener']

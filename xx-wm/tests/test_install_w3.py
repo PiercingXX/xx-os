@@ -64,7 +64,8 @@ def _run_funcs(names, driver, tmp_path, env=None):
     full_env.update(env or {})
     return subprocess.run(
         ['sh', '-c', '. "%s"; %s' % (funcs, driver)],
-        capture_output=True, text=True, env=full_env, cwd=str(tmp_path))
+        capture_output=True, text=True, env=full_env, cwd=str(tmp_path),
+        check=False)
 
 
 # --- 1. meson build-output collision ------------------------------------------
@@ -320,7 +321,8 @@ def test_autologin_writes_block_once(tmp_path):
     assert '[initial_session]' in text
     assert 'command = "/usr/libexec/xx-wm-session"' in text
     me = subprocess.run(
-        ['id', '-un'], capture_output=True, text=True).stdout.strip()
+        ['id', '-un'], capture_output=True, text=True,
+        check=False).stdout.strip()
     assert ('user = "%s"' % me) in text
     second = _run_funcs(names, 'setup_greetd_autologin', tmp_path, env)
     assert second.returncode == 0
@@ -620,7 +622,8 @@ def test_ask_device_offers_qemu(install_script):
 
 def test_script_syntax_parses():
     result = subprocess.run(
-        ['sh', '-n', str(INSTALL_SH)], capture_output=True, text=True)
+        ['sh', '-n', str(INSTALL_SH)], capture_output=True, text=True,
+        check=False)
     assert result.returncode == 0, result.stderr
 
 

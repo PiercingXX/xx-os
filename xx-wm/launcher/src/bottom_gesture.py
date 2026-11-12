@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from itertools import pairwise
 from typing import NamedTuple
 
 _log = logging.getLogger('piercing.bottom_gesture')
@@ -206,7 +207,7 @@ def is_reversal(samples, height: float, t_end: float | None = None) -> bool:
     if len(samples) <= REVERSE_SAMPLES:
         return False
     tail = samples[-(REVERSE_SAMPLES + 1):]
-    if any(_up(b) > _up(a) for a, b in zip(tail, tail[1:])):
+    if any(_up(b) > _up(a) for a, b in pairwise(tail)):
         return False
     return release_speed(samples, t_end) <= -thresholds(height).reverse_speed
 

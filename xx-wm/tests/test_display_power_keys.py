@@ -36,7 +36,7 @@ class _SyncGLib:
 
     @staticmethod
     def source_remove(_tid):
-        None
+        return None
 
 
 def _install_fake_glib() -> None:

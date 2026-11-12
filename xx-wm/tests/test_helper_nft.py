@@ -488,7 +488,8 @@ def _netns_ok():
         return False
     try:
         proc = subprocess.run(['unshare', '-rn', 'nft', 'list', 'ruleset'],
-                              capture_output=True, text=True, timeout=20)
+                              capture_output=True, text=True, timeout=20,
+                              check=False)
     except (OSError, subprocess.SubprocessError):
         return False
     return proc.returncode == 0
@@ -554,7 +555,7 @@ def _in_netns(tmp_path, **args):
     proc = subprocess.run(
         ['unshare', '-rn', sys.executable, str(script), str(HELPER_DIR),
          json.dumps(args)],
-        capture_output=True, text=True, timeout=60)
+        capture_output=True, text=True, timeout=60, check=False)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 

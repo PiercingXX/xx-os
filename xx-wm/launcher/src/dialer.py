@@ -63,6 +63,7 @@ def _run_mmcli(args: list[str]) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
             ['mmcli', *args], capture_output=True, text=True, timeout=_MMCLI_TIMEOUT_S,
+            check=False,
         )
     except FileNotFoundError:
         return False, 'mmcli not installed'
