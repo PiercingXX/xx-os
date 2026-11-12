@@ -49,6 +49,7 @@ Landed in code with headless tests only; each needs a device to confirm.
 - [ ] **Lost config with a helper PIN**: with a PIN set, delete (then corrupt) `~/.config/xx-wm/config.json` and restart the shell: the lock comes up first (shield on phoc, nothing shown on river), asks the old PIN, then the wizard runs without a PIN step. Stop the helper from answering (e.g. `chmod -x` its binary) and restart: locked, "Could not check PIN"; restore it and the same keypad unlocks. Boot time with no PIN set grows only by the helper's activation time.
 - [ ] **pywayland bindings from the stripped `phosh-private.xml`** generate on the device's pywayland and `set_shell_state` reaches phoc (log: `reported shell state UP to phoc`); `deploy.sh` now ships the XML.
 - [ ] **scrypt time on the SoC**: `VerifyPin` with N = 2^15 stays a few hundred ms (FLX1, Librem 5), not seconds.
+- [ ] **Helper calls under OpenRC** (pmOS/OpenRC with tinydm or greetd): the session is an active elogind session on seat0, the shell has `XDG_SESSION_ID`, `pkcheck` grants `…set-charge-limit` and challenges `…upgrade-system`; steps in `docs/helper.md` "Sessions and polkit".
 - [ ] **`SetLockedHint` under elogind** (pmOS/OpenRC): `loginctl show-session` shows `LockedHint=yes` while locked; `loginctl lock-session` shows the lock.
 - [ ] **Lock-screen swipe feel** on glass (drag threshold, fling, keypad reveal).
 - [ ] **Suspend waits for lock paint**: resume never flashes the unlocked session.

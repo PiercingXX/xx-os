@@ -130,7 +130,7 @@ ps -p 1                            # systemd or OpenRC?
 
 - Wayland session: `wayland-sessions/xx-wm.desktop` (display managers only scan `*.desktop`)
 - Session launcher: `libexec/xx-wm-session` (phoc wrapper, sets GTK_THEME from config); the in-session `bin/xx-wm` starts squeekboard before the shell
-- systemd user service: `share/systemd/user/xx-wm.service` (`Restart=on-failure`); OpenRC: `data/openrc/xx-wm` → `/etc/init.d/` (OpenRC-based images only — pmOS v26.06 Phosh runs systemd; install.sh detects via `/run/systemd/system`)
+- systemd user service: `share/systemd/user/xx-wm.service` (`Restart=on-failure`); OpenRC (older pmOS images; pmOS v26.06 Phosh runs systemd, install.sh detects via `/run/systemd/system`): the session starts through tinydm or greetd so elogind registers it and polkit lets the helper's actions through (`docs/helper.md`, "Sessions and polkit"); `data/openrc/xx-wm` → `/etc/init.d/` is the last resort without one
 - Keyboard layouts: `data/squeekboard/` (PiercingXX Colemak, incl. terminal/email/url variants) → `datadir/xx-wm/squeekboard`, symlinked by install.sh to `~/.local/share/squeekboard/keyboards/`
 - phoc.ini: default `data/phoc.ini` plus per-device fragments under `data/phoc/` (`fairphone-5`, `furiphone-flx1`, `librem-5`, `tablet`, `qemu` for the Virtual-1 VM display) selected by install.sh; scale notes per device in `devices/*/notes.md`
 

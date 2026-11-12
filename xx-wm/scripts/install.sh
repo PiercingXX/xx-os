@@ -136,6 +136,12 @@ install_deps() {
         pkg_install wlsunset
         # PolkitAgent typelib: the shell's own password prompt (polkit_agent.py).
         pkg_install polkit
+        # OpenRC: Alpine's plain polkit build tracks no sessions, so no
+        # caller is ever "active" and every helper call is refused. The
+        # elogind build sees the PAM session tinydm or greetd opens.
+        if has_openrc; then
+            pkg_install elogind polkit-elogind
+        fi
     elif [ "$PKG" = pacman ]; then
         pkg_install python-gobject gtk4 libadwaita gtk4-layer-shell meson ninja \
             rsync git phoc python-pywayland wl-clipboard geoclue \
@@ -1055,12 +1061,40 @@ enable_service() {
                 echo "warn: enable the service after first login: systemctl --user enable xx-wm" >&2
         fi
     elif has_openrc; then
-        # OpenRC hosts (older pmOS images): no systemd unit to fight with.
-        write_openrc_conf
-        $SUDO rc-update add xx-wm default 2>/dev/null || {
-            echo "warn: rc-update add xx-wm default failed" >&2
-            _es_status=1
-        }
+        # OpenRC hosts (older pmOS images). polkit grants the helper's
+        # actions only to a caller in an active logind session, and only
+        # a PAM login creates one (Alpine's base-session runs
+        # pam_elogind): start the session through tinydm (autologin) or
+        # greetd. The xx-wm init script starts it without PAM and stays
+        # a last resort.
+        if [ -e "${XX_WM_INITD:-/etc/init.d}/elogind" ]; then
+            $SUDO rc-update add elogind default 2>/dev/null || \
+                echo "warn: rc-update add elogind default failed" >&2
+        fi
+        if command -v tinydm-set-session >/dev/null 2>&1; then
+            $SUDO rc-update del xx-wm default 2>/dev/null || true
+            $SUDO tinydm-set-session -f -s /usr/share/wayland-sessions/xx-wm.desktop || {
+                echo "warn: tinydm-set-session failed" >&2
+                _es_status=1
+            }
+            $SUDO rc-update add tinydm default 2>/dev/null || {
+                echo "warn: rc-update add tinydm default failed" >&2
+                _es_status=1
+            }
+        elif greetd_detected; then
+            $SUDO rc-update del xx-wm default 2>/dev/null || true
+            $SUDO rc-update add greetd default 2>/dev/null || {
+                echo "warn: rc-update add greetd default failed" >&2
+                _es_status=1
+            }
+        else
+            echo "warn: no tinydm or greetd: the xx-wm service starts the session without a login session, so polkit refuses the privileged Settings actions. Install greetd and run the installer again." >&2
+            write_openrc_conf
+            $SUDO rc-update add xx-wm default 2>/dev/null || {
+                echo "warn: rc-update add xx-wm default failed" >&2
+                _es_status=1
+            }
+        fi
         $SUDO rc-update add xx-wm-helper-boot boot 2>/dev/null || {
             echo "warn: rc-update add xx-wm-helper-boot boot failed" >&2
             _es_status=1

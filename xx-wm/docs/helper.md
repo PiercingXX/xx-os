@@ -113,6 +113,54 @@ the service refuses those with InvalidArgs without contacting polkit.
 | `HasPin`, `VerifyPin`, `SetPin`, `ClearPin` | none (caller's own uid) | — |
 | `GetCapabilities`, `GetFirewallState` | none (no auth) | — |
 
+## Sessions and polkit
+
+`allow_active` and `auth_admin_keep` only apply to a caller that polkit
+finds in an *active* logind session: a session on `seat0` whose VT is in
+the foreground. With no session every action falls to `allow_any=no`, so
+every mutating helper call returns NotAuthorized, and the in-shell agent
+has no session to register for (`XDG_SESSION_ID` is unset).
+
+Only a PAM login creates that session. On systemd hosts the greeter or
+the display manager does it. On OpenRC (older postmarketOS images) the
+pieces are:
+
+- **elogind**, running (`rc-update add elogind default`), and Alpine's
+  `/etc/pam.d/base-session`, which runs `pam_elogind.so`.
+- **`polkit-elogind`**: Alpine's plain `polkit` build tracks no
+  sessions at all, so nobody is ever active. install.sh installs the
+  elogind build on OpenRC hosts.
+- **A session starter that goes through PAM**: tinydm (postmarketOS's
+  autologin, through `autologin` and its PAM service) or greetd.
+  install.sh points tinydm at `xx-wm.desktop` with `tinydm-set-session`,
+  or enables greetd and offers autologin, and drops the
+  `/etc/init.d/xx-wm` service from the default runlevel. That service
+  runs the session from supervise-daemon with no PAM login; install.sh
+  only enables it when neither starter exists, with a warning, and
+  the script warns at every start.
+
+Verify on the device, from an ssh login while the shell runs:
+
+```sh
+apk info -e polkit-elogind elogind          # both installed
+rc-status default | grep -E 'elogind|tinydm|greetd|xx-wm'
+loginctl list-sessions                      # a row for the user on seat0 with a TTY
+sid=$(loginctl list-sessions --no-legend | awk -v u="$USER" '$3 == u && $4 == "seat0" {print $1; exit}')
+loginctl show-session "$sid" -p Active -p State -p Seat -p VTNr -p Type -p Class
+# Active=yes State=active Seat=seat0 Type=wayland Class=user
+pid=$(pgrep -u "$USER" -f /usr/share/xx-wm/main.py)
+tr '\0' '\n' < /proc/"$pid"/environ | grep XDG_SESSION_ID   # same id as $sid
+pkcheck --action-id io.piercingxx.XXWM.Helper1.set-charge-limit --process "$pid"; echo $?
+# 0 (allow_active=yes)
+pkcheck --action-id io.piercingxx.XXWM.Helper1.upgrade-system --process "$pid"; echo $?
+# 2: authentication required, which the in-shell agent would ask for
+```
+
+Then in the shell: change the battery charge limit (no prompt; the helper
+log has no NotAuthorized), and start a system upgrade (the device
+password prompt appears). Switching to another VT makes the session
+inactive, and the same `pkcheck` then exits 1.
+
 ## Confinement
 
 - `SetChargeLimit` clamps to 50..100, writes every

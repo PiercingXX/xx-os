@@ -1,6 +1,9 @@
 #!/sbin/openrc-run
-# XX-WM shell session — OpenRC equivalent of the systemd user unit.
-# postmarketOS default images run OpenRC; supervise-daemon respawns on failure.
+# XX-WM shell session started straight from OpenRC: a last resort for
+# hosts without tinydm or greetd. It runs the session without a PAM
+# login, so elogind registers no session for it and polkit refuses the
+# privileged helper's actions (docs/helper.md, "Sessions and polkit").
+# scripts/install.sh prefers tinydm or greetd.
 
 name="xx-wm"
 description="XX-WM shell session"
@@ -32,6 +35,7 @@ start_pre() {
         eerror "XX_WM_USER='${XX_WM_USER}' is not a regular user; set it in /etc/conf.d/xx-wm"
         return 1
     fi
+    ewarn "Starting XX-WM without a login session: privileged Settings actions will be refused (use tinydm or greetd)"
     checkpath -f -o "${XX_WM_USER}" "$output_log"
     # Without an active logind session nothing creates the per-user
     # runtime dir: make it here so the shell (and its IPC socket) lands
