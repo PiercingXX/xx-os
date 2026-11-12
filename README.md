@@ -1,10 +1,11 @@
-# XX-Linux-Phone
+# xx-os
 
-A complete, minimal phone experience for Linux phones: the **XX-WM** shell and the PiercingXX apps, built for postmarketOS, Mobian, FuriOS and other phoc-based systems. Python + GTK4/libadwaita, phone-first (360×720, works down to 320 px wide).
+A complete, minimal phone OS for Linux phones: the **XX-WM** shell and the PiercingXX apps. It runs today on phoc-based systems (postmarketOS, Mobian, FuriOS); the target is a Pixel 9 on Debian with the shell on the river compositor and a docked desktop on an external monitor ([`docs/pixel-9-pro-design.md`](docs/pixel-9-pro-design.md)). Python + GTK4/libadwaita (system pieces in Rust), phone-first (360×720, works down to 320 px wide).
 
 | Directory | What it is |
 |---|---|
-| [`xx-wm/`](xx-wm/) | The shell: home, app drawer, shade, lock screen, calls, notifications, settings, power, privacy, screen time, captions tile |
+| [`xx-wm/`](xx-wm/) | The shell: home, app drawer, shade, lock screen, calls, notifications, settings, power, privacy, screen time, captions tile. [`xx-wm/wm/`](xx-wm/wm/) is xxwm, its Rust window manager for river |
+| [`xx-keyboard/`](xx-keyboard/) | On-screen keyboard, built on Stevia, with QWERTY, Colemak and Piercing Num layouts and glide typing |
 | [`xx-contacts/`](xx-contacts/) | Contacts. Owns the phone's contact store and serves it over D-Bus |
 | [`xx-dialer/`](xx-dialer/) | Phone app with call screening and spam blocking (the shell asks it before ringing) |
 | [`txxt/`](txxt/) | SMS/MMS messaging (owns SMS on the phone) |
@@ -16,7 +17,7 @@ A complete, minimal phone experience for Linux phones: the **XX-WM** shell and t
 | [`xx-captions/`](xx-captions/) | On-device live captions and call transcription |
 | [`xx-find/`](xx-find/) | Self-hosted Find My Device (built, not enabled) |
 | [`xx-auto/`](xx-auto/) | Driving screen for a phone in a car mount (MPRIS media, maps, starred-contact calls) |
-| [`xx-radio/`](xx-radio/) | Unofficial YouTube Music player: search, radio, queue, background playback, offline downloads (spec + scaffold) |
+| [`xx-radio/`](xx-radio/) | Unofficial YouTube Music player: search, radio, queue, background playback, offline downloads |
 | [`xx-audiobook/`](xx-audiobook/) | Self-hosted audiobooks from your own server: library, player, downloads, zones |
 | [`xx-note/`](xx-note/) | Markdown notes as plain files, with labels, archive, trash and optional WebDAV sync |
 | [`xx-weather/`](xx-weather/) | ZIP-code weather from the National Weather Service (US only), with saved locations and rain/freeze alerts |

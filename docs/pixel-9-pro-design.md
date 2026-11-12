@@ -291,7 +291,7 @@ Each has an exit test. M3 and M5 are gates: failing one changes the product.
 | M0 | Fix list | P0 and P1 items in `../xx-wm/docs/review-2026-11-11.md` closed | Any |
 | M1 | Compositor prototype | Checklist passes on river (else sway): handset policy, keyboard resizes the app, lock survives a shell kill, monitor hot-plug, dwindle with the owner's binds | Librem 5 or laptop |
 | M2 | Docked session | Section 2 "Docked" works end to end, phone screen as trackpad | Librem 5 or laptop |
-| M3 | **Gate: Linux graphics on the Pixel** | Stock kernel boots to a shell; panel shows a picture through normal Linux graphics; touch works; the monitor appears. Software rendering is enough | Spare Pixel 9 Pro |
+| M3 | **Gate: Linux graphics on the Pixel** | Stock kernel boots to a shell; panel shows a picture through normal Linux graphics; touch works; the monitor appears. Software rendering is enough | Spare Pixel 9 |
 | M4 | XX-WM on the Pixel | Handset and docked session running, unaccelerated | Pixel |
 | M5 | **Gate: calls** | SIM, data, SMS, then a voice call on the owner's carrier | Pixel |
 | M6 | Acceleration | Open GPU driver working; browser usable on the monitor | Pixel |
@@ -325,9 +325,18 @@ it as a phone.
 
 ## 11. Decisions the owner still has to make
 
-- The OS name.
-- Whether the spare is a 9 Pro (`caiman`) or a 9 (`tokay`); they are separate ports.
-- Carrier, which sets how hard M5 is.
+Settled since this was written:
+
+- The OS name is **xx-os**. Apps drop the `xx-` from visible names and keep it in
+  commands, ids and data directories.
+- The bring-up phone is a **Pixel 9 (`tokay`)**, not the 9 Pro. Same Tensor G4 and
+  modem; a separate device port. The 9 Pro stays a target.
+- The carrier is **Verizon**. A 1.8 V USB serial adapter is on order for M3.
+
+Still open:
+
 - Whether phoc support continues for the FLX1s and Librem 5 (the design keeps it; it
   costs a backend).
 - Verified-boot key custody: who holds the signing key and where.
+- The key that signs app updates (review item P0.6): until it exists, "Update now"
+  keeps building `main` unverified.

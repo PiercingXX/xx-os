@@ -4,8 +4,8 @@ An unofficial YouTube Music player for Linux phones (postmarketOS, Mobian,
 FuriOS and other phoc-based systems running XX-WM or Phosh). It talks to
 YouTube directly from the phone. There is no server.
 
-Status: spec + scaffold. See [PORT_SPEC.md](PORT_SPEC.md) for the product,
-the engine decisions, the architecture and the build plan.
+[PORT_SPEC.md](PORT_SPEC.md) has the product, the engine decisions, the
+architecture and the build plan.
 
 ## Disclaimer
 
@@ -27,7 +27,7 @@ XX_RADIO_ENGINE=fake PYTHONPATH=src:../common python3 -m xx_radio   # demo catal
 ```
 
 Requires Python 3.12+, GTK4 + libadwaita with PyGObject introspection.
-Playback (later stages) needs GStreamer (`Gst`, good + base plugins) and
+Playback needs GStreamer (`Gst`, good + base plugins) and
 libsecret (`Secret`). The YouTube engine needs these packages, all from
 the distribution (details and fallbacks in PORT_SPEC.md):
 
