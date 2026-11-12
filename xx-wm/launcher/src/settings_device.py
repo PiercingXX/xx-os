@@ -267,23 +267,6 @@ def modem_summary() -> dict | None:
     return _modem_props_sync()
 
 
-def format_modem(props: dict | None, reveal_imei: bool = False) -> str:
-    """One-line modem summary; the IMEI shows only when revealed."""
-    if not props:
-        return 'No modem detected.'
-    parts = []
-    for key, label in (('Manufacturer', None), ('Model', None),
-                       ('Revision', 'rev')):
-        value = props.get(key)
-        if value:
-            text = str(value)
-            parts.append('%s %s' % (label, text) if label else text)
-    imei = props.get('EquipmentIdentifier')
-    if imei:
-        parts.append('IMEI %s' % (imei if reveal_imei else 'tap to show'))
-    return ' · '.join(parts) if parts else 'Modem detected.'
-
-
 def battery_health_sync() -> dict | None:
     """UPower battery details for the health rows. None when no battery.
     Worker only."""
@@ -341,21 +324,3 @@ def format_battery_health(props: dict | None) -> dict[str, str]:
     except (TypeError, ValueError):
         pass
     return out
-
-
-def storage_summary_text() -> str:
-    """'12.3 GB free of 28.9 GB' for the home filesystem. Worker only."""
-    try:
-        import settings_storage
-        total, free = settings_storage.fs_usage(
-            settings_storage.home_dir())
-    except Exception:
-        return 'Storage unavailable.'
-    if total is None or free is None:
-        return 'Storage unavailable.'
-    try:
-        import settings_storage as _storage
-        return '%s free of %s' % (_storage.format_bytes(free),
-                                  _storage.format_bytes(total))
-    except Exception:
-        return 'Storage unavailable.'

@@ -160,27 +160,6 @@ class TestBatteryHealth:
         assert health['health'] == 'Unknown'
 
 
-class TestModem:
-    def test_imei_hidden_by_default(self):
-        import settings_device as dev
-        props = {'Manufacturer': 'Quectel', 'Model': 'EG25-G',
-                 'Revision': 'EG25GGBR07A08M2G',
-                 'EquipmentIdentifier': '864567041234567'}
-        shown = dev.format_modem(props, reveal_imei=False)
-        assert '864567041234567' not in shown
-        assert 'Quectel' in shown and 'EG25-G' in shown
-
-    def test_imei_revealed_on_tap_only(self):
-        import settings_device as dev
-        props = {'Manufacturer': 'Quectel',
-                 'EquipmentIdentifier': '864567041234567'}
-        assert '864567041234567' in dev.format_modem(props, reveal_imei=True)
-
-    def test_no_modem_is_plain_text(self):
-        import settings_device as dev
-        assert dev.format_modem(None) == 'No modem detected.'
-
-
 # ------------------------------------------------- night light + profiles
 
 

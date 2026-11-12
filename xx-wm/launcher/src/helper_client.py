@@ -438,22 +438,6 @@ def set_rfkill(rtype: str, blocked: bool, on_done: ResultCallback) -> None:
                  lambda ok, _result: on_done(ok, None if ok else _result))
 
 
-def set_inbound_preset(name: str, allowed: bool,
-                       on_done: ResultCallback) -> None:
-    """Allow (``allowed`` True) or forbid one inbound preset's ports.
-
-    ``on_done(True, None)`` on success, ``(False, error)`` otherwise.
-    """
-    try:
-        Gio, GLib = _gio()
-        params = GLib.Variant('(sb)', (str(name), bool(allowed)))
-    except ImportError as err:
-        on_done(False, 'D-Bus unavailable: %s' % err)
-        return
-    _call_helper('SetInboundPreset', params,
-                 lambda ok, _result: on_done(ok, None if ok else _result))
-
-
 def set_inbound_allowed(names, on_done: ResultCallback) -> None:
     """Replace the whole inbound allowed set with the features' derived
     presets (``SetInboundAllowed``).

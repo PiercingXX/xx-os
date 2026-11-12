@@ -22,8 +22,6 @@ CONTACTS_SEARCH_REPLY = '(a(sss))'
 _SEARCH_TIMEOUT_MS = 8_000
 _SEARCH_LIMIT = 8
 
-BLOOD_TYPES = ('', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')
-
 MEDICAL_FIELDS: tuple = (
     ('name', 'Name'),
     ('blood_type', 'Blood type'),

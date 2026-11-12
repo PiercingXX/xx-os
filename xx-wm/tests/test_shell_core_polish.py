@@ -210,3 +210,23 @@ class TestOneLuminanceRule:
         assert config.is_dark_color('F3EEE2') is False
         assert config.is_dark_color('#0d0b14') is True
         assert config.is_dark_color('garbage') is True
+
+
+class TestNoUnusedHelpers:
+    """Functions nothing calls are deleted, not kept "for later"."""
+
+    def test_unused_functions_are_gone(self):
+        import helper_client
+        import settings_device
+        import settings_display
+        import settings_firewall
+        import settings_medical
+        for module, name in (
+                (helper_client, 'set_inbound_preset'),
+                (settings_device, 'format_modem'),
+                (settings_device, 'storage_summary_text'),
+                (settings_display, 'read_power_profile'),
+                (settings_display, '_read_active'),
+                (settings_firewall.FirewallSection, '_status_text'),
+                (settings_medical, 'BLOOD_TYPES')):
+            assert not hasattr(module, name), name

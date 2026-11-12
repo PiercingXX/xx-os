@@ -191,15 +191,6 @@ def read_power_full() -> tuple[str | None, dict]:
         return None, {}
 
 
-def read_power_profile() -> tuple[str | None, list[str]]:
-    """(bus_name, profiles) or (None, []): worker only, never raises."""
-    name, props = read_power_full()
-    profiles = [str(entry.get('Profile', ''))
-                for entry in (props.get('Profiles') or [])
-                if isinstance(entry, dict) and entry.get('Profile')]
-    return name, profiles
-
-
 def probe_power_state() -> dict:
     """One worker-side snapshot: backend ('ppd'/'helper'/'none'), the
     daemon bus/profiles when present, and the live active profile."""
@@ -739,21 +730,3 @@ class DisplaySection(settings_page._Section):
         bar = getattr(win, '_status_bar', None)
         if bar is not None:
             bar.apply_config()
-
-
-def _read_active(bus_name: str) -> str | None:
-    try:
-        from gi.repository import Gio, GLib
-        import settings_device
-        bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
-        props = settings_device.dbus_call_sync(
-            bus, bus_name, '/org/freedesktop/UPower/PowerProfiles'
-            if bus_name == PROFILE_BUS_NAMES[0]
-            else '/net/hadess/PowerProfiles',
-            'org.freedesktop.DBus.Properties', 'GetAll',
-            GLib.Variant('(s)', (_PROFILE_IFACE,)),
-            GLib.VariantType('(a{sv})'), 3000,
-        ).unpack()[0]
-        return parse_active_profile((props,))
-    except Exception:
-        return None

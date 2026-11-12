@@ -399,17 +399,6 @@ class FirewallSection(settings_page._Section):
     def _is_on(self) -> bool:
         return bool(self._state and self._state.get('enabled'))
 
-    def _status_text(self) -> str:
-        state = self._state
-        if not isinstance(state, dict):
-            return 'Status unavailable'
-        allowed = state.get('allowed') or {}
-        have = {name for name, on in allowed.items() if on} \
-            if isinstance(allowed, dict) else set()
-        return subtitle_for_allowed(
-            have, enabled=self._is_on(),
-            backend=state.get('backend', 'none'))
-
     def _note_text(self) -> str:
         state = self._state
         if not isinstance(state, dict):

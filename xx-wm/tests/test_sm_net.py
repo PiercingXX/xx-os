@@ -1080,13 +1080,6 @@ class TestHelperClientShapes:
         assert params.get_type_string() == '(sb)'
         assert params.unpack() == ('wifi', True)
 
-    def test_preset_params(self, monkeypatch):
-        calls = _capture_client(monkeypatch)
-        helper_client.set_inbound_preset('ssh', False, lambda *_a: None)
-        (method, params), = calls
-        assert method == 'SetInboundPreset'
-        assert params.unpack() == ('ssh', False)
-
     def test_firewall_enabled_params(self, monkeypatch):
         calls = _capture_client(monkeypatch)
         helper_client.set_firewall_enabled(True, lambda *_a: None)
@@ -1773,7 +1766,8 @@ class TestFirewallSectionUI:
         section.build(win)
         section._show_state(win, {'backend': 'none', 'enabled': False,
                                   'allowed': {}, 'foreign_drop': False})
-        assert 'no inbound firewall' in section._status_text().lower()
+        assert 'no inbound firewall' in firewall.subtitle_for_allowed(
+            set(), enabled=False, backend='none').lower()
 
 
 # ------------------------------------------------- registry / static guards
