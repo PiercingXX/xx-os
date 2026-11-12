@@ -1224,6 +1224,12 @@ class NotificationShade(Gtk.Window):
         Rows are inserted and removed one at a time; only this cheap pass
         runs over the list, never a rebuild."""
         total = len(self._notifications)
+        on_count = getattr(self, 'on_count_changed', None)
+        if callable(on_count):
+            try:
+                on_count(total)
+            except Exception:
+                pass
         for widget in getattr(self, '_notif_section', ()):
             try:
                 widget.set_visible(total > 0)

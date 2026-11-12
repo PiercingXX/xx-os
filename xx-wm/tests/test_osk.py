@@ -16,6 +16,11 @@ MARKERS = (
     'on_keyboard',
     'attach(',
 )
+# Entries that must never raise the on-screen keyboard.
+EXEMPT_FILES = {
+    # The docked launcher opens only from a hardware key (Super, Alt+Tab).
+    'desk_launcher.py',
+}
 
 
 def test_every_gtk_entry_is_attached_or_exempt():
@@ -29,6 +34,8 @@ def test_every_gtk_entry_is_attached_or_exempt():
             window = '\n'.join(lines[i:min(len(lines), i + 35)])
             loc = f'{path.name}:{i + 1}'
             found.append(loc)
+            if path.name in EXEMPT_FILES:
+                continue
             if not any(marker in window for marker in MARKERS):
                 missing.append(f'{loc}: {line.strip()}')
     assert found, 'expected Gtk.Entry / SearchEntry construction sites'

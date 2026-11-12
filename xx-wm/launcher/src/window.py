@@ -1787,6 +1787,9 @@ class ShellWindow(Adw.ApplicationWindow):
         """Hide the top status bar (and the bottom gesture strip) under
         the lock screen and the welcome wizard, show them over home and
         apps (status_bar.decide_visible)."""
+        desk = getattr(self, '_desk', None)
+        if desk is not None and self.is_locked():
+            desk.close_overlays()
         strip = getattr(self, '_bottom_gesture', None)
         bar = getattr(self, '_status_bar', None)
         if strip is None and bar is None:
@@ -1875,7 +1878,14 @@ class ShellWindow(Adw.ApplicationWindow):
             # Same current-preset rule as _open_dialer: the shade can be
             # built long after startup, under a hot-reloaded theme.
             self._shade.apply_theme(resolve_appearance_preset(self.config))
+            # The docked top bar shows the shade's notification count.
+            self._shade.on_count_changed = self._on_shade_count
         return self._shade
+
+    def _on_shade_count(self, count: int) -> None:
+        desk = getattr(self, '_desk', None)
+        if desk is not None:
+            desk.set_notifications(count)
 
     def _show_shade(self) -> None:
         self._ensure_shade().show_shade()
@@ -2876,6 +2886,9 @@ class ShellWindow(Adw.ApplicationWindow):
         bar = getattr(self, '_status_bar', None)
         if bar is not None:
             bar.apply_theme(preset)
+        desk = getattr(self, '_desk', None)
+        if desk is not None:
+            desk.apply_theme(preset)
         # The HUD lives on the application (main.py wires it into the shade
         # from there); getattr-guarded so bare test namespaces still fan out.
         get_app = getattr(self, 'get_application', None)

@@ -123,6 +123,14 @@ lock screen (6-digit PIN, fingerprint when hardware supports), notification shad
 - Notification list below, flat on the sheet like an inbox (hairlines between rows; title up to two lines, body up to four): swipe to dismiss, clear all. With nothing to show, the whole section is hidden.
 - One radius (8 px) and one 20 px gutter across header, media, tiles, sliders and notifications.
 
+### Docked monitor (river with xxwm)
+
+A monitor shows a **top bar and nothing else**; windows tile below it. The handset never gets these surfaces.
+
+- **Top bar**: a 28 px strip on the theme's page color at the top of every monitor that is not the handset, with an exclusive zone so tiles sit below it. Left: the workspaces in use plus the one shown there (the shown one inverted, 4 px radius, like today in the calendar; a click shows another one on that monitor; a workspace the handset is showing is not listed), then the title of the window in front. Right: call state as an inverted chip (Incoming call / Calling / On call) while there is one, the notification count in a 1 px outline chip while there are any, the handset bar's state glyphs and battery, then the muted date (`Thu, Nov 12`) and the time. Every value comes from a source the shell already has; nothing is shown that is unknown. **Super+R** turns the bars off and on. Bars follow monitors in and out.
+- **Launcher**: tapping **Super** alone or **Alt+Tab** opens the drawer search as a centered prompt in the upper third of the focused monitor: one 560 px outline panel (8 px radius) on the page color, a flat 16 px entry, a hairline, then up to eight 40 px rows (more scroll). Nothing is listed until something is typed. Same matches, renames, hidden apps, Launcher Settings row, `!` web row and single-result auto-launch as the drawer. The selected row is inverted. Enter opens it; Down/Up, Tab and Ctrl+J/K move the selection while typing; once moved down, j/k move, l opens and h goes back to typing. Escape, Super again, or a click outside closes it.
+- **Keybind sheet**: **Super+/** shows the window manager's live binds (wm.conf overrides included) as a centered outline panel in up to three columns: caps section captions (Windows, Workspaces, Shell, Apps, Media), sentence-case action on the left, muted keys on the right. H/J/K/L and the arrows for one verb share a row, as do Super+1…0 and two keys for one action. Escape, Super+/ again, or a click outside closes it.
+
 ### Do Not Disturb
 
 Modeled on the Pixel's DnD. One toggle silences notification sounds and banners; notifications still collect silently in the shade. Exceptions that always get through: alarms, **repeat callers** (same number calling twice within 15 minutes), and **starred contacts**. Optional schedules (days + start/end time). While active, the lock screen shows no notifications. State is config-backed so the notification daemon and call UI can consult it.

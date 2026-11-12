@@ -384,6 +384,14 @@ class HomePage:
                               win.focus_state.is_active(now))
             except Exception:
                 pass
+        desk = getattr(win, '_desk', None)
+        if desk is not None:
+            try:
+                desk.set_clock(now, clock)
+                desk.set_flags(win.dnd_state.is_active(now),
+                               win.focus_state.is_active(now))
+            except Exception:
+                pass
 
     def _tick_clock(self) -> bool:
         self._refresh_clock()
@@ -414,6 +422,9 @@ class HomePage:
             bar = getattr(win, '_status_bar', None)
             if bar is not None:
                 bar.set_status(snapshot)
+            desk = getattr(win, '_desk', None)
+            if desk is not None:
+                desk.set_status(snapshot)
         status_line_async(_done, on_snapshot=_snapshot)
 
     def set_privacy_snapshot(self, snapshot: dict | None) -> None:
@@ -426,12 +437,13 @@ class HomePage:
                 for kind, apps in dict(snapshot or {}).items()}
         except Exception:
             win._privacy_snapshot = {}
-        bar = getattr(win, '_status_bar', None)
-        if bar is not None:
-            try:
-                bar.set_privacy(any(win._privacy_snapshot.values()))
-            except Exception:
-                pass
+        for target in (getattr(win, '_status_bar', None),
+                       getattr(win, '_desk', None)):
+            if target is not None:
+                try:
+                    target.set_privacy(any(win._privacy_snapshot.values()))
+                except Exception:
+                    pass
         try:
             win._refresh_status()
         except Exception:

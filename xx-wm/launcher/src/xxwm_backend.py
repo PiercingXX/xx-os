@@ -67,6 +67,127 @@ def request(line: str, path: str | None = None,
     return b''.join(chunks).decode(errors='replace').strip()
 
 
+def _idle_add(fn, *args) -> None:
+    from gi.repository import GLib
+    GLib.idle_add(lambda: fn(*args) and False)
+
+
+def request_async(line: str, on_done=None, path: str | None = None,
+                  post=None) -> None:
+    """Send one request on a worker thread; ``on_done(answer)`` runs on
+    the main loop (answer is None when xxwm could not be reached)."""
+    post = post or _idle_add
+
+    def run() -> None:
+        try:
+            answer = request(line, path)
+        except OSError as exc:
+            log.warning('xxwm %r failed: %s', line, exc)
+            answer = None
+        else:
+            if answer.startswith('error'):
+                log.warning('xxwm %r: %s', line, answer)
+        if on_done is not None:
+            post(on_done, answer)
+    threading.Thread(target=run, daemon=True, name='xx-wm-xxwm-req').start()
+
+
+def parse_state_line(line: str) -> tuple[str, object] | None:
+    """One line of `subscribe state`: ('state', {'outputs': [..],
+    'windows': [..]}) or ('shell', verb); None for anything else."""
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    verb = obj.get('shell')
+    if isinstance(verb, str) and verb:
+        return ('shell', verb)
+    outputs, windows = obj.get('outputs'), obj.get('windows')
+    if isinstance(outputs, list) and isinstance(windows, list):
+        return ('state', {
+            'outputs': [o for o in outputs if isinstance(o, dict)],
+            'windows': [w for w in windows if isinstance(w, dict)],
+        })
+    return None
+
+
+class XxwmStateWatcher:
+    """Follows xxwm's `subscribe state` stream on a worker thread: the
+    outputs and windows on every change (the docked top bar) and the
+    verbs xxwm hands the shell (`launcher`, `bar`, `keybinds`). Both
+    callbacks run on the main loop."""
+
+    def __init__(self, on_state, on_shell, path: str | None = None,
+                 post=None) -> None:
+        self._path = path or socket_path()
+        self._on_state = on_state
+        self._on_shell = on_shell
+        self._post = post or _idle_add
+        self._closing = False
+        self._sock: socket.socket | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is None and self._path:
+            self._thread = threading.Thread(
+                target=self._run, daemon=True, name='xx-wm-xxwm-state')
+            self._thread.start()
+
+    def shutdown(self) -> None:
+        self._closing = True
+        sock = self._sock
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def feed(self, line: str) -> None:
+        parsed = parse_state_line(line.strip()) if line.strip() else None
+        if parsed is None:
+            return
+        kind, value = parsed
+        self._post(self._on_state if kind == 'state' else self._on_shell,
+                   value)
+
+    def _run(self) -> None:
+        delay = _RETRY_MIN
+        while not self._closing:
+            try:
+                self._follow()
+                delay = _RETRY_MIN
+            except OSError as exc:
+                if self._closing:
+                    return
+                log.info('xxwm state stream lost (%s); retrying', exc)
+            if self._closing:
+                return
+            threading.Event().wait(delay)
+            delay = min(delay * 2, _RETRY_MAX)
+
+    def _follow(self) -> None:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._sock = sock
+        try:
+            sock.connect(self._path)
+            sock.sendall(b'subscribe state\n')
+            with sock.makefile('r', encoding='utf-8',
+                               errors='replace') as stream:
+                for line in stream:
+                    if self._closing:
+                        return
+                    self.feed(line)
+            raise OSError('xxwm closed the state stream')
+        finally:
+            self._sock = None
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
 class XxwmBackend:
     """ToplevelManager backend fed by xxwm's `subscribe` stream."""
 

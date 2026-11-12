@@ -370,6 +370,7 @@ class TestGateEnumeration:
         ('home_page.py', 'def _launch_slot', 'blocks_window'),
         ('drawer_page.py', 'def _launch_entry', 'launch_app'),
         ('drawer_page.py', 'def launch_app', 'blocks_window'),
+        ('desk_launcher.py', 'def _launch', 'launch_app'),
         ('notification_shade.py', 'def _on_notif_tapped',
          '_nope_blocks_notif'),
         ('notification_shade.py', 'def _invoke_notif_action',

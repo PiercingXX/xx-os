@@ -497,6 +497,7 @@ class XXWMApplication(Adw.Application):
 
         self._start_status_bar()
         self._start_bottom_gesture()
+        self._start_desk()
 
         if self._replay_welcome:
             self._replay_welcome = False
@@ -527,6 +528,26 @@ class XXWMApplication(Adw.Application):
             bar.set_status(snapshot)
         shell._refresh_clock()
         shell._sync_status_bar()
+
+    def _start_desk(self) -> None:
+        """Docked surfaces under xxwm: top bar per monitor, launcher on
+        Super, keybind sheet (desk_session.py). Nothing on phoc."""
+        shell = self._shell
+        if shell is None:
+            return
+        try:
+            from desk_session import start_desk_session
+            desk = start_desk_session(shell)
+        except Exception as exc:
+            _log.warning('docked surfaces unavailable: %s', exc)
+            return
+        if desk is None:
+            return
+        shell._desk = desk
+        snapshot = getattr(shell, '_status_snapshot', None)
+        if snapshot:
+            desk.set_status(snapshot)
+        shell._refresh_clock()
 
     def _start_bottom_gesture(self) -> None:
         """Bottom-edge gesture strip (bottom_gesture.py): flick home,
@@ -1321,6 +1342,12 @@ class XXWMApplication(Adw.Application):
             except Exception:
                 pass
         shell = getattr(self, '_shell', None)
+        desk = getattr(shell, '_desk', None)
+        if desk is not None:
+            try:
+                desk.shutdown()
+            except Exception:
+                pass
         config = getattr(shell, 'config', None)
         if config is not None:
             try:

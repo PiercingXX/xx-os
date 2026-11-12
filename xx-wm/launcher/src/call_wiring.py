@@ -568,6 +568,13 @@ class CallWiring:
         except Exception:
             pass
         win._sync_call_inhibit(calls)
+        desk = getattr(win, '_desk', None)
+        if desk is not None:
+            try:
+                from call_ui import select_page
+                desk.set_call(select_page(calls))
+            except Exception:
+                pass
         # The snapshot drives the whole surface: incoming, outgoing
         # dialing (full page with Hang up, not just the bar), active,
         # waiting, and the empty close. The legacy adapters stay as the
