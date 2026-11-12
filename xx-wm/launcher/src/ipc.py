@@ -11,9 +11,11 @@ from shell_log import get_logger
 
 _log = get_logger('ipc')
 
-# A client that connects but never sends must not stall the GLib main loop
-# (the watch callback runs on the UI thread), so reads are bounded.
-CONN_TIMEOUT_S = 0.25
+# Connections are read without blocking (the watch callbacks run on the
+# UI thread); a client that connects and never finishes its line is
+# dropped after this long.
+CONN_TIMEOUT_S = 0.5
+_MAX_LINE = 256
 
 # IPC verbs dropped while the first-boot tour is visible: lisgd's real
 # gestures would otherwise fire under the tour's own swipe steps.
@@ -107,6 +109,8 @@ class IPCServer:
         self._handler = handler
         self._sock: socket.socket | None = None
         self._watch_id: int | None = None
+        # Connections still sending: conn -> [buffer, watch id, timeout id].
+        self._conns: dict[socket.socket, list] = {}
         self._start()
 
     def _start(self) -> None:
@@ -140,15 +144,86 @@ class IPCServer:
         except OSError:
             return True
         try:
-            conn.settimeout(CONN_TIMEOUT_S)
-            data = conn.recv(256).decode('utf-8', errors='replace').strip()
+            conn.setblocking(False)
         except OSError:
-            data = ''
-        finally:
             conn.close()
-        if data:
-            GLib.idle_add(self._dispatch, data)
+            return True
+        # Clients send one line and close, so the line is usually already
+        # here; otherwise the rest arrives through a watch on the conn.
+        self._conns[conn] = [b'', None, None]
+        if not self._read_conn(conn):
+            self._conns[conn][1:] = [
+                GLib.io_add_watch(
+                    conn.fileno(),
+                    GLib.IOCondition.IN | GLib.IOCondition.HUP
+                    | GLib.IOCondition.ERR,
+                    self._on_conn_ready, conn),
+                GLib.timeout_add(int(CONN_TIMEOUT_S * 1000),
+                                 self._on_conn_timeout, conn),
+            ]
         return True
+
+    def _read_conn(self, conn: socket.socket) -> bool:
+        """Read what is there without blocking. True once the connection
+        is finished (line complete, EOF, error or too long) and handled."""
+        state = self._conns[conn]
+        buf = state[0]
+        done = False
+        while True:
+            try:
+                chunk = conn.recv(_MAX_LINE)
+            except BlockingIOError:
+                break
+            except OSError:
+                done = True
+                break
+            if not chunk:
+                done = True
+                break
+            buf += chunk
+            if b'\n' in buf or len(buf) >= _MAX_LINE:
+                done = True
+                break
+        if not done:
+            state[0] = buf
+            return False
+        self._close_conn(conn)
+        line = buf[:_MAX_LINE].split(b'\n', 1)[0]
+        command = line.decode('utf-8', errors='replace').strip()
+        if command:
+            GLib.idle_add(self._dispatch, command)
+        return True
+
+    def _on_conn_ready(self, _fd: int, _condition: GLib.IOCondition,
+                       conn: socket.socket) -> bool:
+        state = self._conns.get(conn)
+        if state is None:
+            return False
+        watch_id, state[1] = state[1], None  # False removes this watch
+        if self._read_conn(conn):
+            return False
+        state[1] = watch_id
+        return True
+
+    def _on_conn_timeout(self, conn: socket.socket) -> bool:
+        state = self._conns.get(conn)
+        if state is not None:
+            state[2] = None  # returning False removes this timer
+            self._close_conn(conn)
+        return False
+
+    def _close_conn(self, conn: socket.socket) -> None:
+        state = self._conns.pop(conn, None)
+        if state is not None:
+            _buf, watch_id, timeout_id = state
+            if watch_id:
+                GLib.source_remove(watch_id)
+            if timeout_id:
+                GLib.source_remove(timeout_id)
+        try:
+            conn.close()
+        except OSError:
+            pass
 
     def _dispatch(self, command: str) -> bool:
         try:
@@ -163,6 +238,8 @@ class IPCServer:
         if self._watch_id:
             GLib.source_remove(self._watch_id)
             self._watch_id = None
+        for conn in list(self._conns):
+            self._close_conn(conn)
         if self._sock:
             try:
                 self._sock.close()

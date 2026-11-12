@@ -17,26 +17,49 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 
 
 class _FakeGLib:
-    IOCondition = types.SimpleNamespace(IN=1)
+    IOCondition = types.SimpleNamespace(IN=1, HUP=16, ERR=8)
 
     def __init__(self):
         self.pending_idles = []
         self.live_sources = set()
         self.removed_sources = []
+        self.callbacks = {}
         self._next_source_id = 1
 
-    def io_add_watch(self, *_args):
+    def _add(self, entry):
         source_id = self._next_source_id
         self._next_source_id += 1
         self.live_sources.add(source_id)
+        self.callbacks[source_id] = entry
         return source_id
+
+    def io_add_watch(self, fd, cond, cb, *args):
+        return self._add(('io', fd, cb, args))
+
+    def timeout_add(self, ms, cb, *args):
+        return self._add(('timeout', ms, cb, args))
+
+    def fire(self, source_id):
+        """Run a watch/timer callback; a False return removes it, like GLib."""
+        _kind, first, cb, args = self.callbacks[source_id]
+        keep = cb(first, None, *args) if _kind == 'io' else cb(*args)
+        if not keep:
+            self.live_sources.discard(source_id)
+            self.callbacks.pop(source_id, None)
+        return keep
+
+    def sources(self, kind):
+        return [sid for sid, entry in self.callbacks.items()
+                if entry[0] == kind and sid in self.live_sources]
 
     def idle_add(self, cb, *args):
         self.pending_idles.append((cb, args))
         return 1
 
     def source_remove(self, source_id):
+        assert source_id in self.live_sources, 'removing a dead source'
         self.live_sources.discard(source_id)
+        self.callbacks.pop(source_id, None)
         self.removed_sources.append(source_id)
 
     def drain_idles(self):
@@ -52,6 +75,7 @@ def _install_fake_gi():
     glib_mod = types.ModuleType('gi.repository.GLib')
     glib_mod.IOCondition = _GLIB.IOCondition
     glib_mod.io_add_watch = _GLIB.io_add_watch
+    glib_mod.timeout_add = _GLIB.timeout_add
     glib_mod.idle_add = _GLIB.idle_add
     glib_mod.source_remove = _GLIB.source_remove
 
@@ -69,10 +93,13 @@ import ipc  # noqa: E402  (needs fake gi modules installed first)
 
 
 @pytest.fixture(autouse=True)
-def _glib():
+def _glib(monkeypatch):
     _GLIB.pending_idles.clear()
     _GLIB.live_sources.clear()
     _GLIB.removed_sources.clear()
+    _GLIB.callbacks.clear()
+    # Pin the seam: whichever fake gi won collection, ipc talks to _GLIB.
+    monkeypatch.setattr(ipc, 'GLib', _GLIB)
     return _GLIB
 
 
@@ -266,13 +293,18 @@ class TestDispatchLoop:
 
         silent = _connect_send(runtime / 'xx-wm.sock')
         try:
-            time.sleep(ipc.CONN_TIMEOUT_S + 0.1)
             started = time.monotonic()
             assert server._on_incoming(server._sock.fileno(), None, server._sock) is True
             elapsed = time.monotonic() - started
-            assert elapsed < 2.0
+            # The old blocking recv waited out its 250 ms timeout here.
+            assert elapsed < 0.05
         finally:
             silent.close()
+        _GLIB.drain_idles()
+        assert handled == []
+        # The closed silent client finishes through its watch.
+        for sid in _GLIB.sources('io')[1:]:
+            _GLIB.fire(sid)
         _GLIB.drain_idles()
         assert handled == []
 
@@ -307,6 +339,75 @@ class TestDispatchLoop:
         client.close()
         _pump(server)
         assert handled == ['welcome']
+
+
+class TestNonBlockingReads:
+    def test_late_line_arrives_through_the_conn_watch(self, make_server,
+                                                      runtime):
+        handled = []
+        server = make_server(handled.append)
+        client = _connect_send(runtime / 'xx-wm.sock')
+        assert server._on_incoming(server._sock.fileno(), None,
+                                   server._sock) is True
+        watches = _GLIB.sources('io')[1:]
+        assert len(watches) == 1
+        assert _GLIB.sources('timeout')
+        client.sendall(b'sha')
+        assert _GLIB.fire(watches[0]) is True      # half a line: keep going
+        client.sendall(b'de.show\n')
+        assert _GLIB.fire(watches[0]) is False     # done: watch removed
+        client.close()
+        _GLIB.drain_idles()
+        assert handled == ['shade.show']
+        assert not _GLIB.sources('timeout')
+        assert server._conns == {}
+
+    def test_partial_line_read_at_accept_is_kept(self, make_server, runtime):
+        handled = []
+        server = make_server(handled.append)
+        client = _connect_send(runtime / 'xx-wm.sock', b'pag')
+        server._on_incoming(server._sock.fileno(), None, server._sock)
+        (watch,) = _GLIB.sources('io')[1:]
+        client.sendall(b'e.home\n')
+        assert _GLIB.fire(watch) is False
+        client.close()
+        _GLIB.drain_idles()
+        assert handled == ['page.home']
+
+    def test_stalled_client_is_dropped_on_timeout(self, make_server, runtime):
+        handled = []
+        server = make_server(handled.append)
+        client = _connect_send(runtime / 'xx-wm.sock', b'lo')
+        try:
+            server._on_incoming(server._sock.fileno(), None, server._sock)
+            (timer,) = _GLIB.sources('timeout')
+            assert _GLIB.fire(timer) is False
+            assert server._conns == {}
+            assert _GLIB.sources('io') == [server._watch_id]
+        finally:
+            client.close()
+        _GLIB.drain_idles()
+        assert handled == []
+
+    def test_stop_closes_pending_connections(self, make_server, runtime):
+        server = make_server(lambda cmd: None)
+        client = _connect_send(runtime / 'xx-wm.sock')
+        try:
+            server._on_incoming(server._sock.fileno(), None, server._sock)
+            assert server._conns
+            server.stop()
+            assert server._conns == {}
+            assert not _GLIB.live_sources
+        finally:
+            client.close()
+
+    def test_only_the_first_line_is_the_command(self, make_server, runtime):
+        handled = []
+        server = make_server(handled.append)
+        client = _connect_send(runtime / 'xx-wm.sock', b'lock\nwelcome\n')
+        client.close()
+        _pump(server)
+        assert handled == ['lock']
 
 
 if __name__ == '__main__':
