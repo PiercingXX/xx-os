@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -15,6 +16,14 @@ CONTACTS_GET_REPLY = '(s)'
 CONTACTS_LOOKUP_REPLY = '(ssas)'
 
 _CALL_TIMEOUT_MS = 7000
+# First sync of a large address book: Get calls in flight at once.
+_MAX_GETS_IN_FLIGHT = 8
+# Caller-ID answers kept between contact changes (the call screen asks
+# for the same number every second).
+_LOOKUP_CACHE_MAX = 256
+# How long a lookup made right at startup waits for the fallback file
+# read still running on its worker.
+_FALLBACK_WAIT_S = 0.5
 
 
 def _gi():
@@ -116,22 +125,45 @@ class ContactBook:
 
     def __init__(self, config=None) -> None:
         self._contacts: list[Contact] = []
-        self._reload()
         self._lock = threading.Lock()
+        self._generation = 0
+        self._lookup_cache: dict[str, str | None] = {}
+        self._lookup_cache_gen = -1
         self._dbus_by_uid: dict[str, Contact] = {}
         self._dbus_revision: int = 0
         self._dbus_ready = False
         self._config = config
         self._bus = None
         self._signal_id = None
+        # The fallback files (local JSON, a GNOME Contacts VCF) are read
+        # on a worker: a large VCF parsed here held up the shell window.
+        self._fallback_ready = threading.Event()
+        try:
+            threading.Thread(target=self._load_fallback, daemon=True,
+                             name='xx-wm-contacts').start()
+        except RuntimeError:
+            self._load_fallback()
         self._start_async_refresh()
 
-    def _reload(self) -> None:
-        self._contacts = []
-        self._load_local_json()
-        self._load_vcf()
+    def _await_fallback(self) -> None:
+        if not self._fallback_ready.is_set():
+            self._fallback_ready.wait(_FALLBACK_WAIT_S)
 
-    def _load_local_json(self) -> None:
+    def _load_fallback(self) -> None:
+        try:
+            self._reload()
+        finally:
+            self._fallback_ready.set()
+
+    def _reload(self) -> None:
+        found: list[Contact] = []
+        self._load_local_json(found)
+        self._load_vcf(found)
+        with self._lock:
+            self._contacts = found
+            self._generation += 1
+
+    def _load_local_json(self, out: list) -> None:
         if not _LOCAL_JSON.exists():
             return
         try:
@@ -140,21 +172,23 @@ class ContactBook:
                 name = entry.get('name', '').strip()
                 nums = [str(n).strip() for n in entry.get('numbers', []) if n]
                 if name and nums:
-                    self._contacts.append(Contact(name=name, numbers=nums))
+                    out.append(Contact(name=name, numbers=nums))
         except Exception:
             pass
 
-    def _load_vcf(self) -> None:
+    def _load_vcf(self, out: list) -> None:
         for path in _VCF_SEARCH_PATHS:
             if path.exists():
                 try:
-                    self._parse_vcf(path.read_text(encoding='utf-8', errors='replace'))
+                    self._parse_vcf(
+                        path.read_text(encoding='utf-8', errors='replace'),
+                        out)
                 except Exception:
                     pass
                 break
 
-    def _parse_vcf(self, text: str) -> None:
-        existing_names = {c.name for c in self._contacts}
+    def _parse_vcf(self, text: str, out: list) -> None:
+        existing_names = {c.name for c in out}
         cards = re.split(r'(?im)^BEGIN:VCARD', text)
         for card in cards:
             name = ''
@@ -171,18 +205,20 @@ class ContactBook:
                         if num:
                             numbers.append(num)
             if name and numbers and name not in existing_names:
-                self._contacts.append(Contact(name=name, numbers=numbers))
+                out.append(Contact(name=name, numbers=numbers))
                 existing_names.add(name)
 
     # ------------------------------------------------------------------ public
 
     def _visible_contacts(self) -> list[Contact]:
         """D-Bus cache first, then fallback entries with no D-Bus twin."""
+        self._await_fallback()
         with self._lock:
             dbus_contacts = list(self._dbus_by_uid.values())
+            local_contacts = list(self._contacts)
         seen = {c.name.casefold() for c in dbus_contacts if c.name}
         merged = list(dbus_contacts)
-        for local in self._contacts:
+        for local in local_contacts:
             if local.name and local.name.casefold() in seen:
                 continue
             merged.append(local)
@@ -226,11 +262,27 @@ class ContactBook:
         stripped = re.sub(r'[^\d]', '', number or '')
         if not stripped:
             return None
+        key = str(number)
+        self._await_fallback()
+        with self._lock:
+            generation = self._generation
+            if self._lookup_cache_gen != generation:
+                self._lookup_cache.clear()
+                self._lookup_cache_gen = generation
+            if key in self._lookup_cache:
+                return self._lookup_cache[key]
+        found = None
         for c in self._visible_contacts():
-            for n in c.numbers:
-                if _numbers_match(n, number):
-                    return c.name or None
-        return None
+            if any(_numbers_match(n, number) for n in c.numbers):
+                found = c.name or None
+                break
+        with self._lock:
+            if (self._fallback_ready.is_set()
+                    and self._lookup_cache_gen == self._generation == generation):
+                if len(self._lookup_cache) >= _LOOKUP_CACHE_MAX:
+                    self._lookup_cache.clear()
+                self._lookup_cache[key] = found
+        return found
 
     def lookup_number_async(self, number: str, on_done,
                             on_error=None) -> None:
@@ -421,22 +473,29 @@ class ContactBook:
         with self._lock:
             for uid in deleted:
                 self._dbus_by_uid.pop(str(uid), None)
-            pending = [str(uid) for uid in changed]
-        if not pending and not deleted:
-            self._finish_refresh(revision)
-            return
+            if deleted:
+                self._generation += 1
+            pending = deque(str(uid) for uid in changed)
         if not pending:
             self._finish_refresh(revision)
             return
         state = {'left': len(pending)}
 
+        def _next() -> None:
+            if pending:
+                self._get_async(conn, pending.popleft(), _one_done)
+
         def _one_done() -> None:
             state['left'] -= 1
             if state['left'] <= 0:
                 self._finish_refresh(revision)
+            else:
+                _next()
 
-        for uid in pending:
-            self._get_async(conn, uid, _one_done)
+        # A bounded window, not one Get per contact all at once: the
+        # service and the bus queue stay small on the first sync.
+        for _ in range(min(_MAX_GETS_IN_FLIGHT, len(pending))):
+            _next()
 
     def _get_async(self, conn, uid: str, on_settled) -> None:
         _Gio, GLib = _gi()
@@ -450,6 +509,7 @@ class ContactBook:
             except Exception:
                 with self._lock:
                     self._dbus_by_uid.pop(uid, None)
+                    self._generation += 1
                 on_settled()
                 return
             try:
@@ -463,6 +523,7 @@ class ContactBook:
                     self._dbus_by_uid.pop(uid, None)
                 else:
                     self._dbus_by_uid[uid] = contact
+                self._generation += 1
             on_settled()
 
         try:
