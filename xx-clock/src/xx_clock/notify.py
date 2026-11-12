@@ -30,10 +30,14 @@ def notify_params(summary: str, body: str, actions: list[str], critical: bool,
     if glib is None:
         _, glib = _gio()
     hints = {"urgency": glib.Variant("y", 2 if critical else 1)}
+    if critical:
+        # The shell lets only the alarm category through Do Not Disturb.
+        hints["category"] = glib.Variant("s", "alarm")
+    # Missed notices stay until dismissed: an expiry closes the row.
     return glib.Variant("(susssasa{sv}i)",
                         (APP_NAME, 0, "io.piercingxx.XXClock",
                          summary, body, actions, hints,
-                         0 if critical else 10000))
+                         0 if critical else -1))
 
 
 class Notifier:

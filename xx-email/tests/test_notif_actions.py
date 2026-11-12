@@ -235,7 +235,7 @@ def test_run_tick_records_posted_cards(tmp_path, monkeypatch):
         sent = []
 
         def _fake_send(connection, payload, done=None,
-                       expire_ms=15000):
+                       expire_ms=-1):
             sent.append(dict(payload))
             if done is not None:
                 done(4242)

@@ -29,6 +29,7 @@ def test_notify_params_build_in_one_step():
     assert unpacked[3] == "Alarm"
     assert list(unpacked[5]) == ["snooze", "Snooze", "dismiss", "Dismiss"]
     assert unpacked[6]["urgency"] == 2
+    assert unpacked[6]["category"] == "alarm"
 
 
 def test_missed_notification_is_not_critical():
@@ -36,7 +37,8 @@ def test_missed_notification_is_not_critical():
     params = notify.notify_params("Missed alarm", "", [], critical=False)
     unpacked = params.unpack()
     assert unpacked[6]["urgency"] == 1
-    assert unpacked[7] == 10000
+    assert "category" not in unpacked[6]
+    assert unpacked[7] == -1
 
 
 def test_reply_type_is_a_real_variant_type():

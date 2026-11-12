@@ -224,7 +224,7 @@ def notification_hints():
 
 
 def _notify_variant(summary: str, body: str, actions: list[str],
-                    replaces_id: int, expire_ms: int = 15000):
+                    replaces_id: int, expire_ms: int = -1):
     """Build the (susssasa{sv}i) Notify parameter tuple."""
     from gi.repository import GLib
 
@@ -235,7 +235,7 @@ def _notify_variant(summary: str, body: str, actions: list[str],
 
 
 def send_notification(connection, payload: dict, done=None,
-                      expire_ms: int = 15000) -> None:
+                      expire_ms: int = -1) -> None:
     """Async Notify for one account summary; done(server_id) on return.
 
     connection is the session-bus Gio.DBusConnection. The callback
