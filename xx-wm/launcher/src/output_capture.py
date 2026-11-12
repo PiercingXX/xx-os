@@ -72,7 +72,7 @@ class OutputCapture:
 
 
 def _ppm_to_thumb(path: str):
-    from thumbnail_store import downsample_shm
+    from thumbnail_store import downsample_rgb
     with open(path, 'rb') as fh:
         magic = fh.readline().strip()
         if magic != b'P6':
@@ -92,17 +92,7 @@ def _ppm_to_thumb(path: str):
         rgb = fh.read(width * height * 3)
     if len(rgb) < width * height * 3:
         return None
-    # Pack RGB as fake XRGB (B,G,R,0) so downsample_shm can convert.
-    packed = bytearray(width * height * 4)
-    for i in range(width * height):
-        r, g, b = rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]
-        o = i * 4
-        packed[o] = b
-        packed[o + 1] = g
-        packed[o + 2] = r
-        packed[o + 3] = 255
-    return downsample_shm(
-        bytes(packed), width, height, width * 4, shm_format=1, max_edge=240)
+    return downsample_rgb(rgb, width, height, max_edge=240)
 
 
 def _deliver(callback, thumb) -> None:

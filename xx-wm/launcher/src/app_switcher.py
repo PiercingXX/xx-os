@@ -326,10 +326,10 @@ class AppSwitcher(_AppSwitcherBase):
 
         self.set_child(self._build_content())
 
-        self._wire_change(self._manager, self.refresh)
+        self._wire_change(self._manager, self._refresh_if_visible)
         self._manager_wired = True
         if thumbnails is not None and hasattr(thumbnails, 'on_change'):
-            thumbnails.on_change(self.refresh)
+            thumbnails.on_change(self._refresh_if_visible)
         self.refresh()
 
         swipe = Gtk.GestureSwipe.new()
@@ -353,7 +353,7 @@ class AppSwitcher(_AppSwitcherBase):
             self.refresh()
             return
         self._manager = manager
-        self._wire_change(manager, self.refresh)
+        self._wire_change(manager, self._refresh_if_visible)
         self._manager_wired = True
         self.refresh()
 
@@ -448,6 +448,13 @@ class AppSwitcher(_AppSwitcherBase):
             scroller.set_size_request(*size)
         self._rebuild_cards()
         return False
+
+    def _refresh_if_visible(self) -> None:
+        """A title change, an open or close, a new thumbnail: rebuild the
+        cards only while recents is on screen; show_switcher rebuilds
+        from scratch."""
+        if self.get_visible():
+            self.refresh()
 
     def refresh(self, apps: list[AppInfo] | None = None) -> None:
         if apps is None:
