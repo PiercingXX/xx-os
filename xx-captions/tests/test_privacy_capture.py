@@ -8,6 +8,7 @@ classifies as mic use.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,13 @@ def _load_privacy_monitor():
                 "privacy_monitor", path)
             assert spec is not None and spec.loader is not None
             module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+            # Installed, the module sits beside the shell's other modules
+            # (shell_log); load it the same way.
+            sys.path.insert(0, str(path.parent))
+            try:
+                spec.loader.exec_module(module)
+            finally:
+                sys.path.remove(str(path.parent))
             return module
     pytest.skip("no xx-wm tree beside this lane (ref/ nor ../xx-wm)")
 

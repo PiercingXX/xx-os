@@ -9,6 +9,7 @@ modem, network or keyring.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from inspect import signature
 from pathlib import Path
 
@@ -475,7 +476,13 @@ def _load_shell_privacy_monitor():
             spec = importlib.util.spec_from_file_location(
                 "shell_privacy_monitor", path)
             module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+            # Installed, the module sits beside the shell's other modules
+            # (shell_log); load it the same way.
+            sys.path.insert(0, str(path.parent))
+            try:
+                spec.loader.exec_module(module)
+            finally:
+                sys.path.remove(str(path.parent))
             return module
     pytest.skip("shell reference tree not present")
 
