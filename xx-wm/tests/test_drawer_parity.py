@@ -509,7 +509,6 @@ def _populate_win(entries, monkeypatch, query='', pinned=(),
     win._home_slot_app_ids = lambda: set(home_ids)
     win._drawer_folder_slots = lambda: []
     win._drawer_open_folder = None
-    win._drawer_open_hidden = False
     win._alpha_letter_rows = {}
     win._last_search_results = []
     win.apps_search = types.SimpleNamespace(

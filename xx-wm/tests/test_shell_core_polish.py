@@ -1,4 +1,4 @@
-"""Lane vx_shell_core: single-source themes, hidden drawer group, home alignment.
+"""Lane vx_shell_core: single-source themes, hidden apps search-only, home alignment.
 
 Headless: config/home_page/drawer_page import without a display; widget
 construction is monkeypatched out, only the population seams run.
@@ -71,7 +71,6 @@ def _drawer_page(hidden, installed, monkeypatch):
         app_count_label=types.SimpleNamespace(set_text=lambda _t: None),
         _sort_mode='az',
         _drawer_open_folder=None,
-        _drawer_open_hidden=False,
         _home_slot_app_ids=lambda: set(),
     )
     page._win = win
@@ -82,7 +81,6 @@ def _drawer_page(hidden, installed, monkeypatch):
     win._make_drawer_member_row = (
         lambda a, b, m: page._make_drawer_member_row(a, b, m))
     win._make_app_row = lambda e: page._make_app_row(e)
-    win._make_hidden_header = lambda c: page._make_hidden_header(c)
     win._make_settings_row = lambda: page._make_settings_row()
     win._install_time = lambda e: page._install_time(e)
     win._replace_rows = (
@@ -94,67 +92,21 @@ def _drawer_page(hidden, installed, monkeypatch):
     return page, win
 
 
-class TestHiddenGroup:
-    def test_header_shows_count_when_hidden_installed(
-            self, monkeypatch):
+class TestHiddenAppsAreSearchOnly:
+    """design.md: hidden apps are absent from the browse list and surface
+    only in search; there is no "Hidden (n)" group."""
+
+    def test_browse_list_has_no_hidden_rows_or_group(self, monkeypatch):
         page, win = _drawer_page(['h.desktop'], ['h.desktop', 'v.desktop'],
                                  monkeypatch)
-        seen = []
-        monkeypatch.setattr(page, '_make_hidden_header',
-                            lambda count: seen.append(count) or 'header')
-        monkeypatch.setattr(page, '_make_app_row', lambda e: ('row', e.app_id))
-        page._populate_apps('')
-        assert seen == [1]
-        assert 'header' in win.apps_list.inserted
-
-    def test_no_header_without_hidden_apps(self, monkeypatch):
-        page, win = _drawer_page([], ['v.desktop'], monkeypatch)
-        called = []
-        monkeypatch.setattr(page, '_make_hidden_header',
-                            lambda count: called.append(count))
-        monkeypatch.setattr(page, '_make_app_row', lambda e: None)
-        page._populate_apps('')
-        assert called == []
-        assert win.apps_list.inserted == []
-
-    def test_uninstalled_hidden_is_ignored(self, monkeypatch):
-        page, win = _drawer_page(['ghost.desktop'], ['v.desktop'],
-                                 monkeypatch)
-        called = []
-        monkeypatch.setattr(page, '_make_hidden_header',
-                            lambda count: called.append(count))
-        monkeypatch.setattr(page, '_make_app_row', lambda e: None)
-        page._populate_apps('')
-        assert called == []
-
-    def test_members_expand_on_toggle(self, monkeypatch):
-        page, win = _drawer_page(['h.desktop'], ['h.desktop', 'v.desktop'],
-                                 monkeypatch)
-        monkeypatch.setattr(page, '_make_hidden_header', lambda count: 'header')
         rows = []
         monkeypatch.setattr(page, '_make_app_row',
                             lambda e: rows.append(e.app_id) or ('row', e.app_id))
         page._populate_apps('')
-        assert rows == []
-        win._drawer_open_hidden = True
-        page._populate_apps('')
-        assert rows == ['h.desktop']
-
-    def test_toggle_flips_and_repopulates(self, monkeypatch):
-        import drawer_page
-        page = drawer_page.DrawerPage.__new__(drawer_page.DrawerPage)
-        repopulated = []
-        win = types.SimpleNamespace(
-            _drawer_open_hidden=False,
-            apps_search=types.SimpleNamespace(get_text=lambda: 'ca'),
-            _populate_apps=lambda query: repopulated.append(query),
-        )
-        page._win = win
-        page._toggle_hidden()
-        assert win._drawer_open_hidden is True
-        assert repopulated == ['ca']
-        page._toggle_hidden()
-        assert win._drawer_open_hidden is False
+        assert 'h.desktop' not in rows
+        assert win.apps_list.inserted == []
+        assert not hasattr(page, '_make_hidden_header')
+        assert not hasattr(page, '_toggle_hidden')
 
 
 class _FakeAligned:

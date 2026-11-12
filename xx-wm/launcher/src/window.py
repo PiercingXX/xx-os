@@ -1080,11 +1080,6 @@ class ShellWindow(Adw.ApplicationWindow):
             self._drawer_open_folder = None
             self._populate_apps(self.apps_search.get_text())
             return
-        if (current == 'apps' and vel_x > 200
-                and getattr(self, '_drawer_open_hidden', False)):
-            self._drawer_open_hidden = False
-            self._populate_apps(self.apps_search.get_text())
-            return
         # Home side swipes are the Android launcher's: each direction has
         # an Enable switch and an app; with no app bound, left opens the
         # camera and right the dialer (design.md "Gestures").
@@ -2688,23 +2683,12 @@ class ShellWindow(Adw.ApplicationWindow):
     def _make_drawer_folder_row(self, slot: dict, slot_index: int) -> Gtk.ListBoxRow:
         return _drawer(self)._make_drawer_folder_row(slot, slot_index)
 
-    def _make_hidden_header(self, count: int) -> Gtk.ListBoxRow:
-        # Delegators were missing: a drawer with any installed hidden app
-        # raised AttributeError mid-populate.
-        return _drawer(self)._make_hidden_header(count)
-
-    def _toggle_hidden(self) -> None:
-        return _drawer(self)._toggle_hidden()
-
     def _make_drawer_member_row(self, slot_index: int, member_index: int, member: dict) -> Gtk.ListBoxRow:
         return _drawer(self)._make_drawer_member_row(
             slot_index, member_index, member)
 
     def _toggle_drawer_folder(self, slot_index: int) -> None:
         return _drawer(self)._toggle_drawer_folder(slot_index)
-
-    def _toggle_hidden(self) -> None:
-        return _drawer(self)._toggle_hidden()
 
     def _center_drawer_folder(self) -> bool:
         return _drawer(self)._center_drawer_folder()

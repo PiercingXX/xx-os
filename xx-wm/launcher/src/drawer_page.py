@@ -311,8 +311,6 @@ class DrawerPage:
         # Android launcher — never an inset grey panel.
         outer.add_css_class('drawer-sheet')
 
-        win._drawer_open_hidden = False
-
         # No 'All apps' header or count — the drawer is just the list, like
         # the PiercingXX Android launcher; the sort toggle rides alone, dim
         win._sort_btn = Gtk.Button(label=drawer_sort_label(drawer_sort_of(win)))
@@ -529,23 +527,11 @@ class DrawerPage:
                 and win._drawer_open_folder not in {i for i, _s, _m in folder_slots}):
             win._drawer_open_folder = None
 
-        # Hidden apps get their own expandable group in the browse list so
-        # they stay reachable without typing (search still surfaces them).
-        hidden_entries: list = []
-        if not trimmed:
-            hidden_ids = set(win.config.hidden_apps)
-            hidden_entries = [e for e in win.app_index.entries
-                              if e.app_id in hidden_ids]
-        hidden_open = bool(hidden_entries) and bool(
-            getattr(win, '_drawer_open_hidden', False))
-
         expanded_members = 0
         for i, _slot, members in folder_slots:
             if i == win._drawer_open_folder:
                 expanded_members = len(members)
-        row_offset = (len(folder_slots) + expanded_members
-                      + (1 if hidden_entries else 0)
-                      + (len(hidden_entries) if hidden_open else 0))
+        row_offset = len(folder_slots) + expanded_members
 
         # Build letter→first-row-index map for A-Z jump strip
         win._alpha_letter_rows = {}
@@ -571,13 +557,6 @@ class DrawerPage:
                 for m_idx, member in members:
                     win.apps_list.insert(
                         win._make_drawer_member_row(idx, m_idx, member), insert_at)
-                    insert_at += 1
-        if hidden_entries:
-            win.apps_list.insert(win._make_hidden_header(len(hidden_entries)), insert_at)
-            insert_at += 1
-            if hidden_open:
-                for entry in hidden_entries:
-                    win.apps_list.insert(win._make_app_row(entry), insert_at)
                     insert_at += 1
 
         # Synthetic "Launcher Settings" entry always sits at the very end
@@ -685,33 +664,6 @@ class DrawerPage:
         row = Gtk.ListBoxRow(selectable=False, activatable=False)
         row.set_child(btn)
         return row
-
-    def _make_hidden_header(self, count: int):
-        from gi.repository import Gtk, Pango
-
-        win = self._win
-        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        title = Gtk.Label(label=f'Hidden ({count})', xalign=drawer_xalign(win))
-        title.add_css_class('app-name')
-        title.set_ellipsize(Pango.EllipsizeMode.END)
-        title.set_hexpand(True)
-        inner.append(title)
-        inner.set_hexpand(True)
-
-        btn = Gtk.Button()
-        btn.add_css_class('flat')
-        btn.add_css_class('app-entry')
-        btn.set_child(inner)
-        btn.connect('clicked', lambda _b: win._toggle_hidden())
-
-        row = Gtk.ListBoxRow(selectable=False, activatable=False)
-        row.set_child(btn)
-        return row
-
-    def _toggle_hidden(self) -> None:
-        win = self._win
-        win._drawer_open_hidden = not getattr(win, '_drawer_open_hidden', False)
-        win._populate_apps(win.apps_search.get_text())
 
     def _toggle_drawer_folder(self, slot_index: int) -> None:
         from gi.repository import GLib
