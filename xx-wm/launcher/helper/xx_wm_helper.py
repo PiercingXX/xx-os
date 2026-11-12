@@ -2014,13 +2014,16 @@ def check_polkit_authorization(connection, sender, action, callback,
                 return
             callback(authorized, uid, None)
 
-        # Params are one struct of four: the subject struct, the action id,
-        # the details dict, the flags. Nested plain tuples convert; a
-        # pre-built Variant in struct position does not on this PyGObject.
+        # Params are the subject struct, the action id, the details dict,
+        # the flags and the cancellation id (empty: never cancelled).
+        # polkitd rejects the call without the last one ("does not match
+        # expected type ((sa{sv})sa{ss}us)"), which denied every action.
+        # Nested plain tuples convert; a pre-built Variant in struct
+        # position does not on this PyGObject.
         params = GLib.Variant(
-            '((sa{sv})sa{ss}u)',
+            '((sa{sv})sa{ss}us)',
             (('system-bus-name', {'name': GLib.Variant('s', sender)}),
-             action, {}, ALLOW_INTERACTION if interactive else 0),
+             action, {}, ALLOW_INTERACTION if interactive else 0, ''),
         )
         try:
             connection.call(

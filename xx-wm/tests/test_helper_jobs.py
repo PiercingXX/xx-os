@@ -403,7 +403,7 @@ class PolkitConn:
         if method == 'GetConnectionUnixUser':
             callback(self, GLib.Variant('(u)', (UID,)))
             return
-        _subject, action, _details, _flags = params.unpack()
+        _subject, action, _details, _flags, _cancel = params.unpack()
         self.timeouts[action] = timeout
         callback(self, GLib.Variant('((bba{ss}))', ((True, False, {}),)))
 

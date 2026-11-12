@@ -142,7 +142,7 @@ class FlagConn:
         if method == 'GetConnectionUnixUser':
             callback(self, _FakeResult(self.uid))
         elif method == 'CheckAuthorization':
-            subject, action, details, check_flags = params.unpack()
+            subject, action, details, check_flags, _cancel = params.unpack()
             self.flags[action] = check_flags
             callback(self, _FakeAuth(True))
         else:  # pragma: no cover

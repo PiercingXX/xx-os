@@ -490,8 +490,10 @@ class ScriptConn:
                 helper.DBUS_BUS, helper.DBUS_PATH, helper.DBUS_IFACE)
             callback(self, FakeResult(self.uid))
         elif method == 'CheckAuthorization':
-            assert params.get_type_string() == '((sa{sv})sa{ss}u)'
-            subject, action, details, flags = params.unpack()
+            # polkitd's own signature: the cancellation id is not optional.
+            assert params.get_type_string() == '((sa{sv})sa{ss}us)'
+            subject, action, details, flags, cancel_id = params.unpack()
+            assert cancel_id == ''
             assert subject[0] == 'system-bus-name'
             assert subject[1]['name'] == ':1.7'
             assert action in (helper.ACTION_CHARGE, helper.ACTION_NETWORK,
