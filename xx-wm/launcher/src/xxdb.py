@@ -18,6 +18,8 @@ import os
 import random
 import re
 import secrets
+import threading
+import time
 from pathlib import Path
 
 PORT_MIN = 37000
@@ -27,8 +29,15 @@ PAIR_MAX_TRIES = 3
 IDLE_TIMEOUT_S = 3600
 MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_LINE_BYTES = 768 * 1024 * 1024
+PREAUTH_MAX_LINE_BYTES = 64 * 1024
+HANDSHAKE_TIMEOUT_S = 10
+UNAUTH_LIFETIME_S = 30
+MAX_CONNECTIONS = 16
+MAX_UNAUTH_CONNECTIONS = 4
 SYSTEM_CONFIRM_TTL_S = 300
 FP_PREFIX_HEX = 16
+DEFAULT_TRUST_DAYS = 7
+MAX_TRUST_DAYS = 365
 
 XXDB_DIRNAME = 'xxdb'
 KEY_FILE = 'key.pem'
@@ -36,6 +45,7 @@ CERT_FILE = 'cert.pem'
 TRUST_FILE = 'trusted.json'
 
 PUBLIC_COMMANDS = frozenset({'pair'})
+LOCKED_COMMANDS = frozenset({'hello'})
 
 
 def data_dir(home: Path | None = None) -> Path:
@@ -91,7 +101,7 @@ class PairingSession:
     """One single-use 6-digit code: valid 2 minutes, burned after 3 misses."""
 
     def __init__(self, clock=None) -> None:
-        self._clock = clock if clock is not None else __import__('time').time
+        self._clock = clock if clock is not None else time.time
         self.code: str | None = None
         self.expires_at: float = 0.0
         self.tries: int = 0
@@ -128,12 +138,29 @@ class PairingSession:
         return False, 'wrong pairing code'
 
 
+def trust_max_age_s(days) -> float:
+    try:
+        value = int(days)
+    except (TypeError, ValueError):
+        value = DEFAULT_TRUST_DAYS
+    return float(max(1, min(MAX_TRUST_DAYS, value)) * 86400)
+
+
 class TrustStore:
-    """Trusted host certificates, keyed by cert fingerprint. File is 0600."""
+    """Trusted host certificates, keyed by cert fingerprint. File is 0600.
+
+    With `max_age_s` set, a host unused for that long is no longer trusted
+    and is dropped from the file.
+    """
 
     def __init__(self, path: Path | None = None,
-                 home: Path | None = None) -> None:
+                 home: Path | None = None,
+                 max_age_s: float | None = None,
+                 clock=None) -> None:
         self.path = path if path is not None else data_dir(home) / TRUST_FILE
+        self.max_age_s = max_age_s
+        self._clock = clock if clock is not None else time.time
+        self._lock = threading.RLock()
         self._hosts: dict[str, dict] = {}
         self.load()
 
@@ -147,14 +174,20 @@ class TrustStore:
                 if (isinstance(entry, dict)
                         and re.fullmatch(r'[0-9a-f]{64}',
                                          str(entry.get('fingerprint') or ''))):
+                    added = float(entry.get('added', 0.0))
                     self._hosts[str(entry['fingerprint'])] = {
                         'fingerprint': str(entry['fingerprint']),
                         'name': str(entry.get('name', '?')),
                         'cert_pem': str(entry.get('cert_pem', '')),
-                        'added': float(entry.get('added', 0.0)),
+                        'added': added,
+                        'last_used': float(entry.get('last_used', added)),
                     }
 
     def save(self) -> None:
+        with self._lock:
+            self._save()
+
+    def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
@@ -170,30 +203,61 @@ class TrustStore:
 
     def add(self, fingerprint: str, name: str, cert_pem: str,
             now: float) -> None:
-        self._hosts[fingerprint] = {
-            'fingerprint': fingerprint,
-            'name': name,
-            'cert_pem': cert_pem,
-            'added': float(now),
-        }
-        self.save()
+        with self._lock:
+            self._hosts[fingerprint] = {
+                'fingerprint': fingerprint,
+                'name': name,
+                'cert_pem': cert_pem,
+                'added': float(now),
+                'last_used': float(now),
+            }
+            self._save()
 
     def remove(self, fingerprint: str) -> bool:
-        if fingerprint in self._hosts:
-            del self._hosts[fingerprint]
-            self.save()
-            return True
-        return False
+        with self._lock:
+            if fingerprint in self._hosts:
+                del self._hosts[fingerprint]
+                self._save()
+                return True
+            return False
 
-    def contains(self, fingerprint: str) -> bool:
-        return fingerprint in self._hosts
+    def _prune(self, now: float | None) -> None:
+        if self.max_age_s is None:
+            return
+        now = self._clock() if now is None else now
+        stale = [fp for fp, entry in self._hosts.items()
+                 if now - entry['last_used'] > self.max_age_s]
+        for fp in stale:
+            del self._hosts[fp]
+        if stale:
+            self._save()
+
+    def contains(self, fingerprint: str, now: float | None = None) -> bool:
+        with self._lock:
+            self._prune(now)
+            return fingerprint in self._hosts
+
+    def touch(self, fingerprint: str, now: float | None = None) -> None:
+        """Record a use: trust expiry counts from the last one."""
+        with self._lock:
+            entry = self._hosts.get(fingerprint)
+            if entry is None:
+                return
+            now = self._clock() if now is None else now
+            if now - entry['last_used'] >= 60:
+                entry['last_used'] = float(now)
+                self._save()
 
     def name_of(self, fingerprint: str) -> str | None:
-        entry = self._hosts.get(fingerprint)
-        return entry['name'] if entry else None
+        with self._lock:
+            entry = self._hosts.get(fingerprint)
+            return entry['name'] if entry else None
 
-    def list(self) -> list[dict]:
-        return sorted(self._hosts.values(), key=lambda e: e['added'])
+    def list(self, now: float | None = None) -> list[dict]:
+        with self._lock:
+            self._prune(now)
+            return sorted((dict(e) for e in self._hosts.values()),
+                          key=lambda e: e['added'])
 
 
 class FrameError(ValueError):
@@ -205,27 +269,34 @@ def encode_message(obj: dict) -> bytes:
 
 
 class FrameReader:
-    """Splits a TLS byte stream into JSON objects, one per line."""
+    """Splits a TLS byte stream into JSON objects, one per line.
+
+    `max_line` may change between feeds (small until the peer is
+    authorised); a partial line is never re-scanned from its start.
+    """
 
     def __init__(self, max_line: int = MAX_LINE_BYTES) -> None:
         self._buf = bytearray()
-        self._max_line = max_line
+        self._scanned = 0
+        self.max_line = max_line
 
     def feed(self, data: bytes) -> list[dict]:
         self._buf.extend(data)
         messages = []
         while True:
-            newline = self._buf.find(b'\n')
+            newline = self._buf.find(b'\n', self._scanned)
             if newline < 0:
-                if len(self._buf) > self._max_line:
+                self._scanned = len(self._buf)
+                if len(self._buf) > self.max_line:
                     raise FrameError('line too long')
                 return messages
+            if newline > self.max_line:
+                raise FrameError('line too long')
             raw = bytes(self._buf[:newline])
             del self._buf[:newline + 1]
+            self._scanned = 0
             if not raw.strip():
                 continue
-            if len(raw) > self._max_line:
-                raise FrameError('line too long')
             try:
                 obj = json.loads(raw.decode('utf-8'))
             except (ValueError, UnicodeDecodeError) as error:
@@ -254,50 +325,72 @@ class SystemAccess:
     """User-confirmed escapes hatch for paths outside $HOME (--system).
 
     The host asks, the phone user confirms in the Developer section, then
-    the host retries the same command carrying the token.
+    the host retries the same command carrying the token. A token is bound
+    to what it was shown for (`bound`: operation and resolved path) and
+    unlocks nothing else.
     """
 
     def __init__(self, clock=None) -> None:
-        self._clock = clock if clock is not None else __import__('time').time
+        self._clock = clock if clock is not None else time.time
         self._pending: dict[str, dict] = {}
+        self._lock = threading.RLock()
 
-    def request(self, label: str, now: float | None = None) -> str:
+    def request(self, label: str, now: float | None = None,
+                bound: str | None = None) -> str:
         now = self._clock() if now is None else now
-        self._expire(now)
         token = secrets.token_hex(8)
-        self._pending[token] = {'label': label, 'allowed': False,
-                                'expires': now + SYSTEM_CONFIRM_TTL_S}
+        with self._lock:
+            self._expire(now)
+            self._pending[token] = {
+                'label': label, 'allowed': False,
+                'bound': label if bound is None else bound,
+                'expires': now + SYSTEM_CONFIRM_TTL_S}
         return token
+
+    def waiting(self, token: str | None, bound: str,
+                now: float | None = None) -> bool:
+        """True while `token` for `bound` still waits for the phone user."""
+        now = self._clock() if now is None else now
+        with self._lock:
+            self._expire(now)
+            entry = self._pending.get(token) if token else None
+            return (entry is not None and not entry['allowed']
+                    and entry['bound'] == bound)
 
     def confirm(self, token: str, allow: bool,
                 now: float | None = None) -> bool:
         now = self._clock() if now is None else now
-        self._expire(now)
-        entry = self._pending.get(token)
-        if entry is None:
-            return False
-        entry['allowed'] = bool(allow)
-        if not allow:
-            del self._pending[token]
-        return True
+        with self._lock:
+            self._expire(now)
+            entry = self._pending.get(token)
+            if entry is None:
+                return False
+            entry['allowed'] = bool(allow)
+            if not allow:
+                del self._pending[token]
+            return True
 
-    def consume(self, token: str | None,
-                now: float | None = None) -> str | None:
+    def consume(self, token: str | None, now: float | None = None,
+                bound: str | None = None) -> str | None:
         now = self._clock() if now is None else now
-        self._expire(now)
-        if not token:
+        if not token or bound is None:
             return None
-        entry = self._pending.get(token)
-        if entry is None or not entry['allowed']:
-            return None
-        del self._pending[token]
-        return str(entry['label'])
+        with self._lock:
+            self._expire(now)
+            entry = self._pending.get(token)
+            if (entry is None or not entry['allowed']
+                    or entry['bound'] != bound):
+                return None
+            del self._pending[token]
+            return str(entry['label'])
 
     def pending(self, now: float | None = None) -> list[tuple[str, str]]:
         now = self._clock() if now is None else now
-        self._expire(now)
-        return [(token, info['label']) for token, info in self._pending.items()
-                if not info['allowed']]
+        with self._lock:
+            self._expire(now)
+            return [(token, info['label'])
+                    for token, info in self._pending.items()
+                    if not info['allowed']]
 
     def _expire(self, now: float) -> None:
         for token in [t for t, info in self._pending.items()

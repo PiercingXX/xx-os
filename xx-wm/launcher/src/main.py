@@ -910,6 +910,7 @@ class XXWMApplication(Adw.Application):
         )
         ctrl.on_notify = self._on_xxdb_notify
         ctrl.on_unnotify = self._on_xxdb_unnotify
+        ctrl.lock_probe = self._shell.is_locked
         shell = self._shell
 
         def _on_xxdb_state_changed() -> None:

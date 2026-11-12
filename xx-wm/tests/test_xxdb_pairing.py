@@ -129,6 +129,32 @@ def test_trust_store_roundtrip_and_perms(tmp_path):
     assert store.list() == []
 
 
+def test_trust_expires_after_max_age_since_last_use(tmp_path):
+    now = [1000.0]
+    day = 86400.0
+    store = xxdb.TrustStore(path=tmp_path / 'trusted.json',
+                            max_age_s=7 * day, clock=lambda: now[0])
+    store.add('ab' * 32, 'laptop', 'PEM', now=now[0])
+    now[0] += 6 * day
+    assert store.contains('ab' * 32)
+    store.touch('ab' * 32)
+    now[0] += 6 * day
+    assert store.contains('ab' * 32), 'a use restarts the clock'
+    now[0] += 2 * day
+    assert not store.contains('ab' * 32)
+    assert store.list() == []
+    again = xxdb.TrustStore(path=tmp_path / 'trusted.json',
+                            max_age_s=7 * day, clock=lambda: now[0])
+    assert again.list() == [], 'an expired host is dropped from the file'
+
+
+def test_trust_max_age_is_clamped():
+    assert xxdb.trust_max_age_s(7) == 7 * 86400
+    assert xxdb.trust_max_age_s(0) == 86400
+    assert xxdb.trust_max_age_s(99999) == xxdb.MAX_TRUST_DAYS * 86400
+    assert xxdb.trust_max_age_s('junk') == xxdb.DEFAULT_TRUST_DAYS * 86400
+
+
 def test_trust_store_rejects_malformed(tmp_path):
     path = tmp_path / 'trusted.json'
     path.write_text('{"hosts": [{"fingerprint": "zzz", "name": "x"}]}')

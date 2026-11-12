@@ -1401,7 +1401,7 @@ class SettingsPage:
         win._xxdb_switch = row.switch
         win._xxdb_status = row.subtitle_label
         win._xxdb_rows = [row, ui.nav_row(
-            'Pair with code', 'A one-time code for xxdb',
+            'Pair with code', 'A paired computer has full control of the phone',
             lambda _r: win._on_xxdb_pair_clicked())]
         win._xxdb_card = ui.card(win._xxdb_rows)
         win._refresh_xxdb_section()

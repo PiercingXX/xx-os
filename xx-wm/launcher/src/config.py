@@ -133,6 +133,8 @@ DEFAULT_CONFIG = {
     'clock_24h': True,  # owner: 24-hour by default; None follows GNOME
     'xxdb_enabled': False,
     'xxdb_persistent': False,
+    'xxdb_allow_while_locked': False,
+    'xxdb_trust_days': 7,
     'keyboard_layout': 'us',
     'night_light': False,
     'night_light_temp': 2200,

@@ -1,7 +1,9 @@
 """xxdb phone daemon: TLS-over-TCP JSON-lines RPC server.
 
 Stdlib only. The daemon never runs as root, binds Wi-Fi addresses only,
-and refuses every command from untrusted (unpaired) clients.
+and refuses every command from untrusted (unpaired) clients. Its
+callbacks (on_connect, on_disconnect, on_activity, on_system_request,
+is_locked) run on connection threads: the owner hops to its main loop.
 """
 from __future__ import annotations
 
@@ -9,6 +11,7 @@ import base64
 import logging
 import os
 import pty
+import select
 import shutil
 import signal
 import socket
@@ -17,6 +20,7 @@ import struct
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import xxdb
@@ -94,13 +98,138 @@ def _peer_fingerprint(tls_socket: ssl.SSLSocket) -> tuple[str | None, bytes | No
     return xxdb.cert_fingerprint(bytes(der)), bytes(der)
 
 
+def _stream_key_ok(request_id) -> bool:
+    return isinstance(request_id, (int, str)) and not isinstance(
+        request_id, bool)
+
+
+def _session_members(sid: int, proc_root: str = '/proc') -> list[int]:
+    try:
+        names = os.listdir(proc_root)
+    except OSError:
+        return []
+    members = []
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            if os.getsid(int(name)) == sid:
+                members.append(int(name))
+        except OSError:
+            continue
+    return members
+
+
+class _Pty:
+    """One interactive shell: its own session (pty.fork calls setsid). A
+    hangup reaches its process group and every process in its session,
+    including background jobs that job control moved to groups of their
+    own."""
+
+    def __init__(self, pid: int, fd: int) -> None:
+        self.pid = pid
+        self.fd = fd
+        self.stop = threading.Event()
+        self._lock = threading.Lock()
+        self._reaped = False
+
+    def hangup(self) -> None:
+        self.stop.set()
+        self._signal(signal.SIGHUP)
+
+    def _signal(self, sig) -> None:
+        # Only while the shell is unreaped: until then its pid (= the
+        # session and group id) cannot be reused by another process.
+        with self._lock:
+            if self._reaped:
+                return
+            try:
+                os.killpg(self.pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+            for pid in _session_members(self.pid):
+                try:
+                    os.kill(pid, sig)
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+    def _wait(self, block: bool) -> tuple[bool, int | None]:
+        try:
+            pid, status = os.waitpid(self.pid, 0 if block else os.WNOHANG)
+        except ChildProcessError:
+            with self._lock:
+                self._reaped = True
+            return True, None
+        if pid == 0:
+            return False, None
+        with self._lock:
+            self._reaped = True
+        return True, os.waitstatus_to_exitcode(status)
+
+    def reap(self, grace: float = 2.0) -> int | None:
+        """Hang up the process group (what a closing terminal does), wait
+        for the shell, SIGKILL the group after `grace`. Exit code back."""
+        self._signal(signal.SIGHUP)
+        deadline = time.monotonic() + grace
+        done, code = self._wait(block=False)
+        while not done and time.monotonic() < deadline:
+            time.sleep(0.05)
+            done, code = self._wait(block=False)
+        if not done:
+            self._signal(signal.SIGKILL)
+            done, code = self._wait(block=True)
+        return code
+
+
 class _Session:
-    def __init__(self, addr: str) -> None:
+    """One connection. Stream state (PTYs, log follows) lives here, keyed
+    by the request id this connection chose, so connections never meet."""
+
+    def __init__(self, addr: str, conn=None) -> None:
         self.addr = addr
+        self.conn = conn
         self.tls_fp: str | None = None
         self.tls_der: bytes | None = None
         self.paired_fp: str | None = None
         self.name = addr
+        self.authed = False
+        self.announced = False
+        self.closed = False
+        self.send = None
+        self.lock = threading.Lock()
+        self.ptys: dict = {}
+        self.follows: dict = {}
+
+    def fingerprints(self) -> set[str]:
+        return {fp for fp in (self.tls_fp, self.paired_fp) if fp}
+
+    def emit(self, obj: dict) -> None:
+        sink = self.send
+        if sink is None or self.closed:
+            return
+        try:
+            sink(obj)
+        except (OSError, ValueError, TypeError, ssl.SSLError):
+            pass
+
+    def end_streams(self) -> None:
+        with self.lock:
+            ptys = list(self.ptys.values())
+            follows = list(self.follows.values())
+        for entry in ptys:
+            entry.hangup()
+        for stop in follows:
+            stop.set()
+
+    def close(self) -> None:
+        self.closed = True
+        self.end_streams()
+        conn = self.conn
+        if conn is not None:
+            try:
+                socket.socket.shutdown(conn, socket.SHUT_RDWR)
+            except (OSError, ValueError):
+                pass
 
 
 def _default_shell_runner(argv: list[str], timeout: int = 120) -> tuple[int, str, str]:
@@ -226,9 +355,13 @@ class XxdbDaemon:
                  on_connect=None,
                  on_disconnect=None,
                  on_activity=None,
+                 on_system_request=None,
+                 is_locked=None,
+                 allow_while_locked=None,
                  clock=None) -> None:
         self.cert_dir = cert_dir if cert_dir is not None else xxdb.data_dir()
-        self.trust = trust_store if trust_store is not None else xxdb.TrustStore()
+        self.trust = trust_store if trust_store is not None else xxdb.TrustStore(
+            max_age_s=xxdb.trust_max_age_s(xxdb.DEFAULT_TRUST_DAYS))
         self.allow_loopback = allow_loopback
         self.shell_runner = shell_runner or _default_shell_runner
         self.screenshot_provider = screenshot_provider or _default_screenshot
@@ -244,6 +377,9 @@ class XxdbDaemon:
         self.on_connect = on_connect
         self.on_disconnect = on_disconnect
         self.on_activity = on_activity
+        self.on_system_request = on_system_request
+        self.is_locked = is_locked or (lambda: False)
+        self.allow_while_locked = allow_while_locked or (lambda: False)
         self._clock = clock
         self.pairing = xxdb.PairingSession()
         self.system_access = xxdb.SystemAccess()
@@ -251,18 +387,17 @@ class XxdbDaemon:
         self.addrs: list[str] = []
         self.phone_fp = ''
         self._sockets: list[socket.socket] = []
-        _run = False
-        self._running = _run
+        self._running = False
+        self._stopped = False
         self._threads: list[threading.Thread] = []
-        self._follow_stops: dict[int, threading.Event] = {}
-        self._pty_sessions: dict = {}
-        self._stream_sinks: dict = {}
-        self._sink_lock = threading.Lock()
+        self._conn_lock = threading.Lock()
+        self._sessions: set[_Session] = set()
+        self._open = 0
+        self._unauth = 0
         self._avahi_proc = None
         self._home = str(Path.home())
 
     def _now(self) -> float:
-        import time
         return self._clock() if self._clock is not None else time.time()
 
     def start(self) -> tuple[list[str], int]:
@@ -275,6 +410,8 @@ class XxdbDaemon:
                               'cellular or unknown interfaces')
         last_error = None
         for _attempt in range(5):
+            if self._stopped:
+                break
             port = xxdb.pick_port()
             self._running = True
             try:
@@ -285,10 +422,15 @@ class XxdbDaemon:
                 continue
             self.addrs = addrs
             self.port = port
+            if self._stopped:
+                self.stop()
+                break
             self._advertise()
             _log.info('xxdb listening on %s port %d',
                       ','.join(addrs), port)
             return addrs, port
+        if self._stopped:
+            raise DaemonError('wireless debugging was turned off')
         raise DaemonError(f'could not bind a port in '
                           f'{xxdb.PORT_MIN}-{xxdb.PORT_MAX}: {last_error}')
 
@@ -340,7 +482,8 @@ class XxdbDaemon:
         """Pin one more host certificate into the live TLS context so its
         client-cert handshake verifies. The context only ever gains pins:
         forgetting a host removes it from the trust store (RPC auth fails
-        closed) and the pin dies with the daemon on the next disable."""
+        closed, and its live sessions are dropped) and the pin dies with
+        the daemon on the next disable."""
         context = getattr(self, '_ssl_context', None)
         if context is None or not cert_pem:
             return
@@ -350,15 +493,23 @@ class XxdbDaemon:
             pass
 
     def stop(self) -> None:
+        """Off means off: listeners, live sessions and their shells."""
+        self._stopped = True
         self._running = False
         for sock in self._sockets:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             try:
                 sock.close()
             except OSError:
                 pass
         self._sockets = []
-        for stop in list(self._follow_stops.values()):
-            stop.set()
+        with self._conn_lock:
+            sessions = list(self._sessions)
+        for session in sessions:
+            session.close()
         proc, self._avahi_proc = self._avahi_proc, None
         if proc is not None:
             try:
@@ -366,98 +517,141 @@ class XxdbDaemon:
             except OSError:
                 pass
 
+    def drop_host(self, fingerprint: str) -> int:
+        """Close every live session of one host (after it was forgotten)."""
+        with self._conn_lock:
+            sessions = [s for s in self._sessions
+                        if fingerprint in s.fingerprints()]
+        for session in sessions:
+            session.close()
+        return len(sessions)
+
+    def live_sessions(self) -> int:
+        with self._conn_lock:
+            return len(self._sessions)
+
+    def _callback(self, callback, *args) -> bool:
+        if callback is None:
+            return False
+        try:
+            callback(*args)
+        except Exception:
+            _log.exception('xxdb callback failed')
+            return False
+        return True
+
     def _accept_loop(self, sock: socket.socket) -> None:
         while self._running:
             try:
                 conn, addr = sock.accept()
             except OSError:
                 return
-            try:
-                tls_conn = self._ssl_context.wrap_socket(conn, server_side=True)
-            except (OSError, ssl.SSLError):
+            with self._conn_lock:
+                admit = (self._running
+                         and self._open < xxdb.MAX_CONNECTIONS
+                         and self._unauth < xxdb.MAX_UNAUTH_CONNECTIONS)
+                if admit:
+                    self._open += 1
+                    self._unauth += 1
+            if not admit:
                 try:
                     conn.close()
                 except OSError:
                     pass
                 continue
             thread = threading.Thread(target=self._serve,
-                                      args=(tls_conn, addr), daemon=True)
+                                      args=(conn, addr), daemon=True)
             thread.start()
-            self._threads.append(thread)
 
-    def _serve(self, conn: ssl.SSLSocket, addr) -> None:
+    def _serve(self, raw: socket.socket, addr) -> None:
         session = _Session(addr[0])
         try:
-            session.tls_fp, session.tls_der = _peer_fingerprint(conn)
-        except (OSError, ValueError):
-            pass
-        _log.info('xxdb connection from %s (trusted=%s)', session.addr,
-                  self._authorized(session))
-        if self.on_connect is not None:
-            try:
-                self.on_connect(self._display_name(session))
-            except (TypeError, ValueError):
-                pass
-        reader = FrameReader()
+            self._run_session(raw, session)
+        finally:
+            with self._conn_lock:
+                self._open -= 1
+                if not session.authed:
+                    self._unauth -= 1
+                self._sessions.discard(session)
+            session.close()
+            for sock in (session.conn, raw):
+                if sock is None:
+                    continue
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+            _log.info('xxdb disconnect from %s', session.addr)
+            if session.announced:
+                self._callback(self.on_disconnect, self._display_name(session))
+
+    def _run_session(self, raw: socket.socket, session: _Session) -> None:
+        raw.settimeout(xxdb.HANDSHAKE_TIMEOUT_S)
+        try:
+            conn = self._ssl_context.wrap_socket(raw, server_side=True)
+        except (OSError, ssl.SSLError, ValueError):
+            return
+        session.conn = conn
+        with self._conn_lock:
+            if not self._running:
+                return
+            self._sessions.add(session)
+        session.tls_fp, session.tls_der = _peer_fingerprint(conn)
+        reader = FrameReader(xxdb.PREAUTH_MAX_LINE_BYTES)
         send_lock = threading.Lock()
-        owned_streams: list = []
 
         def _send(obj: dict) -> None:
             with send_lock:
                 conn.sendall(xxdb.encode_message(obj))
 
+        session.send = _send
+        deadline = time.monotonic() + xxdb.UNAUTH_LIFETIME_S
+        trusted = self._authorized(session)
+        _log.info('xxdb connection from %s (trusted=%s)', session.addr,
+                  trusted)
+        if trusted:
+            self._authorize_session(session, reader)
+        while self._running and not session.closed:
+            if not session.authed:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                conn.settimeout(remaining)
+            try:
+                chunk = conn.recv(65536)
+            except (OSError, ssl.SSLError):
+                return
+            if not chunk:
+                return
+            try:
+                messages = reader.feed(chunk)
+            except xxdb.FrameError:
+                return
+            for message in messages:
+                if session.authed:
+                    self._callback(self.on_activity)
+                for response in self.handle_request(session, message):
+                    try:
+                        _send(response)
+                    except (OSError, ssl.SSLError):
+                        return
+                if not session.authed and self._authorized(session):
+                    self._authorize_session(session, reader)
+
+    def _authorize_session(self, session: _Session, reader) -> None:
+        reader.max_line = xxdb.MAX_LINE_BYTES
+        with self._conn_lock:
+            if not session.authed:
+                session.authed = True
+                self._unauth -= 1
         try:
-            while self._running:
-                try:
-                    chunk = conn.recv(65536)
-                except (OSError, ssl.SSLError):
-                    break
-                if not chunk:
-                    break
-                try:
-                    messages = reader.feed(chunk)
-                except xxdb.FrameError:
-                    break
-                for message in messages:
-                    if self.on_activity is not None:
-                        try:
-                            self.on_activity()
-                        except (TypeError, ValueError):
-                            pass
-                    for response in self.handle_request(session, message):
-                        try:
-                            _send(response)
-                        except (OSError, ssl.SSLError):
-                            return
-                        if (isinstance(response, dict)
-                                and response.get('stream')
-                                in ('pty-started', 'log-follow')):
-                            with self._sink_lock:
-                                self._stream_sinks[response.get('id')] = _send
-                            owned_streams.append(response.get('id'))
-        finally:
-            with self._sink_lock:
-                for key in owned_streams:
-                    self._stream_sinks.pop(key, None)
-            for stop in [self._follow_stops.pop(key, None)
-                         for key in list(self._follow_stops)
-                         if key in owned_streams or key[0] in owned_streams]:
-                if stop is not None:
-                    stop.set()
-            try:
-                conn.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            try:
-                conn.close()
-            except OSError:
-                pass
-            _log.info('xxdb disconnect from %s', session.addr)
-            if self.on_disconnect is not None:
-                try:
-                    self.on_disconnect(self._display_name(session))
-                except (TypeError, ValueError):
-                    pass
+            session.conn.settimeout(None)
+        except (OSError, AttributeError):
+            pass
+        for fingerprint in session.fingerprints():
+            self.trust.touch(fingerprint, self._now())
+        session.announced = self._callback(self.on_connect,
+                                           self._display_name(session))
 
     def _display_name(self, session: _Session) -> str:
         for fingerprint in (session.paired_fp, session.tls_fp):
@@ -472,6 +666,15 @@ class XxdbDaemon:
                 or (session.paired_fp is not None
                     and self.trust.contains(session.paired_fp)))
 
+    def _locked(self) -> bool:
+        try:
+            if self.allow_while_locked():
+                return False
+            return bool(self.is_locked())
+        except Exception:
+            _log.exception('xxdb lock check failed')
+            return True
+
     def handle_request(self, session: _Session, message: dict):
         request_id = message.get('id')
         cmd = message.get('cmd')
@@ -485,6 +688,9 @@ class XxdbDaemon:
         _log.info('xxdb cmd %s id=%r from %s', cmd, request_id, session.addr)
         if cmd not in xxdb.PUBLIC_COMMANDS and not self._authorized(session):
             yield _refused('not-paired: pair this host first')
+            return
+        if cmd not in xxdb.LOCKED_COMMANDS and self._locked():
+            yield _refused('locked: unlock the phone first')
             return
         handler = getattr(self, f'_cmd_{cmd.replace("-", "_")}', None)
         if handler is None:
@@ -540,7 +746,6 @@ class XxdbDaemon:
                'version': VERSION, 'user': getpass.getuser()}
 
     def _cmd_shell(self, session: _Session, request_id, message):
-        del session
         if 'argv' in message:
             argv = message['argv']
             if (not isinstance(argv, list) or not argv
@@ -561,103 +766,98 @@ class XxdbDaemon:
                    'stdout': out, 'stderr': err}
             return
         if message.get('interactive'):
-            yield from self._pty_spawn(request_id, message)
+            yield from self._pty_spawn(session, request_id)
             return
         if 'input' in message or message.get('close'):
-            yield from self._pty_write(request_id, message)
+            yield from self._pty_write(session, request_id, message)
             return
         yield {'id': request_id, 'ok': False,
                'error': 'shell needs argv or interactive:true'}
 
-    def _pty_spawn(self, request_id, message):
+    def _pty_spawn(self, session: _Session, request_id):
         import fcntl
-        argv = message.get('argv') or [os.environ.get('SHELL', '/bin/sh')]
-        if not isinstance(argv, list) or not argv:
-            argv = [os.environ.get('SHELL', '/bin/sh')]
+        if not _stream_key_ok(request_id):
+            yield {'id': request_id, 'ok': False,
+                   'error': 'an interactive shell needs a number or string id'}
+            return
+        with session.lock:
+            busy = request_id in session.ptys
+        if busy:
+            yield {'id': request_id, 'ok': False,
+                   'error': 'an interactive shell already uses this id'}
+            return
+        argv = [os.environ.get('SHELL', '/bin/sh')]
         pid, fd = pty.fork()
         if pid == 0:
             try:
-                os.execvp(argv[0], list(argv))
+                os.execvp(argv[0], argv)
             finally:
                 os._exit(127)
         flags = fcntl.fcntl(fd, fcntl.F_GETFL)
         fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-        stop = threading.Event()
-        self._pty_sessions[request_id] = (pid, fd, stop)
+        entry = _Pty(pid, fd)
+        with session.lock:
+            session.ptys[request_id] = entry
+        if session.closed:
+            entry.hangup()
         thread = threading.Thread(target=self._pump_pty,
-                                  args=(request_id, pid, fd, stop),
+                                  args=(session, request_id, entry),
                                   daemon=True)
         thread.start()
         yield {'id': request_id, 'ok': True, 'stream': 'pty-started'}
 
-    def _pump_pty(self, request_id, pid, fd, stop) -> None:
-        import errno
-        import time
-        while not stop.is_set():
+    def _pump_pty(self, session: _Session, request_id, entry: _Pty) -> None:
+        while not entry.stop.is_set():
             try:
-                chunk = os.read(fd, 65536)
-            except OSError as error:
-                if error.errno in (errno.EAGAIN, errno.EIO):
-                    if not self._pid_alive(pid):
-                        break
-                    time.sleep(0.05)
-                    continue
+                ready, _w, _x = select.select([entry.fd], [], [], 0.5)
+            except (OSError, ValueError):
+                break
+            if not ready:
+                continue
+            try:
+                chunk = os.read(entry.fd, 65536)
+            except BlockingIOError:
+                continue
+            except OSError:
                 break
             if not chunk:
                 break
-            self._emit_stream(request_id, {'id': request_id, 'ok': True,
-                                           'stream': 'pty-output',
-                                           'data': chunk.decode(
-                                               'utf-8', errors='replace')})
+            session.emit({'id': request_id, 'ok': True,
+                          'stream': 'pty-output',
+                          'data': chunk.decode('utf-8', errors='replace')})
+        returncode = entry.reap()
         try:
-            os.close(fd)
+            os.close(entry.fd)
         except OSError:
             pass
-        self._pty_sessions.pop(request_id, None)
-        self._emit_stream(request_id, {'id': request_id, 'ok': True,
-                                       'stream': 'pty-done'})
+        with session.lock:
+            if session.ptys.get(request_id) is entry:
+                del session.ptys[request_id]
+        session.emit({'id': request_id, 'ok': True, 'stream': 'pty-done',
+                      'returncode': returncode})
 
-    def _emit_stream(self, request_id, obj: dict) -> None:
-        with self._sink_lock:
-            sink = self._stream_sinks.get(request_id)
-        if sink is None:
-            return
-        try:
-            sink(obj)
-        except (OSError, ValueError, TypeError, ssl.SSLError):
-            pass
-
-    @staticmethod
-    def _pid_alive(pid: int) -> bool:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        return True
-
-    def _pty_write(self, request_id, message):
-        entry = self._pty_sessions.get(request_id)
+    def _pty_write(self, session: _Session, request_id, message):
+        entry = None
+        if _stream_key_ok(request_id):
+            with session.lock:
+                entry = session.ptys.get(request_id)
         if entry is None:
             yield {'id': request_id, 'ok': False,
                    'error': 'no such interactive shell'}
             return
-        _pid, fd, stop = entry
         if message.get('close'):
-            stop.set()
-            yield {'id': request_id, 'ok': True, 'stream': 'pty-done'}
+            entry.hangup()
+            yield {'id': request_id, 'ok': True, 'stream': 'pty-ack'}
             return
         data = str(message.get('input', ''))
         try:
-            os.write(fd, data.encode())
+            os.write(entry.fd, data.encode())
         except OSError as error:
             yield {'id': request_id, 'ok': False, 'error': str(error)}
             return
         yield {'id': request_id, 'ok': True, 'stream': 'pty-ack'}
 
     def _cmd_logcat(self, session: _Session, request_id, message):
-        del session
         try:
             limit = max(1, min(2000, int(message.get('lines', 200))))
         except (TypeError, ValueError):
@@ -676,14 +876,18 @@ class XxdbDaemon:
             yield {'id': request_id, 'ok': True, 'stream': 'log-done'}
             return
         stop = threading.Event()
-        key = (request_id, id(stop))
-        self._follow_stops[key] = stop
+        key = object()
+        with session.lock:
+            session.follows[key] = stop
+        if session.closed:
+            stop.set()
         yield {'id': request_id, 'ok': True, 'stream': 'log-follow'}
         thread = threading.Thread(target=self._follow_log,
-                                  args=(request_id, key, stop), daemon=True)
+                                  args=(session, request_id, key, stop),
+                                  daemon=True)
         thread.start()
 
-    def _follow_log(self, request_id, key, stop) -> None:
+    def _follow_log(self, session: _Session, request_id, key, stop) -> None:
         try:
             size = self.shell_log_path.stat().st_size
         except OSError:
@@ -708,11 +912,10 @@ class XxdbDaemon:
                 continue
             size = current
             for line in data.decode('utf-8', errors='replace').splitlines():
-                self._emit_stream(request_id, {'id': request_id, 'ok': True,
-                                               'stream': 'log',
-                                               'source': 'shell.log',
-                                               'line': line})
-        self._follow_stops.pop(key, None)
+                session.emit({'id': request_id, 'ok': True, 'stream': 'log',
+                              'source': 'shell.log', 'line': line})
+        with session.lock:
+            session.follows.pop(key, None)
 
     def _cmd_screenshot(self, session: _Session, request_id, _message):
         del session
@@ -724,7 +927,8 @@ class XxdbDaemon:
         yield {'id': request_id, 'ok': True, 'format': 'png',
                'data': base64.b64encode(png).decode('ascii')}
 
-    def _resolve_push_path(self, message) -> tuple[Path | None, str, str | None]:
+    def _resolve_push_path(self, message,
+                           op: str) -> tuple[Path | None, str, str | None]:
         raw = str(message.get('path', ''))
         if not raw:
             return None, 'missing path', None
@@ -734,19 +938,26 @@ class XxdbDaemon:
         if not message.get('system'):
             return None, (f'refused: {raw} is outside $HOME '
                           '(retry with system:true and confirm on the phone)'), None
-        token = message.get('token')
-        label = self.system_access.consume(token, self._now())
-        if label is None:
-            pending_token = self.system_access.request(raw, self._now())
-            return None, 'needs-confirm', pending_token
-        candidate = Path(raw)
+        candidate = Path(os.path.expanduser(raw))
         if not candidate.is_absolute():
             return None, 'system paths must be absolute', None
-        return candidate, '', None
+        resolved = Path(os.path.realpath(candidate))
+        bound = f'{op}:{resolved}'
+        token = message.get('token')
+        token = str(token) if token else None
+        now = self._now()
+        if self.system_access.consume(token, now, bound=bound) is not None:
+            return resolved, '', None
+        if not self.system_access.waiting(token, bound, now):
+            verb = 'Write' if op == 'push' else 'Read'
+            token = self.system_access.request(f'{verb} {resolved}', now,
+                                               bound=bound)
+            self._callback(self.on_system_request)
+        return None, 'needs-confirm', token
 
     def _cmd_push(self, session: _Session, request_id, message):
         del session
-        target, error, token = self._resolve_push_path(message)
+        target, error, token = self._resolve_push_path(message, 'push')
         if target is None:
             response = {'id': request_id, 'ok': False, 'error': error}
             if token:
@@ -778,7 +989,7 @@ class XxdbDaemon:
 
     def _cmd_pull(self, session: _Session, request_id, message):
         del session
-        target, error, token = self._resolve_push_path(message)
+        target, error, token = self._resolve_push_path(message, 'pull')
         if target is None:
             response = {'id': request_id, 'ok': False, 'error': error}
             if token:
@@ -900,4 +1111,3 @@ class XxdbDaemon:
         ok, detail = self.input_injector(action, params)
         yield {'id': request_id, 'ok': ok,
                ('message' if ok else 'error'): detail}
-

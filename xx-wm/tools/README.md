@@ -25,7 +25,8 @@ switch. Then:
 ./tools/xxdb logcat 192.168.1.20 --lines 100
 ./tools/xxdb screenshot 192.168.1.20 shot.png
 
-# Files ($HOME on the phone unless --system, which the phone user confirms)
+# Files ($HOME on the phone unless --system: the phone user confirms that
+# one path, then re-run with the --token xxdb printed)
 ./tools/xxdb push 192.168.1.20 local.txt notes/remote.txt
 ./tools/xxdb pull 192.168.1.20 .local/share/xx-wm/shell.log shell.log
 
@@ -38,6 +39,11 @@ switch. Then:
 ./tools/xxdb input 192.168.1.20 tap 180 400
 ./tools/xxdb input 192.168.1.20 text "hello"
 ```
+
+A paired computer has full control of the phone: pair only your own,
+and forget it on the phone when you are done. Trust lapses after
+`xxdb_trust_days` (default 7) without a connection, and a locked phone
+answers nothing but `hello` (see `docs/config.md`).
 
 Host state lives in `~/.config/xxdb/` (`key.pem`, `cert.pem`,
 `phones.json` with the pinned phone fingerprints; all 0600). Discovery

@@ -273,10 +273,17 @@ class XxdbClient:
         except queue.Empty:
             raise ClientError('phone did not answer in time')
 
+    def new_id(self) -> int:
+        with self._lock:
+            request_id = self._next_id
+            self._next_id += 1
+        return request_id
+
     def call(self, payload: dict, stream=None, timeout: int = 130) -> dict:
-        request_id = payload.get('id') or self._next_id
-        self._next_id = max(self._next_id + 1, int(request_id) + 1
-                            if isinstance(request_id, int) else self._next_id + 1)
+        request_id = payload.get('id') or self.new_id()
+        if isinstance(request_id, int):
+            with self._lock:
+                self._next_id = max(self._next_id, request_id + 1)
         payload = dict(payload, id=request_id)
         self._send(payload)
         while True:
@@ -394,7 +401,7 @@ def cmd_shell(args) -> int:
 
 
 def _interactive_shell(client: XxdbClient) -> int:
-    request_id = 1
+    request_id = client.new_id()
     client._send({'cmd': 'shell', 'interactive': True, 'id': request_id})
     stop = threading.Event()
 
@@ -439,7 +446,7 @@ def cmd_logcat(args) -> int:
     client, _entry = _client_for(host, port)
     client.connect()
     try:
-        request_id = 1
+        request_id = client.new_id()
         client._send({'cmd': 'logcat', 'id': request_id,
                       'lines': args.lines, 'follow': args.follow})
         with client._lock:
@@ -489,6 +496,23 @@ def _push_pull_path_check(size: int) -> None:
         raise ClientError('file exceeds the 512 MB limit')
 
 
+def _with_system(payload: dict, args) -> dict:
+    if getattr(args, 'system', False):
+        payload['system'] = True
+        if getattr(args, 'token', None):
+            payload['token'] = args.token
+    return payload
+
+
+def _asked_to_confirm(response: dict) -> bool:
+    if response.get('ok') or response.get('error') != 'needs-confirm':
+        return False
+    print('Confirm this --system path on the phone (Settings, Developer '
+          'section), then re-run the same command with '
+          f"--token {response.get('token')}")
+    return True
+
+
 def cmd_push(args) -> int:
     host, port = split_hostport(args.hostport)
     data = Path(args.src).read_bytes()
@@ -496,16 +520,11 @@ def cmd_push(args) -> int:
     client, _entry = _client_for(host, port)
     try:
         client.connect()
-        payload = {'cmd': 'push', 'path': args.dst,
-                   'data': base64.b64encode(data).decode('ascii')}
-        if args.system:
-            payload['system'] = True
+        payload = _with_system({'cmd': 'push', 'path': args.dst,
+                                'data': base64.b64encode(data).decode('ascii')},
+                               args)
         response = client.call(payload)
-        if (not response.get('ok')
-                and response.get('error') == 'needs-confirm'):
-            print('The phone asks to confirm this --system path on its '
-                  'screen (Settings, Developer section), then re-run '
-                  'the same command.')
+        if _asked_to_confirm(response):
             return 2
         if not response.get('ok'):
             print(f"push failed: {response.get('error')}", file=sys.stderr)
@@ -521,9 +540,12 @@ def cmd_pull(args) -> int:
     client, _entry = _client_for(host, port)
     try:
         client.connect()
-        response = client.call({'cmd': 'pull', 'path': args.src})
+        response = client.call(_with_system({'cmd': 'pull', 'path': args.src},
+                                            args))
     finally:
         client.close()
+    if _asked_to_confirm(response):
+        return 2
     if not response.get('ok'):
         print(f"pull failed: {response.get('error')}", file=sys.stderr)
         return 1
@@ -663,11 +685,15 @@ def build_parser() -> argparse.ArgumentParser:
     push.add_argument('src')
     push.add_argument('dst')
     push.add_argument('--system', action='store_true')
+    push.add_argument('--token', default=None)
     push.set_defaults(func=cmd_push)
 
-    pull = sub.add_parser('pull', help='download a file')
+    pull = sub.add_parser('pull', help='download a file ($HOME unless '
+                                       '--system)')
     pull.add_argument('hostport')
     pull.add_argument('src')
+    pull.add_argument('--system', action='store_true')
+    pull.add_argument('--token', default=None)
     pull.add_argument('dst')
     pull.set_defaults(func=cmd_pull)
 

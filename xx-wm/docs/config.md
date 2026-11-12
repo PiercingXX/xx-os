@@ -359,6 +359,11 @@ default; enabling it is always an explicit user action (the switch). Keys
 and paired-host fingerprints live under `~/.local/share/xx-wm/xxdb/`
 (files are 0600).
 
+**A paired computer has full control of the phone.** Its `shell` runs as
+the session user (who has passwordless sudo on the test devices), and it
+can read and write files, inject input and take screenshots. Pair only
+computers you own, and forget them when you are done.
+
 Pairing: "Pair with code" shows the address, a 6-digit code and the first
 16 hex digits of the phone certificate's fingerprint. Run
 `xxdb pair ADDRESS:PORT CODE FINGERPRINT` on the computer. The client
@@ -368,10 +373,19 @@ knows the code with an HMAC keyed by the code and both certificate
 fingerprints. A code is valid for 2 minutes, single use, and burned after
 3 wrong tries.
 
+Turning the switch off ends every live session and interactive shell.
+Forgetting a computer drops its live sessions too. While the phone is
+locked, every command except `hello` is refused unless
+`xxdb_allow_while_locked` is true. A file push or pull outside `$HOME`
+(`--system`) needs a confirmation on the phone, which is bound to that one
+operation and resolved path.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `xxdb_enabled` | bool | `false` | Whether wireless debugging is on. Written by the switch; reset to `false` on every shell restart/reboot unless `xxdb_persistent` is true. |
 | `xxdb_persistent` | bool | `false` | When true, an enabled daemon stays enabled across shell restarts/reboots. Even then it still turns itself off after 60 minutes with no connected client. |
+| `xxdb_trust_days` | int | `7` | A paired computer stays trusted for this many days after its last connection, clamped 1–365. After that it has to pair again. Read when wireless debugging is switched on. |
+| `xxdb_allow_while_locked` | bool | `false` | When true, paired computers keep full access while the phone is locked. Off: only `hello` answers until the phone is unlocked. |
 
 ## gestures.json
 
