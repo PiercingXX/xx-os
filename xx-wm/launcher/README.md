@@ -59,12 +59,13 @@ meson install -C build
 
 ## Tests & the pre-commit gate
 
-`scripts/check.sh` is the gate: py_compile + ruff + pytest + shellcheck.
+`scripts/check.sh` is the gate: py_compile + ruff + the main-loop block check +
+pyright (root helper and its client) + pytest + cargo test + shellcheck.
 pytest needs PyGObject, so the venv must see system site packages:
 
 ```bash
 python3 -m venv --system-site-packages .venv   # .venv is gitignored
-.venv/bin/pip install pytest ruff
+.venv/bin/pip install pytest ruff pyright
 PATH="$PWD/.venv/bin:$PATH" sh scripts/check.sh
 ```
 

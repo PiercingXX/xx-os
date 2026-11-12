@@ -13,9 +13,10 @@ pacman -Syu --noconfirm --needed \
     python-pyopenssl python-pillow python-cryptography python-dateutil \
     python-fonttools python-libevdev python-pynacl python-numpy \
     python-phonenumbers python-pywayland python-requests python-secretstorage \
-    python-zeroconf yt-dlp zbar
+    python-zeroconf yt-dlp zbar nodejs npm
+
 pip install --break-system-packages --root-user-action=ignore \
-    ruff ytmusicapi pyzbar skia-pathops
+    ruff pyright ytmusicapi pyzbar skia-pathops
 id ci >/dev/null 2>&1 || useradd -m ci
 git config --system --add safe.directory '*'
 if [ "${1:-}" = --run ]; then

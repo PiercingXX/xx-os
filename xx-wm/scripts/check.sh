@@ -1,6 +1,7 @@
 #!/bin/sh
 # XX-WM - Pre-commit gate script
-# Runs py_compile + ruff + the main-loop block check + pytest + cargo test + shellcheck.
+# Runs py_compile + ruff + the main-loop block check + pyright (root helper and
+# its client) + pytest + cargo test + shellcheck.
 # A missing tool fails the gate. To skip one on purpose, name it in XX_CHECK_SKIP
 # (e.g. XX_CHECK_SKIP="cargo shellcheck"); the skip is printed.
 
@@ -58,6 +59,21 @@ echo "=== Checking for main-loop blocking calls ==="
     echo "main-loop block check FAILED"
     exit 1
 }
+
+echo "=== Running pyright (helper) ==="
+if ! skipped pyright; then
+    if [ -x "$VENV_BIN/pyright" ]; then
+        PYRIGHT="$VENV_BIN/pyright"
+    elif command -v pyright >/dev/null 2>&1; then
+        PYRIGHT=pyright
+    else
+        missing pyright "Install with: .venv/bin/pip install pyright"
+    fi
+    "$PYRIGHT" --pythonpath "$(command -v "$PYTHON")" -p pyrightconfig.json || {
+        echo "pyright FAILED"
+        exit 1
+    }
+fi
 
 echo "=== Running pytest ==="
 if ! skipped pytest; then

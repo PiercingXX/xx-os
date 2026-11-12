@@ -586,7 +586,44 @@ def test_service_auth_error_maps_to_not_authorized(layout):
     assert 'polkit exploded' in invocation.error[1]
 
 
+@pytest.mark.parametrize('method, args, action, flags', [
+    ('SetChargeLimit', (80,), 'ACTION_CHARGE', 0),
+    ('UpgradeSystem', (), 'ACTION_UPGRADE', 1),
+])
+def test_default_authorize_asks_polkit_and_replies(layout, method, args,
+                                                   action, flags):
+    """No injected authorize: the production polkit path, over a bus
+    fake with the real callback contract, gets past authorization (the
+    core then answers, here possibly with "apk not available") and
+    passes AllowUserInteraction only for the interactive actions."""
+    pytest.importorskip('gi')
+    seen = []
+
+    class FlagConn(ScriptConn):
+        def call(self, bus_name, path, iface, name, params, *rest):
+            if name == 'CheckAuthorization':
+                seen.append(params.unpack()[1:4:2])
+            return super().call(bus_name, path, iface, name, params, *rest)
+
+    conn = FlagConn(UID, True)
+    FlagConn.EXPECTED_FLAGS = {helper.ACTION_UPGRADE: 1}
+    service = helper.HelperService(
+        connection=conn, core=make_core(layout, FakeRun()))
+    service.core.spawn = lambda argv, on_exit: None
+    invocation = FakeInvocation()
+    service._on_method_call(conn, ':1.7', '/p', 'i', method,
+                            SimpleNamespace(unpack=lambda: args), invocation)
+    assert invocation.replies == 1
+    assert invocation.error is None or (
+        'apk not available' in invocation.error[1]), invocation.error
+
+    assert seen == [(getattr(helper, action), flags)]
+    assert service._pending_auth == 0
+
+
+
 def test_service_unknown_method_never_reaches_core_or_auth(layout):
+
     def explosive(conn, sender, action, interactive, callback):
         raise AssertionError('unknown method must not authorize')
 

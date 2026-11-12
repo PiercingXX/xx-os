@@ -1,0 +1,9 @@
+{
+  "include": [
+    "launcher/helper/xx_wm_helper.py",
+    "launcher/src/helper_client.py"
+  ],
+  "extraPaths": ["launcher/src"],
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.12"
+}

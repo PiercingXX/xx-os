@@ -1940,7 +1940,8 @@ class PinStore:
 def _require_gio():
     """Gio/GLib are imported here, not at module top, so the logic above
     stays importable (and unit-testable) without PyGObject."""
-    from gi.repository import Gio, GLib
+    # gi.repository is generated at runtime; there are no stubs to check.
+    from gi.repository import Gio, GLib  # pyright: ignore[reportAttributeAccessIssue]
     return Gio, GLib
 
 
@@ -2015,6 +2016,14 @@ def check_polkit_authorization(connection, sender, action, callback,
             callback(False, uid, str(err))
 
     get_connection_uid(connection, sender, _on_uid)
+
+
+def _polkit_authorize(connection, sender, action, interactive: bool,
+                      callback) -> None:
+    """HelperService's ``authorize`` contract over
+    :func:`check_polkit_authorization`, whose callback comes first."""
+    check_polkit_authorization(connection, sender, action, callback,
+                               interactive=interactive)
 
 
 # Method -> (polkit action, interactive): interactive passes
@@ -2136,17 +2145,20 @@ def policy_for(method: str, args) -> tuple | None:
 class HelperService:
     """D-Bus object: auth dispatch around a :class:`HelperCore`.
 
-    ``authorize``/``get_uid`` are injectable for tests; in production
-    they are :func:`check_polkit_authorization` (which also resolves the
-    uid). ``now`` injects the clock for the idle timer, which is held
-    off while a polkit check or a package job is still running.
+    ``authorize(conn, sender, action, interactive, callback)`` and
+    ``get_uid`` are injectable for tests; in production they are
+    :func:`_polkit_authorize` (polkit, which also resolves the uid) and
+    :func:`get_connection_uid`. ``now`` injects the clock for the idle
+    timer, which is held off while a polkit check or a package job is
+    still running.
     """
 
     def __init__(self, connection=None, core=None, authorize=None,
                  now=time.monotonic, pin_store=None, get_uid=None) -> None:
         self.connection = connection
         self.core = core if core is not None else HelperCore()
-        self._authorize = authorize or check_polkit_authorization
+        self._authorize = authorize or _polkit_authorize
+
         # PIN methods need no polkit action: the caller's bus uid selects
         # the record, so every user can only touch their own PIN.
         self.pins = pin_store if pin_store is not None else PinStore()
@@ -2173,6 +2185,8 @@ class HelperService:
     # ------------------------------------------------------------- dispatch
 
     def register(self) -> None:
+        if self.connection is None:
+            raise RuntimeError('register() needs a bus connection')
         Gio, _GLib = _require_gio()
         node = Gio.DBusNodeInfo.new_for_xml(INTROSPECT_XML)
         self._registration_id = self.connection.register_object(

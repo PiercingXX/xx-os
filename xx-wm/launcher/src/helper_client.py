@@ -63,8 +63,10 @@ _capabilities_cache: dict | None = None
 
 
 def _gio():
-    from gi.repository import Gio, GLib
+    # gi.repository is generated at runtime; there are no stubs to check.
+    from gi.repository import Gio, GLib  # pyright: ignore[reportAttributeAccessIssue]
     return Gio, GLib
+
 
 
 def invalidate_capabilities() -> None:
