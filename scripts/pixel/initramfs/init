@@ -1,0 +1,227 @@
+#!/bin/busybox sh
+# shellcheck shell=sh
+# xx-os bring-up init for the Pixel 9 (tokay). PID 1 of the first boots.
+#
+# Brings up a USB gadget (ACM serial + NCM network) as the debug channel,
+# loads modules in Android's order, keeps every block device read-only,
+# records what the bootloader handed over, and then either stays in RAM or
+# switches to a root given on the command line:
+#
+#   xxos.root=ram                  stay here (default)
+#   xxos.root=usb                  receive an ext4 image over NCM into RAM
+#                                  (nc 172.16.42.1 5555 < root.img), boot it
+#   xxos.root=PARTLABEL=userdata   mount that partition read-write, boot it
+#
+# On the host: the phone is 172.16.42.1 (DHCP hands out .2); a shell is on
+# /dev/ttyACM0 and on telnet 172.16.42.1.
+/bin/busybox mkdir -p /bin /sbin /usr/bin /usr/sbin /proc /sys /dev /run /tmp /mnt
+/bin/busybox --install -s
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+E=/run/xxos
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs -o mode=0755,size=70% tmpfs /run
+mkdir -p "$E/evidence"
+LOG=$E/init.log
+
+log() {
+    echo "xxos: $*" >>"$LOG"
+    echo "xxos: $*" >/dev/kmsg 2>/dev/null || true
+}
+
+if mount -t devtmpfs devtmpfs /dev 2>/dev/null; then
+    log "devtmpfs mounted"
+else
+    # The stock GKI has no devtmpfs; fall back to busybox mdev.
+    mount -t tmpfs -o mode=0755 tmpfs /dev
+    echo /sbin/mdev >/proc/sys/kernel/hotplug 2>/dev/null || true
+    mdev -s
+    log "no devtmpfs: /dev populated by mdev"
+fi
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts
+mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+mount -t pstore pstore /sys/fs/pstore 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+
+cmdline=$(cat /proc/cmdline)
+arg() { # arg NAME DEFAULT: value of NAME= on the kernel command line
+    for tok in $cmdline; do
+        case $tok in "$1"=*) echo "${tok#*=}"; return ;; esac
+    done
+    echo "$2"
+}
+
+# --- 1. Keep every disk read-only unless it is the requested root. -------
+root=$(arg xxos.root ram)
+guard_disks() {
+    for b in /sys/class/block/*; do
+        name=${b##*/}
+        [ -e "/dev/$name" ] || continue
+        part=$(sed -n 's/^PARTNAME=//p' "$b/uevent" 2>/dev/null)
+        if [ "$root" = "PARTLABEL=$part" ] && [ -n "$part" ]; then
+            continue
+        fi
+        blockdev --setro "/dev/$name" 2>/dev/null || true
+    done
+}
+guard_disks
+
+# --- 2. What the bootloader handed over. ---------------------------------
+ev=$E/evidence
+cp /proc/cmdline "$ev/cmdline"
+cp /proc/bootconfig "$ev/bootconfig" 2>/dev/null || true
+uname -a >"$ev/uname"
+for f in model compatible; do
+    tr '\0' '\n' </proc/device-tree/$f >"$ev/dt-$f" 2>/dev/null || true
+done
+ls /proc/device-tree/reserved-memory >"$ev/dt-reserved-memory" 2>/dev/null || true
+ls /proc/device-tree/chosen >"$ev/dt-chosen" 2>/dev/null || true
+cp -r /sys/fs/pstore "$ev/pstore" 2>/dev/null || true
+log "evidence in $ev"
+
+# --- 3. Kernel modules. ---------------------------------------------------
+# Android loads vendor modules from a list, in order; the Pixel build notes
+# that the SoC modules must come first or the phone crashes. insmod does not
+# read the command line, so pass each module its MOD.param=value tokens.
+params_for() {
+    mod=$1 out=
+    for tok in $cmdline; do
+        case $tok in "$mod".*=*) out="$out ${tok#"$mod".}" ;; esac
+    done
+    echo "$out"
+}
+load_list() { # load_list DIR: insmod DIR/*.ko in DIR/modules.load order
+    dir=$1 n=0 bad=0
+    [ -f "$dir/modules.load" ] || return 0
+    while read -r ko; do
+        [ -n "$ko" ] || continue
+        file=$dir/$(basename "$ko")
+        mod=$(basename "$ko" .ko | tr - _)
+        # shellcheck disable=SC2046 # params are separate words on purpose
+        if insmod "$file" $(params_for "$mod") 2>>"$E/insmod.err"; then
+            n=$((n + 1))
+        else
+            bad=$((bad + 1))
+            echo "failed: $ko" >>"$E/insmod.err"
+        fi
+    done <"$dir/modules.load"
+    log "modules from $dir: $n loaded, $bad failed"
+}
+load_list /lib/modules              # downstream: vendor_kernel_boot ramdisk
+load_list /usr/lib/modules/stage2   # downstream: vendor_dlkm, our copy
+kver=$(uname -r)
+if [ -f "/usr/lib/modules/$kver/modules.dep" ]; then
+    # mainline: modprobe everything the devices ask for
+    mkdir -p /lib/modules
+    [ -e "/lib/modules/$kver" ] || ln -s "/usr/lib/modules/$kver" "/lib/modules/$kver"
+    find /sys/devices -name modalias -exec cat {} + 2>/dev/null |
+        sort -u | xargs modprobe -a -q 2>/dev/null || true
+    log "mainline modules coldplugged"
+fi
+[ -x /sbin/mdev ] && mdev -s
+
+# --- 4. Watchdog. ---------------------------------------------------------
+# If the bootloader or a driver left a watchdog running (stock Android runs
+# gs_watchdogd for this), keep petting it; otherwise leave it stopped.
+for w in /sys/class/watchdog/watchdog*; do
+    [ -e "$w/state" ] || continue
+    if [ "$(cat "$w/state")" = active ]; then
+        watchdog -t 5 "/dev/${w##*/}"
+        log "petting active ${w##*/}"
+    fi
+done
+
+# --- 5. USB gadget: ACM serial and NCM network. ---------------------------
+G=/sys/kernel/config/usb_gadget/xxos
+gadget_up() {
+    [ -d /sys/kernel/config/usb_gadget ] || { log "no configfs gadget"; return 1; }
+    mkdir -p "$G"
+    echo 0x1d6b >"$G/idVendor"  # Linux Foundation
+    echo 0x0104 >"$G/idProduct" # multifunction composite gadget
+    mkdir -p "$G/strings/0x409" "$G/configs/c.1/strings/0x409"
+    echo "xx-os" >"$G/strings/0x409/manufacturer"
+    echo "xx-os bring-up (Pixel 9)" >"$G/strings/0x409/product"
+    echo "xxos-$(arg androidboot.serialno tokay)" >"$G/strings/0x409/serialnumber"
+    echo "ACM + NCM" >"$G/configs/c.1/strings/0x409/configuration"
+    for fn in acm.usb0 ncm.usb0; do
+        mkdir -p "$G/functions/$fn"
+        [ -e "$G/configs/c.1/$fn" ] || ln -s "$G/functions/$fn" "$G/configs/c.1/$fn"
+    done
+    i=0 udc=''
+    while [ -z "$udc" ] && [ $i -lt 30 ]; do
+        for u in /sys/class/udc/*; do
+            [ -e "$u" ] && { udc=${u##*/}; break; }
+        done
+        [ -n "$udc" ] || sleep 1
+        i=$((i + 1))
+    done
+    [ -n "$udc" ] || { log "no UDC after 30 s"; return 1; }
+    echo "$udc" >"$G/UDC"
+    log "gadget bound to $udc"
+}
+if gadget_up; then
+    ifname=$(cat "$G/functions/ncm.usb0/ifname" 2>/dev/null || echo usb0)
+    ip link set "$ifname" up
+    ip addr add 172.16.42.1/24 dev "$ifname"
+    cat >"$E/udhcpd.conf" <<EOF
+start 172.16.42.2
+end 172.16.42.2
+interface $ifname
+lease_file $E/udhcpd.leases
+option subnet 255.255.255.0
+EOF
+    touch "$E/udhcpd.leases"
+    udhcpd "$E/udhcpd.conf"
+    telnetd -l /bin/sh -b 172.16.42.1
+    (while :; do
+        [ -c /dev/ttyGS0 ] && setsid -c sh -l </dev/ttyGS0 >/dev/ttyGS0 2>&1
+        sleep 1
+    done) &
+    # If the port came up as host or not at all, ask for device mode once.
+    (sleep 20
+        state=$(cat "/sys/class/udc/$(cat "$G/UDC")/state" 2>/dev/null)
+        if [ "$state" != configured ]; then
+            for r in /sys/class/usb_role/*/role; do
+                [ -e "$r" ] && echo device >"$r"
+            done
+            log "udc state '$state' after 20 s: forced device role"
+        fi) &
+fi
+
+dmesg >"$ev/dmesg-early"
+log "bring-up shell ready, root=$root"
+
+# --- 6. Root. -------------------------------------------------------------
+switch_to() { # switch_to DIR: hand PID 1 to DIR's init
+    for m in proc sys dev run; do
+        mkdir -p "$1/$m"
+        mount --move "/$m" "$1/$m" 2>/dev/null || true
+    done
+    exec switch_root "$1" /sbin/init
+}
+case $root in
+usb)
+    log "waiting for root image on 172.16.42.1:5555"
+    nc -l -p 5555 >/run/root.img
+    mkdir -p /newroot
+    mount -o loop /run/root.img /newroot && switch_to /newroot
+    log "root image did not mount"
+    ;;
+PARTLABEL=*)
+    want=${root#PARTLABEL=}
+    for b in /sys/class/block/*; do
+        [ "$(sed -n 's/^PARTNAME=//p' "$b/uevent" 2>/dev/null)" = "$want" ] || continue
+        mkdir -p /newroot
+        mount -t ext4 "/dev/${b##*/}" /newroot && switch_to /newroot
+    done
+    log "no ext4 root on partition $want"
+    ;;
+esac
+
+# Stay up as PID 1: reap children, keep the evidence fresh.
+while :; do
+    dmesg >"$ev/dmesg"
+    sleep 10
+done

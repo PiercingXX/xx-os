@@ -1,0 +1,80 @@
+#!/bin/sh
+# M3 probes, run on the phone from the bring-up shell. Each writes what it
+# saw under /run/xxos/evidence and prints a one-line verdict.
+#
+#   xxos-probe display   list DRM connectors, draw a test pattern on the
+#                        first connected one (the panel, or the monitor)
+#   xxos-probe touch     find the touchscreen, show 15 s of its events
+#   xxos-probe dp        Type-C and DisplayPort state, for the monitor test
+#   xxos-probe collect   pack the evidence into /run/xxos/evidence.tar.gz
+set -u
+ev=/run/xxos/evidence
+mkdir -p "$ev"
+
+card() { # first DRM card that has connectors
+    for c in /sys/class/drm/card[0-9]; do
+        ls -d "$c"-* >/dev/null 2>&1 && { echo "/dev/dri/${c##*/}"; return; }
+    done
+}
+
+display() {
+    dev=$(card)
+    [ -n "$dev" ] || { echo "display: no DRM card with connectors"; return 1; }
+    modetest -D "$dev" -c >"$ev/modetest-connectors" 2>&1
+    # The first connected connector and its first mode.
+    # shellcheck disable=SC2046 # three words: id, name, mode
+    set -- $(awk '$3 == "connected" && !id { id = $1; name = $4; want = 1; next }
+                  want && /^ +#0 / { print id, name, $2; exit }' "$ev/modetest-connectors")
+    [ $# -eq 3 ] || { echo "display: no connected connector on $dev"; return 1; }
+    echo "display: $2 (connector $1) mode $3 on $dev; pattern for 10 s"
+    timeout 10 modetest -D "$dev" -s "$1:$3" >"$ev/modetest-set-$2" 2>&1
+    echo "display: done, see $ev/modetest-set-$2"
+}
+
+touch_probe() {
+    cp /proc/bus/input/devices "$ev/input-devices"
+    ev_dev=$(awk '/^N: Name=/ { t = (tolower($0) ~ /touch|synaptics|sec_ts|goodix|fts/) }
+                                    t && /^H: Handlers=/ { for (i = 2; i <= NF; i++)
+                                        if ($i ~ /^event/) { print $i; exit } }' "$ev/input-devices")
+    [ -n "$ev_dev" ] || { echo "touch: no touchscreen input device"; return 1; }
+    echo "touch: /dev/input/$ev_dev; touch the screen now (15 s)"
+    timeout 15 evtest "/dev/input/$ev_dev" >"$ev/evtest-$ev_dev" 2>&1
+    n=$(grep -c 'ABS_MT_POSITION_X' "$ev/evtest-$ev_dev")
+    echo "touch: $n position events recorded"
+}
+
+dp() {
+    out=$ev/dp-state
+    {
+        for f in /sys/class/typec/port0/data_role /sys/class/typec/port0/power_role \
+            /sys/class/typec/port0/orientation; do
+            echo "$f: $(cat "$f" 2>/dev/null)"
+        done
+        for a in /sys/class/typec/port0-partner/port0-partner.*; do
+            [ -e "$a/svid" ] || continue
+            echo "$a: svid $(cat "$a/svid") active $(cat "$a/active" 2>/dev/null)"
+            [ -d "$a/displayport" ] && for f in hpd pin_assignment configuration; do
+                echo "  $f: $(cat "$a/displayport/$f" 2>/dev/null)"
+            done
+        done
+        for c in /sys/class/drm/card*-DP-*; do
+            [ -e "$c/status" ] && echo "${c##*/}: $(cat "$c/status")"
+        done
+    } >"$out" 2>&1
+    cat "$out"
+}
+
+case ${1:-} in
+display) display ;;
+touch) touch_probe ;;
+dp) dp ;;
+collect)
+    dmesg >"$ev/dmesg"
+    tar -czf /run/xxos/evidence.tar.gz -C /run/xxos evidence init.log insmod.err 2>/dev/null
+    echo "collect: /run/xxos/evidence.tar.gz (fetch: nc -l -p 5556 > ev.tgz on the host, then nc 172.16.42.2 5556 < /run/xxos/evidence.tar.gz here)"
+    ;;
+*)
+    echo "usage: xxos-probe display|touch|dp|collect" >&2
+    exit 2
+    ;;
+esac

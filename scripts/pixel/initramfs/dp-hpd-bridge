@@ -1,0 +1,47 @@
+#!/bin/sh
+# Downstream kernel only: tell Google's DisplayPort driver about the monitor.
+#
+# On the Pixel 6.1 kernel the DRM DisplayPort driver does not listen to the
+# Type-C stack. Android's USB HAL (hardware/google/pixel/usb/UsbDpUtils.cpp)
+# copies hpd, pin_assignment and orientation from the Type-C DisplayPort
+# alt mode in sysfs into the driver's drm-displayport sysfs group, and DP
+# notifications are ignored unless exynos_drm's dp_enabled is set. This loop
+# does the same. Run it in the background before plugging in the dock.
+set -u
+param=/sys/module/exynos_drm/parameters/dp_enabled
+[ -e "$param" ] && echo 1 >"$param"
+
+drm=$(find /sys/devices/platform -maxdepth 3 -type d -name drm-displayport 2>/dev/null | head -n 1)
+[ -n "$drm" ] || { echo "dp-hpd-bridge: no drm-displayport device" >&2; exit 1; }
+echo "dp-hpd-bridge: driver at $drm"
+
+last=
+while :; do
+    alt=
+    for a in /sys/class/typec/port0-partner/port0-partner.*; do
+        [ -d "$a/displayport" ] && { alt=$a; break; }
+    done
+    if [ -n "$alt" ]; then
+        # Enter the alt mode if nobody has.
+        [ "$(cat "$alt/active" 2>/dev/null)" = yes ] || echo yes >"$alt/active" 2>/dev/null
+        hpd=$(cat "$alt/displayport/hpd" 2>/dev/null)
+        # "C [D]": the bracketed letter is the configured assignment.
+        pin=$(sed -n 's/.*\[\([A-F]\)\].*/\1/p' "$alt/displayport/pin_assignment" 2>/dev/null)
+        orient=$(cat /sys/class/typec/port0/orientation 2>/dev/null)
+    else
+        hpd=0 pin='' orient=''
+    fi
+    now="$hpd/$pin/$orient"
+    if [ "$now" != "$last" ]; then
+        if [ "$hpd" = 1 ] && [ -n "$pin" ]; then
+            echo "$pin" >"$drm/pin_assignment"
+            echo "${orient:-unknown}" >"$drm/orientation"
+            echo 1 >"$drm/hpd"
+        else
+            echo 0 >"$drm/hpd" 2>/dev/null
+        fi
+        echo "dp-hpd-bridge: hpd=$hpd pin=$pin orientation=$orient link=$(cat "$drm/link_status" 2>/dev/null)"
+        last=$now
+    fi
+    sleep 1
+done
