@@ -664,6 +664,47 @@ class TestAppsSection:
         assert isinstance(section, settings_page._Section)
         assert section.key == 'apps'
 
+    def test_only_removable_apps_have_rows(self, monkeypatch):
+        import settings_apps
+        assert settings_apps.is_removable(
+            {'flatpak': 'org.example.App', 'owner': None})
+        assert settings_apps.is_removable({'owner': 'vim', 'backend': 'apk'})
+        assert settings_apps.is_removable(
+            {'owner': 'vim', 'backend': 'pacman'})
+        assert not settings_apps.is_removable(
+            {'owner': 'vim', 'backend': 'apt'})
+        assert not settings_apps.is_removable(
+            {'owner': 'phoc', 'backend': 'apk'})
+        assert not settings_apps.is_removable(
+            {'owner': None, 'backend': 'apk'})
+
+        infos = {
+            'flat.desktop': {'flatpak': 'org.example.App', 'owner': None,
+                             'backend': 'flatpak'},
+            'vim.desktop': {'flatpak': None, 'owner': 'vim',
+                            'backend': 'apt'},
+        }
+        monkeypatch.setattr(settings_apps, 'resolve_owner_for_entry',
+                            lambda entry: infos[entry.app_id])
+        monkeypatch.setattr(settings_apps, '_PACKAGES', {})
+        monkeypatch.setattr(settings_apps, '_REMOVABLE', {})
+        filled = []
+        monkeypatch.setattr(settings_apps, 'ui', SimpleNamespace(
+            row=lambda title, subtitle, on_activate=None: (title, subtitle),
+            fill=lambda box, rows, hide_empty=False: filled.append(rows)))
+        monkeypatch.setattr(settings_apps, '_run_bg',
+                            lambda work, done: done(work()))
+        entries = [SimpleNamespace(app_id=app_id, name=app_id.split('.')[0])
+                   for app_id in infos]
+        win = SimpleNamespace(
+            app_index=SimpleNamespace(entries=entries),
+            config=SimpleNamespace(label_for=lambda app_id, name: name))
+        section = settings_apps.AppsSection()
+        section._list_box = object()
+        section.refresh(win)
+        assert filled[0] == []
+        assert filled[-1] == [('flat', 'Flatpak · org.example.App')]
+
     def test_protected_parity_with_helper(self):
         import settings_apps
         corpus = ['vim', 'htop', 'firefox', 'org.example.App'] + PROTECTED

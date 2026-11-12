@@ -247,9 +247,15 @@ def _refresh_apps(win) -> None:
 
 # ------------------------------------------------------------------ section
 
-# app_id -> package subtitle ('' when nothing owns the desktop file),
-# filled once per app by a settings worker: owner lookups shell out.
+# app_id -> package subtitle ('' when nothing owns the desktop file) and
+# app_id -> whether a tap can remove it, filled once per app by a
+# settings worker: owner lookups shell out.
 _PACKAGES: dict = {}
+_REMOVABLE: dict = {}
+
+# Distro backends whose removals the helper runs. apt has none (dpkg is
+# lookup only), so on FuriOS and Mobian only Flatpak apps are listed.
+REMOVAL_BACKENDS = ('apk', 'pacman')
 
 
 def package_subtitle(info) -> str:
@@ -262,22 +268,36 @@ def package_subtitle(info) -> str:
     return str(info.get('owner') or '')
 
 
+def is_removable(info) -> bool:
+    """True when tapping the app's row can uninstall it: a Flatpak, or
+    a non-protected package of a backend the helper removes from."""
+    if not isinstance(info, dict):
+        return False
+    if info.get('flatpak'):
+        return True
+    owner = info.get('owner')
+    return bool(owner) and info.get('backend') in REMOVAL_BACKENDS \
+        and not is_protected(owner)
+
+
 def lookup_packages(entries) -> dict:
-    """(Blocking: worker only.) Package subtitles for apps not cached."""
+    """(Blocking: worker only.) {app_id: (subtitle, removable)} for apps
+    not cached."""
     found = {}
     for entry in entries:
         app_id = getattr(entry, 'app_id', None)
         if not app_id or app_id in _PACKAGES:
             continue
         try:
-            found[app_id] = package_subtitle(resolve_owner_for_entry(entry))
+            info = resolve_owner_for_entry(entry)
+            found[app_id] = (package_subtitle(info), is_removable(info))
         except Exception:
-            found[app_id] = ''
+            found[app_id] = ('', False)
     return found
 
 
 class AppsSection(settings_page._Section):
-    """Settings section: the installed-apps list; a tap starts the
+    """Settings section: the removable installed apps; a tap starts the
     uninstall flow for that app."""
 
     key = 'apps'
@@ -309,7 +329,9 @@ class AppsSection(settings_page._Section):
     def _on_packages(self, win, found) -> None:
         self._looking = False
         if isinstance(found, dict):
-            _PACKAGES.update(found)
+            for app_id, (subtitle, removable) in found.items():
+                _PACKAGES[app_id] = subtitle
+                _REMOVABLE[app_id] = removable
         self._render(win)
 
     def _render(self, win) -> None:
@@ -319,10 +341,13 @@ class AppsSection(settings_page._Section):
             entries = list(win.app_index.entries)
         except Exception:
             entries = []
+        # Only rows a tap can act on: apps not looked up yet, protected
+        # packages and apt packages (no removal path) have no row.
         rows = [ui.row(_display_name(win, entry),
                        _PACKAGES.get(getattr(entry, 'app_id', ''), ''),
                        on_activate=lambda r, e=entry: begin_uninstall(
                            win, r, e))
-                for entry in entries]
-        # Nothing indexed yet: the card hides instead of saying so.
+                for entry in entries
+                if _REMOVABLE.get(getattr(entry, 'app_id', ''))]
+        # Nothing removable: the card hides instead of saying so.
         ui.fill(self._list_box, rows, hide_empty=True)
