@@ -6,7 +6,7 @@ set -eu
 pacman -Syu --noconfirm --needed \
     git rsync sudo which base-devel \
     python python-pip python-gobject python-cairo python-pytest shellcheck \
-    gtk4 libadwaita gtk4-layer-shell gobject-introspection libnotify \
+    gtk4 libadwaita gtk4-layer-shell gobject-introspection libnotify polkit \
     gstreamer gst-plugins-base gst-plugins-good \
     dbus nftables util-linux xorg-server-xvfb xorg-xauth tzdata \
     rust \
