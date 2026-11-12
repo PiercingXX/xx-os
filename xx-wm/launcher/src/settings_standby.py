@@ -173,9 +173,25 @@ class StandbySection(settings_page._Section):
             'Caffeine turns off', '',
             lambda r: self._pick_caffeine(win, r))
         self._render_suspend(win)
-        return ui.group(
+        built = ui.group(
             'Automatic suspend', [self._suspend_box, self._caffeine_box],
             note=SUSPEND_NOTE)
+        self._hide_suspend_if_unsupported(built[2])
+        return built
+
+    def _hide_suspend_if_unsupported(self, note) -> None:
+        """No suspend row where logind cannot suspend (FuriOS sets
+        AllowSuspend=no); Caffeine stays."""
+        def _done(value) -> None:
+            if value in ('no', 'na'):
+                for widget in (getattr(self, '_suspend_box', None), note):
+                    if widget is not None:
+                        widget.set_visible(False)
+        try:
+            from power_menu import query_can_suspend_async
+            query_can_suspend_async(_done)
+        except Exception:
+            log_exc('settings_standby: CanSuspend probe')
 
     def _render_suspend(self, win) -> None:
         secs = suspend_after(win)

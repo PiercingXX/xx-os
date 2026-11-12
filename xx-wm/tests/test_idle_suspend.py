@@ -495,6 +495,30 @@ class TestController:
         timers.fire(45)
         assert len(rec['suspends']) == 2
 
+    @pytest.mark.parametrize('value', ['no', 'na'])
+    def test_logind_that_cannot_suspend_arms_nothing(self, value):
+        """FuriOS sets AllowSuspend=no: no RTC wake, no Suspend call, no
+        retry loop; the next blank asks logind again."""
+        asked = []
+        ctl, timers, rec, state = _controller(
+            can_suspend=lambda cb: (asked.append(1), cb(value)),
+            rtc_wake=lambda epoch, cb: rec['rtc'].append(epoch))
+        state['alarm'] = auto_suspend.AlarmInfo(
+            True, 1_000_000 + 3600_000, False)
+        ctl.note_blank(True)
+        timers.fire(60)
+        assert asked == [1] and rec['clock_calls'] == 0
+        assert rec['suspends'] == [] and rec['rtc'] == []
+        assert timers.delays() == []
+
+    @pytest.mark.parametrize('value', ['yes', 'challenge', None])
+    def test_logind_that_can_suspend_goes_ahead(self, value):
+        ctl, timers, rec, _st = _controller(
+            can_suspend=lambda cb: cb(value))
+        ctl.note_blank(True)
+        timers.fire(60)
+        assert len(rec['suspends']) == 1
+
     def test_resume_while_blank_waits_grace_and_checks_modem(self):
         ctl, timers, rec, _st = _controller()
         ctl.note_blank(True)

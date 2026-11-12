@@ -459,6 +459,7 @@ class AutoSuspendController:
                  modem_check: Callable[[], None] = modem_alive_check_async,
                  rtc_wake: Callable | None = None,
                  rtc_clear: Callable[[], None] | None = None,
+                 can_suspend: Callable | None = None,
                  timeout_add: Callable | None = None,
                  source_remove: Callable | None = None,
                  wall_ms: Callable[[], int] | None = None) -> None:
@@ -476,6 +477,8 @@ class AutoSuspendController:
         self._rtc_wake = rtc_wake
         self._rtc_clear = rtc_clear
         self._rtc_armed = False
+        self._can_suspend = can_suspend
+        self._cannot_logged = False
         self._timeout_add = timeout_add
         self._source_remove = source_remove
         self._wall_ms = wall_ms or (lambda: int(time.time() * 1000))
@@ -573,6 +576,30 @@ class AutoSuspendController:
                 or not suspend_after_secs(self._config):
             return
         gen = self._gen
+        if self._can_suspend is None:
+            self._check_clock(gen)
+            return
+        try:
+            self._can_suspend(lambda value: self._on_can_suspend(gen, value))
+        except Exception as exc:
+            _log.warning('CanSuspend probe raised: %s', exc)
+            self._check_clock(gen)
+
+    def _on_can_suspend(self, gen: int, value: str | None) -> None:
+        """logind's CanSuspend before anything is armed: 'no' or 'na'
+        (FuriOS sets AllowSuspend=no) ends the attempt with no RTC wake
+        and no retry; the next blank asks again. Unknown (None) tries."""
+        if gen != self._gen:
+            return
+        if value in ('no', 'na'):
+            if not self._cannot_logged:
+                self._cannot_logged = True
+                _log.info('auto-suspend: logind cannot suspend here '
+                          '(CanSuspend=%s); not suspending', value)
+            return
+        self._check_clock(gen)
+
+    def _check_clock(self, gen: int) -> None:
         try:
             self._query_clock(lambda alarm: self._decide(gen, alarm))
         except Exception as exc:

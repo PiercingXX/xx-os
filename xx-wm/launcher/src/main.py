@@ -635,6 +635,7 @@ class XXWMApplication(Adw.Application):
             _log.warning('screensaver service unavailable: %s', exc)
         try:
             from auto_suspend import AutoSuspendController, HelperRtcWake
+            from power_menu import query_can_suspend_async
             shell = self._shell
             rtc = HelperRtcWake()
             self._auto_suspend = AutoSuspendController(
@@ -647,6 +648,7 @@ class XXWMApplication(Adw.Application):
                 debug_clients=self._xxdb_clients,
                 rtc_wake=rtc.arm,
                 rtc_clear=rtc.clear,
+                can_suspend=query_can_suspend_async,
             )
         except Exception as exc:
             _log.warning('automatic suspend unavailable: %s', exc)
