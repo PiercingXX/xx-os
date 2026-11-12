@@ -472,14 +472,17 @@ class TestIpcGatedWhileLocked:
 
     def test_gesture_home_and_back_while_unlocked(self):
         app, calls = _app_with_shell(locked=False)
-        app._shell._back_layer = types.SimpleNamespace(
-            flash_back=lambda v: calls.append(('flash', v)))
         app._on_ipc_command('gesture.home')
         assert ('home', 'home') in calls
         assert 'over-apps' in calls
         app._on_ipc_command('gesture.back')
         assert 'back' in calls
-        assert ('flash', True) in calls
+
+    def test_back_draws_no_arrow_overlay(self):
+        # Minimal rule: back acts, it does not flash a HUD.
+        src = Path(main.__file__).read_text(encoding='utf-8')
+        assert 'back_gesture' not in src
+        assert not (Path(main.__file__).parent / 'back_gesture.py').exists()
 
 
 class TestIpcPageHome:

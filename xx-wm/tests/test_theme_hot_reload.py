@@ -262,21 +262,21 @@ class TestReloadFanOut:
     def test_retheme_reaches_every_constructed_surface(self):
         shade, dialer_s, call_ui_s, call_bar, menu = (
             RecordingSurface() for _ in range(5))
-        switcher, lock, back = (RecordingSurface() for _ in range(3))
+        switcher, lock = (RecordingSurface() for _ in range(2))
         hud, app_menu = RecordingSurface(), RecordingSurface()
         app = types.SimpleNamespace(_hud=hud, _power_menu=app_menu)
         shell = types.SimpleNamespace(
             config=_config_with(theme='custom', custom_background='#2A1018'),
             _shade=shade, _dialer=dialer_s, _call_ui=call_ui_s,
             _call_bar=call_bar, _power_menu=menu,
-            _switcher=switcher, _lock_screen=lock, _back_layer=back,
+            _switcher=switcher, _lock_screen=lock,
             get_application=lambda: app,
         )
         window.ShellWindow._retheme_surfaces(shell)
         expected = window.resolve_theme(shell.config)
         assert expected.background == '#2A1018'
         for surf in (shade, dialer_s, call_ui_s, call_bar, menu,
-                     switcher, lock, back, hud, app_menu):
+                     switcher, lock, hud, app_menu):
             assert surf.applied == [expected]
 
     def test_retheme_skips_surfaces_never_constructed(self):
@@ -284,7 +284,7 @@ class TestReloadFanOut:
             config=_config_with(theme='ocean'),
             _shade=None, _dialer=None, _call_ui=None,
             _call_bar=None, _power_menu=None,
-            _switcher=None, _lock_screen=None, _back_layer=None,
+            _switcher=None, _lock_screen=None,
             get_application=lambda: None,
         )
         # Must be a silent no-op, never an AttributeError.

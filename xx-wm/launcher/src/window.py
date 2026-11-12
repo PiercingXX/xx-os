@@ -731,7 +731,6 @@ class ShellWindow(Adw.ApplicationWindow):
         self._switcher: object | None = None
         self._dialer: object | None = None
         self._power_menu: object | None = None
-        self._back_layer: object | None = None
         # Top status bar (status_bar.py), built by main._show_shell on a
         # layer-shell compositor; fed by the clock/status ticks below.
         self._status_bar: object | None = None
@@ -1564,7 +1563,7 @@ class ShellWindow(Adw.ApplicationWindow):
         return _home(self)._launch_slot(slot)
 
     def _handle_back(self) -> None:
-        """Called by BackGestureLayer on edge swipe from either side."""
+        """The back gesture (lisgd edge swipe, gesture.back over IPC)."""
         import subprocess
         # An open sheet closes first, like Android's back on a sheet.
         host = getattr(self, '_sheet_host', None)
@@ -2854,9 +2853,6 @@ class ShellWindow(Adw.ApplicationWindow):
         lock = getattr(self, '_lock_screen', None)
         if lock is not None:
             lock.apply_theme(preset)
-        back = getattr(self, '_back_layer', None)
-        if back is not None:
-            back.apply_theme(preset)
         bar = getattr(self, '_status_bar', None)
         if bar is not None:
             bar.apply_theme(preset)

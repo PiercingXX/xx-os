@@ -489,12 +489,6 @@ class XXWMApplication(Adw.Application):
         capture.set_blanked(False)
         self._wire_usage_lock()
 
-        # Arrow overlay for back gesture feedback (lisgd fires gesture.back via IPC)
-        from back_gesture import BackGestureLayer
-        back = BackGestureLayer(config=self._shell.config)
-        back.set_application(self)
-        self._shell._back_layer = back
-
         self._start_status_bar()
         self._start_bottom_gesture()
         self._start_desk()
@@ -1005,9 +999,6 @@ class XXWMApplication(Adw.Application):
                 GLib.idle_add(switcher.hide_switcher)
         elif command == 'gesture.back':
             GLib.idle_add(self._shell._handle_back)
-            back = getattr(self._shell, '_back_layer', None)
-            if back:
-                GLib.idle_add(back.flash_back, True)
         elif command == 'gesture.home':
             GLib.idle_add(lambda: self._shell.go_home() if self._shell else None)
         elif command == 'gesture.shade':

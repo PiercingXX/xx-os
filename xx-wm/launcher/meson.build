@@ -48,7 +48,6 @@ install_data(
     'src/app_standby.py',
     'src/app_switcher.py',
     'src/auto_suspend.py',
-    'src/back_gesture.py',
     'src/bottom_gesture.py',
     'src/backup.py',
     'src/banner.py',

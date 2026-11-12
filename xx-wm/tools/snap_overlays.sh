@@ -1,12 +1,12 @@
 #!/bin/sh
 # Render the shell overlay surfaces (recents, the shade in four states,
-# call UI, HUD, power menu, banner, back arrow) for every theme.
+# call UI, HUD, power menu, banner) for every theme.
 #   xx-wm/tools/snap_overlays.sh OUTDIR [theme ...]
 # Sibling of snap_shell.sh (part 1): same seeded temp HOME, first boot
 # done, same hermetic Broadway rig. Full-screen surfaces must be exactly
 # the snap size (360x720; SNAP_SIZE=450x1000 renders the FLX1) with zero
-# `snap: WARNING`s or the run fails (SNAP_TEXT_SCALE=1.5 seeds large text); the HUD/banner/back
-# arrow are small overlay windows captured at their natural size (their
+# `snap: WARNING`s or the run fails (SNAP_TEXT_SCALE=1.5 seeds large text); the HUD/banner
+# are small overlay windows captured at their natural size (their
 # expected sizes are asserted instead). One labeled sheet per surface.
 set -u
 REPO=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -230,15 +230,9 @@ b.show_notification(7, 'Signal', 'Dinner at 7?', 'Running late, order without me
 win.set_visible(False)
 EOF
 
-nav back-arrow <<EOF
-from gi.repository import GLib
-GLib.timeout_add(800, lambda: (win._back_layer.flash_back(True), False)[1])
-win.set_visible(False)
-EOF
-
 # shot -> minimum expected size (WxH). Full-screen surfaces must be exactly
 # the snap size; overlay pills just need a sane non-empty window.
-SHOTS="recents-empty:$SIZE recents-cards:$SIZE shade:$SIZE shade-expanded:$SIZE shade-empty:$SIZE shade-long:$SIZE call-incoming:$SIZE call-active:$SIZE power:$SIZE hud-volume:100x40 banner:200x60 back-arrow:40x40"
+SHOTS="recents-empty:$SIZE recents-cards:$SIZE shade:$SIZE shade-expanded:$SIZE shade-empty:$SIZE shade-long:$SIZE call-incoming:$SIZE call-active:$SIZE power:$SIZE hud-volume:100x40 banner:200x60"
 RECENTS_SLOW="recents-empty recents-cards"
 # SNAP_OVERLAYS_ONLY="shade shade-long" renders just those shots.
 if [ -n "${SNAP_OVERLAYS_ONLY:-}" ]; then

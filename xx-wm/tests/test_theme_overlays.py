@@ -16,12 +16,11 @@ from config import DESTRUCTIVE_TINT_BG, DANGER_RED, THEME_PRESETS
 from _theme_contract import assert_sheets_differ_by_preset, hardcoded_leftover
 
 # Fields each module's sheet interpolates, per its element inventory:
-# back_gesture/hud have no hint text (never touch muted); home_launcher's
+# hud has no hint text (never touch muted); home_launcher's
 # base button color was deleted to fall through to window.py's themed
 # .shell-root button color, so its own sheet only carries muted.
 FIELDS_PER_MODULE = {
     'app_switcher': ('foreground', 'muted', 'surface'),
-    'back_gesture': ('foreground', 'surface'),
     'hud': ('foreground', 'surface'),
     'home_launcher': ('muted',),
 }
@@ -32,13 +31,11 @@ def _sheets():
     # Run-time import: sibling tests stub sys.modules['gi'] during pytest
     # collection; conftest restores the real modules before tests run.
     import app_switcher
-    import back_gesture
     import home_launcher
     import hud
 
     return {
         'app_switcher': app_switcher.theme_css,
-        'back_gesture': back_gesture.theme_css,
         'hud': hud.theme_css,
         'home_launcher': home_launcher.theme_css,
     }

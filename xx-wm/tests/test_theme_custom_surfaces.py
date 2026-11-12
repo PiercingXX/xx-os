@@ -3,7 +3,7 @@
 ``window.resolve_theme`` is the canonical preset resolver: theme == 'custom'
 derives background/surface shades from the stored ``custom_background`` and
 takes text/accent from the canonical preset by luminance (WS22/WS27). The
-main window routed through it in WS27; hud / app_switcher / back_gesture /
+main window routed through it in WS27; hud / app_switcher /
 quick_actions / lock_screen kept building their own snapshot and styling
 with the DEFAULT preset under custom themes. This file pins the fix: every
 one of those surfaces resolves its display preset through resolve_theme at
@@ -78,7 +78,7 @@ def _install_fake_gi() -> None:
     pango = types.ModuleType('gi.repository.Pango')
 
     def _require_version(namespace, version):
-        # window/notification_shade/back_gesture/lock_screen/hud probe
+        # window/notification_shade/lock_screen/hud probe
         # Gtk4LayerShell and treat ValueError as 'absent'.
         if namespace == 'Gtk4LayerShell':
             raise ValueError(f'{namespace} not available')
@@ -97,7 +97,6 @@ def _install_fake_gi() -> None:
 _install_fake_gi()
 
 import app_switcher  # noqa: E402  (needs fake gi modules installed first)
-import back_gesture  # noqa: E402
 import lock_screen  # noqa: E402
 import notification_shade  # noqa: E402
 import quick_actions  # noqa: E402
@@ -176,14 +175,12 @@ def _surface_with_config(cls, config):
 # module scope; hud is covered separately via the hud_mod fixture.
 SURFACES = [
     ('app_switcher', app_switcher.AppSwitcher),
-    ('back_gesture', back_gesture._ArrowOverlay),
     ('quick_actions', quick_actions.QuickActionsPanel),
     ('lock_screen', lock_screen.LockScreen),
 ]
 
 _MODULES = {
     'app_switcher': app_switcher,
-    'back_gesture': back_gesture,
     'quick_actions': quick_actions,
     'lock_screen': lock_screen,
 }
@@ -196,7 +193,6 @@ class TestCustomThemeReachesSurfaces:
     # tile surface arrives through the design-system sheet.
     _CUSTOM_FIELDS = {
         'app_switcher': ('surface', 'foreground'),
-        'back_gesture': ('surface', 'foreground'),
         'quick_actions': ('surface_alt', 'foreground'),
         'lock_screen': ('surface', 'foreground'),
     }
@@ -273,8 +269,7 @@ class TestConstructorBackCompat:
     parameter is optional and the no-arg call still binds."""
 
     def test_config_param_is_optional_everywhere(self):
-        for cls in (back_gesture.BackGestureLayer,
-                    app_switcher.AppSwitcher,
+        for cls in (app_switcher.AppSwitcher,
                     quick_actions.QuickActionsPanel):
             params = inspect.signature(cls.__init__).parameters
             assert 'config' in params, cls.__name__
@@ -288,21 +283,11 @@ class TestConstructorBackCompat:
     def test_surfaces_bind_with_no_args(self):
         # bind() validates a no-arg call against the real signature without
         # constructing GTK widgets (impossible headlessly).
-        inspect.signature(back_gesture.BackGestureLayer).bind()
         inspect.signature(app_switcher.AppSwitcher).bind()
         inspect.signature(quick_actions.QuickActionsPanel).bind()
 
     def test_hud_binds_with_no_args(self, hud_mod):
         inspect.signature(hud_mod.Hud).bind()
-
-    def test_arrow_overlay_keeps_positional_left(self):
-        # _ArrowOverlay(left) predates this slice; the added param must not
-        # break the positional call or BackGestureLayer's keyword pass.
-        params = inspect.signature(back_gesture._ArrowOverlay.__init__).parameters
-        assert list(params)[1] == 'left'
-        inspect.signature(back_gesture._ArrowOverlay).bind(True)
-        inspect.signature(back_gesture._ArrowOverlay).bind(
-            left=False, config=_config_with(theme='ocean'))
 
 
 class TestShadeThreadsConfigIntoPanel:
@@ -327,23 +312,12 @@ class TestApplyThemeSeam:
 
     def test_surfaces_expose_apply_theme(self):
         for cls in (app_switcher.AppSwitcher, lock_screen.LockScreen,
-                    back_gesture.BackGestureLayer, back_gesture._ArrowOverlay,
                     quick_actions.QuickActionsPanel):
             assert callable(getattr(cls, 'apply_theme', None)), cls.__name__
 
     def test_hud_exposes_apply_theme(self, hud_mod):
         assert callable(getattr(hud_mod.Hud, 'apply_theme', None))
         assert callable(getattr(hud_mod._HudWindow, 'apply_theme', None))
-
-    def test_back_layer_apply_theme_fans_to_arrows(self):
-        layer = back_gesture.BackGestureLayer.__new__(
-            back_gesture.BackGestureLayer)
-        left, right = _RecordingSurface(), _RecordingSurface()
-        layer._left_arrow = left
-        layer._right_arrow = right
-        layer.apply_theme(THEME_PRESETS['paper'])
-        assert left.applied == [THEME_PRESETS['paper']]
-        assert right.applied == [THEME_PRESETS['paper']]
 
 
 class _RecordingSurface:
