@@ -452,6 +452,55 @@ class TestTimezoneResult:
         assert wizard._tz_status.text == ''
         assert wizard._stack.visible_child_name is None
 
+    def test_second_failure_does_not_bounce_again(self):
+        wizard = types.SimpleNamespace(
+            _tz_status=_FakeLabel(),
+            _stack=_FakeStack(),
+        )
+        on_result = _first_boot().FirstBootWizard._on_timezone_result
+        on_result(wizard, False, 'denied')
+        assert wizard._stack.visible_child_name == 'timezone'
+        wizard._stack.visible_child_name = 'tour_swipe_up'
+        on_result(wizard, False, 'denied')
+        assert wizard._stack.visible_child_name == 'tour_swipe_up'
+
+    def test_system_zone_is_listed_first_and_kept(self, tmp_path):
+        fb = _first_boot()
+        zoneinfo = tmp_path / 'usr' / 'share' / 'zoneinfo' / 'Europe'
+        zoneinfo.mkdir(parents=True)
+        (zoneinfo / 'Vienna').write_text('')
+        link = tmp_path / 'localtime'
+        link.symlink_to(zoneinfo / 'Vienna')
+        zone = fb.system_timezone(str(link), str(tmp_path / 'missing'))
+        assert zone == 'Europe/Vienna'
+        choices = fb.timezone_choices(zone)
+        assert choices[0] == 'Europe/Vienna'
+        assert fb.timezone_choices('UTC').count('UTC') == 1
+        assert fb.timezone_choices(None)[0] == 'UTC'
+
+    def test_done_on_the_system_zone_sets_nothing(self, monkeypatch):
+        fb = _first_boot()
+        calls = []
+        monkeypatch.setattr(fb, 'set_timezone_async',
+                            lambda tz, on_done=None: calls.append(tz))
+
+        class _Row:
+            def get_index(self):
+                return 0
+
+        config = types.SimpleNamespace(data={}, save=lambda: None)
+        wizard = types.SimpleNamespace(
+            _tz_list=types.SimpleNamespace(get_selected_row=lambda: _Row()),
+            _tz_choices=['Europe/Vienna', 'UTC'],
+            _system_tz='Europe/Vienna',
+            _config=config,
+            _advance_tour=lambda: None,
+            _on_timezone_result=lambda ok, msg: None,
+        )
+        fb.FirstBootWizard._on_finish(wizard, None)
+        assert calls == []
+        assert config.data['setup_complete'] is True
+
     def test_no_silent_timedatectl_or_gsettings_left(self):
         src = (SRC / 'first_boot.py').read_text(encoding='utf-8')
         assert 'timedatectl' not in src

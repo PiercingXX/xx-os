@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import gi
 from collections.abc import Callable
 
@@ -241,6 +243,36 @@ _TIMEZONES = [
     'America/Los_Angeles', 'Europe/London', 'Europe/Berlin', 'Europe/Paris',
     'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Kolkata', 'Australia/Sydney',
 ]
+
+
+
+def system_timezone(localtime: str = '/etc/localtime',
+                    timezone_file: str = '/etc/timezone') -> str | None:
+    """The zone the system already runs in (the installer usually set it),
+    or None when it cannot be read."""
+    try:
+        target = os.path.realpath(localtime)
+        marker = '/zoneinfo/'
+        if marker in target:
+            zone = target.split(marker, 1)[1]
+            if zone and not zone.startswith(('posix/', 'right/')):
+                return zone
+    except OSError:
+        pass
+    try:
+        with open(timezone_file, encoding='utf-8') as fh:
+            zone = fh.read().strip()
+        return zone or None
+    except OSError:
+        return None
+
+
+def timezone_choices(current: str | None) -> list[str]:
+    """The system zone first and preselected, then the common zones."""
+    if not current:
+        return list(_TIMEZONES)
+    return [current] + [tz for tz in _TIMEZONES if tz != current]
+
 
 _TIMEDATE1 = 'org.freedesktop.timedate1'
 _TIMEDATE1_PATH = '/org/freedesktop/timedate1'
@@ -933,7 +965,9 @@ class FirstBootWizard(Gtk.Window):
         self._tz_list = Gtk.ListBox()
         self._tz_list.add_css_class('tz-list')
         self._tz_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        for tz in _TIMEZONES:
+        self._system_tz = system_timezone()
+        self._tz_choices = timezone_choices(self._system_tz)
+        for tz in self._tz_choices:
             label = Gtk.Label(label=tz, xalign=0)
             self._tz_list.append(label)
         self._tz_list.select_row(self._tz_list.get_row_at_index(0))
@@ -1288,11 +1322,14 @@ class FirstBootWizard(Gtk.Window):
 
     def _on_finish(self, _btn: Gtk.Button) -> None:
         row = self._tz_list.get_selected_row()
-        tz = _TIMEZONES[row.get_index() if row is not None else 0]
+        tz = self._tz_choices[row.get_index() if row is not None else 0]
         # Setup is durable from here even if the walkthrough is skipped
         self._config.data['setup_complete'] = True
         self._config.save()
         self._advance_tour()
+        if tz == getattr(self, '_system_tz', None):
+            # Already the system zone: nothing to set, nothing to fail.
+            return
         # timedate1 answers asynchronously, so the wizard moves on while the
         # zone lands in the background. The keyboard layout was applied
         # on its own step, before the PIN.
@@ -1306,6 +1343,11 @@ class FirstBootWizard(Gtk.Window):
             return
         from shell_log import get_logger
         get_logger('first_boot').warning('SetTimezone failed: %s', message)
+        # Page back once with the installer pointer; a second Done goes on,
+        # or a zone the wizard cannot set would loop forever.
+        if getattr(self, '_tz_failed', False):
+            return
+        self._tz_failed = True
         try:
             self._tz_status.set_text(_TIMEZONE_FAILURE_MESSAGE)
             self._stack.set_visible_child_name('timezone')
