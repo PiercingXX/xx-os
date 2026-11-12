@@ -43,17 +43,6 @@ class TestCreateCallParams:
         (props,) = params.unpack()
         assert props['number'] == '+15550001111'
 
-    def test_sms_params_build_under_real_glib(self):
-        import modem_monitor
-        params = modem_monitor.sms_create_params(
-            '+15550001111', 'line1\nline2, still one message',
-            glib=_real_glib())
-        assert params.get_type_string() == '(a{sv})'
-        (props,) = params.unpack()
-        assert dict(props) == {'number': '+15550001111',
-                               'text': 'line1\nline2, still one message'}
-
-
 class TestOtherASVCallSites:
     def test_openuri_portal_params(self, monkeypatch, tmp_path):
         import capture

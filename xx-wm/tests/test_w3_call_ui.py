@@ -1,11 +1,10 @@
-"""W3 call UI + call audio (snapshot surface, ringer, proximity, dialer).
+"""W3 call UI + call audio (snapshot surface, ringer, proximity).
 
-Headless: real widgets are never constructed. call_ui/modem_monitor/dialer/
+Headless: real widgets are never constructed. call_ui/modem_monitor/
 window/display_manager are imported against a minimal fake gi stack (the
 test_call_ui_flow idiom) and driven as unbound methods on hand-built
 namespaces or __new__ instances with fake labels/stacks/buses.
 """
-import inspect
 import logging
 import sys
 import types
@@ -67,7 +66,6 @@ _install_fake_gi()
 
 import call_ui  # noqa: E402  (needs fake gi modules installed first)
 import modem_monitor  # noqa: E402
-import dialer  # noqa: E402
 import display_manager  # noqa: E402
 
 # window is imported with the test_w2_lock save/restore idiom: sibling
@@ -1027,94 +1025,6 @@ class TestProximity:
         with caplog.at_level(logging.WARNING):
             ui._on_dtmf_clicked(None, '5')
         assert any('DTMF' in r.getMessage() for r in caplog.records)
-
-
-def _make_dialer():
-    d = dialer.Dialer.__new__(dialer.Dialer)
-    d._digits = ''
-    d._suppress_zero_click = False
-    d._display = FakeLabel()
-    d._status = FakeLabel()
-    d._contact_book = types.SimpleNamespace(search=lambda *a, **k: [])
-    d._suggestions = types.SimpleNamespace(
-        set_visible=lambda v: None, get_first_child=lambda: None)
-    return d
-
-
-class TestDialerZeroLongpress:
-    def test_empty_longpress_enters_plus(self):
-        d = _make_dialer()
-        dialer.Dialer._on_zero_longpress(d, None, 0.0, 0.0)
-        assert d._digits == '+'
-        assert d._suppress_zero_click is True
-
-    def test_release_click_after_hold_suppressed_once(self):
-        d = _make_dialer()
-        dialer.Dialer._on_zero_longpress(d, None, 0.0, 0.0)
-        dialer.Dialer._on_digit(d, None, '0')
-        assert d._digits == '+'
-        dialer.Dialer._on_digit(d, None, '0')
-        assert d._digits == '+0'
-
-    def test_nonempty_longpress_appends_plus(self):
-        d = _make_dialer()
-        d._digits = '011'
-        dialer.Dialer._on_zero_longpress(d, None, 0.0, 0.0)
-        assert d._digits == '011+'
-
-    def test_plus_survives_display_format(self, monkeypatch):
-        import xx_phone
-        monkeypatch.setattr(xx_phone, 'user_country', lambda *a: 'US')
-        d = _make_dialer()
-        shown = dialer.Dialer._format_number(d, '+15550001111')
-        assert shown == xx_phone.as_you_type('+15550001111', 'US')
-        assert shown.startswith('+')
-
-
-class TestDialerNumberDisplay:
-    """Shell keypad entry reads through xx_phone; saved names win."""
-
-    def test_keypad_groups_through_xx_phone(self, monkeypatch):
-        import xx_phone
-        monkeypatch.setattr(xx_phone, 'user_country', lambda *a: 'US')
-        d = _make_dialer()
-        assert (dialer.Dialer._format_number(d, '6145550142')
-                == xx_phone.as_you_type('6145550142', 'US') == '(614) 555-0142')
-        assert (dialer.Dialer._format_number(d, '5550142')
-                == xx_phone.as_you_type('5550142', 'US') == '555-0142')
-        assert dialer.Dialer._format_number(d, '911') == '911'
-        assert dialer.Dialer._format_number(d, '') == ''
-
-    def test_country_lookup_stays_off_dbus(self, monkeypatch):
-        import xx_phone
-        seen: list = []
-
-        def _capture(*args):
-            seen.append(args)
-            return 'US'
-
-        monkeypatch.setattr(xx_phone, 'user_country', _capture)
-        monkeypatch.setattr(xx_phone, '_auto_sources',
-                            lambda: (_ for _ in ()).throw(
-                                AssertionError('must not hit D-Bus')))
-        d = _make_dialer()
-        dialer.Dialer._format_number(d, '6145550142')
-        assert seen == [("", "")]
-
-    def test_format_falls_back_to_raw(self, monkeypatch):
-        import xx_phone
-
-        def _boom(digits, country=None):
-            raise RuntimeError('no engine')
-
-        monkeypatch.setattr(xx_phone, 'as_you_type', _boom)
-        d = _make_dialer()
-        assert dialer.Dialer._format_number(d, '6145550142') == '6145550142'
-
-    def test_swipe_to_close_lives_on_header_only(self):
-        src = inspect.getsource(dialer.Dialer._build)
-        assert 'header.add_controller(swipe)' in src
-        assert 'root.add_controller(swipe)' not in src
 
 
 class TestWindowWiring:

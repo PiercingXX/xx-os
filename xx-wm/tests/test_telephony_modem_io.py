@@ -1,10 +1,7 @@
-"""D-Bus modem I/O: voice/SMS operations and SMS history (W1 telephony).
+"""D-Bus modem I/O: voice call placement (W1 telephony).
 
-Dialing and texting go through Voice.CreateCall + Call.Start,
-Messaging.Create + Sms.Send, and Messaging.List + Sms.GetAll directly —
-no mmcli output scraping, so multi-line SMS bodies survive intact.
-contacts.load_sms_history prefers this path and only falls back to mmcli
-scraping (against the D-Bus-resolved modem) when the transport fails.
+Dialing goes through Voice.CreateCall + Call.Start directly, no mmcli
+output scraping. Texting belongs to TxxT.
 
 Fakes are reached through modem_monitor.GLib/Gio attributes, which the
 tests script explicitly: sibling modules install their own fake gi
@@ -47,7 +44,6 @@ def _install_fake_gi() -> None:
 _install_fake_gi()
 
 import modem_monitor  # noqa: E402  (needs fake gi modules installed first)
-import contacts  # noqa: E402
 
 _MM1 = 'org.freedesktop.ModemManager1'
 _VOICE_IFACE = 'org.freedesktop.ModemManager1.Modem.Voice'
@@ -154,133 +150,3 @@ class TestVoiceCreateAndStart:
         assert ok is False
         assert detail == 'rejected by modem'
         assert len(bus.sync_calls) == 1
-
-
-class TestMessagingCreateAndSend:
-    def test_create_then_send_preserves_multiline_text(self, monkeypatch):
-        bus = _script_bus(monkeypatch, [FakeReply((SMS1,)), FakeReply(())])
-        ok, path = modem_monitor.messaging_create_and_send(
-            '+15550001111', 'line1\nline2', modem=MODEM)
-        assert (ok, path) == (True, SMS1)
-        assert bus.sync_calls[0][:4] == (_MM1, MODEM, _MSG_IFACE, 'Create')
-        assert _props_arg(bus.sync_calls[0]) == {
-            'number': '+15550001111', 'text': 'line1\nline2'}
-        assert bus.sync_calls[1][:4] == (_MM1, SMS1, _SMS_IFACE, 'Send')
-
-    def test_send_failure_reports_detail(self, monkeypatch):
-        _script_bus(monkeypatch, [FakeReply((SMS1,)), Exception('no service')])
-        ok, detail = modem_monitor.messaging_create_and_send(
-            '+1', 'hi', modem=MODEM)
-        assert (ok, detail) == (False, 'no service')
-
-    def test_no_bus_reports_unavailable(self, monkeypatch):
-        monkeypatch.setattr(modem_monitor.Gio, 'bus_get_sync',
-                            lambda *a, **k: None)
-        assert modem_monitor.messaging_create_and_send('+1', 'hi',
-                                                       modem=MODEM) == \
-            (False, 'system bus unavailable')
-
-
-class TestMessagingList:
-    def _sms_props(self, number, text, pdu, timestamp='2026-10-01T10:00:00'):
-        return FakeReply({'Number': number, 'Text': text, 'PduType': pdu,
-                          'Timestamp': timestamp})
-
-    def test_list_returns_history_with_direction(self, monkeypatch):
-        bus = _script_bus(monkeypatch, [
-            FakeReply(([SMS1, SMS2],)),
-            self._sms_props('tel:+15550001111', 'line1\nline2', 1),
-            self._sms_props('+15550002222', 'out', 3),
-        ])
-        messages = modem_monitor.messaging_list(modem=MODEM)
-        assert bus.sync_calls[0][3] == 'List'
-        assert messages == [
-            {'number': '+15550001111', 'text': 'line1\nline2',
-             'outgoing': False, 'timestamp_iso': '2026-10-01T10:00:00'},
-            {'number': '+15550002222', 'text': 'out',
-             'outgoing': True, 'timestamp_iso': '2026-10-01T10:00:00'},
-        ]
-
-    def test_incomplete_records_skipped(self, monkeypatch):
-        _script_bus(monkeypatch, [
-            FakeReply(([SMS1, SMS2],)),
-            FakeReply({'Number': '', 'Text': 'no number'}),
-            self._sms_props('+15550002222', 'ok', 4),
-        ])
-        messages = modem_monitor.messaging_list(modem=MODEM)
-        assert [m['text'] for m in messages] == ['ok']
-
-    def test_transport_failure_returns_none(self, monkeypatch):
-        _script_bus(monkeypatch, [Exception('modem vanished')])
-        assert modem_monitor.messaging_list(modem=MODEM) is None
-
-    def test_no_bus_returns_none(self, monkeypatch):
-        monkeypatch.setattr(modem_monitor.Gio, 'bus_get_sync',
-                            lambda *a, **k: None)
-        assert modem_monitor.messaging_list(modem=MODEM) is None
-
-
-class _CompletedProcess:
-    def __init__(self, stdout):
-        self.stdout = stdout
-        self.stderr = ''
-        self.returncode = 0
-
-
-_LIST_SMS = ('        /org/freedesktop/ModemManager1/SMS/1 (received)\n'
-             '        /org/freedesktop/ModemManager1/SMS/2 (sent)\n')
-
-_SMS_DETAIL = (
-    '  ----------------------------------\n'
-    '  Content    |           number: +15550001111\n'
-    '             |             text: hello\n'
-    '             |        timestamp: 2026-10-01T10:00:00\n'
-    '             |         pdu type: deliver\n'
-)
-
-
-class TestContactsHistory:
-    def test_dbus_history_returned_directly(self, monkeypatch):
-        expected = [{'number': '+1', 'text': 'a\nb', 'outgoing': False,
-                     'timestamp_iso': ''}]
-        monkeypatch.setattr(modem_monitor, 'messaging_list',
-                            lambda modem=None, timeout_ms=0: expected)
-
-        def _boom(*a, **k):
-            raise AssertionError('mmcli must not run')
-
-        monkeypatch.setattr(contacts.subprocess, 'run', _boom)
-        assert contacts.load_sms_history() == expected
-
-    def test_mmcli_fallback_uses_resolved_modem(self, monkeypatch):
-        monkeypatch.setattr(modem_monitor, 'messaging_list',
-                            lambda modem=None, timeout_ms=0: None)
-        monkeypatch.setattr(contacts, '_resolve_mmcli_modem',
-                            lambda: MODEM)
-        calls = []
-
-        def _run(args, **kwargs):
-            calls.append(list(args))
-            if '--messaging-list-sms' in args:
-                return _CompletedProcess(_LIST_SMS)
-            return _CompletedProcess(_SMS_DETAIL)
-
-        monkeypatch.setattr(contacts.subprocess, 'run', _run)
-        messages = contacts.load_sms_history()
-        assert calls[0][:3] == ['mmcli', '-m', MODEM]
-        assert messages[0]['number'] == '+15550001111'
-        assert messages[0]['outgoing'] is False
-
-    def test_mmcli_fallback_uses_index_when_unresolvable(self, monkeypatch):
-        monkeypatch.setattr(modem_monitor, 'messaging_list',
-                            lambda modem=None, timeout_ms=0: None)
-        monkeypatch.setattr(contacts, '_resolve_mmcli_modem', lambda: None)
-        calls = []
-
-        def _run(args, **kwargs):
-            calls.append(list(args))
-            return _CompletedProcess('no sms\n')
-
-        monkeypatch.setattr(contacts.subprocess, 'run', _run)
-        assert contacts.load_sms_history() == []
-        assert calls[0][:3] == ['mmcli', '-m', '0']

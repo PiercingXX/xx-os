@@ -55,9 +55,8 @@ _MUSIC_CANDIDATES = [
     'org.gnome.Rhythmbox3',
     'org.gnome.Lollypop',
 ]
-# Phone/Text prefer the device's real telephony apps (GNOME Calls / Chatty —
-# what FuriOS and postmarketOS ship); the shell's built-in dialer is the
-# fallback so the pair always correlates with whatever stack actually works.
+# Phone/Text bind to the device's telephony apps: xx-dialer and TxxT, else
+# GNOME Calls / Chatty (what FuriOS and postmarketOS ship).
 _PHONE_CANDIDATES = ['io.piercingxx.XXDialer', 'org.gnome.Calls', 'sm.puri.Calls']
 _TEXT_CANDIDATES = ['io.piercingxx.TxxT', 'sm.puri.Chatty', 'org.gnome.Chats']
 _EMAIL_CANDIDATES = ['io.piercingxx.XXEmail', 'org.gnome.Geary', 'org.gnome.Evolution']
@@ -192,7 +191,9 @@ class DefaultLayoutResolver:
     def resolve_comms_folder(self) -> dict | None:
         phone = self._app_member('Phone', _PHONE_CANDIDATES)
         if phone is None:
-            phone = {'label': 'Phone', 'app_id': None, 'cmd': None}  # built-in dialer
+            # Resolved at launch (window._open_dialer), so a Phone app
+            # installed later still opens.
+            phone = {'label': 'Phone', 'app_id': None, 'cmd': None}
         children = [phone]
         text = self._app_member('Text', _TEXT_CANDIDATES)
         if text:
@@ -255,6 +256,13 @@ def seed_default_layout(config, resolver: DefaultLayoutResolver | None = None) -
         return existing
     resolver = resolver or DefaultLayoutResolver()
     return resolver.resolve_slots()
+
+
+def phone_app_id(find_desktop: Callable[[str], str | None] | None = None,
+                 ) -> str | None:
+    """Desktop id of the installed Phone app, or None."""
+    return DefaultLayoutResolver(find_desktop=find_desktop)._first(
+        _PHONE_CANDIDATES)
 
 
 def apply_default_layout(config, gestures=None, resolver: DefaultLayoutResolver | None = None) -> None:

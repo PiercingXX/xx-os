@@ -95,7 +95,6 @@ class WizardTelephony:
         self._call_ui = None
         self._call_bar = None
         self._display_mgr = None
-        self._dialer = None
         self._calls_owner_warned = False
         self._chatty_owner_warned = False
         self._txtt_owner_warned = False

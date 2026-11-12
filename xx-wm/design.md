@@ -12,7 +12,7 @@ Text-first. No icon grids, no app icons on home. Low visual noise, local-only cu
 - Default layout (seeded on first boot, never overwrites user config):
   - **Notes** → daily note (`piercing-note` via piercing-dots, else first notes app)
   - **Audio** (folder) → Audiobook, Music
-  - **Comms** (folder) → Phone, Text, Email, Chat, SoftPhone. Phone and Text bind to the device's real telephony apps when installed (GNOME Calls / Chatty — the working stack on FuriOS and postmarketOS); the shell's built-in dialer is only the fallback, so the two always correlate with whatever stack actually places calls and texts on that device.
+  - **Comms** (folder) → Phone, Text, Email, Chat, SoftPhone. Phone and Text bind to the device's telephony apps: xx-dialer and TxxT, else GNOME Calls / Chatty (the stack FuriOS and postmarketOS ship). The shell has no dialer or SMS window of its own; a Phone slot with no app bound opens whichever Phone app is installed.
   - **Calendar**
   - **Tools** (folder) → browser (labeled with its own name), Calculator, Camera, Photos
   - Members that don't resolve to an installed app are skipped; empty folders are not created; slots compact (no gaps).
@@ -61,7 +61,7 @@ Every dialog and action menu the shell draws (long-press menus, rename entries, 
 | Gesture | Action |
 |---|---|
 | Swipe left on home | Launch the Swipe Left App (seeded: **Skippy**, resolved by app name — it installs as a PWA so its id varies; no app → Camera). Enable Swipe Left turns it off. |
-| Swipe right on home | Launch the Swipe Right App (seeded: Camera; no app → Dialer). Enable Swipe Right turns it off. |
+| Swipe right on home | Launch the Swipe Right App (seeded: Camera; no app → the Phone app). Enable Swipe Right turns it off. |
 | Swipe down on home | Swipe Down Action: Expand notifications, Web search, or Disabled |
 | Double-tap home | Lock the screen when Double Tap to Lock is on (off by default) |
 | Double-tap | Lock screen (kept on Linux — Android dropped it only because it needed the accessibility service) |
@@ -103,7 +103,7 @@ Versioned JSON export covering: home slots, folders + membership, pins, app rena
 
 XX-WM *is* the system UI, so the shell owns every surface beyond the launcher. These extend the same design language and already exist in `launcher/src/`:
 
-lock screen (6-digit PIN, fingerprint when hardware supports), notification shade + daemon, quick settings tiles, app switcher, call UI + dialer + SMS + contacts, first-boot wizard, power menu, volume HUD (in-shell; brightness has no HUD), virtual keyboard (xx-keyboard, built on Stevia, with the PiercingXX layouts; squeekboard as the fallback), display/power management.
+lock screen (6-digit PIN, fingerprint when hardware supports), notification shade + daemon, quick settings tiles, app switcher, call UI (calls are placed from the Phone app, texts live in TxxT), first-boot wizard, power menu, volume HUD (in-shell; brightness has no HUD), virtual keyboard (xx-keyboard, built on Stevia, with the PiercingXX layouts; squeekboard as the fallback), display/power management.
 
 ### Lock screen
 

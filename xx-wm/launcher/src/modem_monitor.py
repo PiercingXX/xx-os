@@ -508,15 +508,6 @@ def voice_call_params(number: str, glib=None):
     return glib.Variant('(a{sv})', ({'number': glib.Variant('s', number)},))
 
 
-def sms_create_params(number: str, text: str, glib=None):
-    """``(a{sv})`` params for Messaging.Create; same one-step rule."""
-    glib = glib if glib is not None else GLib
-    return glib.Variant('(a{sv})', ({
-        'number': glib.Variant('s', number),
-        'text': glib.Variant('s', text),
-    },))
-
-
 def voice_create_and_start(
     number: str, modem: str | None = None, timeout_ms: int = _IO_TIMEOUT_MS,
 ) -> tuple[bool, str]:
@@ -566,88 +557,12 @@ def _delete_created_call(bus, modem: str, call_path: str,
         pass
 
 
-def messaging_create_and_send(
-    number: str, text: str, modem: str | None = None,
-    timeout_ms: int = _IO_TIMEOUT_MS,
-) -> tuple[bool, str]:
-    """Create an SMS and Send it via D-Bus (no mmcli output scraping, so
-    multi-line text survives intact). Blocking: worker thread only."""
-    from shell_log import get_logger
-    bus = _sync_system_bus()
-    if bus is None:
-        return False, 'system bus unavailable'
-    modem = modem or resolve_modem_path(_MSG_IFACE)
-    if modem is None:
-        return False, 'no modem found'
-    try:
-        sms_path = bus.call_sync(
-            _MM1, modem, _MSG_IFACE, 'Create',
-            sms_create_params(number, text), None,
-            Gio.DBusCallFlags.NONE, timeout_ms, None,
-        ).unpack()[0]
-        bus.call_sync(
-            _MM1, str(sms_path), _SMS_IFACE, 'Send',
-            None, None, Gio.DBusCallFlags.NONE, timeout_ms, None,
-        )
-    except Exception as err:
-        detail = _err_message(err)
-        get_logger('modem_monitor').warning('SMS to %s failed: %s', number, detail)
-        return False, detail
-    return True, str(sms_path)
-
-
-_SMS_SUBMIT_PDUS = frozenset({3, 4})
 _SMS_STATE_RECEIVING = 2
 _SMS_RECEIVE_POLLS = 15
 _SMS_RECEIVE_POLL_MS = 2_000
 #: Messages the shell posted itself, remembered to drop a copy that
 #: ModemManager announces again (modem re-enable before the delete).
 _SMS_SEEN_MAX = 128
-
-
-def messaging_list(
-    modem: str | None = None, timeout_ms: int = _ENUM_TIMEOUT_MS,
-) -> list[dict] | None:
-    """Full SMS store via Messaging.List + per-message GetAll.
-
-    Returns the history list, or None on transport failure (so callers can
-    fall back to mmcli scraping). Blocking: worker thread only.
-    """
-    bus = _sync_system_bus()
-    if bus is None:
-        return None
-    modem = modem or resolve_modem_path(_MSG_IFACE)
-    if modem is None:
-        return None
-    try:
-        paths = bus.call_sync(
-            _MM1, modem, _MSG_IFACE, 'List',
-            None, None, Gio.DBusCallFlags.NONE, timeout_ms, None,
-        ).unpack()[0]
-        messages: list[dict] = []
-        for sms_path in paths:
-            props = dict(bus.call_sync(
-                _MM1, str(sms_path), _PROPS_IFACE, 'GetAll',
-                GLib.Variant('(s)', (_SMS_IFACE,)), None,
-                Gio.DBusCallFlags.NONE, timeout_ms, None,
-            ).unpack()[0])
-            number = _strip_tel(str(props.get('Number', '')))
-            text = str(props.get('Text', ''))
-            if not number or not text:
-                continue
-            try:
-                pdu = int(props.get('PduType', 0))
-            except (TypeError, ValueError):
-                pdu = 0
-            messages.append({
-                'number': number,
-                'text': text,
-                'outgoing': pdu in _SMS_SUBMIT_PDUS,
-                'timestamp_iso': str(props.get('Timestamp', '')),
-            })
-    except Exception:
-        return None
-    return messages
 
 
 class ModemMonitor:

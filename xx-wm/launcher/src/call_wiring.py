@@ -105,7 +105,7 @@ class CallWiring:
             # wired here — terminal paths stop themselves.
             win._call_ui = CallUI(config=win.config)
             win._call_ui.set_application(win.get_application())
-            # Same current-preset rule as _open_dialer.
+            # Lazy construction renders the CURRENT preset.
             win._call_ui.apply_theme(resolve_theme(win.config))
             try:
                 win._call_ui.set_lock_probe(win.is_locked)
@@ -685,13 +685,6 @@ class CallWiring:
         if getattr(win, '_end_reason_shown', None) == key:
             return
         win._end_reason_shown = key
-        dialer = getattr(win, '_dialer', None)
-        try:
-            if dialer is not None and dialer.get_visible():
-                dialer._set_status(text)
-                return
-        except Exception:
-            pass
         show = getattr(win, '_show_status', None)
         if callable(show):
             try:

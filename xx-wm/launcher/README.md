@@ -16,7 +16,7 @@ GTK4/libadwaita launcher + shell surfaces for Linux phones. Despite the "WM" nam
 - **Weather** (`weather.py`) — Open-Meteo current conditions, 15-min cache, silent offline fallback.
 - **System settings** (`system_settings.py`) — WiFi scan/connect (nmcli), Bluetooth scan/pair (BlueZ D-Bus), sound output picker (pactl), battery (UPower); the settings page is system-only — every shell preference lives in `~/.config/xx-wm/` (`../docs/config.md`).
 - **Backup** (`backup.py`) — versioned JSON export/restore with validate-before-write.
-- **Call UI / Dialer / SMS** (`call_ui.py`, `dialer.py`, `sms.py`) — mmcli/ModemManager telephony surfaces; dialer rows star contacts for DnD.
+- **Call UI** (`call_ui.py`, `call_wiring.py`, `modem_monitor.py`) — ModemManager call screen and in-call controls. Calls are placed from the Phone app (xx-dialer) and texts live in TxxT; `dialer.py` keeps only the call and emergency-call helpers the lock screen uses.
 - **First-boot wizard** (`first_boot.py`) — PIN, theme, timezone, then the interactive gesture walkthrough (replay with `xx-wm --welcome`).
 - **IPC server** (`ipc.py`) — Unix socket at `$XDG_RUNTIME_DIR/xx-wm.sock` (`lock`, `shade.*`, `switcher.*`, `gesture.*`, `welcome`, plus page-driving `page.home` / `page.apps` / `page.settings` and `settings.open[:section]` for rigs and scripts — no gesture timing needed; `settings.open` reuses the `open_settings(section)` deep-link).
 - **Modem monitor** (`modem_monitor.py`) — ModemManager DBus watcher for call events.

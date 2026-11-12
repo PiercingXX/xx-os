@@ -131,7 +131,6 @@ install_data(
     'src/shell_log.py',
     'src/sim_pin.py',
     'src/smart_lock.py',
-    'src/sms.py',
     'src/sound.py',
     'src/status_bar.py',
     'src/system_settings.py',

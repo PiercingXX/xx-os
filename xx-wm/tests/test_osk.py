@@ -55,12 +55,10 @@ def test_helper_owns_setvisible_and_attach():
 
 def test_wizard_and_sms_and_dialogs_use_the_helper():
     first_boot = (SRC / 'first_boot.py').read_text(encoding='utf-8')
-    sms = (SRC / 'sms.py').read_text(encoding='utf-8')
     actions = (SRC / 'app_item_actions.py').read_text(encoding='utf-8')
     window = (SRC / 'window.py').read_text(encoding='utf-8')
     assert 'from osk import attach' in first_boot
     assert 'KeyboardMode.NONE' in first_boot
-    assert 'from osk import attach' in sms
     assert 'from osk import attach' in actions
     assert 'from osk import attach' in window
     assert 'def _attach_osk' in window

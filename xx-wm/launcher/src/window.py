@@ -157,7 +157,7 @@ def _home_press_to_recents(win) -> bool:
             return False
     except Exception:
         return False
-    for attr in ('_switcher', '_shade', '_dialer'):
+    for attr in ('_switcher', '_shade'):
         try:
             surface = getattr(win, attr, None)
             if surface is not None and surface.get_visible():
@@ -729,7 +729,6 @@ class ShellWindow(Adw.ApplicationWindow):
         self._xxdb_pending_box = None
         self._shade: object | None = None
         self._switcher: object | None = None
-        self._dialer: object | None = None
         self._power_menu: object | None = None
         # Top status bar (status_bar.py), built by main._show_shell on a
         # layer-shell compositor; fed by the clock/status ticks below.
@@ -1546,17 +1545,12 @@ class ShellWindow(Adw.ApplicationWindow):
         return _home(self)._build_home_page()
 
     def _open_dialer(self) -> None:
-        from dialer import Dialer
-        if self._dialer and self._dialer.get_visible():
-            return
-        d = Dialer(dnd_state=self.dnd_state, config=self.config)
-        d.set_application(self.get_application())
-        # Lazy mid-session construction must render the CURRENT preset, not
-        # whatever the injected config resolved to at construction inside
-        # the surface (apply_theme() there is only a standalone fallback).
-        d.apply_theme(resolve_appearance_preset(self.config))
-        d.present()
-        self._dialer = d
+        """Open the Phone app (xx-dialer, else GNOME Calls); the shell
+        has no dialer window of its own."""
+        from default_layout import phone_app_id
+        app_id = phone_app_id()
+        if app_id:
+            self._launch_app_id(app_id)
 
     def _launch_slot(self, slot: dict) -> None:
         """Launch an app or command from a home slot."""
@@ -1590,11 +1584,7 @@ class ShellWindow(Adw.ApplicationWindow):
         if self._shade and self._shade.get_visible():
             self._shade.hide_shade()
             return
-        # 3. Close dialer if open
-        if self._dialer and self._dialer.get_visible():
-            self._dialer.close()
-            return
-        # 4. Navigate back within the shell stack
+        # Navigate back within the shell stack
         current = self.stack.get_visible_child_name()
         if current == 'settings':
             self._settings_back()
@@ -1866,7 +1856,7 @@ class ShellWindow(Adw.ApplicationWindow):
             if revealer is not None:
                 revealer.connect('notify::reveal-child',
                                  lambda *_a: self._sync_status_bar())
-            # Same current-preset rule as _open_dialer: the shade can be
+            # Lazy construction renders the CURRENT preset: the shade can be
             # built long after startup, under a hot-reloaded theme.
             self._shade.apply_theme(resolve_appearance_preset(self.config))
             # The docked top bar shows the shade's notification count.
@@ -1912,7 +1902,7 @@ class ShellWindow(Adw.ApplicationWindow):
             self._power_menu.set_application(self.get_application())
             self._power_menu.set_lock_host(
                 lambda: getattr(self, '_lock_screen', None))
-            # Same current-preset rule as _open_dialer.
+            # Lazy construction renders the CURRENT preset.
             self._power_menu.apply_theme(resolve_appearance_preset(self.config))
         self._power_menu.show_menu()
 
@@ -2841,11 +2831,11 @@ class ShellWindow(Adw.ApplicationWindow):
         already propagate display-wide via font_theme's global provider."""
         preset = resolve_appearance_preset(self.config)
         try:
-            surfaces = (self._shade, self._dialer, self._call_ui,
+            surfaces = (self._shade, self._call_ui,
                         self._call_bar, self._power_menu, self._switcher)
         except AttributeError:
             surfaces = tuple(getattr(self, attr, None) for attr in (
-                '_shade', '_dialer', '_call_ui', '_call_bar',
+                '_shade', '_call_ui', '_call_bar',
                 '_power_menu', '_switcher'))
         for surface in surfaces:
             if surface is not None:

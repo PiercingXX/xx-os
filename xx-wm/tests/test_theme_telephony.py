@@ -12,20 +12,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 
 from config import DESTRUCTIVE_TINT_BG, DANGER_RED, ON_DANGER_FG, THEME_PRESETS
 
-from _theme_contract import hardcoded_leftover, strip_palette
+from _theme_contract import hardcoded_leftover
 
 # Fields each module's sheet interpolates, per its element inventory:
-# dialer/call_ui have no bordered elements (never touch border); sms has no
-# hover states (never touch surface_alt).
+# call_ui has no bordered elements (never touch border).
 FIELDS_PER_MODULE = {
-    'dialer': (
-        'background', 'foreground', 'surface', 'surface_alt', 'muted', 'accent',
-    ),
     'call_ui': (
         'background', 'foreground', 'surface', 'surface_alt', 'muted', 'accent',
-    ),
-    'sms': (
-        'background', 'foreground', 'surface', 'border', 'muted', 'accent',
     ),
 }
 
@@ -39,13 +32,9 @@ def _sheets():
     # Run-time import: sibling test modules stub sys.modules['gi'] during
     # pytest collection; conftest restores the real modules before tests run.
     import call_ui
-    import dialer
-    import sms
 
     return {
-        'dialer': dialer.theme_css,
         'call_ui': call_ui.theme_css,
-        'sms': sms.theme_css,
     }
 
 
@@ -81,9 +70,6 @@ def test_white_literal_confined_to_call_ui_danger_pair() -> None:
     for key, preset in THEME_PRESETS.items():
         sheets = {name: theme_css(preset) for name, theme_css in _sheets().items()}
         assert ON_DANGER_FG.lower() in sheets['call_ui'].lower(), f'{key}/call_ui'
-        for name in ('dialer', 'sms'):
-            css = strip_palette(sheets[name], preset)
-            assert '#ffffff' not in css.lower(), f'{key}/{name}'
 
 
 def test_call_ui_keeps_semantic_danger_pair() -> None:

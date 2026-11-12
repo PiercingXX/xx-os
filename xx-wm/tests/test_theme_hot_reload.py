@@ -4,7 +4,7 @@ Editing ``~/.config/xx-wm/config.json`` is the advertised workflow
 (design.md "Themes": theme changes apply instantly; todo.md hot-reload
 item). The shell window owns the live ``ShellConfig`` and must propagate
 every reload past its own ``.shell-root``: the overlay surfaces (shade,
-call UI/bar, dialer, SMS view, power menu) draw outside ``.shell-root``
+call UI/bar, power menu) draw outside ``.shell-root``
 with their own display-level providers, so ``window._reload_config`` fans
 the freshly resolved preset out to each constructed surface.
 
@@ -86,10 +86,8 @@ _install_fake_gi()
 
 import window  # noqa: E402  (needs fake gi modules installed first)
 import call_ui  # noqa: E402
-import dialer  # noqa: E402
 import notification_shade  # noqa: E402
 import power_menu  # noqa: E402
-import sms  # noqa: E402
 
 # Leave the module cache as we found it: later test files (e.g.
 # test_keyboard_dismiss) import window under their own fake gi and rely on
@@ -209,9 +207,8 @@ class TestConstructorBackCompat:
     parameter is optional and the no-arg call still binds."""
 
     def test_config_param_is_optional_everywhere(self):
-        for cls in (call_ui.CallUI, call_ui.CallBar, dialer.Dialer,
-                    notification_shade.NotificationShade, power_menu.PowerMenu,
-                    sms.SMSConversation):
+        for cls in (call_ui.CallUI, call_ui.CallBar,
+                    notification_shade.NotificationShade, power_menu.PowerMenu):
             params = inspect.signature(cls.__init__).parameters
             assert 'config' in params, cls.__name__
             assert params['config'].default is None, cls.__name__
@@ -219,23 +216,22 @@ class TestConstructorBackCompat:
     def test_surfaces_bind_with_no_args(self):
         # bind() validates a no-arg call against the real signature without
         # constructing GTK widgets (impossible headlessly).
-        for cls in (call_ui.CallUI, dialer.Dialer,
-                    notification_shade.NotificationShade, power_menu.PowerMenu,
-                    sms.SMSConversation):
+        for cls in (call_ui.CallUI,
+                    notification_shade.NotificationShade, power_menu.PowerMenu):
             inspect.signature(cls).bind()
         inspect.signature(call_ui.CallBar).bind(on_expand=lambda: None)
 
 
 class TestSurfaceApplyTheme:
     def test_explicit_preset_lands_in_the_provider(self):
-        surf = sms.SMSConversation.__new__(sms.SMSConversation)
+        surf = power_menu.PowerMenu.__new__(power_menu.PowerMenu)
         surf._config = _config_with(theme='amoled')
         surf._theme_provider = FakeProvider()
         surf.apply_theme(THEME_PRESETS['forest'])
         assert b'#10261B' in surf._theme_provider.data
 
     def test_no_arg_falls_back_to_injected_config_preset(self):
-        surf = dialer.Dialer.__new__(dialer.Dialer)
+        surf = call_ui.CallUI.__new__(call_ui.CallUI)
         surf._config = _config_with(theme='ocean')
         surf._theme_provider = FakeProvider()
         surf.apply_theme()
@@ -245,8 +241,6 @@ class TestSurfaceApplyTheme:
         (notification_shade, 'NotificationShade'),
         (call_ui, 'CallUI'),
         (call_ui, 'CallBar'),
-        (dialer, 'Dialer'),
-        (sms, 'SMSConversation'),
         (power_menu, 'PowerMenu'),
     ])
     def test_every_surface_has_apply_theme_idiom(self, module, cls_name):
@@ -260,14 +254,14 @@ class TestSurfaceApplyTheme:
 
 class TestReloadFanOut:
     def test_retheme_reaches_every_constructed_surface(self):
-        shade, dialer_s, call_ui_s, call_bar, menu = (
-            RecordingSurface() for _ in range(5))
+        shade, call_ui_s, call_bar, menu = (
+            RecordingSurface() for _ in range(4))
         switcher, lock = (RecordingSurface() for _ in range(2))
         hud, app_menu = RecordingSurface(), RecordingSurface()
         app = types.SimpleNamespace(_hud=hud, _power_menu=app_menu)
         shell = types.SimpleNamespace(
             config=_config_with(theme='custom', custom_background='#2A1018'),
-            _shade=shade, _dialer=dialer_s, _call_ui=call_ui_s,
+            _shade=shade, _call_ui=call_ui_s,
             _call_bar=call_bar, _power_menu=menu,
             _switcher=switcher, _lock_screen=lock,
             get_application=lambda: app,
@@ -275,14 +269,14 @@ class TestReloadFanOut:
         window.ShellWindow._retheme_surfaces(shell)
         expected = window.resolve_theme(shell.config)
         assert expected.background == '#2A1018'
-        for surf in (shade, dialer_s, call_ui_s, call_bar, menu,
+        for surf in (shade, call_ui_s, call_bar, menu,
                      switcher, lock, hud, app_menu):
             assert surf.applied == [expected]
 
     def test_retheme_skips_surfaces_never_constructed(self):
         shell = types.SimpleNamespace(
             config=_config_with(theme='ocean'),
-            _shade=None, _dialer=None, _call_ui=None,
+            _shade=None, _call_ui=None,
             _call_bar=None, _power_menu=None,
             _switcher=None, _lock_screen=None,
             get_application=lambda: None,
@@ -295,7 +289,7 @@ class TestReloadFanOut:
         app = types.SimpleNamespace(_hud=hud, _power_menu=app_menu)
         shell = types.SimpleNamespace(
             config=_config_with(theme='paper'),
-            _shade=None, _dialer=None, _call_ui=None,
+            _shade=None, _call_ui=None,
             _call_bar=None, _power_menu=win_menu,
             get_application=lambda: app,
         )
@@ -372,7 +366,7 @@ class TestFontsPropagateViaGlobalProvider:
         # Fonts reach the surfaces display-wide through font_theme's global
         # provider; a family baked into a surface sheet would defeat the
         # hot-reloaded font setting.
-        for module in (notification_shade, call_ui, dialer, sms, power_menu):
+        for module in (notification_shade, call_ui, power_menu):
             sheet = module.theme_css(THEME_PRESETS['paper']).lower()
             assert 'font-family' not in sheet, module.__name__
 

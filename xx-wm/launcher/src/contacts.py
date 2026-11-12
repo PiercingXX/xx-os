@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -534,98 +533,3 @@ def display_number(number: str) -> str:
         return xx_phone.display(number, xx_phone.user_country("", ""))
     except Exception:
         return number
-
-
-# ------------------------------------------------------------------ mmcli SMS
-
-def _resolve_mmcli_modem() -> str | None:
-    """D-Bus-resolved modem path for the mmcli fallback, if reachable."""
-    try:
-        from modem_monitor import resolve_modem_path
-        return resolve_modem_path(
-            'org.freedesktop.ModemManager1.Modem.Messaging')
-    except Exception:
-        return None
-
-
-def _strip_label(line: str, label: str) -> str | None:
-    """Extract value after 'label:' in mmcli tabular output."""
-    m = re.search(rf'\|\s+{re.escape(label)}:\s+(.+)', line)
-    return m.group(1).strip() if m else None
-
-
-def load_sms_history(
-    modem_idx: int = 0, timeout: int = 8, modem: str | None = None,
-) -> list[dict]:
-    """
-    Fetch SMS history from ModemManager.
-    Returns list of dicts: {number, text, outgoing, timestamp_iso}.
-    Prefers Messaging.List + GetAll over D-Bus (exact text, including
-    multi-line bodies that mmcli's human-readable tables truncate);
-    falls back to mmcli scraping against the D-Bus-resolved modem path,
-    then the legacy numeric index. Empty list when nothing is reachable.
-    """
-    try:
-        from modem_monitor import messaging_list, resolve_modem_path
-        resolved = modem or resolve_modem_path(
-            'org.freedesktop.ModemManager1.Modem.Messaging')
-        messages = messaging_list(
-            modem=resolved, timeout_ms=timeout * 1000)
-        if messages is not None:
-            return messages
-    except Exception:
-        pass
-    selector = modem or _resolve_mmcli_modem() or str(modem_idx)
-    try:
-        result = subprocess.run(
-            ['mmcli', '-m', selector, '--messaging-list-sms'],
-            capture_output=True, text=True, timeout=timeout,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return []
-
-    paths = re.findall(r'(/org/freedesktop/ModemManager1/SMS/\d+)', result.stdout)
-    if not paths:
-        return []
-
-    messages: list[dict] = []
-    for path in paths:
-        try:
-            r = subprocess.run(
-                ['mmcli', '-s', path],
-                capture_output=True, text=True, timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
-            continue
-
-        number = ''
-        text = ''
-        timestamp = ''
-        pdu_type = ''
-
-        for line in r.stdout.splitlines():
-            v = _strip_label(line, 'number')
-            if v:
-                number = v
-            v = _strip_label(line, 'text')
-            if v:
-                text = v
-            v = _strip_label(line, 'timestamp')
-            if v:
-                timestamp = v
-            v = _strip_label(line, 'pdu type')
-            if v:
-                pdu_type = v
-
-        if not number or not text:
-            continue
-
-        outgoing = pdu_type.lower() in ('submit', 'submit-report')
-        messages.append({
-            'number': number,
-            'text': text,
-            'outgoing': outgoing,
-            'timestamp_iso': timestamp,
-        })
-
-    return messages

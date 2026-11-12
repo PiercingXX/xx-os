@@ -67,8 +67,6 @@ ALLOW = {
         'recorder _start_work thread; one bounded local probe per record.',
     ('capture.py', '_reap'):
         '_spawn_worker reap thread after SIGINT, 10 s cap then kill.',
-    ('contacts.py', 'load_sms_history'):
-        'SMS history worker (sms _fetch thread).',
     ('dialer.py', '_run_mmcli'):
         'telephony worker threads (place-call / emergency paths).',
     ('dialer.py', 'get_modem_emergency_numbers'):
@@ -101,10 +99,6 @@ ALLOW = {
         'telephony worker (dialer _place_call thread).',
     ('modem_monitor.py', '_delete_created_call'):
         'voice_create_and_start cleanup after a failed Start; same worker.',
-    ('modem_monitor.py', 'messaging_create_and_send'):
-        'telephony worker (sms send thread).',
-    ('modem_monitor.py', 'messaging_list'):
-        'SMS history worker (contacts load path).',
     ('notification_shade.py', '_external_daemon_owns_notifications'):
         'external-daemon probe worker, posts back via _post_to_main.',
     ('power_menu.py', 'power_action_sync'):
@@ -161,8 +155,6 @@ ALLOW = {
         'sole capturing chokepoint; dry-run preview worker only.',
     ('filebackup.py', 'run_transfer'):
         'rsync transfer worker thread (Popen + wait off the GTK loop).',
-    ('sms.py', '_run_mmcli'):
-        'SMS worker threads (send/history), documented worker-only.',
     ('sound.py', '_loop_worker'):
         'ringtone loop worker thread.',
     # All nmcli/pactl helpers above route through this one chokepoint, which

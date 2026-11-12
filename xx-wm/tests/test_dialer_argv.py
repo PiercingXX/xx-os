@@ -5,7 +5,7 @@ to the two-step mmcli sequence — create the call object, then start it
 via the returned object path selected with ``-o`` (upstream mmcli has no
 ``--voice-call`` verb; verified against cli/mmcli-common.c and the
 mmcli(8) CALL OPTIONS section) against the D-Bus-resolved modem path.
-Failures surface in the dialer status label instead of being discarded.
+The shell has no dialer window of its own: the Phone app is xx-dialer.
 """
 import subprocess
 import sys
@@ -71,14 +71,6 @@ class SyncThread:
 
     def start(self):
         self.target(*self.args)
-
-
-def _make_dialer(monkeypatch):
-    d = dialer.Dialer.__new__(dialer.Dialer)
-    d._digits = '5551234567'
-    d._status = FakeLabel()
-    monkeypatch.setattr(dialer.threading, 'Thread', SyncThread)
-    return d
 
 
 def _script_mmcli(monkeypatch, responses):
@@ -188,26 +180,6 @@ class TestPlaceCall:
         assert dialer.place_call('5551234567') == (False, 'mmcli not installed')
 
 
-class TestDialStatus:
-    def test_success_status(self, monkeypatch):
-        flush = _flush_idle(monkeypatch)
-        d = _make_dialer(monkeypatch)
-        monkeypatch.setattr(dialer, 'place_call',
-                            lambda number: (True, '/Call/1'))
-        d._initiate_call('5551234567')
-        flush()
-        assert d._status.text == 'Dialing…'
-
-    def test_failure_status(self, monkeypatch):
-        flush = _flush_idle(monkeypatch)
-        d = _make_dialer(monkeypatch)
-        monkeypatch.setattr(dialer, 'place_call',
-                            lambda number: (False, "error: couldn't find modem\n"))
-        d._initiate_call('5551234567')
-        flush()
-        assert "Call failed: error: couldn't find modem" in d._status.text
-
-
 class TestRunMmcli:
     def test_success_returns_stdout(self, monkeypatch):
         proc = subprocess.CompletedProcess(['mmcli'], 0,
@@ -226,108 +198,34 @@ class TestRunMmcli:
         assert dialer._run_mmcli([]) == (False, 'mmcli exited with status 9')
 
 
-class TestStatusLabelWiring:
-    def test_calling_status_visible_during_worker(self, monkeypatch):
-        # No modem here: the country (so the grouping) comes from the locale.
-        monkeypatch.delenv('LC_ALL', raising=False)
-        monkeypatch.delenv('LC_MESSAGES', raising=False)
-        monkeypatch.setenv('LANG', 'en_US.UTF-8')
-        flush = _flush_idle(monkeypatch)
-        d = _make_dialer(monkeypatch)
-        seen_at_call = []
+class TestPhoneIsTheApp:
+    """xx-dialer is the Phone app; the shell keeps only place_call and the
+    emergency helpers, and its own SMS window is gone (TxxT owns texts)."""
 
-        def _place(number):
-            seen_at_call.append(d._status.text)
-            return True, '/org/freedesktop/ModemManager1/Call/1'
+    def test_no_dialer_or_sms_window(self):
+        src = Path(dialer.__file__).parent
+        assert not hasattr(dialer, 'Dialer')
+        assert not (src / 'sms.py').exists()
+        assert callable(dialer.place_call)
+        assert callable(dialer.place_emergency_call)
 
-        monkeypatch.setattr(dialer, 'place_call', _place)
-        d._initiate_call('5551234567')
-        assert seen_at_call[0] == 'Calling (555) 123-4567…'
-        flush()
-        assert d._status.text == 'Dialing…'
+    def test_phone_app_id_prefers_xx_dialer(self):
+        import default_layout
+        installed = {'org.gnome.Calls.desktop', 'io.piercingxx.XXDialer.desktop'}
 
+        def find(app_id):
+            for cand in (app_id, app_id + '.desktop'):
+                if cand in installed:
+                    return cand
+            return None
+        assert default_layout.phone_app_id(find) == (
+            'io.piercingxx.XXDialer.desktop')
+        assert default_layout.phone_app_id(lambda _a: None) is None
 
-class TestEmergencyFromDialer:
-    def test_emergency_number_takes_the_emergency_path(self, monkeypatch):
-        flush = _flush_idle(monkeypatch)
-        d = _make_dialer(monkeypatch)
-        used = []
-        monkeypatch.setattr(dialer, 'place_call',
-                            lambda number: used.append(('call', number))
-                            or (True, '/Call/1'))
-        monkeypatch.setattr(dialer, 'place_emergency_call',
-                            lambda number, *a: used.append(('emg', number))
-                            or (False, dialer.EMERGENCY_NO_SIM))
-        d._initiate_call('112')
-        flush()
-        d._initiate_call('5551234567')
-        flush()
-        assert used == [('emg', '112'), ('call', '5551234567')]
-
-
-class TestDialingEnds:
-    def test_dialing_status_follows_the_call_end(self, monkeypatch):
-        flush = _flush_idle(monkeypatch)
-        d = _make_dialer(monkeypatch)
-        path = '/org/freedesktop/ModemManager1/Call/4'
-        watched = {}
-        monkeypatch.setattr(dialer, 'place_call', lambda number: (True, path))
-        monkeypatch.setattr(modem_monitor, 'watch_call_end',
-                            lambda p, cb: watched.setdefault(p, cb) or True)
-        d._initiate_call('5551234567')
-        flush()
-        assert d._status.text == 'Dialing…'
-        watched[path]('')
-        assert d._status.text == ''
-
-    def test_newer_status_is_left_alone(self, monkeypatch):
-        flush = _flush_idle(monkeypatch)
-        d = _make_dialer(monkeypatch)
-        path = '/org/freedesktop/ModemManager1/Call/5'
-        watched = {}
-        monkeypatch.setattr(dialer, 'place_call', lambda number: (True, path))
-        monkeypatch.setattr(modem_monitor, 'watch_call_end',
-                            lambda p, cb: watched.setdefault(p, cb) or True)
-        d._initiate_call('5551234567')
-        flush()
-        d._set_status('Code not sent: x')
-        watched[path]('Busy')
-        assert d._status.text == 'Code not sent: x'
-
-
-class TestCallInFlightGuard:
-    """A second tap on Call while the first dial is still in flight
-    places nothing; the guard lifts once the first attempt reports."""
-
-    def test_second_tap_ignored_until_first_reports(self, monkeypatch):
-        flush = _flush_idle(monkeypatch)
-        d = _make_dialer(monkeypatch)
-        placed = []
-        monkeypatch.setattr(dialer, 'place_call',
-                            lambda number: placed.append(number)
-                            or (False, 'no service'))
-        d._initiate_call('5551234567')
-        d._initiate_call('5551234567')
-        assert placed == ['5551234567']
-        flush()
-        assert d._status.text == 'Call failed: no service'
-        d._initiate_call('5551234567')
-        assert placed == ['5551234567', '5551234567']
-
-    def test_worker_exception_releases_guard(self, monkeypatch):
-        flush = _flush_idle(monkeypatch)
-        d = _make_dialer(monkeypatch)
-
-        def _boom(number):
-            raise RuntimeError('modem gone')
-
-        monkeypatch.setattr(dialer, 'place_call', _boom)
-        d._initiate_call('5551234567')
-        flush()
-        assert d._status.text == 'Call failed: modem gone'
-        placed = []
-        monkeypatch.setattr(dialer, 'place_call',
-                            lambda number: placed.append(number)
-                            or (True, '/Call/1'))
-        d._initiate_call('5551234567')
-        assert placed == ['5551234567']
+    def test_open_dialer_launches_the_phone_app(self):
+        src =(Path(dialer.__file__).parent / 'window.py').read_text(
+            encoding='utf-8')
+        body = src.split('def _open_dialer(self)')[1].split('\n    def ')[0]
+        assert 'phone_app_id' in body
+        assert '_launch_app_id' in body
+        assert 'Dialer(' not in body

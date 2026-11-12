@@ -1,16 +1,14 @@
-"""Call follow-ups: end-reason notice, call-waiting DnD logging, USSD dial.
+"""Call follow-ups: end-reason notice, call-waiting DnD logging.
 
 - A call that ends abnormally ('Busy', 'Network error', 'Audio setup
-  failed') shows its reason briefly: on the dialer status line when the
-  dialer is open, else the shell toast. Normal hang-ups show nothing;
+  failed') shows its reason briefly as the shell toast. Normal hang-ups
+  show nothing;
   'Busy' only for calls we placed.
 - WAITING calls (screened in modem_monitor._screen_waiting) are noted
   into the DnD repeat-caller window once; a waiting call promoted to
   ringing is not noted twice.
 - The DnD exception is decided before the ringing call is noted (it
   used to match itself, so every call rang through DnD).
-- The shell dialer sends USSD/MMI codes to the USSD sheet and *#06# to
-  the IMEI sheet instead of placing a voice call.
 """
 from types import SimpleNamespace
 
@@ -50,15 +48,10 @@ def test_end_reason_stale_or_missing():
     assert end_reason_notice(_info(6, text=''), now=101.0) == 'Network error'
 
 
-def _win(dialer_visible=None):
-    shown = {'toast': [], 'dialer': [], 'noted': []}
-    dialer = None
-    if dialer_visible is not None:
-        dialer = SimpleNamespace(
-            get_visible=lambda: dialer_visible,
-            _set_status=lambda t: shown['dialer'].append(t))
+def _win():
+    shown = {'toast': [], 'noted': []}
     win = SimpleNamespace(
-        _dialer=dialer, _show_status=lambda t: shown['toast'].append(t),
+        _show_status=lambda t: shown['toast'].append(t),
         _calls_owner_warned=False, _call_ui=None, _call_bar=None,
         _screen_pending=None,
         dnd_state=SimpleNamespace(
@@ -85,21 +78,14 @@ def test_on_call_ended_toasts_reason(monkeypatch):
     assert shown['toast'] == ['Busy']
 
 
-def test_reason_goes_to_open_dialer(monkeypatch):
-    _last_ended(monkeypatch, _info(7))
-    win, shown = _win(dialer_visible=True)
-    CallWiring(win)._show_end_reason()
-    assert shown['dialer'] == ['Audio setup failed'] and shown['toast'] == []
-
-
 def test_normal_hangup_and_calls_owner_show_nothing(monkeypatch):
     _last_ended(monkeypatch, _info(4))
-    win, shown = _win(dialer_visible=False)
+    win, shown = _win()
     CallWiring(win)._show_end_reason()
     _last_ended(monkeypatch, _info(6, path='/c/2'))
     win._calls_owner_warned = True
     CallWiring(win)._show_end_reason()
-    assert shown['toast'] == [] and shown['dialer'] == []
+    assert shown['toast'] == []
 
 
 # ------------------------------------------------------ waiting DnD log
@@ -204,39 +190,6 @@ def test_promoted_waiting_call_not_noted_twice(monkeypatch):
     wiring._on_call_incoming('Ann', '+15550004444')
     assert noted == ['+15550002222', '+15550004444']
 
-
-# ------------------------------------------------------ shell dialer USSD
-
-def test_shell_dialer_routes_codes(monkeypatch):
-    import dialer
-    routed = []
-    bare = dialer.Dialer.__new__(dialer.Dialer)
-    bare._show_imei = lambda: routed.append(('imei',))
-    bare._start_ussd = lambda code: routed.append(('ussd', code))
-    bare._initiate_call = lambda number: routed.append(('call', number))
-    for digits in ('*#06#', '*100#', '**21*5550100#', '+15550100', '#31#555'):
-        bare._digits = digits
-        bare._on_call(None)
-    assert routed == [('imei',), ('ussd', '*100#'),
-                      ('ussd', '**21*5550100#'), ('call', '+15550100'),
-                      ('call', '#31#555')]
-
-
-def test_classify_dial_without_xx_phone_stays_a_call(monkeypatch):
-    import builtins
-    import dialer
-    real_import = builtins.__import__
-
-    def _no_xx_phone(name, *args, **kwargs):
-        if name.startswith('xx_phone'):
-            raise ImportError(name)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, '__import__', _no_xx_phone)
-    assert dialer.classify_dial('*100#') == 'call'
-
-
-# ------------------------------------------- GNOME Calls leaving the bus
 
 def test_end_notices_return_after_gnome_calls_leaves(monkeypatch):
     owner = {'present': True}

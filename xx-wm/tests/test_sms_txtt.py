@@ -10,7 +10,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'launcher' / 'src'))
 
@@ -171,45 +170,3 @@ class TestSmsNumberDisplay:
         win = _win()
         CallWiring(win)._on_sms_received('+16145550177', 'hello')
         assert win._posted[0][2] == 'Mom'
-
-
-class TestSmsHeaderDisplay:
-    """Conversation header reads through xx_phone; saved names win."""
-
-    def _view(self):
-        import sms
-        view = sms.SMSConversation.__new__(sms.SMSConversation)
-        view._contact_book = types.SimpleNamespace(
-            lookup_number=lambda n: None)
-        view._header_label = types.SimpleNamespace(
-            set_text=lambda text: setattr(view, '_shown', text))
-        view._messages = []
-        view._rebuild_messages = lambda: None
-        view._load_history = lambda: None
-        view.present = lambda: None
-        return view
-
-    def test_unknown_number_header_uses_xx_phone(self):
-        import xx_phone
-        view = self._view()
-        number = '+16145550177'
-        view.open_conversation(number)
-        assert view._shown == xx_phone.display(
-            number, xx_phone.user_country("", ""))
-        assert view._number == number
-
-    def test_saved_name_wins_in_header(self):
-        view = self._view()
-        view._contact_book = types.SimpleNamespace(
-            lookup_number=lambda n: 'Mom')
-        view.open_conversation('+16145550177')
-        assert view._shown == 'Mom'
-
-    def test_supplied_name_wins_in_header(self):
-        view = self._view()
-        view.open_conversation('+16145550177', 'Mom')
-        assert view._shown == 'Mom'
-
-
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
