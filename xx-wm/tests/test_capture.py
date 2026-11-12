@@ -257,6 +257,10 @@ class _FakeProc:
         self.signals = []
         self.waited = None
         self.killed = False
+        self.returncode = None
+
+    def poll(self):
+        return self.returncode
 
     def send_signal(self, sig):
         self.signals.append(sig)
@@ -369,6 +373,54 @@ class TestRecorderLifecycle:
         cbs['Stop']()
         assert procs[0].signals == [signal.SIGINT]
         assert not rec.is_recording()
+
+
+class TestRecorderLifetime:
+    def test_spawned_on_main_thread_tied_to_shell(self, shade, monkeypatch):
+        rec, procs = _recorder(monkeypatch)
+        posted = []
+        monkeypatch.setattr(capture, '_post_to_main',
+                            lambda cb, *args: posted.append((cb, args)))
+        rec.start()
+        assert procs == []
+        for cb, args in posted:
+            cb(*args)
+        assert len(procs) == 1
+        assert procs[0].kwargs['preexec_fn'] is capture._die_with_shell
+        assert rec.is_recording()
+
+    def test_recorder_exit_ends_the_session(self, shade, monkeypatch):
+        rec, procs = _recorder(monkeypatch, blank_fn=lambda: False,
+                               battery_fn=lambda: 50)
+        rec.start()
+        procs[0].returncode = 1
+        assert rec._on_tick() is False
+        assert not rec.is_recording()
+        assert shade.dismissed == [capture.RECORDING_NOTIF_ID]
+
+    def test_low_space_stops_recording(self, shade, monkeypatch):
+        rec, procs = _recorder(monkeypatch, blank_fn=lambda: False,
+                               battery_fn=lambda: 50)
+        rec.start()
+        monkeypatch.setattr(capture, 'free_bytes', lambda path: 10 << 20)
+        assert rec.check_auto_stop() is True
+        assert procs[0].signals == [signal.SIGINT]
+
+    def test_low_space_refuses_start(self, shade, monkeypatch):
+        rec, procs = _recorder(monkeypatch)
+        monkeypatch.setattr(capture, 'free_bytes', lambda path: 10 << 20)
+        rec.start()
+        assert procs == []
+        assert not rec.is_recording()
+
+    def test_scrolling_capture_hides_shade_and_drops_layer(self, monkeypatch):
+        calls = []
+        shell = types.SimpleNamespace(
+            hide_shade=lambda: calls.append('shade'),
+            drop_to_background=lambda: calls.append('drop'))
+        monkeypatch.setattr(capture, '_shell_provider', lambda: shell)
+        capture._hide_shell_surfaces()
+        assert calls == ['shade', 'drop']
 
 
 class TestRecorderAutoStop:

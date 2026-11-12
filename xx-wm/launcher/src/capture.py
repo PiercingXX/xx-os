@@ -14,6 +14,7 @@ tile drives get_recorder().
 
 from __future__ import annotations
 
+import ctypes
 import datetime
 import logging
 import os
@@ -353,6 +354,36 @@ def recorder_available() -> bool:
     return shutil.which('wf-recorder') is not None
 
 
+# A recording stops (or never starts) with less free space than this.
+_MIN_FREE_BYTES = 500 * 1024 * 1024
+_PR_SET_PDEATHSIG = 1
+
+
+def free_bytes(path: str) -> int | None:
+    try:
+        return shutil.disk_usage(path).free
+    except OSError:
+        return None
+
+
+def _resolve_prctl():
+    try:
+        return ctypes.CDLL(None, use_errno=True).prctl
+    except (OSError, AttributeError):
+        return None
+
+
+_prctl = _resolve_prctl()
+
+
+def _die_with_shell() -> None:
+    """preexec_fn: SIGINT the recorder when the thread that spawned it
+    dies, so a shell crash finalizes the file instead of recording until
+    the disk is full. Only a prebound libc call runs in the child."""
+    if _prctl is not None:
+        _prctl(_PR_SET_PDEATHSIG, signal.SIGINT)
+
+
 def probe_h264() -> bool:
     """True when ffmpeg knows libx264, so -c libx264 stays honest.
 
@@ -535,31 +566,42 @@ class ScreenRecorder:
         except OSError as exc:
             log.warning('recording failed: %s', exc)
             return
+        free = free_bytes(recordings_dir())
+        if free is not None and free < _MIN_FREE_BYTES:
+            log.warning('recording not started: %d MiB free', free >> 20)
+            return
         output = os.path.join(recordings_dir(), recording_filename())
         cmd = build_recorder_command(
             output,
             record_audio=_record_audio_enabled(),
             has_h264=probe_h264(),
         )
+        # The death signal follows the spawning THREAD, so the recorder is
+        # spawned from the GTK main thread, which lives as long as the shell.
+        _post_to_main(self._spawn_on_main, cmd, output)
+
+    def _spawn_on_main(self, cmd: list[str], output: str) -> bool:
         try:
             proc = self._spawn(
                 cmd, env=_wl_env(), close_fds=True,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                preexec_fn=_die_with_shell,
             )
-        except (FileNotFoundError, OSError) as exc:
+        except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
             log.warning('recording failed: %s', exc)
-            return
+            return False
         with self._lock:
             if self._proc is not None:
                 try:
                     proc.terminate()
                 except Exception:
                     pass
-                return
+                return False
             self._proc = proc
             self._output = output
             self._started_at = time.monotonic()
-        _post_to_main(self._on_started)
+        self._on_started()
+        return False
 
     def _on_started(self) -> bool:
         self._notify_elapsed()
@@ -584,15 +626,31 @@ class ScreenRecorder:
         if not self.is_recording():
             self._tick_id = None
             return False
+        if self._check_exited():
+            self._tick_id = None
+            return False
         if self.check_auto_stop():
             self._tick_id = None
             return False
         self._notify_elapsed()
         return True
 
+    def _check_exited(self) -> bool:
+        """wf-recorder died on its own (encoder error, output gone): drop
+        the session so the tile and notification stop claiming one."""
+        with self._lock:
+            proc = self._proc
+            if proc is None or proc.poll() is None:
+                return False
+            self._proc = None
+            self._tick_id = None
+        log.warning('recorder exited (%s): %s', proc.returncode, self._output)
+        _dismiss_notif(RECORDING_NOTIF_ID)
+        return True
+
     def check_auto_stop(self) -> bool:
-        """Poll blank + battery; stop when either trips. Returns True
-        when the recording was stopped here."""
+        """Poll blank, battery and free space; stop when one trips.
+        Returns True when the recording was stopped here."""
         try:
             blanked = bool(self._blank_fn())
         except Exception:
@@ -601,9 +659,16 @@ class ScreenRecorder:
             pct = self._battery_fn()
         except Exception:
             pct = None
-        if not should_auto_stop(blanked, pct):
+        free = free_bytes(os.path.dirname(self._output) or recordings_dir())
+        low_space = free is not None and free < _MIN_FREE_BYTES
+        if not should_auto_stop(blanked, pct) and not low_space:
             return False
-        reason = 'screen blanked' if blanked else 'low battery'
+        if blanked:
+            reason = 'screen blanked'
+        elif low_space:
+            reason = 'storage low'
+        else:
+            reason = 'low battery'
         log.info('stopping recording: %s', reason)
         self.stop(reason=reason)
         return True
@@ -856,7 +921,6 @@ def _hide_shell_surfaces() -> None:
             fn = getattr(shell, method, None)
             if callable(fn):
                 fn()
-                break
         except Exception:
             pass
     for attr in ('_banner', '_switcher'):
